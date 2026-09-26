@@ -225,11 +225,16 @@ export async function withOnDiskSpelling(fullPath: string): Promise<string> {
  * replaced the file meanwhile (including during a lock backoff) makes the
  * write fail with {@link StaleWriteError} instead of overwriting that
  * version unseen. The caller re-reads and applies its change again.
+ *
+ * `opts.refuseLink` fails the write with {@link LinkedFileError} when the
+ * destination is a symbolic link, checked before every rename attempt: the
+ * rename would replace the link with a regular file, cutting the note off
+ * from the original it points at.
  */
 export async function atomicWriteFile(
   filePath: string,
   content: string | Buffer,
-  opts?: { expectExisting?: boolean; expectStat?: { mtimeMs: number; size: number } },
+  opts?: { expectExisting?: boolean; expectStat?: { mtimeMs: number; size: number }; refuseLink?: boolean },
 ): Promise<void> {
   const nonce = randomBytes(6).toString('hex');
   const tmpPath = tmpSiblingPath(filePath, nonce);
@@ -296,6 +301,9 @@ export async function atomicWriteFile(
           );
           gone.code = 'ENOENT';
           throw gone;
+        }
+        if (opts?.refuseLink && (await isSymbolicLink(filePath))) {
+          throw new LinkedFileError(filePath);
         }
         if (opts?.expectStat) {
           const now = await fs.stat(filePath).catch(() => null);
@@ -428,6 +436,28 @@ export class StaleWriteError extends Error {
   constructor(filePath: string) {
     super(`atomicWriteFile: "${filePath}" changed since it was read; not overwriting it`);
     this.name = 'StaleWriteError';
+  }
+}
+
+/**
+ * The destination is a symbolic link, so the write was not made (an atomic
+ * rename would replace the link with a regular file). Code `NOTE_IS_LINK`
+ * crosses IPC in the error envelope.
+ */
+export class LinkedFileError extends Error {
+  readonly code = 'NOTE_IS_LINK';
+  constructor(filePath: string) {
+    super(`atomicWriteFile: "${filePath}" is a link to another file; not replacing it`);
+    this.name = 'LinkedFileError';
+  }
+}
+
+/** True when `p` itself is a symbolic link (not followed); false when it is missing. */
+export async function isSymbolicLink(p: string): Promise<boolean> {
+  try {
+    return (await fs.lstat(p)).isSymbolicLink();
+  } catch {
+    return false;
   }
 }
 

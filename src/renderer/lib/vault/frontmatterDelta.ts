@@ -60,43 +60,6 @@ export function patchToFrontmatterDelta(patch: Record<string, unknown>): Frontma
 }
 
 /**
- * Diffs a full `before` frontmatter object against a full `after` object and
- * returns the MINIMAL delta (only the keys that changed). Used by the Properties
- * popup, which works in whole-object terms: `before` is the popup's open-time
- * snapshot and `after` is its current rows, so a key the popup never touched
- * (incl. one an external editor added since the popup opened, which is in
- * neither snapshot) is absent from the delta and the write preserves it from
- * disk.
- *
- * Cleaning rule matches `patchToFrontmatterDelta`: an empty/null/undefined value
- * in `after` is a clear → `unset` (only when the key actually carried a value in
- * `before`; a key that was empty in both is a no-op). Equality is a conservative
- * structural compare — a false "changed" only re-sets a key to its own value,
- * which the CST engine still byte-preserves, so over-inclusion is harmless while
- * under-inclusion (missing a real change) is not.
- */
-export function diffToFrontmatterDelta(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-): FrontmatterDelta {
-  const set: Record<string, unknown> = {};
-  const unset: string[] = [];
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-  for (const key of keys) {
-    const a = after[key];
-    const aIsValue = key in after && a !== '' && a !== null && a !== undefined;
-    if (aIsValue) {
-      if (!valuesShallowEqual(before[key], a)) set[key] = a;
-    } else {
-      const b = before[key];
-      const bWasValue = key in before && b !== '' && b !== null && b !== undefined;
-      if (bWasValue) unset.push(key);
-    }
-  }
-  return { set, unset };
-}
-
-/**
  * Applies a delta to a `base` frontmatter object (typically a FRESH disk parse),
  * returning a NEW object. `set` keys are assigned, then `unset` keys removed —
  * so a key that somehow appears in both resolves to removed (defensive; the
@@ -154,17 +117,17 @@ export function subtractWrittenDelta(queued: FrontmatterDelta, written: Frontmat
 }
 
 /**
- * Conservative structural equality for the popup diff. Object key order is not
- * semantically meaningful in YAML so it is ignored; arrays compare
- * order-sensitively (a reordered list IS a user edit in the popup). Anything
- * this can't confidently prove equal is treated as different (the safe
- * direction — see `diffToFrontmatterDelta`).
+ * Conservative structural equality for `subtractWrittenDelta`. Object key
+ * order is not semantically meaningful in YAML so it is ignored; arrays compare
+ * order-sensitively (a reordered list is a different value). Anything this
+ * can't confidently prove equal is treated as different, the safe direction:
+ * a key wrongly kept is only re-set to its own value.
  */
 function valuesShallowEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   // `NaN !== NaN`, but two `.nan` values are the same data;
-  // treat them equal so a `.nan` key isn't spuriously diffed as changed on every
-  // unrelated popup edit (mirrors `valuesEqual` in frontmatterEngine.ts).
+  // treat them equal so a landed `.nan` key isn't re-applied as if it were
+  // still queued (mirrors `valuesEqual` in frontmatterEngine.ts).
   if (typeof a === 'number' && typeof b === 'number' && Number.isNaN(a) && Number.isNaN(b)) {
     return true;
   }

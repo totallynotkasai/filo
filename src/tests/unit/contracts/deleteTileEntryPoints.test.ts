@@ -1,5 +1,5 @@
 /**
- * Phase 0 / Phase 2 characterization — delete-tile entry-point parity.
+ * Contract — delete-tile entry-point parity.
  *
  * Asserts the post-condition (no orphan placement / no orphan tileDef /
  * no orphan connection) holds for every board type when a tile is removed
@@ -151,7 +151,7 @@ function freshBoard(
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
-describe('Phase 0 characterization — delete-tile entry-point parity', () => {
+describe('Contract — delete-tile entry-point parity', () => {
   beforeEach(() => {
     boardCacheStore.clear();
   });

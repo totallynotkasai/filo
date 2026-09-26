@@ -17,7 +17,7 @@
 
 import { CURRENT_BOARD_FILE_VERSION } from './boardFile';
 
-export interface MigrateBoardFileResult {
+interface MigrateBoardFileResult {
   /** The input, ready for `BoardFileDataSchema` when the version is current. */
   data: unknown;
   /**

@@ -1,7 +1,7 @@
 /**
  * L5 (Audit-12) — attachment-delete grace, pinned by source scan (it lives in
  * a module-private reconciler, which this suite pins structurally — cf.
- * `characterization/externalEditReconciliation.test.ts`):
+ * `contracts/externalEditReconciliation.test.ts`):
  *
  *   The attachment reconciler is fire-and-forget so its 500 ms grace deferral
  *   runs OUTSIDE the shared rename queue the batch dispatch is awaited inside —

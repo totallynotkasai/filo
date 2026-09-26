@@ -1,6 +1,6 @@
 /**
- * Rewrites of a note's file from its bytes (Replace All, tag sweeps, the undo
- * of a delete) go through `noteStore.transform` / `restore`, and every open
+ * Rewrites of a note's file from its bytes (Replace All, tag sweeps, the raw
+ * view) go through `noteStore.transform`, and every open
  * view of that note follows the written bytes. The contract:
  *  - an open view shows the new body and frontmatter, with nothing unsaved;
  *  - a view's unsaved typing is written first, so the rewrite starts from it
@@ -55,15 +55,6 @@ describe('views follow a rewrite of their note', () => {
     expect(m.bodySource).toBe('disk');
     expect(m.frontmatter).toEqual({ title: 'Renamed' });
     expect(m.hasUnsavedBody).toBe(false);
-  });
-
-  it('restoring a deleted note reaches its open view too', async () => {
-    const m = await open('Notes.md');
-    vault.remove('Notes.md');
-    await noteStore.restore('Notes.md', '---\ntitle: Notes\n---\nrestored\n');
-    expect(vault.read('Notes.md')).toBe('---\ntitle: Notes\n---\nrestored\n');
-    expect(m.body).toBe('restored\n');
-    expect(m.status).toBe('ready');
   });
 
   it('writes a view\'s unsaved typing first, so the rewrite never reverts it', async () => {

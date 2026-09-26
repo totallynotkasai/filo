@@ -4,7 +4,6 @@ import {
   emptyFrontmatterDelta,
   isEmptyFrontmatterDelta,
   patchToFrontmatterDelta,
-  diffToFrontmatterDelta,
   applyFrontmatterDelta,
   mergeFrontmatterDelta,
 } from '@renderer/lib/vault/frontmatterDelta';
@@ -96,60 +95,6 @@ describe('frontmatterDelta — mergeFrontmatterDelta (coalesced edits)', () => {
     const merged = applyFrontmatterDelta(base, mergeFrontmatterDelta(d1, d2));
     expect(merged).toEqual(sequential);
     expect(merged).toEqual({ a: 10, b: 20, c: 30, keep: 'me' });
-  });
-});
-
-describe('frontmatterDelta — diffToFrontmatterDelta (Properties popup)', () => {
-  it('captures only the keys that changed between two full objects', () => {
-    const before = { priority: 'high', status: 'todo', title: 'T' };
-    const after = { priority: 'low', status: 'todo', title: 'T' };
-    const delta = diffToFrontmatterDelta(before, after);
-    expect(delta.set).toEqual({ priority: 'low' });
-    expect(delta.unset).toEqual([]);
-  });
-
-  it('a removed/cleared row becomes an unset', () => {
-    const delta = diffToFrontmatterDelta({ priority: 'high', note: 'x' }, { priority: 'high' });
-    expect(delta.set).toEqual({});
-    expect(delta.unset).toEqual(['note']);
-  });
-
-  it('a brand-new row becomes a set', () => {
-    const delta = diffToFrontmatterDelta({ a: 1 }, { a: 1, b: 2 });
-    expect(delta.set).toEqual({ b: 2 });
-    expect(delta.unset).toEqual([]);
-  });
-
-  it('an external key in NEITHER snapshot is absent from the delta (preserved by the write)', () => {
-    // The popup opened with {priority: high}; an external editor later added
-    // `reviewed: true` to disk. The popup edits priority only; `reviewed` is in
-    // neither before nor after, so it never enters the delta and the gateway
-    // sources it from fresh disk.
-    const before = { priority: 'high' };
-    const after = { priority: 'low' };
-    const delta = diffToFrontmatterDelta(before, after);
-    expect(Object.keys(delta.set)).toEqual(['priority']);
-    expect(delta.unset).toEqual([]);
-    // Applying it to a disk object that carries the external key keeps it.
-    expect(applyFrontmatterDelta({ priority: 'high', reviewed: true }, delta)).toEqual({
-      priority: 'low',
-      reviewed: true,
-    });
-  });
-
-  it('an unchanged array (same order) produces no delta entry', () => {
-    const delta = diffToFrontmatterDelta({ tags: ['a', 'b'] }, { tags: ['a', 'b'] });
-    expect(isEmptyFrontmatterDelta(delta)).toBe(true);
-  });
-
-  it('a reordered array IS treated as a user edit', () => {
-    const delta = diffToFrontmatterDelta({ tags: ['a', 'b'] }, { tags: ['b', 'a'] });
-    expect(delta.set).toEqual({ tags: ['b', 'a'] });
-  });
-
-  it('a key empty in both snapshots is a no-op', () => {
-    const delta = diffToFrontmatterDelta({ aliases: null }, { aliases: '' });
-    expect(isEmptyFrontmatterDelta(delta)).toBe(true);
   });
 });
 

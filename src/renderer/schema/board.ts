@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ArrowTypeSchema, BackgroundPatternSchema, BorderStyleSchema, PathTypeSchema, ShapeSchema } from './styleEnums';
 import { ACCENT_COLOR } from '../constants/defaults';
 import {
   TilePlacementSchema,
@@ -34,8 +35,8 @@ const PartialTileStyleSchema = z.object({
   headerColor: z.string().optional(),
   bodyColor: z.string().optional(),
   borderColor: z.string().optional(),
-  shape: z.enum(['rectangle', 'rounded']).optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  shape: ShapeSchema.optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: z.number().min(0).max(10).optional(),
   // .finite() + bounds matching the corresponding defaults schema in
   // settings.ts, so a hand-edited override can't feed Infinity (or other
@@ -52,9 +53,9 @@ const PartialConnectionPathStyleSchema = z.object({
   // so a per-board path-size override can't smuggle a 1000-px arrow into
   // the renderer.
   pathSize: z.number().finite().min(1).max(10).optional(),
-  pathType: z.enum(['curved', 'straight', 'elbow', 'smart']).optional(),
-  pathStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
-  arrowType: z.enum(['none', 'start', 'end', 'both']).optional(),
+  pathType: PathTypeSchema.optional(),
+  pathStyle: BorderStyleSchema.optional(),
+  arrowType: ArrowTypeSchema.optional(),
   arrowColor: z.string().optional(),
   arrowSize: z.number().finite().min(4).max(24).optional(),
 });
@@ -75,9 +76,9 @@ const PartialFrameStyleBlockSchema = z.object({
   // smuggle Infinity into the cascade.
   backgroundOpacity: z.number().finite().min(0).max(1).optional(),
   borderColor: z.string().optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: z.number().min(0).max(10).optional(),
-  shape: z.enum(['rectangle', 'rounded']).optional(),
+  shape: ShapeSchema.optional(),
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
   dynamicContrastText: z.boolean().optional(),
   fontSizeTitle: z.number().min(8).max(48).optional(),
@@ -87,7 +88,7 @@ const PartialColumnStyleSchema = z.object({
   headerColor: z.string().optional(),
   bodyColor: z.string().optional(),
   borderColor: z.string().optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: z.number().min(0).max(10).optional(),
   // Bounds mirror `ColumnDefaultsSchema` in settings.ts.
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
@@ -112,9 +113,9 @@ const PartialCardStyleSchema = z.object({
   /** Card body (text/content area) background colour. */
   bodyColor: z.string().optional(),
   /** Outer card shape — mirrors the tile vocabulary. */
-  shape: z.enum(['rectangle', 'rounded']).optional(),
+  shape: ShapeSchema.optional(),
   borderColor: z.string().optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: z.number().min(0).max(10).optional(),
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
   dynamicContrastText: z.boolean().optional(),
@@ -128,7 +129,7 @@ const PartialTaskStyleSchema = z.object({
   headerColor: z.string().optional(),
   bodyColor: z.string().optional(),
   borderColor: z.string().optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: z.number().min(0).max(10).optional(),
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
   dynamicContrastText: z.boolean().optional(),
@@ -142,7 +143,7 @@ const PartialTaskSectionStyleSchema = z.object({
   headerColor: z.string().optional(),
   bodyColor: z.string().optional(),
   borderColor: z.string().optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: z.number().min(0).max(10).optional(),
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
   dynamicContrastText: z.boolean().optional(),
@@ -154,7 +155,7 @@ const PartialDocumentStyleSchema = z.object({
   headerColor: z.string().optional(),
   bodyColor: z.string().optional(),
   borderColor: z.string().optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: z.number().min(0).max(10).optional(),
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
   dynamicContrastText: z.boolean().optional(),
@@ -192,7 +193,7 @@ const BaseBoardSettingsSchema = z.object({
    * (`settings.mindmap.backgroundPattern` etc.). The CurrentBoardSettings
    * panel writes `undefined` for the "— Inherit —" option.
    */
-  backgroundPattern: z.enum(['grid', 'dots', 'lines', 'none']).optional(),
+  backgroundPattern: BackgroundPatternSchema.optional(),
   /**
    * Vault-relative folder (POSIX slashes, no leading/trailing '/') where new
    * text tiles created on this board are written. Empty string ⇒ vault root.
@@ -300,7 +301,6 @@ const TaskListSavedViewSchema = z.object({
     .default('all'),
 }).passthrough();
 
-export type TaskListSavedView = z.infer<typeof TaskListSavedViewSchema>;
 
 /**
  * Task List board-specific settings.

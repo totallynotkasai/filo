@@ -213,31 +213,6 @@ export type TileType =
   | 'timer';
 
 /**
- * Connection path type identifiers.
- */
-export type ConnectionPathType = 'curved' | 'straight' | 'elbow' | 'smart';
-
-/**
- * Tile shape options.
- */
-export type TileShape = 'rectangle' | 'rounded';
-
-/**
- * Border style options.
- */
-export type BorderStyle = 'solid' | 'dashed' | 'dotted';
-
-/**
- * Arrow type options for connections.
- */
-export type ArrowType = 'none' | 'start' | 'end' | 'both';
-
-/**
- * Background pattern options for boards.
- */
-export type BackgroundPattern = 'grid' | 'dots' | 'lines' | 'none';
-
-/**
  * Theme identifiers for built-in themes.
  */
 export type ThemeId = 'light' | 'dark' | 'blueprint' | 'retro' | 'nature';

@@ -31,7 +31,7 @@ export async function readOwnSentinel(vaultRoot: string, kind: SentinelKind): Pr
 }
 
 /** Deletes a sentinel file; ENOENT (already gone) is success. Other failures throw. */
-export async function deleteSentinelFile(vaultRoot: string, relPath: string): Promise<void> {
+async function deleteSentinelFile(vaultRoot: string, relPath: string): Promise<void> {
   const fullPath = `${normalizePath(vaultRoot)}/${relPath}`;
   try {
     // Crash-recovery sentinel cleanup (`.filo/`), not user content — ALLOWLISTed in check-no-raw-disk-shape-ipc.

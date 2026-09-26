@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BorderStyleSchema, ShapeSchema } from './styleEnums';
 import { coerceToNumber } from './schemaUtils';
 import { TileStyleSchema, tileUrlString } from './tile';
 
@@ -24,7 +25,6 @@ export const TilePlacementSchema = z.object({
   frameless: z.boolean().default(false),
 }).passthrough();
 
-export type TilePlacement = z.infer<typeof TilePlacementSchema>;
 
 // ── Placement-based shapes for Kanban / Task List ──
 //
@@ -36,7 +36,7 @@ export type TilePlacement = z.infer<typeof TilePlacementSchema>;
  * Per-card style override on a Kanban placement.
  * Mirrors the shape used by `effectiveStyle.resolveCardStyle`.
  */
-export const PartialKanbanCardStyleSchema = z.object({
+const PartialKanbanCardStyleSchema = z.object({
   /** Outer card shell background. Fills the footer/"Background" zone below the
    *  body. `headerColor` and `bodyColor` overlay on top of this for the
    *  TileHeader and body content respectively. */
@@ -46,9 +46,9 @@ export const PartialKanbanCardStyleSchema = z.object({
   /** Card body (text/content area) background colour. */
   bodyColor: z.string().optional(),
   /** Outer card shape — mirrors the tile vocabulary. */
-  shape: z.enum(['rectangle', 'rounded']).optional(),
+  shape: ShapeSchema.optional(),
   borderColor: z.string().optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: z.number().min(0).max(10).optional(),
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
   dynamicContrastText: z.boolean().optional(),
@@ -67,7 +67,7 @@ export const PartialTaskStyleSchema = z.object({
   headerColor: z.string().optional(),
   bodyColor: z.string().optional(),
   borderColor: z.string().optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: z.number().min(0).max(10).optional(),
   shadowIntensity: z.number().finite().min(0).max(1).optional(),
   dynamicContrastText: z.boolean().optional(),

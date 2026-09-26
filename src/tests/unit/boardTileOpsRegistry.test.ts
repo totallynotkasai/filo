@@ -1,7 +1,7 @@
 /**
  * Phase 2 — direct contract tests for `boardTileOpsRegistry`.
  *
- * The characterization suite (`deleteTileEntryPoints.test.ts`) covers the
+ * The contract suite (`deleteTileEntryPoints.test.ts`) covers the
  * dispatcher-level post-condition. This file targets the *strategy
  * implementations* directly so a regression in one per-type op surfaces
  * with a precise failure message instead of being absorbed by the

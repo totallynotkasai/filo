@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ArrowTypeSchema, BorderStyleSchema, PathTypeSchema } from './styleEnums';
 import { optionalNumber } from './schemaUtils';
 
 /**
@@ -69,11 +70,11 @@ export const ConnectionSchema = z.object({
   toTileId: z.string().min(1),
   fromBubble: BubbleIndex,
   toBubble: BubbleIndex,
-  pathType: z.enum(['curved', 'straight', 'elbow', 'smart']).optional(),
+  pathType: PathTypeSchema.optional(),
   pathColor: z.string().default(''),
   pathSize: optionalNumber(z.number().min(1).max(10).optional()),
-  pathStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
-  arrowType: z.enum(['none', 'start', 'end', 'both']).optional(),
+  pathStyle: BorderStyleSchema.optional(),
+  arrowType: ArrowTypeSchema.optional(),
   arrowColor: z.string().default(''),
   arrowSize: optionalNumber(z.number().min(4).max(24).optional()),
   visibility: z

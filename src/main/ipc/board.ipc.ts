@@ -45,7 +45,7 @@ import { vaultRegistry } from '../services/vaultRegistry';
 import { getActiveWatcher } from './vault.ipc';
 import { snapshotForRecovery, listRecoverySnapshots, type SnapshotPurpose } from '../services/recoverySnapshot';
 import { sweepOrphanTmpFiles } from '../services/orphanTmpSweep';
-import { toPosix } from '../utils/pathHelpers';
+import { toPosix } from '../../shared/pathUtils';
 import {
   assertPayloadByteSize,
   jsonPayloadByteSize,

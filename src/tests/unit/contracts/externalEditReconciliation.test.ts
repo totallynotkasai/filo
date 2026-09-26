@@ -1,5 +1,5 @@
 /**
- * Phase 0 / Phase 3 characterization — external-edit reconciliation coverage.
+ * Contract — external-edit reconciliation coverage.
  *
  * Originally this source-scan test asserted the CURRENT shape at the Phase 0
  * boundary (document + attachment had reconcilers; board + config-* did
@@ -92,7 +92,7 @@ const CURRENT_FILE_CHANGE_KINDS = extractFileChangeTypeKinds();
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
-describe('Phase 3 characterization — external-edit reconciliation coverage', () => {
+describe('Contract — external-edit reconciliation coverage', () => {
   describe('FileChangeType union inventory', () => {
     it('enumerates the post-Phase-3 kinds', () => {
       // Phase 3 / 3.2 — split `config` into three granular subtypes

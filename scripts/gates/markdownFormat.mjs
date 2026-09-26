@@ -5,9 +5,19 @@ import {
 } from './lib.mjs';
 
 const BOM_ALLOWED = new Set([
-  'src/renderer/lib/editor/markdownSync.ts', // parseMarkdownFile sees raw bytes
-  'src/renderer/lib/vault/tagRewriter.ts', // splits/reassembles raw file content
+  'src/renderer/lib/editor/markdownSync.ts', // re-emits the BOM a raw file carried
+  'src/renderer/lib/notes/frontmatterFence.ts', // the fence parser sees raw bytes
 ]);
+
+// The one module that decides where a note's frontmatter block ends. A second
+// fence regex drifts (trailing spaces on a fence, an empty block, the first vs
+// a later `---`), and then one reader shows as body what another writes as keys.
+const FENCE_PARSER = 'src/renderer/lib/notes/frontmatterFence.ts';
+const FENCE_PATTERNS = [
+  // A regex (literal or RegExp string) anchored on an opening `---`, BOM-tolerant or not.
+  ['fence-regex', /\^\(?(?:\\uFEFF\??|\\u\{feff\}\??|﻿\??)?\(?(?:-{3}|-\{3\}|\\-\\-\\-)/i],
+  ['fence-startsWith', /\.startsWith\(\s*['"`](?:\\uFEFF|﻿)?---/i],
+];
 const BOM_PATTERNS = [
   ['hex-feff', /charCodeAt\s*\(\s*0\s*\)\s*===\s*0x[fF][eE][fF][fF]/],
   ['dec-feff', /charCodeAt\s*\(\s*0\s*\)\s*===\s*65279\b/],
@@ -48,7 +58,7 @@ const EOL_CHECKS = [
   {
     // The tag rewriter and the note writer pick line endings with one rule.
     file: 'src/renderer/lib/vault/tagRewriter.ts',
-    required: [{ token: /frontmatterLineEnding\(\s*text\s*\)/, why: 'the rewriter uses the shared line-ending rule' }],
+    required: [{ token: /frontmatterLineEnding\(\s*(?:text|raw)\s*\)/, why: 'the rewriter uses the shared line-ending rule' }],
     forbidden: [{ token: /function\s+detectEol\b/, why: 'a second line-ending detector can disagree with the note writer about the same file' }],
   },
   {
@@ -174,6 +184,26 @@ export const checks = [
         stripCommentsKeepLines(raw).split(/\r?\n/).forEach((line, i) => {
           if (/\/\/\s*allow-bom-sniff:\s*\S+/.test(`${rawLines[i - 1] ?? ''}\n${rawLines[i] ?? ''}`)) return;
           for (const [name, re] of BOM_PATTERNS) if (re.test(line)) out.push(fail(rel, i + 1, `[${name}] ${(rawLines[i] ?? '').trim()}`));
+        });
+      }
+      return out;
+    },
+  },
+  {
+    id: 'single-fence-parser',
+    title: 'only the fence parser finds where a frontmatter block starts and ends',
+    hint:
+      'Call splitFrontmatterFence / openingFenceEol (lib/notes/frontmatterFence.ts) instead of matching `---` yourself, ' +
+      'so every reader and writer agrees on which bytes are frontmatter.',
+    run(ctx) {
+      const out = [];
+      if (ctx.read(FENCE_PARSER) === null) out.push(fail(FENCE_PARSER, undefined, 'missing'));
+      for (const rel of ctx.files(['src/renderer', 'src/main', 'src/shared'], { ext: ['.ts', '.svelte', '.mjs'] })) {
+        if (rel === FENCE_PARSER) continue;
+        const raw = ctx.read(rel);
+        const rawLines = raw.split(/\r?\n/);
+        stripCommentsKeepLines(raw).split(/\r?\n/).forEach((line, i) => {
+          for (const [name, re] of FENCE_PATTERNS) if (re.test(line)) out.push(fail(rel, i + 1, `[${name}] ${(rawLines[i] ?? '').trim()}`));
         });
       }
       return out;

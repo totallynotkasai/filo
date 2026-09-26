@@ -28,7 +28,7 @@
  * than a missing strategy.
  *
  * The orphan detector lives in
- * `src/tests/unit/characterization/randomOpsNoOrphans.property.test.ts`
+ * `src/tests/unit/contracts/randomOpsNoOrphans.property.test.ts`
  * and is shared with Phase 0's invariant tests so both layers report the
  * same shape of orphan.
  */
@@ -53,7 +53,7 @@ import type {
   TileDefinition,
 } from '@renderer/schema/index';
 import { restoreFiloDefault } from '../helpers/filoBridge';
-import { findOrphans } from './characterization/randomOpsNoOrphans.property.test';
+import { findOrphans } from './contracts/randomOpsNoOrphans.property.test';
 
 // ── Fixture factories ──────────────────────────────────────────────────
 

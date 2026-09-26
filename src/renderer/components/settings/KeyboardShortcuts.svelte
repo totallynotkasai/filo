@@ -37,7 +37,7 @@
   // Shortcuts that aren't wired through the registry but are documented for users
   // (text-formatting handled by Tiptap, gesture-based interactions).
   const supplementalShortcuts: Array<{ keys: string; description: string }> = [
-    { keys: 'Ctrl+Shift+Arrow', description: 'Add / Select Neighbour' },
+    { keys: 'Ctrl+Shift+Arrow', description: 'Add the nearest tile in that direction to the selection (Mind Map)' },
     { keys: 'Shift+Drag', description: 'Area Selection' },
     { keys: 'Ctrl+B', description: 'Bold' },
     { keys: 'Ctrl+I', description: 'Italic' },

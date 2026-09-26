@@ -2,7 +2,7 @@ import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultSwapResettable } from '../../core/vaultLifecycle';
-import { normalizePath, toPosix } from '../utils/path';
+import { toPosix, toVaultRelative } from '../utils/path';
 
 /**
  * "Keep local" ALWAYS backs up the external bytes first. Every Keep-local
@@ -38,13 +38,6 @@ function displayName(rel: string): string {
   return i >= 0 ? rel.slice(i + 1) : rel;
 }
 
-/** Absolute snapshot path → vault-relative, forward slashes (for the toast). */
-function toVaultRelative(vaultRoot: string, abs: string): string {
-  const a = toPosix(abs);
-  const root = normalizePath(vaultRoot);
-  return a.toLowerCase().startsWith(root.toLowerCase() + '/') ? a.slice(root.length + 1) : a;
-}
-
 function errorCode(err: unknown): string | undefined {
   if (err instanceof IpcEnvelopeError) return err.code;
   const code = (err as { code?: unknown } | null)?.code;
@@ -64,7 +57,10 @@ function confirmOverwriteWithoutBackup(rel: string, reason: string): Promise<boo
 async function runBackup(vaultRoot: string, rel: string): Promise<boolean> {
   try {
     const snap = await invokeOk('recovery:snapshot', vaultRoot, rel, 'keep');
-    const where = typeof snap?.path === 'string' ? toVaultRelative(vaultRoot, snap.path) : '.filo/recovery/';
+    const where =
+      typeof snap?.path === 'string'
+        ? (toVaultRelative(snap.path, vaultRoot) ?? toPosix(snap.path))
+        : '.filo/recovery/';
     uiStore.pushToast({
       text: `Kept your version of "${displayName(rel)}". The other version is saved in ${where}.`,
       type: 'info',

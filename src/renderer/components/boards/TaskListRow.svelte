@@ -18,8 +18,8 @@
    *     needs to read mid-render (drag controller's active drag, multi-
    *     select's anchor set, plus the field writers / deleter / creator);
    *   - `callbacks` carries the small handful of host-level actions that
-   *     don't fit either bundle (rename, properties popup, tag editor,
-   *     openTask, toggleLock, moveToSection, toggleSubtaskCollapsed).
+   *     don't fit either bundle (rename, delete, tag editor, openTask,
+   *     toggleLock, moveToSection, toggleSubtaskCollapsed).
    *
    * Three primitives stay un-bundled (`row`, `depth`, `sectionId`) because
    * they're the per-render args — there's one row per call, and the
@@ -61,7 +61,7 @@
     accentColor?: string;
     /** Per-row cascade resolver supplied by <TaskListBoard>. Called with
      *  this row's `placement.style` so per-task overrides (written by
-     *  <TaskItemStylePopup>) win over the board / global task defaults. */
+     *  <ElementStylePopup>) win over the board / global task defaults. */
     resolveTaskStyle: (placementStyle?: Record<string, unknown> | null) => ResolvedTaskStyle;
     viewModel: TaskListRowViewModel;
     controllers: TaskListRowControllers;

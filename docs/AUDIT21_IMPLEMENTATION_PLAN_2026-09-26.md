@@ -962,6 +962,92 @@ Verify each with `npx knip --production` and a grep before deleting.
 | A21-71 | Move `docs/UI_FEEDBACK_1_PLAN.md` to `docs/archive/`. When this plan is done, write `docs/archive/AUDIT21_PRE_DOGFOOD_2026-09-26.md` (a findings report) and move this plan there too. |
 | A21-72 | Design doc drift: the shortcut table (Ctrl+Shift+Arrow "add neighbour" doesn't exist; redo is Ctrl+Y) must match the code after A21-55. |
 
+### Status: done (2026-09-26)
+
+All sixteen items (A21-57 to A21-72) are done, except A21-58, which no longer applies (see below). `npm run ci:verify` passes:
+- lint, svelte-check (0 errors across 780 files), `typecheck:main` and the build;
+- 596 test files: 5,879 passed and 5 skipped;
+- 68/68 gates.
+
+The five skipped tests are the real-symlink cases, which Windows without Developer Mode can't create.
+
+New gate: `single-fence-parser` (`markdownFormat`). Gate `single-note-writer` now also forbids `vault:write-file-text` in `noteWriter.ts`. Both were proven to bite: the violation was planted, the gate failed, and the plant was reverted.
+
+New modules:
+- `lib/notes/frontmatterFence.ts`
+- `schema/styleEnums.ts`
+- `lib/styles/elementStyleTargets.ts`
+- `components/boards/ElementStylePopup.svelte`
+- `src/shared/pathUtils.ts`
+
+Deleted:
+- `schema/document.ts`
+- `lib/utils/ipcEnvelope.ts`
+- the four Kanban / Task List style popups
+
+New tests:
+- `frontmatterFence.test.ts` (17 cases)
+- `component/elementStylePopup.test.ts` (10)
+- `sharedPathUtils.test.ts`
+- `symlinkNoteWrite.test.ts`
+- `component/linkedNoteReadOnly.test.ts`
+- a linked-note case in `noteWriter.test.ts`
+- the Windows-only cases in `pathSecurity.test.ts`
+
+The `KanbanBoard.svelte` allowlist ceiling was lowered to 1437.
+
+### Deviations from the plan
+
+- **Verification.** `npx knip` was not run, because it would have downloaded a package. Each deletion was checked by searching `src/` and `scripts/` instead, tests and IPC channel strings included.
+- **A21-57.** Only the tests of `restore` itself were removed. The gate hint now names the two channels the writer may use: `vault:write-existing-file-text` and `vault:create-file-text`.
+- **A21-58: not done.** `noteStore.hasPendingWrites` is no longer test-only: `promptWriteTargetMissing` in `stores/notePrompts.ts` calls it, so it stays.
+- **A21-59.**
+  - Deleted: `isBoardProvisionallyMissing`, `formatDueDateRelative` and `diffToFrontmatterDelta`, together with their tests and the `single-note-writer` token for `diffToFrontmatterDelta`.
+  - Un-exported rather than deleted, because each is still called inside its own module: `deleteSentinelFile`, `sweepOrphanTempFiles` (a renderer helper, so IPC can't reach it), `unsavedListText`, `unsavedHeadline`, `buildTemplateSearchIndex`, `pathMatchingTitle`, `isTightListElement` and `titleHtmlText`.
+  - `resetThemeManager` is renamed `__resetThemeManagerForTests`, since two theme tests need it between cases.
+  - `relativeLuminance` and `contrastRatio` stay: the theme contrast tests use them.
+- **A21-60.**
+  - Schema: 25 exports were removed or un-exported.
+  - `boardSaver.ts` facade: 10 unused re-exports were removed. About 9 names that tests import through the facade stay, `__resetDirtyTrackingForTests` in 39 files among them. Importing the facade also registers its vault-swap handlers, so moving those imports could change what each test sets up.
+  - `promptBoardExternalEdit` now lives only in `stores/boardDrift.ts`.
+  - The barrel's three importers now use `@shared/ipcEnvelope`.
+- **A21-61.** `splitFrontmatterFence` lives in its own module, `lib/notes/frontmatterFence.ts`, not in `noteFile.ts`. `noteFile.ts` imports `markdownSync` and `lineEnding`, and both need the parser, so putting it there would create two import cycles. The gate exempts only `frontmatterFence.ts`.
+  - The `taskBodyText.ts` regex was already gone (Phase 1). Two other opening-fence checks now go through `openingFenceEol`: `looksTorn` in the note writer and `frontmatterLineEnding`.
+  - Merging the regexes settled three differences between the copies:
+    - The first column-0 `---` always closes the block. An empty block no longer lets the match run on to a later rule in the body.
+    - A closing fence is `---` plus optional spaces or tabs, never `----` or `---x`.
+    - The vault index now reads an empty block the way the editor does.
+  - The A21-04 follow-up was not done. A non-mapping leading block counted as body comes out of the editor as lossy (a rule plus a heading), so the whole note would open read-only. Today only metadata edits on such a note are refused, and nothing is at risk. This is recorded as a `DECISION:` comment in `frontmatterFence.ts`.
+- **A21-62.** The single source is `schema/styleEnums.ts`, in the renderer: the main process never used the `shared/types.ts` copies, so they were deleted rather than moved. `styleOptions.ts` had no labels or icons to make exhaustive. Some components still spell these values as literal unions (`effectiveStyle.ts`, the tile and frame popups, `TemplateBrowser`, `LivePreview`); that is left for later.
+- **A21-63.**
+  - All four popups share one skeleton, so there is a single `ElementStylePopup.svelte` with a `kind` prop. Each kind's fields, store writer, style read-back and undo command live in `lib/styles/elementStyleTargets.ts`.
+  - Every difference between the four was kept: titles, control ids, the column's Shadow default of 0.3, and each kind's extra rows. Only the root CSS class was unified; nothing referenced the old class names.
+- **A21-64.**
+  - Merged into `src/shared/pathUtils.ts`: `toPosix`, `stripLeadingSlash`, `normalizePath` and `toVaultRelative`. `lib/utils/path.ts` re-exports them.
+  - `relativePosix` stays in main. It uses `path.relative`, which resolves `..`, and the `.filo/` guard relies on that.
+  - Vault-root matching in the board store, `vaultRootFolder.ts` and `VaultFileItem` is now case-insensitive and checks a `/` boundary.
+- **A21-66.**
+  - Links are detected only for the note file itself. A link that points outside the vault was already refused by the vault boundary check.
+  - `tagRewriteSweep` skips linked notes and names them in a toast.
+  - Rescue copies have no "link" cause, so a change queued on a linked note is reported as a failed write.
+  - A short window remains between the `lstat` and the rename.
+  - The hard-link entry is KNOWN_LIMITATIONS #34.
+- **A21-67.** `axe-core` was removed: `@axe-core/playwright` depends on it directly. The lockfile was regenerated offline, and only its root entry changed.
+- **A21-68.**
+  - The CLAUDE.md tree gained the listed folders and files plus other key ones (the vault external-change stores, `vaultCandidate`, `recoveryLocations`, `closeDrainGate`, `handleFlushAndQuit`, `nonUtf8Paths`), and a Gotchas entry on linked notes.
+  - The tree still doesn't list every file: about 50 small helpers remain out.
+- **A21-69.**
+  - `src/tests/unit/characterization` is now `src/tests/unit/contracts`. Its describe titles now say "Contract" instead of "Phase N characterization".
+  - The size rule now says to aim for new files under ~300 lines and to split on a second concern, with 1,000 lines as the hard limit.
+- **A21-70.**
+  - The `diffToFrontmatterDelta` test description went with the function (A21-59). `KanbanColumn.svelte` no longer had a Properties comment.
+  - Two more stale mentions were fixed: `notes.svelte.ts` and `frontmatterInverse.ts`.
+  - The `assembleMarkdownEngine` cases now say "frontmatter-only".
+- **A21-71.** `docs/UI_FEEDBACK_1_PLAN.md` was moved to `docs/archive/`. The findings report and the archiving of this plan wait until Phase 8 is done.
+- **A21-72.** Ctrl+Shift+Arrow does exist: on the Mind Map it adds the nearest tile in that direction to the selection. So it was relabelled in the design doc and in Help instead of removed.
+  - The design doc table now lists every registered shortcut, with Ctrl+N per board type and both redo keys.
+  - Its closing line now says shortcuts are rebound in Help → Shortcuts, which stores them in `.filo/hotkeys.json`.
+
 ---
 
 ## Phase 8: Verification and sign-off (no production code)

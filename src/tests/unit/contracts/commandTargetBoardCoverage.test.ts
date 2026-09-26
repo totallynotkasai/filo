@@ -1,5 +1,5 @@
 /**
- * Phase 2 characterization — `Command.targetBoardId` coverage matrix.
+ * Contract — `Command.targetBoardId` coverage matrix.
  *
  * Per IMPLEMENTATION_PLAN_2026-05-27 §Phase 2:
  *
@@ -99,7 +99,7 @@ const ALL_COMMAND_CLASSES = discoverCommandClasses();
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
-describe('Phase 2 characterization — Command.targetBoardId coverage', () => {
+describe('Contract — Command.targetBoardId coverage', () => {
   it('discovers a non-empty set of Command subclasses', () => {
     // Sanity check that the AST scan actually found classes. If a refactor
     // moves Command subclasses elsewhere (or splits them across folders),

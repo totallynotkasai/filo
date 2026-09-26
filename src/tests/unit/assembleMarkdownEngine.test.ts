@@ -317,9 +317,9 @@ describe('assembleMarkdownFile — empty-FM split: clear vs unparseable (L1)', (
  * H2 (Audit-7) — `patchFrontmatterSourceCst` normalises the FM source to LF and
  * its docstring says the caller re-applies the file's line ending; the dirty
  * `objectHasKeys` branch used to hard-code `\n` for the FM block + fences, so a
- * CRLF file's first metadata edit (Properties popup / editor) silently flipped
+ * CRLF file's first metadata edit (tag row / editor) silently flipped
  * its frontmatter to LF. The matrix below pins eol preservation across
- * {LF, CRLF} × {Properties-dirty (diskBody), editor-dirty (LF body), clean
+ * {LF, CRLF} × {frontmatter-only (diskBody), editor-dirty (LF body), clean
  * passthrough, dump fallback} × {BOM, no-BOM}. The LF-only suite above never
  * exercised the single most leak-prone formatting invariant.
  */
@@ -329,7 +329,7 @@ describe('assembleMarkdownFile — line-ending preservation on the dirty FM path
   const CRLF_FM = 'priority: low\r\ntitle: Note';
   const LF_FM = 'priority: low\ntitle: Note';
 
-  it('CRLF file + Properties-style dirty FM → whole output is CRLF, body byte-identical', () => {
+  it('CRLF file + frontmatter-only dirty FM → whole output is CRLF, body byte-identical', () => {
     const body = 'First line.\r\nSecond line.\r\n'; // diskBody verbatim (CRLF)
     const out = assembleMarkdownFile(
       { priority: 'high', title: 'Note' },
@@ -433,7 +433,7 @@ describe('assembleMarkdownFile — line-ending preservation on the dirty FM path
 describe('assembleMarkdownFile — single-line frontmatter eol (A8-M1)', () => {
   const isAllCrlf = (s: string): boolean => !s.replace(/\r\n/g, '').includes('\n');
 
-  it('CRLF file + single-line FM + Properties-style dirty (CRLF body) → whole output CRLF', () => {
+  it('CRLF file + single-line FM + frontmatter-only dirty (CRLF body) → whole output CRLF', () => {
     // The diskBody is verbatim CRLF; the one-line FM source has no internal eol.
     const out = assembleMarkdownFile(
       { title: 'Renamed' },
@@ -520,7 +520,7 @@ describe('assembleMarkdownFile — CRLF body (A19-MD10)', () => {
     expect(out).toBe('# Heading\r\n\r\nText\r\n');
   });
 
-  it('no eol supplied → body written verbatim (Properties diskBody path)', () => {
+  it('no eol supplied → body written verbatim (frontmatter-only diskBody path)', () => {
     const mixed = 'line one\r\nline two\nline three\n';
     const out = assembleMarkdownFile({}, mixed);
     expect(out).toBe(mixed);

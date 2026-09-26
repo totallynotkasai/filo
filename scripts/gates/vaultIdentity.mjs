@@ -357,8 +357,9 @@ export const checks = [
     id: 'no-inline-path-normalize',
     title: 'separator normalisation goes through the canonical path helpers',
     hint:
-      'Use toPosix / normalizePath / normalizeVaultRelative (renderer lib/utils/path.ts) or the main ' +
-      'utils/pathHelpers.ts helpers, or `// allow-inline-normalize: <reason>` on the line.',
+      'Use toPosix / normalizePath / toVaultRelative (src/shared/pathUtils.ts, re-exported by renderer ' +
+      'lib/utils/path.ts), normalizeVaultRelative (src/shared/vaultPath.ts) or the main utils/pathHelpers.ts ' +
+      'relativePosix, or `// allow-inline-normalize: <reason>` on the line.',
     run(ctx) {
       const out = [];
       const PATTERN = /replace\(\/\\\\\/g,\s*['"]\/['"]\)/;

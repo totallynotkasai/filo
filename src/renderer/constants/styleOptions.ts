@@ -1,11 +1,19 @@
 /**
  * Shared option lists for the settings panels (Global Defaults + Current
- * Board). Mirrors the Zod enums in `schema/settings.ts` — keep both in
- * sync when adding/removing an option.
+ * Board). Read from the Zod enums in `schema/styleEnums.ts`, the single
+ * source of each list, so a picker can never offer a value the schema
+ * rejects on the next load (or miss one it accepts).
  */
+import {
+  ShapeSchema,
+  BorderStyleSchema,
+  BackgroundPatternSchema,
+  PathTypeSchema,
+  ArrowTypeSchema,
+} from '../schema/styleEnums';
 
-export const SHAPE_OPTIONS = ['rectangle', 'rounded'] as const;
-export const BORDER_STYLE_OPTIONS = ['solid', 'dashed', 'dotted'] as const;
-export const BACKGROUND_PATTERN_OPTIONS = ['grid', 'dots', 'lines', 'none'] as const;
-export const PATH_TYPE_OPTIONS = ['curved', 'straight', 'elbow', 'smart'] as const;
-export const ARROW_TYPE_OPTIONS = ['none', 'start', 'end', 'both'] as const;
+export const SHAPE_OPTIONS = ShapeSchema.options;
+export const BORDER_STYLE_OPTIONS = BorderStyleSchema.options;
+export const BACKGROUND_PATTERN_OPTIONS = BackgroundPatternSchema.options;
+export const PATH_TYPE_OPTIONS = PathTypeSchema.options;
+export const ARROW_TYPE_OPTIONS = ArrowTypeSchema.options;

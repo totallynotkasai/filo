@@ -1,5 +1,5 @@
 /**
- * Phase 0 characterization — board file round-trip parity.
+ * Contract — board file round-trip parity.
  *
  * Property: for every Board of every type produced by the schema factories,
  * the full v8 envelope serialised with `JSON.stringify` and re-parsed through
@@ -14,7 +14,7 @@
  * components, which the vite-plugin-svelte preprocessor cannot handle inside
  * a vitest+jsdom environment. Phase 5 collapses every other in-app board-
  * creation site onto `boardRegistry.createDefault`; if THAT canonical shape
- * drifts from this characterization, the property tests below catch the
+ * drifts from this contract, the property tests below catch the
  * regression.
  *
  * Phase-1+ collapses MUST keep this test green — any structural drift in
@@ -150,7 +150,7 @@ function normalise(env: BoardFileData): unknown {
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
-describe('Phase 0 characterization — board round-trip parity', () => {
+describe('Contract — board round-trip parity', () => {
   describe('defaults round-trip per board type', () => {
     for (const type of BOARD_TYPES) {
       it(`${type} default board → JSON.stringify → BoardFileDataSchema → equivalent envelope`, () => {

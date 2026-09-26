@@ -148,7 +148,7 @@ export interface ApplyDeltaArgs {
    * advanced `dueDate`, a state the roll-forward must never create. When true,
    * ANY conflict skips the WHOLE delta and offers an all-or-nothing "Apply
    * anyway". Omitted/false: the per-key merge below (right for independent
-   * multi-field edits like the Properties popup).
+   * multi-field edits like the Document tab's tag row).
    */
   atomic?: boolean;
   /**

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ArrowTypeSchema, BackgroundPatternSchema, BorderStyleSchema, PathTypeSchema, ShapeSchema } from './styleEnums';
 
 /**
  * Tile default styles used when creating new tiles.
@@ -12,8 +13,8 @@ const TileDefaultsSchema = z.object({
   headerColor: z.string().default(''),
   bodyColor: z.string().default(''),
   borderColor: z.string().default(''),
-  shape: z.enum(['rectangle', 'rounded']).default('rounded'),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  shape: ShapeSchema.default('rounded'),
+  borderStyle: BorderStyleSchema.default('solid'),
   borderWidth: z.number().min(0).max(10).default(1),
   shadowIntensity: z.number().min(0).max(1).default(0.3),
   dynamicContrastText: z.boolean().default(true),
@@ -27,9 +28,9 @@ const TileDefaultsSchema = z.object({
 const ConnectionPathDefaultsSchema = z.object({
   pathColor: z.string().default(''),
   pathSize: z.number().min(1).max(10).default(2),
-  pathType: z.enum(['curved', 'straight', 'elbow', 'smart']).default('curved'),
-  pathStyle: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
-  arrowType: z.enum(['none', 'start', 'end', 'both']).default('none'),
+  pathType: PathTypeSchema.default('curved'),
+  pathStyle: BorderStyleSchema.default('solid'),
+  arrowType: ArrowTypeSchema.default('none'),
   arrowColor: z.string().default(''),
   arrowSize: z.number().min(4).max(24).default(10),
 });
@@ -63,9 +64,9 @@ const FrameDefaultsSchema = z.object({
   backgroundImage: z.string().default(''),
   backgroundOpacity: z.number().min(0).max(1).default(1),
   borderColor: z.string().default(''),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  borderStyle: BorderStyleSchema.default('solid'),
   borderWidth: z.number().min(0).max(10).default(1),
-  shape: z.enum(['rectangle', 'rounded']).default('rounded'),
+  shape: ShapeSchema.default('rounded'),
   shadowIntensity: z.number().min(0).max(1).default(0.3),
   dynamicContrastText: z.boolean().default(true),
   fontSizeTitle: z.number().min(8).max(48).optional(),
@@ -78,7 +79,7 @@ const ColumnDefaultsSchema = z.object({
   headerColor: z.string().default(''),
   bodyColor: z.string().default(''),
   borderColor: z.string().default(''),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  borderStyle: BorderStyleSchema.default('solid'),
   borderWidth: z.number().min(0).max(10).default(1),
   shadowIntensity: z.number().min(0).max(1).default(0.3),
   dynamicContrastText: z.boolean().default(true),
@@ -100,9 +101,9 @@ const CardDefaultsSchema = z.object({
   /** Default body content background. Empty = inherit theme `--tile-body-bg`. */
   bodyColor: z.string().default(''),
   borderColor: z.string().default(''),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  borderStyle: BorderStyleSchema.default('solid'),
   borderWidth: z.number().min(0).max(10).default(1),
-  shape: z.enum(['rectangle', 'rounded']).default('rounded'),
+  shape: ShapeSchema.default('rounded'),
   shadowIntensity: z.number().min(0).max(1).default(0.2),
   dynamicContrastText: z.boolean().default(true),
   fontSizeTitle: z.number().min(8).max(48).optional(),
@@ -116,7 +117,7 @@ const TaskDefaultsSchema = z.object({
   headerColor: z.string().default(''),
   bodyColor: z.string().default(''),
   borderColor: z.string().default(''),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  borderStyle: BorderStyleSchema.default('solid'),
   borderWidth: z.number().min(0).max(10).default(1),
   shadowIntensity: z.number().min(0).max(1).default(0.2),
   dynamicContrastText: z.boolean().default(true),
@@ -133,7 +134,7 @@ const TaskSectionDefaultsSchema = z.object({
   headerColor: z.string().default(''),
   bodyColor: z.string().default(''),
   borderColor: z.string().default(''),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  borderStyle: BorderStyleSchema.default('solid'),
   borderWidth: z.number().min(0).max(10).default(1),
   shadowIntensity: z.number().min(0).max(1).default(0.2),
   dynamicContrastText: z.boolean().default(true),
@@ -147,7 +148,7 @@ const DocumentElementDefaultsSchema = z.object({
   headerColor: z.string().default(''),
   bodyColor: z.string().default(''),
   borderColor: z.string().default(''),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  borderStyle: BorderStyleSchema.default('solid'),
   borderWidth: z.number().min(0).max(10).default(1),
   shadowIntensity: z.number().min(0).max(1).default(0.2),
   dynamicContrastText: z.boolean().default(true),
@@ -157,7 +158,7 @@ const DocumentElementDefaultsSchema = z.object({
 
 export const MindMapDefaultsSchema = z.object({
   backgroundColor: z.string().default(''),
-  backgroundPattern: z.enum(['grid', 'dots', 'lines', 'none']).default('grid'),
+  backgroundPattern: BackgroundPatternSchema.default('grid'),
   tile: TileDefaultsSchema.prefault({}),
   connectionPath: ConnectionPathDefaultsSchema.prefault({}),
   connectionLabel: ConnectionLabelDefaultsSchema.prefault({}),
@@ -166,7 +167,7 @@ export const MindMapDefaultsSchema = z.object({
 
 export const KanbanDefaultsSchema = z.object({
   backgroundColor: z.string().default(''),
-  backgroundPattern: z.enum(['grid', 'dots', 'lines', 'none']).default('none'),
+  backgroundPattern: BackgroundPatternSchema.default('none'),
   accentColor: z.string().default(''),
   column: ColumnDefaultsSchema.prefault({}),
   card: CardDefaultsSchema.prefault({}),
@@ -174,7 +175,7 @@ export const KanbanDefaultsSchema = z.object({
 
 export const TaskListDefaultsSchema = z.object({
   backgroundColor: z.string().default(''),
-  backgroundPattern: z.enum(['grid', 'dots', 'lines', 'none']).default('none'),
+  backgroundPattern: BackgroundPatternSchema.default('none'),
   accentColor: z.string().default(''),
   task: TaskDefaultsSchema.prefault({}),
   section: TaskSectionDefaultsSchema.prefault({}),
@@ -182,7 +183,7 @@ export const TaskListDefaultsSchema = z.object({
 
 export const DocumentDefaultsSchema = z.object({
   backgroundColor: z.string().default(''),
-  backgroundPattern: z.enum(['grid', 'dots', 'lines', 'none']).default('none'),
+  backgroundPattern: BackgroundPatternSchema.default('none'),
   accentColor: z.string().default(''),
   document: DocumentElementDefaultsSchema.prefault({}),
 });
@@ -329,7 +330,3 @@ export function defaultProjectSettings(): ProjectSettings {
   return ProjectSettingsSchema.parse({});
 }
 export type GeneralSettings = z.infer<typeof GeneralSettingsSchema>;
-export type MindMapDefaults = z.infer<typeof MindMapDefaultsSchema>;
-export type KanbanDefaults = z.infer<typeof KanbanDefaultsSchema>;
-export type TaskListDefaults = z.infer<typeof TaskListDefaultsSchema>;
-export type DocumentDefaults = z.infer<typeof DocumentDefaultsSchema>;

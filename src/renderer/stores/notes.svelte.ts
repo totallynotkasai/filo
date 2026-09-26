@@ -2,7 +2,7 @@
  * noteStore — one model per open note, shared by every view of it.
  *
  * A note's vault path is its only name. Every view that shows a note (a text
- * tile, a Document tab, a Properties popup) `acquire`s its model and reads
+ * tile, a Document tab, a Task List row) `acquire`s its model and reads
  * the body and frontmatter from it; edits go back through `setBody` and
  * `patchFrontmatter`, which queue them on the note writer. Nothing else holds
  * a copy of a note, so two views can't disagree.
@@ -29,7 +29,7 @@ import { onVaultSwap } from '../core/vaultLifecycle';
 import { registerPathRenamable } from '../lib/vault/renamePathKeys';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { parseMarkdown } from '../lib/vault/vaultIndex';
-import { isNonUtf8 } from '../lib/vault/nonUtf8Paths.svelte';
+import { isLinkedNote, isNonUtf8 } from '../lib/vault/nonUtf8Paths.svelte';
 import { applyFrontmatterDelta, type FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 import {
   createNoteWriter,
@@ -122,9 +122,9 @@ export class NoteModel {
     return vaultPath(this.relPath);
   }
 
-  /** Lossy or not UTF-8: shown, never written from an editor. */
+  /** Lossy, not UTF-8, or a symbolic link: shown, never written from an editor. */
   get readOnly(): boolean {
-    return this.lossy || isNonUtf8(this.relPath);
+    return this.lossy || isNonUtf8(this.relPath) || isLinkedNote(this.relPath);
   }
 }
 
@@ -885,11 +885,6 @@ export const noteStore = {
     });
     if (conflict) return 'conflict';
     return written === null ? 'unchanged' : 'written';
-  },
-
-  /** Writes a deleted note back (undo of a delete). */
-  restore(relPath: string, text: string, track?: TrackComponentWriteOptions): Promise<void> {
-    return writer.restore(relPath, text, track);
   },
 
   /** Runs a rename or delete of `paths` with their queues held idle. */

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BorderStyleSchema, ShapeSchema } from './styleEnums';
 import { optionalNumber, uniqueStrings } from './schemaUtils';
 
 /**
@@ -34,13 +35,13 @@ const FrameStyleSchema = z.object({
   backgroundImage: z.string().default(''),
   backgroundOpacity: optionalNumber(z.number().min(0).max(1).optional()),
   borderColor: z.string().default(''),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: optionalNumber(z.number().min(0).max(10).optional()),
   headerColor: z.string().optional(),
   bodyColor: z.string().optional(),
   // Per-frame shape override. Mirrors the tile shape vocabulary so the
   // FrameStylePopup can reuse the same Rectangle / Rounded select.
-  shape: z.enum(['rectangle', 'rounded']).optional(),
+  shape: ShapeSchema.optional(),
   shadowIntensity: z.number().min(0).max(1).optional(),
   // `null` = inherit from board/global; `true`/`false` = override at this element.
   dynamicContrastText: z.boolean().nullable().optional(),

@@ -108,9 +108,10 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename(' NUL ', c)).toThrow(/trailing/); // trailing-space gate fires first
   });
 
-  it('rejects trailing dot or trailing space', () => {
-    expect(() => assertSafeFilename('foo.')).toThrow(/trailing/);
-    expect(() => assertSafeFilename('foo ')).toThrow(/trailing/);
+  it('rejects trailing dot or trailing space at creation', () => {
+    const c = { forCreation: true } as const;
+    expect(() => assertSafeFilename('foo.', c)).toThrow(/trailing/);
+    expect(() => assertSafeFilename('foo ', c)).toThrow(/trailing/);
   });
 
   // Audit2 5.4 / 6.3.P1 — `:` is the load-bearing entry: NTFS Alternate
@@ -220,7 +221,24 @@ describe('assertSafeFilename — platform gating (6.3.P1 / 6.3.P2)', () => {
     expect(() => assertSafeFilename('a'.repeat(256))).toThrow(/255/);
     expect(() => assertSafeFilename('foo/bar.md')).toThrow();
     expect(() => assertSafeFilename('..')).toThrow();
-    expect(() => assertSafeFilename('foo.')).toThrow(/trailing/);
+  });
+
+  it('on POSIX, accepts a name ending in a dot or space (a synced `Draft.` folder stays readable)', () => {
+    setPlatform('darwin');
+    expect(() => assertSafeFilename('Draft.')).not.toThrow();
+    expect(() => assertSafeFilename('Draft ')).not.toThrow();
+    expect(() => assertSafeRelativePath('Draft./note.md')).not.toThrow();
+    setPlatform('linux');
+    expect(() => assertSafeFilename('Draft.')).not.toThrow();
+  });
+
+  it('trailing dot / space still rejects on Windows, and at creation on POSIX', () => {
+    setPlatform('win32');
+    expect(() => assertSafeFilename('Draft.')).toThrow(/trailing/);
+    expect(() => assertSafeFilename('Draft ')).toThrow(/trailing/);
+    setPlatform('darwin');
+    expect(() => assertSafeFilename('Draft.', { forCreation: true })).toThrow(/trailing/);
+    expect(() => assertSafeRelativePath('Draft./note.md', { forCreation: true })).toThrow(/trailing/);
   });
 
   it('assertSafeRelativePath threads the forCreation flag through every segment', () => {

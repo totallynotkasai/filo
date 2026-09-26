@@ -1,6 +1,6 @@
 import { boardStore } from './board.svelte';
 import { flattenTreePaths } from '../lib/vault/vaultTreeSort';
-import { normalizePath, stripLeadingSlash } from '../lib/utils/path';
+import { normalizePath, stripLeadingSlash, toVaultRelative } from '../lib/utils/path';
 import type { VaultContext } from './vaultStoreTypes';
 
 /**
@@ -43,11 +43,8 @@ export function makeRootFolderSlice(ctx: VaultContext) {
       const current = project.settings.general.activeRootFolder ?? '';
       if (!current) return;
 
-      const root = normalizePath(vaultPath);
-      const norm = normalizePath(deletedPath);
-      const deletedRel = norm.startsWith(root + '/')
-        ? norm.slice(root.length + 1)
-        : stripLeadingSlash(norm);
+      const deletedRel =
+        toVaultRelative(deletedPath, vaultPath) ?? stripLeadingSlash(normalizePath(deletedPath));
 
       if (!deletedRel) return;
       if (current === deletedRel || current.startsWith(deletedRel + '/')) {
@@ -65,11 +62,7 @@ export function makeRootFolderSlice(ctx: VaultContext) {
       const project = ctx.getProject();
       const vaultPath = ctx.getVaultPath();
       if (!project || !vaultPath) return;
-      const root = normalizePath(vaultPath);
-      const norm = normalizePath(absPath);
-      const rel = norm === root || !norm.startsWith(root + '/')
-        ? ''
-        : norm.slice(root.length + 1);
+      const rel = toVaultRelative(absPath, vaultPath) ?? '';
       const current = project.settings.general?.activeRootFolder ?? '';
       const next = rel === current ? '' : rel;
       if (!project.settings.general) return;

@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { toPosix } from './pathHelpers';
+import { toPosix } from '../../shared/pathUtils';
 import { parseSentinelPath } from '../../shared/sentinelPaths';
 import { getMachineIdentity } from '../services/machineIdentity';
 import { RESERVED_WINDOWS_NAMES } from '../../shared/fileNames';
@@ -158,11 +158,11 @@ const isWin32 = (): boolean => process.platform === 'win32';
  *     traversal only ever arrives here as a bare `..` segment, because
  *     `assertSafeRelativePath` splits on `/` and `` first.
  *   - length > 255 (Windows MAX_PATH segment + POSIX NAME_MAX)
- *   - trailing dot or trailing space (silently stripped by Win32 → name collision)
  *   - control characters (\x00..\x1F, \x7F) including embedded NUL
  *
  * Platform-gated to win32 by default; pass `{ forCreation: true }` to enforce
  * on every platform (for new files written via Filo):
+ *   - trailing dot or trailing space (silently stripped by Win32 → name collision)
  *   - Windows-illegal characters `<>:"|?*` (NTFS ADS via `:`, etc.)
  *   - Windows DOS device names (CON, PRN, AUX, NUL, COM1..9, LPT1..9) regardless
  *     of extension — see `RESERVED_WINDOWS_NAMES`
@@ -195,7 +195,10 @@ export function assertSafeFilename(
   if (fileName.length > 255) {
     throw new Error('Unsafe filename rejected — exceeds 255 chars');
   }
-  if (fileName.endsWith('.') || fileName.endsWith(' ')) {
+  // Win32 strips a trailing dot / space, so on Windows `Draft.` would alias
+  // `Draft`. On macOS / Linux the name is ordinary, and a folder synced from
+  // there must stay readable, so the rule is gated with the other Win rules.
+  if (enforceWinRules && (fileName.endsWith('.') || fileName.endsWith(' '))) {
     throw new Error('Unsafe filename rejected — trailing dot or space');
   }
   for (let i = 0; i < fileName.length; i++) {

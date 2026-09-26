@@ -1,7 +1,8 @@
 import { ipcMain } from 'electron';
 import { basename } from 'path';
 import { promises as fsPromises } from 'fs';
-import { toPosix, relativePosix } from '../utils/pathHelpers';
+import { relativePosix } from '../utils/pathHelpers';
+import { toPosix } from '../../shared/pathUtils';
 import { copyFileToVault } from '../vault/fileOps';
 import {
   assertWithinVault,

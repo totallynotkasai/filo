@@ -1,4 +1,5 @@
 import { parseDocument } from 'yaml';
+import { splitFrontmatterFence } from '../notes/frontmatterFence';
 
 /**
  * The lightweight frontmatter READ helpers for the non-editor paths (the vault
@@ -16,22 +17,19 @@ import { parseDocument } from 'yaml';
 
 /**
  * Splits raw markdown bytes into the verbatim frontmatter SOURCE (the bytes
- * between the `---` fences — no fences, no surrounding newline) and the body.
- * Uses the SAME fence regex as `parseMarkdownFile` / `parseMarkdown` — including
- * the `[ \t]*` tolerance for a trailing space an editor left on a fence line —
- * and strips a leading BOM so a Notepad-saved file's body
- * matches the disk-read gateway's view. Returns `rawFrontmatter: ''` and the
- * whole (BOM-stripped) input as `body` when there is no frontmatter block.
+ * between the `---` fences — no fences, no surrounding newline) and the body,
+ * with the one fence parser the note writer uses (`splitFrontmatterFence`), so
+ * the index and the editor always agree on where the body starts. A leading
+ * BOM is skipped, so a Notepad-saved file's body matches the disk-read
+ * gateway's view. Returns `rawFrontmatter: ''` and the whole (BOM-stripped)
+ * input as `body` when there is no frontmatter block.
  */
 export function splitFrontmatterSource(rawContent: string): {
   rawFrontmatter: string;
   body: string;
 } {
-  // allow-bom-sniff: receives raw on-disk bytes (vault:read-file-text) for the index + template reads
-  const stripped = rawContent.charCodeAt(0) === 0xfeff ? rawContent.slice(1) : rawContent;
-  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/.exec(stripped);
-  if (!match) return { rawFrontmatter: '', body: stripped };
-  return { rawFrontmatter: match[1] ?? '', body: stripped.slice(match[0].length) };
+  const { block, body } = splitFrontmatterFence(rawContent);
+  return { rawFrontmatter: block?.source ?? '', body };
 }
 
 /**

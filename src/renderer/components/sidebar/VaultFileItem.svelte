@@ -12,7 +12,7 @@
   import { fileNameProblem } from '@shared/fileNames';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { boardStore } from '../../stores/board.svelte';
-  import { normalizePath, pathsEqual, stripLeadingSlash, toPosix } from '../../lib/utils/path';
+  import { normalizePath, samePath, toPosix, toVaultRelative } from '../../lib/utils/path';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
   import { reportError } from '../../lib/utils/errorBus';
@@ -80,10 +80,7 @@
     // The sidebar's node.path is absolute. Strip the vault root so tags.json
     // keys stay vault-relative (the same shape used by board JSON, vault
     // index, and the file watcher).
-    const root = normalizePath(vaultStore.path);
-    const abs = toPosix(node.path);
-    if (root && abs.startsWith(root)) return stripLeadingSlash(abs.slice(root.length));
-    return abs;
+    return toVaultRelative(node.path, vaultStore.path) ?? toPosix(node.path);
   }
 
   // ── Per-board "Default Folder" pin ──
@@ -105,7 +102,7 @@
       : '',
   );
   const isBoardPinnedHere = $derived(
-    !!activeBoard && node.isDirectory && pathsEqual(boardFolderAbs, node.path),
+    !!activeBoard && node.isDirectory && samePath(boardFolderAbs, node.path),
   );
 
   function openTagEditor(e: MouseEvent) {
@@ -559,7 +556,7 @@
     class="file-actions"
     class:has-pinned-active={
       node.isDirectory && (
-        pathsEqual(vaultStore.activeRootFolderAbs, node.path) ||
+        samePath(vaultStore.activeRootFolderAbs, node.path) ||
         isBoardPinnedHere
       )
     }
@@ -598,10 +595,10 @@
       -->
       <button
         class="action-btn root-dir-btn"
-        class:active={pathsEqual(vaultStore.activeRootFolderAbs, node.path)}
+        class:active={samePath(vaultStore.activeRootFolderAbs, node.path)}
         onclick={(e) => { e.stopPropagation(); vaultStore.setActiveRootFolder(node.path); }}
         title="Use as Root Directory for new tiles and dropped files"
-        aria-pressed={pathsEqual(vaultStore.activeRootFolderAbs, node.path)}
+        aria-pressed={samePath(vaultStore.activeRootFolderAbs, node.path)}
         aria-label="Toggle Root Directory for {node.name}"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

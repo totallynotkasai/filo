@@ -109,6 +109,16 @@ export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec 
       retryable: false,
     };
   }
+  // Main refused to write over a symbolic link (the write would replace the
+  // link with a regular file, cutting the note off from the original).
+  if (errorCode(info.error) === 'NOTE_IS_LINK') {
+    return {
+      context: 'Note not saved',
+      message: `Filo didn't save${where} because this note is a link to another file. Edit the original.`,
+      coalesceKey: `note-is-link::${info.path ?? ''}`,
+      retryable: false,
+    };
+  }
   // A corrupt-config suppression is NOT a disk-space / permission
   // failure, so it gets its own honest copy instead of the generic message
   // below. The config write is being SKIPPED on purpose to preserve the

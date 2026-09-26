@@ -13,6 +13,7 @@ import { beginVaultGeneration, __resetVaultIdentityForTests } from '../../render
 import { __resetDirtyTrackingForTests } from '../../renderer/lib/boards/writeStateTracking';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
+import { isLinkedNote, __resetNonUtf8PathsForTests } from '../../renderer/lib/vault/nonUtf8Paths.svelte';
 
 let vault: MemoryVault;
 let writer: NoteWriter;
@@ -197,6 +198,17 @@ describe('refusals', () => {
     expect(mdWrites()).toHaveLength(0);
   });
 
+  it('never writes a note that is a symbolic link, and a rewrite leaves it alone', async () => {
+    vault.links.add('a.md');
+    vault.links.add('b.md');
+    writer.queueDelta('A.md', { set: { k: 'v' }, unset: [] });
+    expect((await writer.flush('A.md')).ok).toBe(false);
+    expect(await writer.transform('B.md', (fresh) => `${fresh.raw}more\n`)).toBeNull();
+    expect(mdWrites()).toHaveLength(0);
+    expect(isLinkedNote('A.md')).toBe(true);
+    __resetNonUtf8PathsForTests();
+  });
+
   it('never recreates a note deleted before its write', async () => {
     vault.remove('B.md');
     writer.queueDelta('B.md', { set: { k: 'v' }, unset: [] });
@@ -224,18 +236,12 @@ describe('creating notes', () => {
   });
 });
 
-describe('transform, restore and hold', () => {
+describe('transform and hold', () => {
   it('transform writes queued changes first, then rewrites from the fresh bytes', async () => {
     writer.queueDelta('A.md', { set: { k: 1 }, unset: [] });
     const out = await writer.transform('A.md', (fresh) => fresh.raw.replace('One', 'Uno'));
     expect(out).toBe('---\ntitle: A # keep\nk: 1\n---\nUno\n');
     expect(vault.read('A.md')).toBe(out);
-  });
-
-  it('restore writes a deleted note back', async () => {
-    vault.remove('B.md');
-    await writer.restore('Sub/B.md', 'back\n');
-    expect(vault.read('Sub/B.md')).toBe('back\n');
   });
 
   it('hold lands queued writes first and keeps new ones waiting until the rename is done', async () => {

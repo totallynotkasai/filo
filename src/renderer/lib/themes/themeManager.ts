@@ -324,9 +324,9 @@ export function listBuiltinThemes(): readonly ThemeId[] {
 }
 
 /**
- * Test/teardown helper — clears any inline custom-theme variables
- * without touching `data-theme`. Exposed so unit tests can isolate.
+ * Clears any inline custom-theme variables without touching `data-theme`, so
+ * unit tests start from no applied custom theme. Nothing in the app calls it.
  */
-export function resetThemeManager(): void {
+export function __resetThemeManagerForTests(): void {
   clearAppliedCustomProps();
 }

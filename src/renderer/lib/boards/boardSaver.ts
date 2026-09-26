@@ -12,7 +12,7 @@
  *   - `miscWriteScheduler` — per-key one-off writes (tags, themes, viewports).
  *   - `viewportCache`      — `.filo/viewports.json` in-memory map.
  *
- * This file re-exports every public name from those modules and composes
+ * This file re-exports the names its callers import from those modules and composes
  * the `flushAll` / `cancelAllPendingWrites` orchestrators that span them.
  */
 
@@ -34,11 +34,6 @@ import { onVaultSwap } from '../../core/vaultLifecycle';
 
 export type { BoardFileData } from './tileDefBuilder';
 export {
-  isInlineTileType,
-  buildTileDefinition,
-  buildInlineTileFromTile,
-} from './tileDefBuilder';
-export {
   setWriteErrorListener,
   setWriteStateListener,
   trackComponentWrite,
@@ -46,7 +41,6 @@ export {
   markPathFailed,
   markRecentSelfWrite,
   isRecentSelfWrite,
-  hasPendingWrite,
   isPathPending,
   isPathQueuedOrInFlight,
   hasFailedWrites,
@@ -54,7 +48,6 @@ export {
   __clearRecentSelfWritesForTests,
   type WriteErrorInfo,
   type WriteStateInfo,
-  type TrackComponentWriteOptions,
 } from './writeStateTracking';
 export {
   scheduleBoardWrite,
@@ -67,15 +60,11 @@ export {
   writeConfigs,
   seedConfigSnapshots,
   markCorruptConfigTarget,
-  clearCorruptConfigTarget,
-  isConfigTargetCorrupt,
-  isConfigPathCorrupt,
 } from './configWriteScheduler';
 export {
   scheduleMiscWrite,
   flushAllMisc,
   flushMiscWrite,
-  type MiscWriteArgs,
 } from './miscWriteScheduler';
 export {
   seedViewportsCache,
@@ -85,7 +74,6 @@ export {
   removeViewport,
   type ViewportEntry,
 } from './viewportCache';
-export { BOARD_WRITE_DEBOUNCE_MS } from './boardWriteDebounce';
 
 // ── Cross-scheduler orchestration ──
 

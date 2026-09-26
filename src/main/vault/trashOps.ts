@@ -27,7 +27,7 @@ import { promises as fs } from 'fs';
 import { randomBytes } from 'crypto';
 import { dirname, extname, join } from 'path';
 import { retryOnWindowsLock } from './filenameUtils';
-import { toPosix } from '../utils/pathHelpers';
+import { toPosix } from '../../shared/pathUtils';
 
 export const TRASH_DIR = join('.filo', 'trash');
 const MANIFEST = 'manifest.json';

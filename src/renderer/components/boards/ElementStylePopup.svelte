@@ -1,23 +1,25 @@
 <script lang="ts">
   /**
-   * KanbanColumnStylePopup — per-column style override editor.
+   * ElementStylePopup — the style override editor for a Kanban card or
+   * column and a Task List task or section. `kind` picks the rows, the
+   * write target and the undo command (`lib/styles/elementStyleTargets.ts`).
    *
-   * Mirrors `TileStylePopup`: snapshot fields once via `untrack`, write
-   * back via `boardCacheStore.updateKanbanColumnStyle` on each change so
-   * the popup never re-subscribes to its own writes. Drag-the-header,
-   * Escape/X close, no outside-click dismissal.
-   *
-   * Per-column writes go to `KanbanColumn.style` and feed
-   * `effectiveColumnStyle` at render time (board → global → empty).
-   * Clearing all fields removes the `style` block entirely.
+   * Snapshots the fields once via `untrack` and writes each pick straight to
+   * the board cache, so the popup never re-subscribes to its own writes.
+   * Drag the header to move it; Escape or X closes it; an outside click
+   * does not.
    */
   import { untrack, getContext } from 'svelte';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
   import { nanoid } from 'nanoid';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
-  import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { historyStore } from '../../stores/history.svelte';
-  import { UpdateKanbanColumnStyleCommand } from '../../commands/index';
+  import {
+    ELEMENT_STYLE_TARGETS,
+    type ElementStyle,
+    type ElementStyleKind,
+  } from '../../lib/styles/elementStyleTargets';
+  import type { BorderStyle, Shape } from '../../schema/styleEnums';
   import ColorPicker from '../shared/ColorPicker.svelte';
   import { portal } from '../../lib/utils/portal';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
@@ -25,53 +27,50 @@
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
 
-  const popupTitleId = `kc-style-popup-title-${nanoid(6)}`;
-
-  type ColumnStyle = {
-    headerColor?: string;
-    bodyColor?: string;
-    borderColor?: string;
-    borderStyle?: 'solid' | 'dashed' | 'dotted';
-    borderWidth?: number;
-    shadowIntensity?: number;
-    dynamicContrastText?: boolean;
-    width?: number;
-    fontSizeTitle?: number;
-    /** Per-column accent. Falls through to `board.settings.accentColor`
-     *  then to the theme default. Drives the column accent bar + the
-     *  card-count badge tint. */
-    accent?: string;
-  };
-
   let {
+    kind,
     boardId,
-    column,
+    elementId,
+    style,
     x,
     y,
     onclose,
   }: {
+    kind: ElementStyleKind;
     boardId: string;
-    column: { id: string; style?: ColumnStyle };
+    /** The card's or task's tileId, or the column's or section's id. */
+    elementId: string;
+    style?: ElementStyle;
     x: number;
     y: number;
     onclose: () => void;
   } = $props();
 
-  // Snapshot the whole column style block at mount so popup-close can
-  // dispatch a single UpdateKanbanColumnStyleCommand spanning every pick
-  // made during this session. JSON round-trip detaches the snapshot from
-  // the live $state Proxy.
-  const beforeStyle: ColumnStyle = untrack(() =>
-    JSON.parse(JSON.stringify(column.style ?? {})),
+  // Each call site passes one fixed kind.
+  const target = untrack(() => ELEMENT_STYLE_TARGETS[kind]);
+  const fields = target.fields;
+  const p = target.idPrefix;
+
+  const popupTitleId = `${p}-style-popup-title-${nanoid(6)}`;
+
+  // Snapshot the whole style block at mount so popup-close can dispatch a
+  // single style command spanning every pick made during this session. The
+  // JSON round-trip detaches the snapshot from the live $state Proxy so
+  // later store mutations don't leak in.
+  const beforeStyle: ElementStyle = untrack(() =>
+    JSON.parse(JSON.stringify(style ?? {})),
   );
   let hasChanged = false;
-  const initialStyle = untrack(() => (column.style ?? {}) as ColumnStyle);
+  const initialStyle: ElementStyle = untrack(() => style ?? {});
+  let backgroundColor = $state<string>(initialStyle.backgroundColor ?? '');
   let headerColor = $state<string>(initialStyle.headerColor ?? '');
   let bodyColor = $state<string>(initialStyle.bodyColor ?? '');
+  let shape = $state<Shape | ''>(initialStyle.shape ?? '');
+  let accent = $state<string>(initialStyle.accent ?? '');
   let borderColor = $state<string>(initialStyle.borderColor ?? '');
-  let borderStyle = $state<'solid' | 'dashed' | 'dotted'>(initialStyle.borderStyle ?? 'solid');
+  let borderStyle = $state<BorderStyle>(initialStyle.borderStyle ?? 'solid');
   let borderWidth = $state<number>(initialStyle.borderWidth ?? 1);
-  let shadowIntensity = $state<number>(initialStyle.shadowIntensity ?? 0.3);
+  let shadowIntensity = $state<number>(initialStyle.shadowIntensity ?? target.defaultShadow);
   let dct = $state<'' | 'true' | 'false'>(
     initialStyle.dynamicContrastText === true
       ? 'true'
@@ -81,7 +80,7 @@
   );
   let width = $state<number | ''>(initialStyle.width ?? '');
   let fontSizeTitle = $state<number | ''>(initialStyle.fontSizeTitle ?? '');
-  let accent = $state<string>(initialStyle.accent ?? '');
+  let fontSizeBody = $state<number | ''>(initialStyle.fontSizeBody ?? '');
 
   let popupEl = $state<HTMLDivElement | null>(null);
   let isDragging = $state(false);
@@ -106,16 +105,21 @@
     try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* not captured */ }
   }
 
-  function write(patch: ColumnStyle) {
-    boardCacheStore.updateKanbanColumnStyle(boardId, column.id, patch);
+  function write(patch: ElementStyle) {
+    target.write(boardId, elementId, patch);
     hasChanged = true;
   }
 
+  function setBackgroundColor(c: string) { backgroundColor = c; write({ backgroundColor: c }); }
   function setHeaderColor(c: string) { headerColor = c; write({ headerColor: c }); }
   function setBodyColor(c: string) { bodyColor = c; write({ bodyColor: c }); }
+  function setShape(v: Shape | '') {
+    shape = v;
+    write({ shape: v === '' ? undefined : v });
+  }
   function setAccent(c: string) { accent = c; write({ accent: c }); }
   function setBorderColor(c: string) { borderColor = c; write({ borderColor: c }); }
-  function setBorderStyle(v: 'solid' | 'dashed' | 'dotted') { borderStyle = v; write({ borderStyle: v }); }
+  function setBorderStyle(v: BorderStyle) { borderStyle = v; write({ borderStyle: v }); }
   function setBorderWidth(v: number) { borderWidth = v; write({ borderWidth: v }); }
   function setShadowIntensity(v: number) { shadowIntensity = v; write({ shadowIntensity: v }); }
   function setDct(v: '' | 'true' | 'false') {
@@ -135,22 +139,30 @@
     const n = parseFloat(raw);
     if (Number.isFinite(n)) { fontSizeTitle = n; write({ fontSizeTitle: n }); }
   }
+  function setFontSizeBody(raw: string) {
+    if (raw === '') { fontSizeBody = ''; write({ fontSizeBody: undefined }); return; }
+    const n = parseFloat(raw);
+    if (Number.isFinite(n)) { fontSizeBody = n; write({ fontSizeBody: n }); }
+  }
 
   function restoreDefaults() {
-    // Clear the column style block entirely; the cascade resolves fresh
-    // values on the next render. Local state is reset to defaults so the
-    // controls visibly snap back during the popup's animation.
+    // Clear the style block entirely; the cascade resolves fresh values on
+    // the next render. Local state is reset to defaults so the controls
+    // visibly snap back during the popup's animation.
+    backgroundColor = '';
     headerColor = '';
     bodyColor = '';
+    shape = '';
+    accent = '';
     borderColor = '';
     borderStyle = 'solid';
     borderWidth = 1;
-    shadowIntensity = 0.3;
+    shadowIntensity = target.defaultShadow;
     dct = '';
     width = '';
     fontSizeTitle = '';
-    accent = '';
-    boardCacheStore.updateKanbanColumnStyle(boardId, column.id, null);
+    fontSizeBody = '';
+    target.write(boardId, elementId, null);
     hasChanged = true;
   }
 
@@ -174,23 +186,14 @@
     return () => {
       safeDeactivateTrap(trap);
       trap = null;
-      // Push a single UpdateKanbanColumnStyleCommand spanning every pick
-      // made during this session. Read the live column from the cache so
-      // the "after" snapshot reflects exactly what's on screen.
+      // Push a single style command spanning every pick made during this
+      // session. Read the live style from the cache (NOT local $state) so
+      // the "after" snapshot holds exactly what's on screen: local state
+      // mixes initial defaults with user edits.
       if (hasChanged) {
-        const cached = boardCacheStore.cache[boardId];
-        if (cached && cached.board.type === 'kanban') {
-          const kb = cached.board as Record<string, unknown>;
-          const columns = (kb.columns ?? []) as Array<{ id: string; style?: ColumnStyle }>;
-          const col = columns.find((c) => c.id === column.id);
-          const afterStyle: ColumnStyle = col?.style
-            ? (JSON.parse(JSON.stringify(col.style)) as ColumnStyle)
-            : {};
-          if (JSON.stringify(beforeStyle) !== JSON.stringify(afterStyle)) {
-            historyStore.pushWithoutExecute(
-              new UpdateKanbanColumnStyleCommand(boardId, column.id, beforeStyle, afterStyle),
-            );
-          }
+        const afterStyle = target.readLive(boardId, elementId);
+        if (afterStyle && JSON.stringify(beforeStyle) !== JSON.stringify(afterStyle)) {
+          historyStore.pushWithoutExecute(target.command(boardId, elementId, beforeStyle, afterStyle));
         }
       }
       if (triggerEl && triggerEl.isConnected) {
@@ -211,7 +214,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   use:portal
-  class="kc-style-popup"
+  class="element-style-popup"
   bind:this={popupEl}
   role="group"
   aria-labelledby={popupTitleId}
@@ -221,7 +224,7 @@
 >
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="popup-header" onpointerdown={onDragStart} onpointermove={onDragMove} onpointerup={onDragEnd}>
-    <span class="popup-title" id={popupTitleId}>Column Style</span>
+    <span class="popup-title" id={popupTitleId}>{target.title}</span>
     <button class="close-btn" onclick={onclose} aria-label="Close">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
     </button>
@@ -229,17 +232,40 @@
 
   <button class="restore-defaults-btn" onclick={restoreDefaults}>Restore to Theme Defaults</button>
 
+  <!-- A card splits into three colourable zones: Header (title bar /
+       TileHeader), Body (text content), Background (outer shell where the
+       footer chrome — priority pill, due-date, tag chips — sits). Empty
+       fields fall through the cascade to board / global / theme defaults. -->
   <div class="style-row"><span>Header Colour</span><ColorPicker value={headerColor} onchange={setHeaderColor} anchorTo={popupEl} /></div>
   <div class="style-row"><span>Body Colour</span><ColorPicker value={bodyColor} onchange={setBodyColor} anchorTo={popupEl} /></div>
-  <!-- Per-column accent — drives the header accent bar AND the
-       card-count badge tint. Empty falls through to the board-level
-       accent (`settings.accentColor`) and finally the theme default. -->
-  <div class="style-row"><span>Accent</span><ColorPicker value={accent} onchange={setAccent} anchorTo={popupEl} /></div>
+  {#if fields.backgroundColor}
+    <div class="style-row"><span>Background</span><ColorPicker value={backgroundColor} onchange={setBackgroundColor} anchorTo={popupEl} /></div>
+  {/if}
+
+  {#if fields.shape}
+    <!-- Outer card shape. 'Inherit' falls through to board / global defaults. -->
+    <div class="style-row">
+      <label for="{p}-shape">Shape</label>
+      <select id="{p}-shape" value={shape} onchange={(e) => setShape((e.target as HTMLSelectElement).value as Shape | '')}>
+        <option value="">Inherit</option>
+        <option value="rounded">Rounded</option>
+        <option value="rectangle">Rectangle</option>
+      </select>
+    </div>
+  {/if}
+
+  {#if fields.accent}
+    <!-- Per-column accent — drives the header accent bar AND the
+         card-count badge tint. Empty falls through to the board-level
+         accent (`settings.accentColor`) and finally the theme default. -->
+    <div class="style-row"><span>Accent</span><ColorPicker value={accent} onchange={setAccent} anchorTo={popupEl} /></div>
+  {/if}
+
   <div class="style-row"><span>Border Colour</span><ColorPicker value={borderColor} onchange={setBorderColor} anchorTo={popupEl} /></div>
 
   <div class="style-row">
-    <label for="kc-border-style">Border Style</label>
-    <select id="kc-border-style" value={borderStyle} onchange={(e) => setBorderStyle((e.target as HTMLSelectElement).value as 'solid' | 'dashed' | 'dotted')}>
+    <label for="{p}-border-style">Border Style</label>
+    <select id="{p}-border-style" value={borderStyle} onchange={(e) => setBorderStyle((e.target as HTMLSelectElement).value as BorderStyle)}>
       <option value="solid">Solid</option>
       <option value="dashed">Dashed</option>
       <option value="dotted">Dotted</option>
@@ -247,40 +273,49 @@
   </div>
 
   <div class="style-row">
-    <label for="kc-border-width">Border Width</label>
-    <input id="kc-border-width" class="style-number" type="number" min="0" max="10" value={borderWidth} onchange={(e) => setBorderWidth(parseInt((e.target as HTMLInputElement).value) || 0)} />
+    <label for="{p}-border-width">Border Width</label>
+    <input id="{p}-border-width" class="style-number" type="number" min="0" max="10" value={borderWidth} onchange={(e) => setBorderWidth(parseInt((e.target as HTMLInputElement).value) || 0)} />
   </div>
 
   <div class="style-row">
-    <label for="kc-shadow">Shadow</label>
+    <label for="{p}-shadow">Shadow</label>
     <div class="range-with-readout">
-      <input id="kc-shadow" class="style-range" type="range" min="0" max="1" step="0.05" value={shadowIntensity} oninput={(e) => setShadowIntensity(parseFloat((e.target as HTMLInputElement).value))} />
+      <input id="{p}-shadow" class="style-range" type="range" min="0" max="1" step="0.05" value={shadowIntensity} oninput={(e) => setShadowIntensity(parseFloat((e.target as HTMLInputElement).value))} />
       <span class="range-value">{Math.round(shadowIntensity * 100)}%</span>
     </div>
   </div>
 
   <div class="style-row">
-    <label for="kc-dct">Dynamic Contrast Text</label>
-    <select id="kc-dct" value={dct} onchange={(e) => setDct((e.target as HTMLSelectElement).value as '' | 'true' | 'false')}>
+    <label for="{p}-dct">Dynamic Contrast Text</label>
+    <select id="{p}-dct" value={dct} onchange={(e) => setDct((e.target as HTMLSelectElement).value as '' | 'true' | 'false')}>
       <option value="">Inherit</option>
       <option value="true">On</option>
       <option value="false">Off</option>
     </select>
   </div>
 
-  <div class="style-row">
-    <label for="kc-width">Column Width (px)</label>
-    <input id="kc-width" class="style-number" type="number" min="120" max="2000" step="10" placeholder="—" value={width} onchange={(e) => setWidth((e.target as HTMLInputElement).value)} />
-  </div>
+  {#if fields.width}
+    <div class="style-row">
+      <label for="{p}-width">Column Width (px)</label>
+      <input id="{p}-width" class="style-number" type="number" min="120" max="2000" step="10" placeholder="—" value={width} onchange={(e) => setWidth((e.target as HTMLInputElement).value)} />
+    </div>
+  {/if}
 
   <div class="style-row">
-    <label for="kc-font-size">Title Font Size</label>
-    <input id="kc-font-size" class="style-number" type="number" min="8" max="48" placeholder="—" value={fontSizeTitle} onchange={(e) => setFontSizeTitle((e.target as HTMLInputElement).value)} />
+    <label for="{p}-{target.titleFontIdSuffix}">Title Font Size</label>
+    <input id="{p}-{target.titleFontIdSuffix}" class="style-number" type="number" min="8" max="48" placeholder="—" value={fontSizeTitle} onchange={(e) => setFontSizeTitle((e.target as HTMLInputElement).value)} />
   </div>
+
+  {#if fields.fontSizeBody}
+    <div class="style-row">
+      <label for="{p}-font-body">Body Font Size</label>
+      <input id="{p}-font-body" class="style-number" type="number" min="8" max="48" placeholder="—" value={fontSizeBody} onchange={(e) => setFontSizeBody((e.target as HTMLInputElement).value)} />
+    </div>
+  {/if}
 </div>
 
 <style>
-  .kc-style-popup {
+  .element-style-popup {
     position: fixed;
     background: var(--ui-surface);
     border: 1px solid var(--ui-border);
@@ -394,6 +429,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .kc-style-popup { animation: none; }
+    .element-style-popup { animation: none; }
   }
 </style>

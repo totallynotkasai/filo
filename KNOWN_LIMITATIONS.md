@@ -66,8 +66,8 @@ loss):**
   comment on the old value is dropped (a scalar→scalar value change keeps it, via
   the value-only splice).
 - **A9-L6 — deleted key's documenting comment.** Deleting a frontmatter key
-  (clearing a field in the Properties popup, or a card/task field edit that
-  empties a value) also drops a standalone comment line immediately ABOVE that key. A
+  (removing the last tag in a Document tab's tag row, or a card/task field
+  edit that empties a value) also drops a standalone comment line immediately ABOVE that key. A
   comment conventionally documents the key it precedes, so it is removed WITH the
   key rather than relocated onto the next surviving key — where it would
   mis-document an unrelated field — or left dangling at the document end.
@@ -1024,3 +1024,41 @@ you chose to leave anyway, so they should be rare and small.
   too.
 - A copy isn't written for a change over 25 MB or on a disk error. Filo then
   asks once more ("… and lose them") before leaving.
+
+---
+
+## 34. Linked notes: symbolic links are read-only, hard links are not detected
+
+**What:** Filo saves a note atomically: it writes a temporary file next to it
+and renames that over the note. A rename replaces the directory entry, so it
+never writes *through* a link:
+- A note that is a **symbolic link** would become an ordinary file, and the
+  original it pointed at would stop getting the edits. Filo doesn't follow
+  links. The read reports the link, and the note opens read-only with the
+  banner *"This note is a link; edit the original."* The main process also
+  refuses every text write to it (`NOTE_IS_LINK`), both before staging the
+  temporary file and again right before each rename attempt. A vault-wide tag
+  rename skips it and names it in a toast.
+- A note that is a **hard link** (a second name for the same file) is not
+  detected. The first save gives that name its own copy of the file, and the
+  other names keep the old text. From then on they are separate files.
+
+A symbolic link that points outside the vault can't be read at all (the vault
+boundary check follows links).
+
+**Where:** `isSymbolicLink` / `atomicWriteFile({ refuseLink })` in
+[src/main/vault/filenameUtils.ts](src/main/vault/filenameUtils.ts), the
+`vault:read-file-text` / `vault:write-file-text` /
+`vault:write-existing-file-text` handlers in
+[src/main/ipc/vault.ipc.ts](src/main/ipc/vault.ipc.ts),
+[src/renderer/lib/vault/nonUtf8Paths.svelte.ts](src/renderer/lib/vault/nonUtf8Paths.svelte.ts)
+(`isLinkedNote`).
+
+**Why accepted:** Writing through a link in place would give up the atomic
+write that keeps a crash from leaving a half-written note. A hard link has no
+mark of its own: every name is an equal, ordinary file, and the only hint is a
+link count above 1, which network drives and some file systems don't report
+reliably. Hard-linked notes are rare, so Filo doesn't try.
+
+**Impact:** Edit a linked note through its original file. Don't hard-link
+notes inside a vault; use a symbolic link (read-only in Filo) or a copy.

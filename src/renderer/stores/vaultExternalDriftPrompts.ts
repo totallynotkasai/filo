@@ -13,8 +13,6 @@ import { resolveBoardDrift } from './boardDrift';
 import { configExternalHandlers } from './configDriftPrompt';
 import { registerNotePrompts } from './notePrompts';
 
-export { promptBoardExternalEdit, __inFlightDriftPromptsForTests } from './boardDrift';
-
 /**
  * Installs the prompts the writers ask. `lib/` writers can't import
  * `stores/`, so they expose setters. App.svelte calls this at startup: by

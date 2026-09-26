@@ -1,10 +1,8 @@
 /**
  * Due-date formatting helpers shared by TaskItem.svelte and KanbanCard.svelte.
  *
- * Pure — no DOM, no Svelte. The "absolute" form is a compact `MMM D` chip
- * (e.g. `May 16`); the "relative" form is the natural-language form used in
- * tooltips and ARIA labels (`Today` / `Tomorrow` / `Yesterday` / `In 3 days`
- * / `Aug 12`). The time-chip helper formats `HH:MM` 24-hour input to a
+ * Pure — no DOM, no Svelte. The date chip is a compact `MMM D` form
+ * (e.g. `May 16`). The time-chip helper formats `HH:MM` 24-hour input to a
  * compact 12-hour string (`9am` / `4:30pm`).
  */
 
@@ -20,30 +18,6 @@ export function formatDueDateAbsolute(iso: string): string {
     : new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-/**
- * Natural-language relative date — `Today` / `Tomorrow` / `Yesterday`,
- * `In 3 days` / `3 days ago` within ±6 days, or absolute chip otherwise.
- * Accepts an optional `now` for testability; defaults to `new Date()`.
- */
-export function formatDueDateRelative(iso: string, now: Date = new Date()): string {
-  if (!iso) return '';
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  const due = m
-    ? new Date(parseInt(m[1] ?? '', 10), parseInt(m[2] ?? '', 10) - 1, parseInt(m[3] ?? '', 10))
-    : new Date(iso);
-  if (Number.isNaN(due.getTime())) return iso;
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  due.setHours(0, 0, 0, 0);
-  const days = Math.round((due.getTime() - today.getTime()) / 86400000);
-  if (days === 0) return 'Today';
-  if (days === 1) return 'Tomorrow';
-  if (days === -1) return 'Yesterday';
-  if (days > 1 && days <= 6) return `In ${days} days`;
-  if (days < -1 && days >= -6) return `${-days} days ago`;
-  return formatDueDateAbsolute(iso);
 }
 
 /**

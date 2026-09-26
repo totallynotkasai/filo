@@ -22,7 +22,7 @@ import {
 } from '../lib/vault/vaultOperations';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 import { reportError } from '../lib/utils/errorBus';
-import { normalizePath, toPosix } from '../lib/utils/path';
+import { toVaultRelative } from '../lib/utils/path';
 import { vaultPath } from '../../shared/vaultPath';
 
 let entries = $state<TrashEntryInfo[]>([]);
@@ -32,14 +32,12 @@ let busy = $state(false);
 
 /** Vault-relative paths of every file in `tree` at or under `rel`. */
 function filesUnder(tree: FileTreeNode[], vaultRoot: string, rel: string): string[] {
-  const root = normalizePath(vaultRoot);
   const key = rel.toLowerCase();
   const out: string[] = [];
   const walk = (nodes: FileTreeNode[]): void => {
     for (const n of nodes) {
-      const abs = toPosix(n.path);
-      if (!abs.toLowerCase().startsWith(`${root.toLowerCase()}/`)) continue;
-      const nodeRel = abs.slice(root.length + 1);
+      const nodeRel = toVaultRelative(n.path, vaultRoot);
+      if (!nodeRel) continue;
       const lower = nodeRel.toLowerCase();
       if (!n.isDirectory && (lower === key || lower.startsWith(`${key}/`))) out.push(nodeRel);
       if (n.children && (lower === key || key.startsWith(`${lower}/`) || lower.startsWith(`${key}/`))) walk(n.children);

@@ -1,5 +1,5 @@
 /**
- * Phase 0 characterization — IPC envelope contract.
+ * Contract — IPC envelope contract.
  *
  * For every envelope-returning channel in `src/main/ipc/board.ipc.ts`, this
  * file asserts that the renderer-side caller threads the result through
@@ -120,7 +120,7 @@ const BOARD_IPC_ENVELOPE_CHANNELS = [
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
-describe('Phase 0 characterization — IPC envelope contract (board.ipc.ts)', () => {
+describe('Contract — IPC envelope contract (board.ipc.ts)', () => {
   describe('every envelope channel handler in board.ipc.ts is enumerated above', () => {
     it('source listing matches the test inventory', () => {
       const handlerSource = fs.readFileSync(

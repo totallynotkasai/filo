@@ -2,6 +2,7 @@ import { Document, parseDocument, isSeq } from 'yaml';
 import { parseTagsField } from '../utils/normalizeTagsField';
 import { patchFrontmatterSourceCst, frontmatterSourceHasNonScalarKey } from './frontmatterCstModel';
 import { frontmatterLineEnding } from '../utils/lineEnding';
+import { splitFrontmatterFence } from '../notes/frontmatterFence';
 
 /**
  * Frontmatter-only tag rewriter.
@@ -21,15 +22,6 @@ import { frontmatterLineEnding } from '../utils/lineEnding';
  * package — the same parser as the read path and the CST write engine — so
  * the two can't disagree on a scalar and trigger a phantom rewrite.
  */
-
-// `[ \t]*` tolerates trailing whitespace on either fence line (`--- `);
-// otherwise `addTagToMarkdown` would see "no frontmatter" and prepend a
-// duplicate block. The interior group is OPTIONAL so a zero-interior fence
-// pair (`---\n---\n`) parses as an EMPTY frontmatter block, for the same
-// reason. Mirrors `parseMarkdownFile` (markdownSync.ts).
-// The fence lines (with any trailing whitespace) and the closing fence's line
-// break are captured so a rewrite re-emits them exactly.
-const FRONTMATTER_FENCE = /^(---[ \t]*)\r?\n(?:([\s\S]*?)\r?\n)?(---[ \t]*)(\r?\n)?([\s\S]*)$/;
 
 /**
  * Case-insensitive tag-identity equality. Folds via
@@ -77,32 +69,31 @@ interface SplitNote {
 }
 
 function splitFrontmatter(raw: string): SplitNote {
-  // Strip a leading UTF-8 BOM before the `^---`-anchored fence match (mirrors
-  // parseMarkdownFile); otherwise a BOM file reads as "no frontmatter" and
-  // addTagToMarkdown prepends a second block, demoting the real frontmatter
-  // into the body. `hadBom` is re-emitted by `reassemble`.
-  const hadBom = raw.charCodeAt(0) === 0xfeff;
-  const text = hadBom ? raw.slice(1) : raw;
-  const eol = frontmatterLineEnding(text);
-  const fenced = FRONTMATTER_FENCE.exec(text);
-  if (!fenced) {
-    return { yamlSource: '', body: text, hasFrontmatter: false, eol, hadBom, fences: null };
+  // The one fence parser the note writer uses, so a tag rewrite and a note
+  // write always agree on where the block ends. It skips a leading BOM
+  // (otherwise a BOM file reads as "no frontmatter" and addTagToMarkdown
+  // prepends a second block); `hadBom` is re-emitted by `reassemble`. The fence
+  // lines (with any trailing whitespace) and the closing fence's line break
+  // come back as written so a rewrite re-emits them exactly.
+  const { hadBom, block, body } = splitFrontmatterFence(raw);
+  const eol = frontmatterLineEnding(raw);
+  if (!block) {
+    return { yamlSource: '', body, hasFrontmatter: false, eol, hadBom, fences: null };
   }
   // Normalise the captured YAML source to LF so the line-level matchers match
   // uniformly (JS `.`/`$` don't cross `\r`, so a CRLF `tags:` line would never
   // match and fall to the lossy path). `eol` is re-applied to the frontmatter block at
-  // assembly time; the body (`fenced[5]`) is kept byte-verbatim — the rewriter
-  // never edits it.
+  // assembly time; the body is kept byte-verbatim — the rewriter never edits it.
   // DECISION: a frontmatter block with internally-mixed endings normalises to
   // the detected `eol`; the body's own (possibly mixed) endings are untouched.
-  const yamlSource = (fenced[2] ?? '').replace(/\r\n/g, '\n');
+  const yamlSource = block.source.replace(/\r\n/g, '\n');
   return {
     yamlSource,
-    body: fenced[5] ?? '',
+    body,
     hasFrontmatter: true,
     eol,
     hadBom,
-    fences: { open: fenced[1] ?? '---', close: fenced[3] ?? '---', closeEnd: fenced[4] ?? '' },
+    fences: { open: block.open, close: block.close, closeEnd: block.closeEol },
   };
 }
 

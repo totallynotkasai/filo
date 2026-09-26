@@ -24,12 +24,10 @@
   import type {
     KanbanBoard as KanbanBoardType,
     KanbanTilePlacement,
-    PartialKanbanCardStyle,
     Tile,
   } from '../../schema/index';
   import KanbanColumn from './KanbanColumn.svelte';
-  import KanbanColumnStylePopup from './KanbanColumnStylePopup.svelte';
-  import KanbanCardStylePopup from './KanbanCardStylePopup.svelte';
+  import ElementStylePopup from './ElementStylePopup.svelte';
   import KanbanSideToolbar from './KanbanSideToolbar.svelte';
   import KanbanNewTileModal from './KanbanNewTileModal.svelte';
   import TagPromptPopup from './TagPromptPopup.svelte';
@@ -1167,9 +1165,10 @@
 </div>
 
 {#if columnStylePopup && board}
-  <KanbanColumnStylePopup
+  <ElementStylePopup kind="kanbanColumn"
     boardId={board.id}
-    column={{ id: columnStylePopup.columnId, style: columnStylePopup.style }}
+    elementId={columnStylePopup.columnId}
+    style={columnStylePopup.style}
     x={columnStylePopup.x}
     y={columnStylePopup.y}
     onclose={() => columnStylePopup = null}
@@ -1177,10 +1176,10 @@
 {/if}
 
 {#if cardStylePopup && board}
-  <KanbanCardStylePopup
+  <ElementStylePopup kind="kanbanCard"
     boardId={board.id}
-    tileId={cardStylePopup.tileId}
-    style={cardStylePopup.style as PartialKanbanCardStyle | undefined}
+    elementId={cardStylePopup.tileId}
+    style={cardStylePopup.style}
     x={cardStylePopup.x}
     y={cardStylePopup.y}
     onclose={() => cardStylePopup = null}

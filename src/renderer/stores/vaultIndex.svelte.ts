@@ -10,7 +10,7 @@ import { vaultStore } from './vault.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import { isMarkdownExtension } from '../lib/vault/extension';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
-import { noteReadEncoding } from '../lib/vault/nonUtf8Paths.svelte';
+import { noteReadEncoding, noteReadLink } from '../lib/vault/nonUtf8Paths.svelte';
 import { stripLeadingSlash, toPosix } from '../lib/utils/path';
 import type { FileTreeNode } from '../../shared/types';
 import { onVaultSwap } from '../core/vaultLifecycle';
@@ -60,12 +60,21 @@ interface ReadFileResult {
   mtimeMs: number | null;
   /** 'invalid-utf-8' when the bytes aren't UTF-8 (absent = UTF-8). */
   encoding?: 'utf-8' | 'invalid-utf-8';
+  /** True when the path is a symbolic link (the note opens read-only). */
+  link?: boolean;
 }
 
 async function readFileText(vaultRoot: string, relativePath: string): Promise<ReadFileResult> {
   const res = await window.filo.invoke('vault:read-file-text', vaultRoot, relativePath);
   if (res.success) {
-    return { ok: true, content: res.content, code: null, mtimeMs: res.mtimeMs ?? null, encoding: res.encoding };
+    return {
+      ok: true,
+      content: res.content,
+      code: null,
+      mtimeMs: res.mtimeMs ?? null,
+      encoding: res.encoding,
+      link: res.link === true,
+    };
   }
   return { ok: false, content: null, code: res.code ?? null, mtimeMs: null };
 }
@@ -115,6 +124,7 @@ async function indexOnePath(relativePath: string): Promise<void> {
     index.upsert(metadata);
     bumpEntry(rel);
     noteReadEncoding(rel, res.encoding); // a non-UTF-8 note opens non-editable
+    noteReadLink(rel, res.link); // so does a symbolic link
     // Cancel any pending retry — the read succeeded this pass.
     const pending = pendingRetries.get(relativePath);
     if (pending) {

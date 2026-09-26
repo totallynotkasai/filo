@@ -3,7 +3,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import {
   promptBoardExternalEdit,
   __inFlightDriftPromptsForTests,
-} from '@renderer/stores/vaultExternalChanges';
+} from '@renderer/stores/boardDrift';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**

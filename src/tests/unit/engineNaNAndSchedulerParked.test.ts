@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { valuesEqual } from '@renderer/lib/vault/frontmatterEngine';
-import { diffToFrontmatterDelta } from '@renderer/lib/vault/frontmatterDelta';
+import { subtractWrittenDelta } from '@renderer/lib/vault/frontmatterDelta';
 import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstModel';
 import { createScheduler } from '@renderer/lib/boards/writeScheduler';
 import { writeBoardFile, setBoardExternalEditHandler } from '@renderer/lib/boards/boardWriteScheduler';
@@ -30,16 +30,14 @@ describe('Audit-17 5.1 — NaN equality (no churn on untouched `.nan` keys)', ()
     expect(valuesEqual({ a: NaN }, { a: 1 })).toBe(false);
   });
 
-  it('diffToFrontmatterDelta does not flag an untouched `.nan` key as changed', () => {
-    // valuesShallowEqual (private) is exercised through the popup diff: an
-    // unchanged NaN value must produce an EMPTY delta. Pre-fix (NaN !== NaN) it
-    // was emitted as a `set`, re-serialising the key on every unrelated edit.
-    const delta = diffToFrontmatterDelta({ score: NaN, title: 'x' }, { score: NaN, title: 'x' });
-    expect(delta.set).toEqual({});
-    expect(delta.unset).toEqual([]);
-    // A genuine change still surfaces.
-    const changed = diffToFrontmatterDelta({ score: NaN }, { score: 1 });
-    expect(changed.set).toEqual({ score: 1 });
+  it('subtractWrittenDelta treats a landed `.nan` value as landed', () => {
+    // valuesShallowEqual (private) is exercised through subtractWrittenDelta: a
+    // NaN that already landed must leave nothing queued (NaN !== NaN would keep
+    // re-applying it).
+    expect(subtractWrittenDelta({ set: { score: NaN }, unset: [] }, { set: { score: NaN }, unset: [] })).toBeNull();
+    // A different value still stays queued.
+    expect(subtractWrittenDelta({ set: { score: 1 }, unset: [] }, { set: { score: NaN }, unset: [] }))
+      .toEqual({ set: { score: 1 }, unset: [] });
   });
 
   it('CST engine byte-preserves an untouched non-canonical `.NaN` scalar', () => {

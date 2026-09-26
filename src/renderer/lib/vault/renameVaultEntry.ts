@@ -1,7 +1,7 @@
 import type { FileTreeNode } from '../../../shared/types';
 import { vaultStore } from '../../stores/vault.svelte';
 import { uiStore } from '../../stores/ui.svelte';
-import { normalizePath, toPosix } from '../utils/path';
+import { toPosix, toVaultRelative } from '../utils/path';
 
 /**
  * Renames a sidebar entry to `draft` (already validated by the caller with
@@ -21,11 +21,7 @@ export async function renameVaultEntry(node: FileTreeNode, draft: string): Promi
   const vaultRoot = vaultStore.path;
   if (vaultRoot) {
     // Build the vault-relative path the IPC layer expects.
-    const root = normalizePath(vaultRoot);
-    const newAbsNorm = toPosix(newAbsPath);
-    const newRel = newAbsNorm.toLowerCase().startsWith(root.toLowerCase() + '/')
-      ? newAbsNorm.slice(root.length + 1)
-      : newAbsNorm;
+    const newRel = toVaultRelative(newAbsPath, vaultRoot) ?? toPosix(newAbsPath);
     try {
       const exists = await window.filo.invoke('vault:file-exists', vaultRoot, newRel);
       if (exists) {

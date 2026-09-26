@@ -12,7 +12,13 @@ import {
   VaultTreeTooLargeError,
   CaseRenameStrandedError,
 } from '../vault/fileOps';
-import { atomicWriteFile, uniqueFolderPath, withOnDiskSpelling, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
+import {
+  atomicWriteFile,
+  isSymbolicLink,
+  uniqueFolderPath,
+  withOnDiskSpelling,
+  LOCK_AWARE_SUPPRESS_MS,
+} from '../vault/filenameUtils';
 import { createExclusiveFile } from '../vault/exclusiveCreate';
 import { FileWatcher } from '../services/fileWatcher';
 import {
@@ -50,6 +56,19 @@ function notUtf8Refusal(relativePath: string): { success: false; code: 'NOT_UTF8
     success: false,
     code: 'NOT_UTF8',
     error: `"${relativePath}" is not UTF-8 text; Filo won't overwrite it (use "Convert to UTF-8")`,
+  };
+}
+
+/**
+ * The typed refusal for a write over a symbolic link. Links aren't followed:
+ * the atomic rename would replace the link with a regular file, and the
+ * original it points at would stop getting the edits.
+ */
+function linkRefusal(relativePath: string): { success: false; code: 'NOTE_IS_LINK'; error: string } {
+  return {
+    success: false,
+    code: 'NOTE_IS_LINK',
+    error: `"${relativePath}" is a link to another file; Filo won't replace it (edit the original)`,
   };
 }
 
@@ -501,12 +520,16 @@ export function registerVaultHandlers(): void {
       // Record (or clear) a non-UTF-8 file so the text write
       // channels refuse to overwrite it with U+FFFD-damaged text.
       noteReadEncoding(abs, result.encoding === 'utf-8');
+      // A symbolic link is shown but never written (see `linkRefusal`); the
+      // renderer marks the note read-only from this flag.
+      const link = await isSymbolicLink(abs);
       return {
         success: true,
         content: result.content,
         mtimeMs: result.mtimeMs,
         size: result.size,
         encoding: result.encoding,
+        ...(link ? { link: true as const } : {}),
       };
     } catch (err) {
       const code = ipcErrorCode(err);
@@ -609,9 +632,10 @@ export function registerVaultHandlers(): void {
         const fullPath = join(vaultRoot, relativePath);
         assertWithinVault(vaultRoot, fullPath);
         if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
+        if (await isSymbolicLink(fullPath)) return linkRefusal(relativePath);
         await fsPromises.mkdir(dirname(fullPath), { recursive: true });
         activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, content);
-        await atomicWriteFile(await withOnDiskSpelling(fullPath), content);
+        await atomicWriteFile(await withOnDiskSpelling(fullPath), content, { refuseLink: true });
         noteOwnWrite(relativePath, content);
         return { success: true, path: fullPath };
       } catch (err) {
@@ -714,6 +738,7 @@ export function registerVaultHandlers(): void {
         // Never overwrite a file whose bytes aren't UTF-8 with text decoded
         // from them (every non-ASCII byte would become U+FFFD).
         if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
+        if (await isSymbolicLink(fullPath)) return linkRefusal(relativePath);
         activeWatcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, content);
         // `expectExisting` re-verifies the destination right
         // before the rename so a delete landing in the stat-precheck→rename
@@ -724,6 +749,7 @@ export function registerVaultHandlers(): void {
         await atomicWriteFile(await withOnDiskSpelling(fullPath), content, {
           expectExisting: true,
           expectStat: expect,
+          refuseLink: true,
         });
         noteOwnWrite(relativePath, content);
         return { success: true, path: fullPath };

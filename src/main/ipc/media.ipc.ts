@@ -7,7 +7,8 @@ import { assertNotInFiloDir, assertSafeFilename, assertSafeRelativePath, assertW
 import { assertActiveVault } from '../utils/activeVaultCheck';
 import { getMimeType } from '../utils/mime';
 import { logMainError } from '../utils/mainLogger';
-import { toPosix, relativePosix } from '../utils/pathHelpers';
+import { relativePosix } from '../utils/pathHelpers';
+import { toPosix } from '../../shared/pathUtils';
 import { getVaultRoot, getActiveWatcher } from './vault.ipc';
 import { assertPayloadByteSize, PAYLOAD_LIMITS } from '../utils/payloadLimits';
 import { atomicWriteFile, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';

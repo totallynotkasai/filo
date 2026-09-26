@@ -14,7 +14,7 @@ import { boardCacheStore } from './boardCache.svelte';
 import { historyStore } from './history.svelte';
 import { workspaceStore } from './workspace.svelte';
 import { themeStore } from './theme.svelte';
-import { normalizePath, toPosix } from '../lib/utils/path';
+import { normalizePath, toVaultRelative } from '../lib/utils/path';
 // Aliased import — the vault store has its own local `let vaultPath = $state<string>('')`
 // which shadows the constructor name otherwise.
 import { vaultPath as brandVaultPath, type VaultPath } from '../../shared/vaultPath';
@@ -1257,13 +1257,9 @@ export const vaultStore = {
       fileTree = tree;
       const knownPaths = new SvelteSet<VaultPath>();
       const walk = (nodes: FileTreeNode[]) => {
-        const root = normalizePath(vaultPath).toLowerCase();
         for (const n of nodes) {
-          const rel = toPosix(n.path).toLowerCase();
-          if (rel.startsWith(root + '/')) {
-            const slice = toPosix(n.path).slice(root.length + 1);
-            if (!n.isDirectory && slice) knownPaths.add(brandVaultPath(slice));
-          }
+          const rel = toVaultRelative(n.path, vaultPath);
+          if (!n.isDirectory && rel) knownPaths.add(brandVaultPath(rel));
           if (n.children) walk(n.children);
         }
       };

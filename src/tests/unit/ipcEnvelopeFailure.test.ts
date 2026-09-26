@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { assertIpcOk, IpcEnvelopeError } from '@renderer/lib/utils/ipcEnvelope';
+import { assertIpcOk, IpcEnvelopeError } from '@shared/ipcEnvelope';
 import {
   writeBoardFile,
   writeConfigs,

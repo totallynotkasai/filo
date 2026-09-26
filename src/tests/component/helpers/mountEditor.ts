@@ -62,6 +62,8 @@ export interface RecordingFilo {
   failReads(rel: string, code: string | null): void;
   /** Make the next writes of `rel` fail with this error code. */
   failWrites(rel: string, code: string | null): void;
+  /** Paths that are symbolic links: reads carry `link: true`, writes fail NOTE_IS_LINK. */
+  links: Set<string>;
 }
 
 const WRITE_CHANNELS = new Set([
@@ -85,8 +87,9 @@ export function recordingFilo(initial: Record<string, string>): RecordingFilo {
   const writeFailures = new Map<string, string>();
   const writes: RecordedWrite[] = [];
   const calls: string[] = [];
+  const links = new Set<string>();
 
-  const size = (s: string): number => new TextEncoder().encode(s).length;
+  const size =(s: string): number => new TextEncoder().encode(s).length;
   const fail = (code: string) => ({ ok: false, success: false, code, error: code });
 
   installFiloMock((channel: unknown, ...args: unknown[]) => {
@@ -98,7 +101,14 @@ export function recordingFilo(initial: Record<string, string>): RecordingFilo {
       if (code) return fail(code);
       const content = files.get(rel);
       if (content === undefined) return fail('ENOENT');
-      return { ok: true, success: true, content, mtimeMs: mtimes.get(rel) ?? clock, size: size(content) };
+      return {
+        ok: true,
+        success: true,
+        content,
+        mtimeMs: mtimes.get(rel) ?? clock,
+        size: size(content),
+        ...(links.has(rel) ? { link: true } : {}),
+      };
     }
     if (ch === 'vault:stat') {
       const content = files.get(rel);
@@ -111,6 +121,7 @@ export function recordingFilo(initial: Record<string, string>): RecordingFilo {
       const code = writeFailures.get(rel);
       if (code) return fail(code);
       if (ch === 'vault:create-file-text' && files.has(rel)) return fail('EEXIST');
+      if (links.has(rel)) return fail('NOTE_IS_LINK');
       const content = String(args[2] ?? '');
       files.set(rel, content);
       clock += 10;
@@ -139,6 +150,7 @@ export function recordingFilo(initial: Record<string, string>): RecordingFilo {
       if (code) writeFailures.set(r, code);
       else writeFailures.delete(r);
     },
+    links,
   };
 }
 

@@ -40,7 +40,7 @@ import { uiStore } from '../../stores/ui.svelte';
 import { PendingWritesFailedError, withDrainedWrites } from './vaultOperations';
 import { noteStore } from '../../stores/notes.svelte';
 import { isMissingFileError, NoteBusyError } from '../notes/noteWriter';
-import { isNonUtf8 } from './nonUtf8Paths.svelte';
+import { isLinkedNote, isNonUtf8 } from './nonUtf8Paths.svelte';
 import { getActiveVaultPath } from './activeVaultPath';
 import type { FileMetadata } from './vaultIndex';
 import { rebasePath, registerPathRenamable } from './renamePathKeys';
@@ -173,6 +173,7 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
   // decoded text would persist U+FFFD for every non-ASCII byte, so they are
   // skipped (and main refuses the write anyway) and named in one toast.
   const skippedNonUtf8: string[] = [];
+  const skippedLinks: string[] = [];
   // Planned notes gone by the time their write ran, with no recorded rename
   // to follow: named in a toast, and the sentinel stays.
   const skippedMissing: string[] = [];
@@ -188,6 +189,10 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
       const readResult = await invokeOk('vault:read-file-text', vaultRoot, md.path);
       if (readResult.encoding === 'invalid-utf-8') {
         skippedNonUtf8.push(md.path);
+        continue;
+      }
+      if (readResult.link) {
+        skippedLinks.push(md.path);
         continue;
       }
       raw = readResult.content;
@@ -304,9 +309,10 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
             continue;
           }
           if (written === null) {
-            // Already without the old tag, or no longer UTF-8 (never rewritten
-            // from decoded text).
+            // Already without the old tag, no longer UTF-8 (never rewritten
+            // from decoded text), or a symbolic link (never replaced).
             if (isNonUtf8(target)) skippedNonUtf8.push(target);
+            else if (isLinkedNote(target)) skippedLinks.push(target);
             continue;
           }
           succeeded.push(target);
@@ -356,6 +362,14 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
     const names = skippedNonUtf8.slice(0, 5).join(', ') + (skippedNonUtf8.length > 5 ? `, +${skippedNonUtf8.length - 5} more` : '');
     uiStore.pushToast({
       text: `Tag rename skipped ${skippedNonUtf8.length} note${skippedNonUtf8.length === 1 ? '' : 's'} that aren't UTF-8 (converting them would damage accented characters): ${names}. Open each and use "Convert to UTF-8" first.`,
+      type: 'warning',
+      duration: 12000,
+    });
+  }
+  if (skippedLinks.length > 0) {
+    const names = skippedLinks.slice(0, 5).join(', ') + (skippedLinks.length > 5 ? `, +${skippedLinks.length - 5} more` : '');
+    uiStore.pushToast({
+      text: `Tag ${newName === null ? 'removal' : 'rename'} skipped ${skippedLinks.length} note${skippedLinks.length === 1 ? '' : 's'} that ${skippedLinks.length === 1 ? 'is a link' : 'are links'} to another file: ${names}. Edit the original${skippedLinks.length === 1 ? '' : 's'}.`,
       type: 'warning',
       duration: 12000,
     });

@@ -43,14 +43,14 @@ function plural(n: number, one: string, many: string): string {
 }
 
 /** One line per path with its reason, capped at {@link MAX_LISTED}. */
-export function unsavedListText(items: readonly UnsavedItem[]): string {
+function unsavedListText(items: readonly UnsavedItem[]): string {
   const lines = items.slice(0, MAX_LISTED).map((i) => `• ${i.path}: ${CAUSE_TEXT[i.cause]}`);
   if (items.length > MAX_LISTED) lines.push(`…and ${items.length - MAX_LISTED} more`);
   return lines.join('\n');
 }
 
 /** The headline: how many changes aren't on disk. */
-export function unsavedHeadline(items: readonly UnsavedItem[]): string {
+function unsavedHeadline(items: readonly UnsavedItem[]): string {
   if (items.length === 0) return 'Filo is still writing a change to disk.';
   return `${plural(items.length, "change couldn't be saved", "changes couldn't be saved")}.`;
 }

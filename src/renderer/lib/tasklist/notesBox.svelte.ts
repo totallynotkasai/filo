@@ -18,7 +18,7 @@ import { sameBody } from '../notes/noteFile';
 import { noteStore, type SetBodyStatus } from '../../stores/notes.svelte';
 import { promptNotesBoxConflict } from '../../stores/notePrompts';
 import { uiStore } from '../../stores/ui.svelte';
-import { isNonUtf8 } from '../vault/nonUtf8Paths.svelte';
+import { isLinkedNote, isNonUtf8 } from '../vault/nonUtf8Paths.svelte';
 
 export interface NotesBoxState {
   /** The user typed in the box since it opened (or since its last write). */
@@ -73,6 +73,7 @@ export class NotesBox {
     const path = this.deps.path();
     if (!path) return null;
     if (isNonUtf8(path)) return "This note isn't UTF-8, so Filo won't save it. Convert it from its Document tab.";
+    if (isLinkedNote(path)) return 'This note is a link; edit the original.';
     if (noteStore.get(path)?.readOnly) return "This note has formatting Filo can't keep, so it isn't saved from here. Edit it in its Document tab.";
     return null;
   }

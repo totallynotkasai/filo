@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ArrowTypeSchema, BorderStyleSchema, PathTypeSchema } from './styleEnums';
 import { TileStyleSchema } from './tile';
 import { ConnectionLabelSchema } from './connection';
 
@@ -26,7 +27,7 @@ const TileTypeSchema = z.enum([
   'timer',
 ]);
 
-export const LayoutTemplateTileSchema = z.object({
+const LayoutTemplateTileSchema = z.object({
   type: TileTypeSchema,
   relativePosition: RelativePositionSchema,
   size: SizeSchema,
@@ -57,11 +58,11 @@ export const LayoutTemplateConnectionSchema = z.object({
   // Path/arrow style fields are optional so a re-instantiated template's
   // connections fall through the cascade just like a freshly-drawn
   // connection. See ConnectionSchema docstring for the rationale.
-  pathType: z.enum(['curved', 'straight', 'elbow', 'smart']).optional(),
+  pathType: PathTypeSchema.optional(),
   pathColor: z.string().default(''),
   pathSize: z.number().min(1).max(10).optional(),
-  pathStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
-  arrowType: z.enum(['none', 'start', 'end', 'both']).optional(),
+  pathStyle: BorderStyleSchema.optional(),
+  arrowType: ArrowTypeSchema.optional(),
   arrowColor: z.string().default(''),
   arrowSize: z.number().min(4).max(24).optional(),
   visibility: z
@@ -113,7 +114,7 @@ export type LayoutTemplate = z.infer<typeof LayoutTemplateSchema>;
  * function is effectively a no-op; the scaffold lets a V2 bump land in
  * one file rather than scattering version-aware logic across callers.
  */
-export interface MigrateLayoutTemplateResult {
+interface MigrateLayoutTemplateResult {
   data: unknown;
   migratedFrom: number | null;
   fromFuture: boolean;

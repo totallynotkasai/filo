@@ -14,6 +14,7 @@ import {
   frontmatterSourceHasNonScalarKey,
   frontmatterSourceRootIsMapping,
 } from '../vault/frontmatterCstModel';
+import { splitFrontmatterFence } from '../notes/frontmatterFence';
 
 /**
  * Markdown round-trip helpers for TipTap editors backed by `.md` files.
@@ -57,8 +58,8 @@ export interface ParsedMarkdownDocument {
   /**
    * True iff the source started with a UTF-8 BOM (`﻿`).
    *
-   * The BOM is stripped before frontmatter detection so the fenced regex
-   * matches files saved by Windows editors (Notepad, Office "Save As UTF-8")
+   * The BOM is stripped before frontmatter detection so the fence is found
+   * in files saved by Windows editors (Notepad, Office "Save As UTF-8")
    * that prefix the byte-order mark.
    * Callers that want to preserve the user's original encoding on
    * round-trip pass this flag back to `assembleMarkdownFile` via
@@ -72,33 +73,17 @@ export interface ParsedMarkdownDocument {
  * an empty frontmatter object on any parse error (the raw block is still threaded
  * out via `rawFrontmatter` so an unparseable fence round-trips without data loss).
  *
- * Strips a leading UTF-8 BOM (`﻿`) before the regex so
- * Notepad-saved files don't lose their frontmatter. `hadBom` is returned so
- * the caller can re-emit the mark via `assembleMarkdownFile({ bom: true })`.
+ * Where the block starts and ends is decided by `splitFrontmatterFence`
+ * (`lib/notes/frontmatterFence.ts`), the one fence parser every reader and
+ * writer shares. It skips a leading UTF-8 BOM so Notepad-saved files don't
+ * lose their frontmatter; `hadBom` is returned so the caller can re-emit the
+ * mark via `assembleMarkdownFile({ bom: true })`.
  */
 export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
-  if (!raw) return { frontmatter: {}, rawFrontmatter: '', body: '', hasFrontmatter: false, hadBom: false };
-
-  const hadBom = raw.charCodeAt(0) === 0xfeff;
-  const text = hadBom ? raw.slice(1) : raw;
-
-  if (!text) return { frontmatter: {}, rawFrontmatter: '', body: '', hasFrontmatter: false, hadBom };
-
-  // `[ \t]*` tolerates trailing horizontal whitespace on either fence line
-  // (`--- `), which editors / linters routinely leave; without it the YAML would
-  // leak into the body.
-  //
-  // The non-greedy `([\s\S]*?)` stopping at the FIRST column-0 `---` is safe: a
-  // column-0 `---` is a YAML document boundary (never valid mapping content), and
-  // a `---` inside a scalar is indented.
-  //
-  // The interior group is OPTIONAL so a zero-interior fence pair (`---\n---\n`,
-  // a common empty-frontmatter placeholder) parses as an EMPTY frontmatter block
-  // rather than "no frontmatter" (which made the tag-rewriter prepend a second
-  // block). The body is still group 2.
-  const fenced = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*\r?\n?([\s\S]*)$/.exec(text);
-  if (!fenced) {
-    return { frontmatter: {}, rawFrontmatter: '', body: text, hasFrontmatter: false, hadBom };
+  const split = splitFrontmatterFence(raw);
+  const { hadBom, block } = split;
+  if (!block) {
+    return { frontmatter: {}, rawFrontmatter: '', body: split.body, hasFrontmatter: false, hadBom };
   }
 
   let frontmatter: Record<string, unknown> = {};
@@ -112,7 +97,7 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
     // threaded out below so the fence is kept.
     // logLevel 'error': a collection key (`[a, b]: x`) is stringified by
     // toJS() on purpose; the package's warning about it is noise.
-    const doc = parseDocument(fenced[1] ?? '', { logLevel: 'error' });
+    const doc = parseDocument(block.source, { logLevel: 'error' });
     if (doc.errors.length === 0) {
       const loaded = doc.toJS();
       if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
@@ -125,7 +110,7 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
 
   // Keep the raw YAML source even when it didn't parse into an object,
   // so the write path can preserve a fence it couldn't turn into keys.
-  return { frontmatter, rawFrontmatter: fenced[1] ?? '', body: fenced[2] ?? '', hasFrontmatter: true, hadBom };
+  return { frontmatter, rawFrontmatter: block.source, body: split.body, hasFrontmatter: true, hadBom };
 }
 
 /**

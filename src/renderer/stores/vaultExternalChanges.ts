@@ -48,9 +48,6 @@ export {
   _resetAttachmentDeleteGraceForTests,
 } from '../lib/vault/externalChangeWindows';
 
-// Re-export the board drift prompt for existing import sites (tests).
-export { promptBoardExternalEdit, __inFlightDriftPromptsForTests } from './vaultExternalDriftPrompts';
-
 /**
  * Tiebreak for a path inside the self-write suppression window. Returns true
  * when a fresh disk stat diverges from the baseline Filo last wrote (mtime OR

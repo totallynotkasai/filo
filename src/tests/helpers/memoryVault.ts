@@ -24,6 +24,8 @@ export interface MemoryVault {
   read(rel: string): string | undefined;
   /** Bytes whose UTF-8 decoding failed, per path (reads report invalid-utf-8). */
   nonUtf8: Set<string>;
+  /** Paths that are symbolic links (reads report `link`, writes fail NOTE_IS_LINK). */
+  links: Set<string>;
   /** Called before a write lands; await it to hold the write open. */
   beforeWrite: ((rel: string, text: string) => Promise<void> | void) | null;
   /** Called before a read returns; lets a test change the file mid-flush. */
@@ -59,6 +61,7 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
     files,
     writes: [],
     nonUtf8: new Set(),
+    links: new Set(),
     beforeWrite: null,
     afterRead: null,
     writeExternally: (rel, text) => put(rel, text),
@@ -95,6 +98,7 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
     const k = key(rel);
     if (mode === 'existing' && !files.has(k)) return { success: false, code: 'ENOENT', error: 'ENOENT' };
     if (mode === 'create' && files.has(k)) return { success: false, code: 'EEXIST', error: 'EEXIST' };
+    if (vault.links.has(k)) return { success: false, code: 'NOTE_IS_LINK', error: 'NOTE_IS_LINK' };
     await vault.beforeWrite?.(rel, text);
     // Checked after the hook too: the main process re-checks right before the rename.
     if (!statMatches(k, expect)) return { success: false, code: 'STALE', error: 'STALE' };
@@ -122,6 +126,7 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
           mtimeMs: mtimes.get(k),
           size: enc.encode(content).length,
           encoding: vault.nonUtf8.has(k) ? 'invalid-utf-8' : 'utf-8',
+          ...(vault.links.has(k) ? { link: true } : {}),
         };
       }
       case 'vault:stat':

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BorderStyleSchema, ShapeSchema } from './styleEnums';
 import { coerceToNumber, optionalNumber } from './schemaUtils';
 
 /**
@@ -47,8 +48,8 @@ export const TileStyleSchema = z.object({
   headerColor: z.string(),
   bodyColor: z.string(),
   borderColor: z.string().default(''),
-  shape: z.enum(['rectangle', 'rounded']).optional(),
-  borderStyle: z.enum(['solid', 'dashed', 'dotted']).optional(),
+  shape: ShapeSchema.optional(),
+  borderStyle: BorderStyleSchema.optional(),
   borderWidth: optionalNumber(z.number().min(0).max(10).optional()),
   shadowIntensity: optionalNumber(z.number().min(0).max(1).optional()),
   // Per-element override of the Dynamic Contrast Text feature. `null` means
@@ -97,7 +98,7 @@ const BaseTileSchema = z.object({
 
 // ── Individual tile type schemas ──
 
-export const TextTileSchema = BaseTileSchema.extend({
+const TextTileSchema = BaseTileSchema.extend({
   type: z.literal('text'),
   content: z.string().default(''), // editor HTML, view-only
   /**
@@ -118,20 +119,20 @@ export const ImageTileSchema = BaseTileSchema.extend({
   alt: z.string().optional(),
 }).passthrough();
 
-export const VideoTileSchema = BaseTileSchema.extend({
+const VideoTileSchema = BaseTileSchema.extend({
   type: z.literal('video'),
   src: z.string().default(''),
   isPlaying: z.boolean().default(false),
 }).passthrough();
 
-export const FileTileSchema = BaseTileSchema.extend({
+const FileTileSchema = BaseTileSchema.extend({
   type: z.literal('file'),
   filePath: z.string().default(''), // relative vault path
   fileName: z.string().default(''),
   fileExtension: z.string().default(''),
 }).passthrough();
 
-export const AudioTileSchema = BaseTileSchema.extend({
+const AudioTileSchema = BaseTileSchema.extend({
   type: z.literal('audio'),
   src: z.string().default(''), // relative vault path to MP3
   isRecording: z.boolean().default(false),
@@ -350,10 +351,3 @@ export const TileDefinitionSchema = z.discriminatedUnion('type', [
 
 export type TileDefinition = z.infer<typeof TileDefinitionSchema>;
 export type TextTileDef = z.infer<typeof TextTileDefSchema>;
-export type ImageTileDef = z.infer<typeof ImageTileDefSchema>;
-export type VideoTileDef = z.infer<typeof VideoTileDefSchema>;
-export type AudioTileDef = z.infer<typeof AudioTileDefSchema>;
-export type FileTileDef = z.infer<typeof FileTileDefSchema>;
-export type LinkTileDef = z.infer<typeof LinkTileDefSchema>;
-export type IframeTileDef = z.infer<typeof IframeTileDefSchema>;
-export type TimerTileDef = z.infer<typeof TimerTileDefSchema>;

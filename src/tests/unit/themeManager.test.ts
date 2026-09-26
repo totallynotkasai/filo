@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   applyBuiltinTheme,
   applyCustomTheme,
-  resetThemeManager,
+  __resetThemeManagerForTests,
   listBuiltinThemes,
   type ThemeFile,
 } from '@renderer/lib/themes/themeManager';
@@ -11,7 +11,7 @@ describe('themeManager', () => {
   beforeEach(() => {
     // Wipe any previously applied custom-theme variables and reset the
     // data-theme attribute so each test starts from a clean slate.
-    resetThemeManager();
+    __resetThemeManagerForTests();
     document.documentElement.removeAttribute('data-theme');
   });
 

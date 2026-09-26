@@ -642,7 +642,7 @@ The Global Toolbar consists of the following buttons:
 
 * **Global Undo (Button / Ctrl+Z)** — Undoes the last action on the active board. The undo history is scoped per-board — each board maintains its own independent undo stack. In split-pane mode, undo applies to whichever pane the user is actively editing. Tracked actions vary by board type but broadly cover: element creation/deletion, moves and resizes, text content changes (integrated with TipTap's built-in undo), style changes, and board-level setting changes. This button is faded if there is no undo action available.
 
-* **Global Redo (Button / Ctrl+Y)** — Redoes the last undone action on the active board. Uses the same per-board redo stack. This button is faded if there is no redo action available.
+* **Global Redo (Button / Ctrl+Y or Ctrl+Shift+Z)** — Redoes the last undone action on the active board. Uses the same per-board redo stack. This button is faded if there is no redo action available.
 
 * **Search, Find and Replace (Button / Ctrl+Shift+F)** — Opens a floating Search panel in the top-left of the workspace. The panel is draggable so the user can reposition it; closing returns focus to the previously focused element. The find box accepts a query; toggling Replace mode reveals a second box and the Replace / Replace All actions. Supports search operators (combinable; AND-joined):
     * `tag:#tagname` — Search by frontmatter tag (leading `#` is optional)
@@ -925,20 +925,31 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 
 | Shortcut | Action |
 |---|---|
-| Ctrl + N | New Tile |
+| Ctrl + N | New Tile (Mind Map), New Card (Kanban), New Task (Task List) |
 | Ctrl + T | Insert Template |
 | Ctrl + Z | Undo |
-| Ctrl + Y | Redo |
+| Ctrl + Y, Ctrl + Shift + Z | Redo |
+| Ctrl + S | Save |
+| Ctrl + O | Open Vault (from Home or an open vault) |
+| Ctrl + Shift + W | Close Vault |
+| Ctrl + , | Settings |
+| Ctrl + W | Close Tab |
+| Ctrl + Tab, Ctrl + Shift + Tab | Next / Previous Tab |
 | Ctrl + G | Group/Ungroup |
+| Ctrl + L | Lock/Unlock Selected |
+| Ctrl + A | Select All |
 | Ctrl + K | Insert Link |
 | Ctrl + Shift + F | Vault-wide Search |
-| Ctrl + Shift + Arrow | Add/Select Neighbour |
+| Ctrl + Shift + T | Tags Browser |
+| Arrow | Select the nearest tile in that direction (Mind Map) |
+| Ctrl + Shift + Arrow | Add the nearest tile in that direction to the selection (Mind Map) |
+| Ctrl + Arrow | Move the selected tiles (Mind Map) |
 | Shift + Drag | Area Selection |
 | Delete | Remove Selected |
 | Escape | Cancel Action |
 | Alt + Click | Open in Split Pane |
 
-All keyboard shortcuts are customisable via `.filo/hotkeys.json` or the Settings UI.
+Every shortcut registered as a command is listed in Help → Shortcuts and can be rebound there; overrides are stored in `.filo/hotkeys.json`. There is no native application menu: these shortcuts replace it.
 
 ## Animations
 

@@ -1,5 +1,5 @@
 /**
- * Vault-swap reset chain — characterization + lifecycle contract.
+ * Vault-swap reset chain — contract + lifecycle contract.
  *
  * Phase 0 of the consolidation plan captured the inline reset chain inside
  * `vault.svelte.ts:openVault` as a source-code snapshot. Phase 4

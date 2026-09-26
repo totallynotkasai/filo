@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatDueDateAbsolute,
-  formatDueDateRelative,
   formatTimeChip,
   isOverdue,
 } from '@renderer/lib/tasks/dueDateFormat';
@@ -25,41 +24,6 @@ describe('formatDueDateAbsolute', () => {
     // returns `'2025-12-31'` in negative-offset timezones. Our parser must
     // use local construction.
     expect(formatDueDateAbsolute('2026-01-01')).toBe('Jan 1');
-  });
-});
-
-describe('formatDueDateRelative', () => {
-  const TODAY = new Date(2026, 4, 16); // 2026-05-16
-
-  it('formats today as "Today"', () => {
-    expect(formatDueDateRelative('2026-05-16', TODAY)).toBe('Today');
-  });
-
-  it('formats tomorrow as "Tomorrow"', () => {
-    expect(formatDueDateRelative('2026-05-17', TODAY)).toBe('Tomorrow');
-  });
-
-  it('formats yesterday as "Yesterday"', () => {
-    expect(formatDueDateRelative('2026-05-15', TODAY)).toBe('Yesterday');
-  });
-
-  it('formats 2-6 days ahead as "In N days"', () => {
-    expect(formatDueDateRelative('2026-05-18', TODAY)).toBe('In 2 days');
-    expect(formatDueDateRelative('2026-05-22', TODAY)).toBe('In 6 days');
-  });
-
-  it('formats 2-6 days behind as "N days ago"', () => {
-    expect(formatDueDateRelative('2026-05-14', TODAY)).toBe('2 days ago');
-    expect(formatDueDateRelative('2026-05-10', TODAY)).toBe('6 days ago');
-  });
-
-  it('falls back to absolute chip outside ±6 days', () => {
-    expect(formatDueDateRelative('2026-06-01', TODAY)).toBe('Jun 1');
-    expect(formatDueDateRelative('2026-05-09', TODAY)).toBe('May 9');
-  });
-
-  it('returns empty string for empty input', () => {
-    expect(formatDueDateRelative('', TODAY)).toBe('');
   });
 });
 

@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   markBoardProvisionallyMissing,
-  isBoardProvisionallyMissing,
   RECHECK_GRACE_MS,
 } from '@renderer/stores/boardProvisionalMissing';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -88,7 +87,6 @@ describe('provisionally missing boards (Audit-19 EXT-1)', () => {
     expect(boardCacheStore.cache.b1).toBeDefined(); // NOT evicted
     expect(saves).not.toContain(OLD); // the old folder was never recreated
     expect(saves).toContain(NEW); // the held edit landed at the new path
-    expect(isBoardProvisionallyMissing('b1')).toBe(false);
     expect(isBoardPathHeld(OLD)).toBe(false);
   });
 

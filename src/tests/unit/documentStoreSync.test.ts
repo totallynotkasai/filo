@@ -1,6 +1,6 @@
 /**
  * Several views of one `.md` file (text tiles on different boards, a Document
- * tab, the Properties popup, a Task List row) share one note model, so an edit
+ * tab, a Task List row) share one note model, so an edit
  * from any of them is what every other one reads and writes:
  *  - the model is found by path in any spelling (slashes, case);
  *  - frontmatter changes from different writers merge, none is dropped;

@@ -148,15 +148,26 @@ export interface IpcChannelMap {
     // it); the note writer re-reads such a read before trusting it.
     // `encoding` is `'invalid-utf-8'` when the bytes aren't UTF-8
     // (content is still decoded, with U+FFFD, for display only); absent = UTF-8.
-    result: IpcSuccess<{ content: string; mtimeMs?: number; size?: number; encoding?: 'utf-8' | 'invalid-utf-8' }>;
+    // `link` is true when the path is a symbolic link: the note is shown but
+    // never written (the text write channels refuse it with 'NOTE_IS_LINK').
+    result: IpcSuccess<{
+      content: string;
+      mtimeMs?: number;
+      size?: number;
+      encoding?: 'utf-8' | 'invalid-utf-8';
+      link?: true;
+    }>;
   };
   'vault:write-file-text': {
+    // Fails with 'NOT_UTF8' / 'NOTE_IS_LINK' (nothing written) over a
+    // non-UTF-8 file or a symbolic link.
     args: [vaultRoot: string, relPath: string, content: string];
     result: IpcSuccess<{ path: string }>;
   };
   'vault:write-existing-file-text': {
     // `expect`: the file's stat when the renderer read it. The write fails
-    // with code 'STALE' (nothing written) when the file changed since.
+    // with code 'STALE' (nothing written) when the file changed since, and
+    // with 'NOT_UTF8' / 'NOTE_IS_LINK' over a non-UTF-8 file or a symbolic link.
     args: [vaultRoot: string, relPath: string, content: string, expect?: { mtimeMs: number; size: number }];
     result: IpcSuccess<{ path: string }>;
   };

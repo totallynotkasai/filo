@@ -24,7 +24,7 @@ export const FiloLinkSchema = z.object({
   label: z.string().default(''),
 }).passthrough();
 
-export type FiloLink = z.infer<typeof FiloLinkSchema>;
+type FiloLink = z.infer<typeof FiloLinkSchema>;
 
 /**
  * Schema for a *decoded* link, produced by
@@ -48,7 +48,7 @@ export const DecodedFiloLinkSchema = z.object({
   text: z.string().optional(),
 });
 
-export type DecodedFiloLink = z.infer<typeof DecodedFiloLinkSchema>;
+type DecodedFiloLink = z.infer<typeof DecodedFiloLinkSchema>;
 
 /**
  * Encodes a Filo internal link as a URI for use in Tiptap Link extension.

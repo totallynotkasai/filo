@@ -10,7 +10,8 @@ import {
   hashFileForRename,
 } from './fileWatcherHash';
 import { logMainError } from '../utils/mainLogger';
-import { toPosix, relativePosix } from '../utils/pathHelpers';
+import { relativePosix } from '../utils/pathHelpers';
+import { toPosix } from '../../shared/pathUtils';
 import { vaultPath, type VaultPath } from '../../shared/vaultPath';
 import type { FileChangeEvent, FileChangeType } from './fileWatcherTypes';
 import {

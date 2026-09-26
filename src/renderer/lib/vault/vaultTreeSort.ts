@@ -4,7 +4,7 @@ import type {
   VaultSortDirection,
   VaultGroupField,
 } from '../../../shared/types';
-import { normalizePath, toPosix } from '../utils/path';
+import { normalizePath, toVaultRelative } from '../utils/path';
 
 export interface SortConfig {
   sortField: VaultSortField;
@@ -177,13 +177,9 @@ export function treesEqual(a: FileTreeNode[], b: FileTreeNode[]): boolean {
 
 export function flattenTreePaths(nodes: FileTreeNode[], rootAbs: string): Set<string> {
   const out = new Set<string>();
-  const root = normalizePath(rootAbs).toLowerCase();
   function walk(node: FileTreeNode) {
-    const rel = toPosix(node.path).toLowerCase();
-    if (rel.startsWith(root + '/')) {
-      const slice = toPosix(node.path).slice(root.length + 1);
-      if (!node.isDirectory && slice) out.add(slice);
-    }
+    const rel = toVaultRelative(node.path, rootAbs);
+    if (!node.isDirectory && rel) out.add(rel);
     if (node.children) for (const child of node.children) walk(child);
   }
   for (const n of nodes) walk(n);

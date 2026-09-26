@@ -527,7 +527,7 @@
     background: color-mix(in srgb, var(--accent-primary, #4f7cff) 5%, transparent);
   }
 
-  /* Style button (palette and brush) in the section header — opens TaskSectionStylePopup.
+  /* Style button (palette and brush) in the section header — opens its ElementStylePopup.
      Mirrors KanbanColumn's `.column-action-btn`: hidden at rest, revealed
      on section hover / focus so the header reads as quiet by default and
      the affordance only appears when the user is engaging with the section. */

@@ -42,8 +42,7 @@
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   let { tabId: _tabId }: { tabId?: string } = $props(); // pane-correct via scope; accepted + ignored
   const boardStore = scope.board;
-  import TaskItemStylePopup from './TaskItemStylePopup.svelte';
-  import TaskSectionStylePopup from './TaskSectionStylePopup.svelte';
+  import ElementStylePopup from './ElementStylePopup.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
   import TaskQuickAddInput from './TaskQuickAddInput.svelte';
   import SmartListTabs from './SmartListTabs.svelte';
@@ -1069,7 +1068,7 @@
   //
   // TaskItem's Tags / Style buttons dispatch custom events that bubble up to
   // the board's scroll container. We listen for them once and mount the
-  // TagEditor / TaskItemStylePopup components — same pattern used by
+  // TagEditor / ElementStylePopup components — same pattern used by
   // MindMapBoard.
   let tagEditorPopup = $state<{ tileId: string; x: number; y: number } | null>(null);
   let taskItemStylePopup = $state<{ tileId: string; style?: PartialTaskStyle; x: number; y: number } | null>(null);
@@ -1518,9 +1517,9 @@
 
   <!-- Task-item style popup (placement override) -->
   {#if taskItemStylePopup && board}
-    <TaskItemStylePopup
+    <ElementStylePopup kind="task"
       boardId={board.id}
-      tileId={taskItemStylePopup.tileId}
+      elementId={taskItemStylePopup.tileId}
       style={taskItemStylePopup.style}
       x={taskItemStylePopup.x}
       y={taskItemStylePopup.y}
@@ -1530,9 +1529,10 @@
 
   <!-- Section-style popup -->
   {#if sectionStylePopup && board}
-    <TaskSectionStylePopup
+    <ElementStylePopup kind="taskSection"
       boardId={board.id}
-      section={{ id: sectionStylePopup.sectionId, style: sectionStylePopup.style }}
+      elementId={sectionStylePopup.sectionId}
+      style={sectionStylePopup.style}
       x={sectionStylePopup.x}
       y={sectionStylePopup.y}
       onclose={() => (sectionStylePopup = null)}

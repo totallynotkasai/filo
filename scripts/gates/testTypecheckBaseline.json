@@ -10,7 +10,7 @@
   "src/tests/unit/boardLoader.test.ts": 2,
   "src/tests/unit/boardSplitPaneReactive.test.ts": 1,
   "src/tests/unit/cancelAllPendingWrites.test.ts": 2,
-  "src/tests/unit/characterization/randomOpsNoOrphans.property.test.ts": 1,
+  "src/tests/unit/contracts/randomOpsNoOrphans.property.test.ts": 1,
   "src/tests/unit/connectionRestoreEndpointGuard.test.ts": 1,
   "src/tests/unit/deleteTilesCommandCrossBoardConnections.test.ts": 1,
   "src/tests/unit/emptyParagraphs.test.ts": 1,

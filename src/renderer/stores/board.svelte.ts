@@ -21,7 +21,7 @@ import {
   buildBoardSettingsFromTheme,
 } from '../lib/styles/buildBoardDefaults';
 import { vaultStore } from './vault.svelte';
-import { normalizePath, stripLeadingSlash } from '../lib/utils/path';
+import { normalizePath, stripLeadingSlash, toVaultRelative } from '../lib/utils/path';
 import type { BoardContext } from './boardStoreTypes';
 import { makeHistorySlice } from './boardHistory';
 import { makeConnectionsSlice } from './boardConnections';
@@ -444,11 +444,7 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       if (!currentBoard) return;
       const vp = vaultStore.path;
       if (!vp) return;
-      const root = normalizePath(vp);
-      const norm = normalizePath(absPath);
-      const rel = norm === root || !norm.startsWith(root + '/')
-        ? ''
-        : norm.slice(root.length + 1);
+      const rel = toVaultRelative(absPath, vp) ?? '';
       const current = (currentBoard.settings as { defaultFolder?: string }).defaultFolder ?? '';
       const next = rel === current ? '' : rel;
       store.updateSettings({ defaultFolder: next });
@@ -463,13 +459,8 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
     clearBoardDefaultFolderIfMatches(deletedPath: string, newPath?: string): string[] {
       const vp = vaultStore.path;
       if (!vp) return [];
-      const root = normalizePath(vp);
-      const toRel = (p: string): string => {
-        const norm = normalizePath(p);
-        return norm.startsWith(root + '/')
-          ? norm.slice(root.length + 1)
-          : stripLeadingSlash(norm);
-      };
+      const toRel = (p: string): string =>
+        toVaultRelative(p, vp) ?? stripLeadingSlash(normalizePath(p));
       const deletedRel = toRel(deletedPath);
       if (!deletedRel) return [];
       const newRel = newPath ? toRel(newPath) : '';

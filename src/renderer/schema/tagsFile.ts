@@ -55,7 +55,7 @@ export type TagsFile = z.infer<typeof TagsFileSchema>;
  * point is to lock the call site in place now so the V2 bump becomes
  * a one-file change.
  */
-export interface MigrateTagsFileResult {
+interface MigrateTagsFileResult {
   data: unknown;
   migratedFrom: number | null;
   fromFuture: boolean;

@@ -13,7 +13,7 @@ import { normalizePath } from '../utils/path';
  * the same way a new note's does; a name another file already has gets the
  * next free ` (n)`. A case-only difference renames in place.
  */
-export function pathMatchingTitle(relPath: string): string | null {
+function pathMatchingTitle(relPath: string): string | null {
   const slash = relPath.lastIndexOf('/');
   const folder = slash >= 0 ? relPath.slice(0, slash) : '';
   const ext = /\.markdown$/i.test(relPath) ? '.markdown' : '.md';

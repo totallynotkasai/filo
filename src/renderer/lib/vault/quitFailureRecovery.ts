@@ -120,7 +120,7 @@ export async function clearQuitFailureBreadcrumb(vaultRoot: string): Promise<voi
  * been surfaced, so a listed partial is never moved from under the notice.
  * Best-effort: a failure is logged, never blocks the open.
  */
-export async function sweepOrphanTempFiles(vaultRoot: string, captured: VaultIdentity): Promise<void> {
+async function sweepOrphanTempFiles(vaultRoot: string, captured: VaultIdentity): Promise<void> {
   if (!vaultRoot) return;
   try {
     const { moved } = await invokeOk('vault:sweep-orphan-tmp', vaultRoot);

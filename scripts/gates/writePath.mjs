@@ -131,7 +131,6 @@ const NOTE_WRITER_CONTRACT = [
     file: 'src/renderer/lib/vault/frontmatterDelta.ts',
     required: [
       { token: /export\s+function\s+patchToFrontmatterDelta\b/, why: 'patch → delta builder' },
-      { token: /export\s+function\s+diffToFrontmatterDelta\b/, why: 'snapshot diff → delta builder' },
       { token: /export\s+function\s+applyFrontmatterDelta\b/, why: 'delta applier' },
     ],
   },
@@ -155,6 +154,14 @@ const NOTE_WRITER_CONTRACT = [
       { token: /onBodyConflict\s*\(/, why: 'a drifted body is handed to the store, never written over' },
       { token: /text\s*!==\s*fresh\.text\.raw/, why: 'identical bytes are not written' },
     ],
+  },
+  {
+    // `vault:write-file-text` creates the file (and its folders) and overwrites
+    // whatever is there without a stat check: a note is changed only through
+    // `vault:write-existing-file-text` (which names the read it builds on) and
+    // created only through the exclusive `vault:create-file-text`.
+    file: NOTE_WRITER,
+    forbidden: [{ token: /['"`]vault:write-file-text['"`]/, why: 'the writer never uses the blind, create-capable write channel' }],
   },
   { file: 'src/renderer/commands/noteFieldCommand.ts', required: [{ token: /patchToFrontmatterDelta\s*\(/, why: 'field commands send a delta' }] },
   {
@@ -253,7 +260,8 @@ export const checks = [
     id: 'single-note-writer',
     title: 'only noteWriter writes a note, applying each change to a fresh read of the file',
     hint:
-      'Route every .md change through noteStore (setBody / patchFrontmatter / transform / createUnique / restore). ' +
+      'Route every .md change through noteStore (setBody / patchFrontmatter / transform / createUnique / createExclusive / recreate). ' +
+      'noteWriter itself writes only through vault:write-existing-file-text (stat-checked) and vault:create-file-text (exclusive). ' +
       'A write of a non-note file (a .filo/ sentinel or config) may use `// allow-direct-write: <reason>` on the call, ' +
       'the channel line or up to 4 lines above.',
     run(ctx) {

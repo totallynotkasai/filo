@@ -10,7 +10,7 @@
  * This is a source-scan pin (the mutation lived inside a tiptap `onUpdate`
  * handler in a Svelte component — mounting tiptap in jsdom isn't this suite's
  * convention; the repo pins component-internal invariants by source scan, e.g.
- * `characterization/externalEditReconciliation.test.ts`). It asserts the
+ * `contracts/externalEditReconciliation.test.ts`). It asserts the
  * vestigial `project.boards` write can't silently return AND that the canonical
  * `NoteEditorView` binding (the editor → note model sync) is still there.
  */

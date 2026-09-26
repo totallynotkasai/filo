@@ -48,7 +48,7 @@ import {
 import { invokeOk } from '../utils/invokeOk';
 import { reportError } from '../utils/errorBus';
 import { captureVaultIdentity, isStillSameVault } from '../vault/vaultIdentity';
-import { noteReadEncoding } from '../vault/nonUtf8Paths.svelte';
+import { noteReadEncoding, noteReadLink } from '../vault/nonUtf8Paths.svelte';
 import {
   mergeFrontmatterDelta,
   subtractWrittenDelta,
@@ -65,6 +65,7 @@ import {
   type DiskSnapshot,
   type NoteText,
 } from './noteFile';
+import { openingFenceEol } from './frontmatterFence';
 
 export const NOTE_WRITE_DEBOUNCE_MS = 300;
 
@@ -97,6 +98,8 @@ export interface FreshRead {
   mtimeMs?: number;
   size?: number;
   nonUtf8: boolean;
+  /** The path is a symbolic link: never written (the link would become a regular file). */
+  link?: boolean;
 }
 
 /** What the note store tells the writer, and what the writer reports back. */
@@ -218,6 +221,7 @@ export async function readNoteFresh(vaultRoot: string, relPath: string): Promise
   for (let attempt = 0; ; attempt++) {
     const result = await invokeOk('vault:read-file-text', vaultRoot, relPath);
     noteReadEncoding(relPath, result.encoding);
+    noteReadLink(relPath, result.link);
     const coherent = result.mtimeMs !== undefined && result.size !== undefined;
     if (coherent || attempt >= READ_RETRY_MS.length) {
       return {
@@ -225,6 +229,7 @@ export async function readNoteFresh(vaultRoot: string, relPath: string): Promise
         mtimeMs: result.mtimeMs,
         size: result.size,
         nonUtf8: result.encoding === 'invalid-utf-8',
+        link: result.link === true,
       };
     }
     await sleep(READ_RETRY_MS[attempt] ?? 300);
@@ -238,8 +243,7 @@ export async function readNoteFresh(vaultRoot: string, relPath: string): Promise
  */
 export function looksTorn(fresh: NoteText, hadFrontmatter: boolean): boolean {
   if (fresh.hasFrontmatter || !hadFrontmatter) return false;
-  const raw = fresh.hadBom ? fresh.raw.slice(1) : fresh.raw;
-  return /^---[ \t]*\r?\n/.test(raw);
+  return openingFenceEol(fresh.raw) !== null;
 }
 
 /**
@@ -303,8 +307,6 @@ export interface NoteWriter {
     firstCandidate: string,
     buildText: (finalStem: string) => string,
   ): Promise<{ relPath: string; stem: string; text: string }>;
-  /** Writes `text` to `relPath`, creating it (and its folders) if needed. For undoing a delete. */
-  restore(relPath: string, text: string, track?: TrackComponentWriteOptions): Promise<void>;
   /** Runs `op` while no write for any of `paths` can start. Queued writes land first. */
   hold<T>(paths: string[], op: () => Promise<T>): Promise<T>;
   /** Moves queued work from one path to another (rename sweep). */
@@ -439,6 +441,15 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         );
         markPathFailed(vaultRoot, relPath);
         throw new Error(`noteWriter: "${relPath}" is not UTF-8`);
+      }
+      if (fresh.link) {
+        reportError(
+          'note.link',
+          null,
+          `Couldn't save "${relPath}": it is a link to another file, so Filo won't replace it. Edit the original.`,
+        );
+        markPathFailed(vaultRoot, relPath);
+        throw new Error(`noteWriter: "${relPath}" is a link`);
       }
       const base = host.baseOf(path);
       const known = knownShape(path);
@@ -699,7 +710,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
             if (!isMissingFileError(err) && isStillSameVault(identity)) failedRewrite(vaultRoot, path, relPath);
             throw err;
           }
-          if (!isStillSameVault(identity) || fresh.nonUtf8) return null;
+          if (!isStillSameVault(identity) || fresh.nonUtf8 || fresh.link) return null;
           const unstable = fresh.mtimeMs === undefined || fresh.size === undefined;
           if (unstable || looksTorn(fresh.text, host.hadFrontmatter(path)) || (!lastRound && looksCutShort(fresh, knownShape(path)))) {
             if (lastRound) throw new Error(`noteWriter: "${relPath}" was mid-write by another program; try again`);
@@ -768,25 +779,6 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         n++;
       }
       throw new NameExhaustedError(base);
-    },
-
-    async restore(relPath, text, track) {
-      const path = vaultPath(relPath);
-      await onPath(path, async () => {
-        const vaultRoot = host.vaultRoot();
-        if (!vaultRoot) throw new Error('noteWriter: no vault is open');
-        const identity = captureVaultIdentity();
-        rememberOwnWrite(path, noteTextHash(text));
-        await trackComponentWrite(
-          vaultRoot,
-          relPath,
-          () => invokeOk('vault:write-file-text', vaultRoot, relPath, text),
-          track ?? {},
-        );
-        if (!isStillSameVault(identity)) return;
-        const written = readNoteText(text);
-        host.onWritten(path, relPath, written, snapshotOf(written), {});
-      });
     },
 
     async hold(paths, op) {

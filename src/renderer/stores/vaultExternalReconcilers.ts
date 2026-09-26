@@ -43,7 +43,7 @@ import { templatesStore } from './templates.svelte';
 import { uiStore } from './ui.svelte';
 import { vaultStore } from './vault.svelte';
 import { reportError } from '../lib/utils/errorBus';
-import { assertIpcOk } from '../lib/utils/ipcEnvelope';
+import { assertIpcOk } from '@shared/ipcEnvelope';
 import { isRecentSelfWrite, isPathPending, isPathQueuedOrInFlight } from '../lib/boards/boardSaver';
 import { loadTagsFile } from '../lib/vault/tagsStorage';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
@@ -254,7 +254,7 @@ async function reconcileTemplateChange(event: ExternalChangeEvent): Promise<void
  * Bridges `vaultStore.handleExternalMarkdownChanges` into the registry so the
  * dispatcher is exhaustive. The store method owns the cross-store
  * coordination (vault index, frontmatter sync, partial-read retry,
- * dirty-editor prompt, properties-popup-dirty path); the bridge just adapts
+ * dirty-editor prompt); the bridge just adapts
  * the event shape to its `string[]` argument.
  */
 const documentBatchedReconciler: BatchedReconciler = {

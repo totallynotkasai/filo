@@ -13,7 +13,7 @@
   import { NoteEditorView } from '../../lib/editor/noteEditorView';
   import { createId } from '../../lib/utils/ids';
   import { vaultStore } from '../../stores/vault.svelte';
-  import { isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
+  import { isLinkedNote, isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
   import { confirmConvertToUtf8 } from '../../lib/vault/convertToUtf8';
   import { uiStore } from '../../stores/ui.svelte';
   import { trashStore } from '../../stores/trash.svelte';
@@ -221,6 +221,9 @@
   let readOnly = $derived(model?.lossy ?? false);
   // A note whose bytes aren't UTF-8 is non-editable until converted.
   let nonUtf8 = $derived(isNonUtf8(docPath));
+  // A symbolic link is shown but never written: saving would replace the link
+  // with a regular file, and the original would stop getting the edits.
+  let linked = $derived(isLinkedNote(docPath));
   // The read failed for a reason other than a missing file: typing would
   // overwrite the unread file with an empty editor.
   let unreadable = $derived(model?.status === 'unreadable');
@@ -234,11 +237,11 @@
 
   // Freeze the editor while a tab-close drain is in flight (a keystroke would
   // be stranded by the unmount), while the note can't be written (lossy, not
-  // UTF-8, unreadable, missing) and until it has loaded.
+  // UTF-8, a link, unreadable, missing) and until it has loaded.
   $effect(() => {
     const status = model?.status;
     const frozen =
-      closeDrainGate.draining || readOnly || nonUtf8 || unreadable || missing || status === 'loading';
+      closeDrainGate.draining || readOnly || nonUtf8 || linked || unreadable || missing || status === 'loading';
     // Non-emitting + untracked: see setEditorEditable (avoids an effect loop).
     untrack(() => setEditorEditable(editor, !frozen));
   });
@@ -330,6 +333,10 @@
           <span class="readonly-text">This note isn't UTF-8 (probably Windows-1252). Filo won't save it, to avoid corrupting characters.</span>
           <button class="readonly-action" onclick={convertToUtf8}>Convert to UTF-8…</button>
         </div>
+      {:else if linked}
+        <div class="readonly-banner" role="status">
+          <span class="readonly-text">This note is a link; edit the original.</span>
+        </div>
       {:else if readOnly}
         <div class="readonly-banner" role="status">
           <span class="readonly-text">Filo can't save this file without changing formatting it doesn't support, so it's open read-only.</span>
@@ -340,7 +347,7 @@
         <div class="document-header">
           <div class="document-tags-bar">
             {#if !rawMode}
-              <NoteTagRow path={docPath} boardId={tab?.boardId ?? ''} readOnly={nonUtf8 || unreadable || missing} />
+              <NoteTagRow path={docPath} boardId={tab?.boardId ?? ''} readOnly={nonUtf8 || linked || unreadable || missing} />
             {/if}
           </div>
           <button
@@ -358,7 +365,7 @@
         </div>
       {/if}
       {#if rawMode && docPath}
-        <NoteRawView bind:this={rawView} path={docPath} readOnly={nonUtf8} />
+        <NoteRawView bind:this={rawView} path={docPath} readOnly={nonUtf8 || linked} />
       {/if}
       <div
         class="document-editor"

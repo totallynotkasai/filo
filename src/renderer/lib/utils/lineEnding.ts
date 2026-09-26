@@ -6,6 +6,8 @@
  * They share these rules so the two can never disagree about the same file.
  */
 
+import { openingFenceEol } from '../notes/frontmatterFence';
+
 export type LineEnding = '\n' | '\r\n';
 
 /**
@@ -28,9 +30,5 @@ export function fileLineEnding(raw: string): LineEnding {
  * fence line already uses, else (no block yet) the file's own.
  */
 export function frontmatterLineEnding(raw: string): LineEnding {
-  // allow-bom-sniff: the fence is looked for after any BOM the file carries
-  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
-  const fence = /^---[ \t]*(\r?\n)/.exec(text);
-  if (fence) return fence[1] === '\r\n' ? '\r\n' : '\n';
-  return fileLineEnding(text);
+  return openingFenceEol(raw) ?? fileLineEnding(raw);
 }

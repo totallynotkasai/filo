@@ -55,7 +55,7 @@ import type {
 import type { ThemeFile } from '../themes/themeManager';
 import type { TagsFile } from '../../schema/tagsFile';
 import { loadTagsFile } from './tagsStorage';
-import { normalizePath, toPosix } from '../utils/path';
+import { toVaultRelative } from '../utils/path';
 import { baselineSeq, noteBaseline } from './fileBaselineRegistry';
 import { stashRecoveryStatusBeforeCommit } from './dirtyFlagRecovery';
 import { loadMachineIdentity } from './machineIdentity';
@@ -666,14 +666,10 @@ export function parseSettingsSlices(
 
 function computeKnownPaths(tree: FileTreeNode[], vaultPath: string): Set<string> {
   const out = new SvelteSet<string>();
-  const root = normalizePath(vaultPath).toLowerCase();
   const walk = (nodes: FileTreeNode[]): void => {
     for (const n of nodes) {
-      const rel = toPosix(n.path).toLowerCase();
-      if (rel.startsWith(root + '/')) {
-        const slice = toPosix(n.path).slice(root.length + 1);
-        if (!n.isDirectory && slice) out.add(slice);
-      }
+      const rel = toVaultRelative(n.path, vaultPath);
+      if (!n.isDirectory && rel) out.add(rel);
       if (n.children) walk(n.children);
     }
   };

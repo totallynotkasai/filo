@@ -19,7 +19,7 @@
     RESOLVED_TILE_STYLE_KEY,
     type ResolvedTileStyleHolder,
   } from '../../lib/styles/resolvedTileStyleContext';
-  import { isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
+  import { isLinkedNote, isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
   import { confirmConvertToUtf8 } from '../../lib/vault/convertToUtf8';
   let {
     tile,
@@ -136,6 +136,8 @@
   // A note whose bytes aren't UTF-8 is non-editable (a save would persist
   // U+FFFD for every non-ASCII byte) until converted.
   let nonUtf8 = $derived(isNonUtf8(notePath));
+  // A symbolic link is shown but never written (saving would replace the link).
+  let linked = $derived(isLinkedNote(notePath));
   // The read failed for a reason other than a missing file: nothing real is
   // loaded, so typing would overwrite the unread file with an empty editor.
   let unreadable = $derived(model?.status === 'unreadable');
@@ -143,11 +145,11 @@
 
   // Freeze the editor while a tab-close drain is in flight (a keystroke would
   // be stranded by the unmount), while the note can't be written (lossy, not
-  // UTF-8, unreadable, missing) and until it has loaded.
+  // UTF-8, a link, unreadable, missing) and until it has loaded.
   $effect(() => {
     const status = model?.status;
     const frozen =
-      closeDrainGate.draining || readOnly || nonUtf8 || unreadable || missing || status === 'loading';
+      closeDrainGate.draining || readOnly || nonUtf8 || linked || unreadable || missing || status === 'loading';
     // Non-emitting + untracked: see setEditorEditable (avoids an effect loop).
     untrack(() => setEditorEditable(editor, !frozen));
   });
@@ -188,6 +190,10 @@
     <div class="readonly-banner" role="status">
       <span class="readonly-text">This note isn't UTF-8 (probably Windows-1252). Filo won't save it, to avoid corrupting characters.</span>
       <button class="readonly-action" onclick={convertToUtf8}>Convert to UTF-8…</button>
+    </div>
+  {:else if linked}
+    <div class="readonly-banner" role="status">
+      <span class="readonly-text">This note is a link; edit the original.</span>
     </div>
   {:else if readOnly}
     <div class="readonly-banner" role="status">

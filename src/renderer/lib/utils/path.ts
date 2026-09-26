@@ -18,33 +18,10 @@
  */
 
 import { normalizeVaultRelative as sharedNormalizeVaultRelative } from '../../../shared/vaultPath';
+import { normalizePath } from '../../../shared/pathUtils';
 
-/**
- * Convert backslashes to forward slashes only. The lowest-level normalizer —
- * use when the caller doesn't want any slash stripping (e.g. preserving the
- * exact path shape but in POSIX form for storage or display).
- */
-export function toPosix(p: string): string {
-  return p.replace(/\\/g, '/');
-}
-
-/**
- * Strip leading slashes (one or more). Useful for vault-relative paths that
- * may or may not have a leading slash and need to be normalized to "no
- * leading slash" form for keying.
- */
-export function stripLeadingSlash(p: string): string {
-  return p.replace(/^\/+/, '');
-}
-
-/**
- * Normalize an absolute or directory path for comparison: backslashes →
- * forward slashes, trailing slashes stripped. Does NOT lower-case (callers
- * that need case-insensitive matching on Windows must do that themselves).
- */
-export function normalizePath(p: string): string {
-  return toPosix(p).replace(/\/+$/, '');
-}
+// One implementation, shared with the main process (`src/shared/pathUtils.ts`).
+export { toPosix, stripLeadingSlash, normalizePath, toVaultRelative } from '../../../shared/pathUtils';
 
 /**
  * True when two paths refer to the same on-disk location, ignoring separator
@@ -73,20 +50,4 @@ export const normalizeVaultRelative = sharedNormalizeVaultRelative;
 export function samePath(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
   return sharedNormalizeVaultRelative(a) === sharedNormalizeVaultRelative(b);
-}
-
-/**
- * Absolute path → vault-relative POSIX path, or `null` when the path is
- * outside the vault (or no vault is open). The prefix match is
- * case-insensitive and requires a separator boundary, so `/vault-other`
- * never counts as inside `/vault`; the returned slice keeps the original
- * casing because it becomes a stored key. The vault root itself maps to `''`.
- */
-export function toVaultRelative(absolutePath: string, vaultPath: string): string | null {
-  if (!vaultPath) return null;
-  const root = normalizePath(vaultPath).toLowerCase();
-  const candidate = toPosix(absolutePath).toLowerCase();
-  if (candidate === root) return '';
-  if (!candidate.startsWith(root + '/')) return null;
-  return toPosix(absolutePath).slice(root.length + 1);
 }

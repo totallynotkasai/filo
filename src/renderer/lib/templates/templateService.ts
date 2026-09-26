@@ -203,7 +203,7 @@ export function interpolate(input: string, vars: TemplateVariables = {}): string
  * the same engine the rest of the app uses for vault search, keeping
  * fuzzy/prefix behaviour consistent.
  */
-export function buildTemplateSearchIndex(refs: TemplateRef[]): MiniSearch<{ id: string; name: string }> {
+function buildTemplateSearchIndex(refs: TemplateRef[]): MiniSearch<{ id: string; name: string }> {
   const search = new MiniSearch<{ id: string; name: string }>({
     fields: ['name'],
     storeFields: ['name'],

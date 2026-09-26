@@ -8,7 +8,7 @@ import { Extension } from '@tiptap/core';
  * tight list with one centred item would reload loose, gain blank lines on the
  * next save, and open read-only as a lossy note.
  */
-export function isTightListElement(el: HTMLElement): boolean {
+function isTightListElement(el: HTMLElement): boolean {
   return el.getAttribute('data-tight') === 'true' || !el.querySelector('p:not([style])');
 }
 

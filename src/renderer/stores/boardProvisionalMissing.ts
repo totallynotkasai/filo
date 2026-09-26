@@ -55,10 +55,6 @@ vaultSwapResettable('boardProvisionalMissing', () => {
   provisional.clear();
 });
 
-export function isBoardProvisionallyMissing(boardId: string): boolean {
-  return provisional.has(boardId);
-}
-
 /**
  * Replaces the tree-refresh's immediate eviction. Idempotent per board while a
  * re-check is pending.

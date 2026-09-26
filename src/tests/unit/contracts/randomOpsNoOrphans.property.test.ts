@@ -1,5 +1,5 @@
 /**
- * Phase 0 characterization — invariant: no orphans after random board ops.
+ * Contract — invariant: no orphans after random board ops.
  *
  * Property: starting from a default board of each type, applying any
  * sequence drawn from {addTile, removeTile, addConnection, removeConnection,
@@ -422,7 +422,7 @@ const OP_TAGS: Op['tag'][] = [
 const opArb = fc.constantFrom(...OP_TAGS).map((tag) => ({ tag }) as Op);
 const opSeqArb = fc.array(opArb, { minLength: 0, maxLength: 30 });
 
-describe('Phase 0 characterization — no-orphan invariant under random ops', () => {
+describe('Contract — no-orphan invariant under random ops', () => {
   describe('starter sanity — default envelopes have no orphans', () => {
     for (const type of BOARD_TYPES) {
       it(`${type} default envelope is orphan-free`, () => {
@@ -474,7 +474,7 @@ describe('Phase 0 characterization — no-orphan invariant under random ops', ()
   });
 });
 
-// Export `findOrphans` so other characterization tests can reuse the
+// Export `findOrphans` so other contract tests can reuse the
 // invariant definition without duplicating it.
 export type { Op };
 

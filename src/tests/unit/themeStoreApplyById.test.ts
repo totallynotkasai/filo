@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { themeStore } from '@renderer/stores/theme.svelte';
 import {
-  resetThemeManager,
+  __resetThemeManagerForTests,
   type ThemeFile,
 } from '@renderer/lib/themes/themeManager';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
@@ -16,13 +16,13 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 describe('themeStore.applyById — non-throwing contract', () => {
   beforeEach(() => {
     restoreFiloDefault();
-    resetThemeManager();
+    __resetThemeManagerForTests();
     document.documentElement.removeAttribute('data-theme');
     themeStore.clear();
   });
   afterEach(() => {
     restoreFiloDefault();
-    resetThemeManager();
+    __resetThemeManagerForTests();
     document.documentElement.removeAttribute('data-theme');
     themeStore.clear();
   });
@@ -100,13 +100,13 @@ describe('themeStore.applyById — non-throwing contract', () => {
 describe('themeStore.commitFromCandidate', () => {
   beforeEach(() => {
     restoreFiloDefault();
-    resetThemeManager();
+    __resetThemeManagerForTests();
     document.documentElement.removeAttribute('data-theme');
     themeStore.clear();
   });
   afterEach(() => {
     restoreFiloDefault();
-    resetThemeManager();
+    __resetThemeManagerForTests();
     document.documentElement.removeAttribute('data-theme');
     themeStore.clear();
   });

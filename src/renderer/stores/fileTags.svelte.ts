@@ -76,7 +76,7 @@ import {
 import { scheduleMiscWrite, flushAllMisc, flushMiscWrite } from '../lib/boards/boardSaver';
 import { noteStore } from './notes.svelte';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
-import { assertIpcOk } from '../lib/utils/ipcEnvelope';
+import { assertIpcOk } from '@shared/ipcEnvelope';
 import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';

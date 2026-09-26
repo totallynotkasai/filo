@@ -1,7 +1,7 @@
 import { ipcMain, shell } from 'electron';
 import { join } from 'path';
 import { promises as fsPromises } from 'fs';
-import { toPosix } from '../utils/pathHelpers';
+import { toPosix } from '../../shared/pathUtils';
 import {
   assertSafeRelativePath,
   assertWithinVault,

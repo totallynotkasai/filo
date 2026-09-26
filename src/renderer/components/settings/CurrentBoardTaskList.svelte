@@ -25,7 +25,7 @@
     max="48"
     placeholder="Default"
     value={(read('titleFontSize') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('titleFontSize', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('titleFontSize', e.currentTarget)}
   />
 </div>
 
@@ -84,7 +84,7 @@
     max="10"
     placeholder="Inherit"
     value={(read('defaults.section.borderWidth') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.section.borderWidth', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.section.borderWidth', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -98,7 +98,7 @@
     step="0.05"
     placeholder="Inherit"
     value={(read('defaults.section.shadowIntensity') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.section.shadowIntensity', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.section.shadowIntensity', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -124,7 +124,7 @@
     max="48"
     placeholder="Inherit"
     value={(read('defaults.section.fontSizeTitle') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.section.fontSizeTitle', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.section.fontSizeTitle', e.currentTarget)}
   />
 </div>
 
@@ -167,7 +167,7 @@
     max="10"
     placeholder="Inherit"
     value={(read('defaults.task.borderWidth') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.task.borderWidth', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.task.borderWidth', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -181,7 +181,7 @@
     step="0.05"
     placeholder="Inherit"
     value={(read('defaults.task.shadowIntensity') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.task.shadowIntensity', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.task.shadowIntensity', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -207,7 +207,7 @@
     max="48"
     placeholder="Inherit"
     value={(read('defaults.task.fontSizeTitle') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.task.fontSizeTitle', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.task.fontSizeTitle', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -220,6 +220,6 @@
     max="48"
     placeholder="Inherit"
     value={(read('defaults.task.fontSizeBody') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.task.fontSizeBody', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.task.fontSizeBody', e.currentTarget)}
   />
 </div>

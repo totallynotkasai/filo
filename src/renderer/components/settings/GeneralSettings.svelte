@@ -5,44 +5,11 @@
   import { reportError } from '../../lib/utils/errorBus';
   import ColorPicker from '../shared/ColorPicker.svelte';
   import { applyFontDefaultsToAllExisting as applyFontDefaultsToAllExistingLib } from '../../lib/styles/applyDefaultsToAll';
+  import { defaultProjectSettings, GeneralSettingsSchema } from '../../schema/index';
+  import { numberBoundsAt, readNumberField } from '../../lib/settings/numberInput';
 
   // Local state derived from project settings
-  let settings = $derived(vaultStore.project?.settings?.general ?? {
-    globalFont: 'Inter, system-ui, sans-serif',
-    globalFontSize: 13,
-    defaultBoardFontSize: {
-      tileTitle: 14,
-      tileBody: 13,
-      connectionLabel: 12,
-      frameTitle: 15,
-      kanbanColumnTitle: 14,
-      kanbanCardTitle: 13,
-      kanbanCardBody: 12,
-      taskListTitle: 16,
-      taskItem: 13,
-      taskItemBody: 12,
-      taskSectionTitle: 14,
-    },
-    systemFonts: ['Inter', 'Arial', 'Georgia', 'Courier New', 'Verdana'],
-    globalToolbarScale: 1,
-    boardToolbarScale: 1,
-    tabBarScale: 1,
-    minimapScale: 1,
-    waypointScale: 1,
-    toolbarColor: '',
-    tabBarColor: '',
-    radarEnabled: true,
-    showFileExtensions: false,
-    historyLimit: 500,
-    hoverButtons: {
-      tiles: true,
-      cards: true,
-      tasks: true,
-      frames: true,
-      connectionLabels: true,
-      columns: true,
-    },
-  });
+  let settings = $derived(vaultStore.project?.settings?.general ?? defaultProjectSettings().general);
 
   type HoverButtonKey =
     | 'tiles'
@@ -175,26 +142,24 @@
     | 'taskItemBody'
     | 'taskSectionTitle';
 
-  // Drives the Default Board Font Size group. Each row's max matches the
-  // schema's element-level ceiling — Connection Label caps at 32, everything
-  // else at 48.
+  // Drives the Default Board Font Size group. Each row's range is read from
+  // the schema (Connection Label caps at 32, everything else at 48).
+  const BOARD_FONT_SIZE_DEFAULTS = defaultProjectSettings().general.defaultBoardFontSize;
   const fontSizeControls: {
     key: DefaultBoardFontSizeKey;
     label: string;
-    fallback: number;
-    max: number;
   }[] = [
-    { key: 'tileTitle', label: 'Tile Title (px)', fallback: 14, max: 48 },
-    { key: 'tileBody', label: 'Tile Body (px)', fallback: 13, max: 48 },
-    { key: 'connectionLabel', label: 'Connection Label (px)', fallback: 12, max: 32 },
-    { key: 'frameTitle', label: 'Frame Title (px)', fallback: 15, max: 48 },
-    { key: 'kanbanColumnTitle', label: 'Kanban Column Title (px)', fallback: 14, max: 48 },
-    { key: 'kanbanCardTitle', label: 'Kanban Card Title (px)', fallback: 13, max: 48 },
-    { key: 'kanbanCardBody', label: 'Kanban Card Body (px)', fallback: 12, max: 48 },
-    { key: 'taskListTitle', label: 'Task List Title (px)', fallback: 16, max: 48 },
-    { key: 'taskItem', label: 'Task Title (px)', fallback: 13, max: 48 },
-    { key: 'taskItemBody', label: 'Task Body (px)', fallback: 12, max: 48 },
-    { key: 'taskSectionTitle', label: 'Task Section Title (px)', fallback: 14, max: 48 },
+    { key: 'tileTitle', label: 'Tile Title (px)' },
+    { key: 'tileBody', label: 'Tile Body (px)' },
+    { key: 'connectionLabel', label: 'Connection Label (px)' },
+    { key: 'frameTitle', label: 'Frame Title (px)' },
+    { key: 'kanbanColumnTitle', label: 'Kanban Column Title (px)' },
+    { key: 'kanbanCardTitle', label: 'Kanban Card Title (px)' },
+    { key: 'kanbanCardBody', label: 'Kanban Card Body (px)' },
+    { key: 'taskListTitle', label: 'Task List Title (px)' },
+    { key: 'taskItem', label: 'Task Title (px)' },
+    { key: 'taskItemBody', label: 'Task Body (px)' },
+    { key: 'taskSectionTitle', label: 'Task Section Title (px)' },
   ];
 
   /**
@@ -227,11 +192,8 @@
 
   function updateBoardFontSize(key: DefaultBoardFontSizeKey, value: number) {
     if (!vaultStore.project) return;
-    const current = vaultStore.project.settings.general.defaultBoardFontSize ?? {
-      tileTitle: 14, tileBody: 13, connectionLabel: 12, frameTitle: 15,
-      kanbanColumnTitle: 14, kanbanCardTitle: 13, kanbanCardBody: 12,
-      taskListTitle: 16, taskItem: 13, taskItemBody: 12, taskSectionTitle: 14,
-    };
+    const current = vaultStore.project.settings.general.defaultBoardFontSize
+      ?? defaultProjectSettings().general.defaultBoardFontSize;
     vaultStore.project.settings.general.defaultBoardFontSize = { ...current, [key]: value };
     vaultStore.markMetaDirty();
   }
@@ -375,10 +337,10 @@
       type="number"
       min="10"
       max="20"
-      value={settings.globalFontSize ?? 13}
+      value={settings.globalFontSize}
       onchange={(e) => {
-        const val = parseInt((e.target as HTMLInputElement).value, 10);
-        if (val >= 10 && val <= 20) updateSetting('globalFontSize', val);
+        const val = readNumberField(e.currentTarget, numberBoundsAt(GeneralSettingsSchema, 'globalFontSize'), settings.globalFontSize, false);
+        if (val !== undefined) updateSetting('globalFontSize', val);
       }}
     />
   </div>
@@ -429,11 +391,16 @@
           class="setting-input number-input"
           type="number"
           min="8"
-          max={ctl.max}
-          value={settings.defaultBoardFontSize?.[ctl.key] ?? ctl.fallback}
+          max={numberBoundsAt(GeneralSettingsSchema, `defaultBoardFontSize.${ctl.key}`).max}
+          value={settings.defaultBoardFontSize?.[ctl.key] ?? BOARD_FONT_SIZE_DEFAULTS[ctl.key]}
           onchange={(e) => {
-            const val = parseInt((e.target as HTMLInputElement).value, 10);
-            if (val >= 8 && val <= ctl.max) updateBoardFontSize(ctl.key, val);
+            const val = readNumberField(
+              e.currentTarget,
+              numberBoundsAt(GeneralSettingsSchema, `defaultBoardFontSize.${ctl.key}`),
+              settings.defaultBoardFontSize?.[ctl.key] ?? BOARD_FONT_SIZE_DEFAULTS[ctl.key],
+              false,
+            );
+            if (val !== undefined) updateBoardFontSize(ctl.key, val);
           }}
         />
       </div>
@@ -548,12 +515,10 @@
       min="10"
       max="5000"
       step="10"
-      value={settings.historyLimit ?? 500}
+      value={settings.historyLimit}
       onchange={(e) => {
-        const val = parseInt((e.target as HTMLInputElement).value, 10);
-        if (Number.isFinite(val) && val >= 10 && val <= 5000) {
-          updateSetting('historyLimit', val);
-        }
+        const val = readNumberField(e.currentTarget, numberBoundsAt(GeneralSettingsSchema, 'historyLimit'), settings.historyLimit, false);
+        if (val !== undefined) updateSetting('historyLimit', val);
       }}
     />
   </div>

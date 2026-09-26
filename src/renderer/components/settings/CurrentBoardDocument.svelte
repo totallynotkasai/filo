@@ -62,7 +62,7 @@
     max="10"
     placeholder="Inherit"
     value={(read('defaults.document.borderWidth') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.document.borderWidth', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.document.borderWidth', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -76,7 +76,7 @@
     step="0.05"
     placeholder="Inherit"
     value={(read('defaults.document.shadowIntensity') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.document.shadowIntensity', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.document.shadowIntensity', e.currentTarget)}
   />
 </div>
 <div class="setting-row">

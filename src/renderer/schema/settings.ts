@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ArrowTypeSchema, BackgroundPatternSchema, BorderStyleSchema, PathTypeSchema, ShapeSchema } from './styleEnums';
+import { GENERAL_SETTINGS_DEFAULTS as GD } from '../../shared/generalSettingsDefaults';
 
 /**
  * Tile default styles used when creating new tiles.
@@ -201,19 +202,19 @@ export const DocumentDefaultsSchema = z.object({
  * defaults onto every existing element as a per-element override.
  */
 const DefaultBoardFontSizeSchema = z.object({
-  tileTitle: z.number().min(8).max(48).default(14),
-  tileBody: z.number().min(8).max(48).default(13),
-  connectionLabel: z.number().min(8).max(32).default(12),
-  frameTitle: z.number().min(8).max(48).default(15),
-  kanbanColumnTitle: z.number().min(8).max(48).default(14),
-  kanbanCardTitle: z.number().min(8).max(48).default(13),
-  kanbanCardBody: z.number().min(8).max(48).default(12),
-  taskListTitle: z.number().min(8).max(48).default(16),
-  taskItem: z.number().min(8).max(48).default(13),
+  tileTitle: z.number().min(8).max(48).default(GD.defaultBoardFontSize.tileTitle),
+  tileBody: z.number().min(8).max(48).default(GD.defaultBoardFontSize.tileBody),
+  connectionLabel: z.number().min(8).max(32).default(GD.defaultBoardFontSize.connectionLabel),
+  frameTitle: z.number().min(8).max(48).default(GD.defaultBoardFontSize.frameTitle),
+  kanbanColumnTitle: z.number().min(8).max(48).default(GD.defaultBoardFontSize.kanbanColumnTitle),
+  kanbanCardTitle: z.number().min(8).max(48).default(GD.defaultBoardFontSize.kanbanCardTitle),
+  kanbanCardBody: z.number().min(8).max(48).default(GD.defaultBoardFontSize.kanbanCardBody),
+  taskListTitle: z.number().min(8).max(48).default(GD.defaultBoardFontSize.taskListTitle),
+  taskItem: z.number().min(8).max(48).default(GD.defaultBoardFontSize.taskItem),
   /** Default body font-size for task placements. Paired with `taskItem` (which is the title size) so "Apply to all" can write both layers. */
-  taskItemBody: z.number().min(8).max(48).default(12),
+  taskItemBody: z.number().min(8).max(48).default(GD.defaultBoardFontSize.taskItemBody),
   /** Default title font-size for task-list section headers. */
-  taskSectionTitle: z.number().min(8).max(48).default(14),
+  taskSectionTitle: z.number().min(8).max(48).default(GD.defaultBoardFontSize.taskSectionTitle),
 }).prefault({});
 
 /**
@@ -222,47 +223,47 @@ const DefaultBoardFontSizeSchema = z.object({
  * today's hover-reveal behaviour across all six surfaces.
  */
 const HoverButtonsSchema = z.object({
-  tiles: z.boolean().default(true),
-  cards: z.boolean().default(true),
-  tasks: z.boolean().default(true),
-  frames: z.boolean().default(true),
-  connectionLabels: z.boolean().default(true),
-  columns: z.boolean().default(true),
+  tiles: z.boolean().default(GD.hoverButtons.tiles),
+  cards: z.boolean().default(GD.hoverButtons.cards),
+  tasks: z.boolean().default(GD.hoverButtons.tasks),
+  frames: z.boolean().default(GD.hoverButtons.frames),
+  connectionLabels: z.boolean().default(GD.hoverButtons.connectionLabels),
+  columns: z.boolean().default(GD.hoverButtons.columns),
 }).prefault({});
 
 export const GeneralSettingsSchema = z.object({
-  globalFont: z.string().default('Inter, system-ui, sans-serif'),
+  globalFont: z.string().default(GD.globalFont),
   /**
    * Base font size (px) for system chrome — toolbar, sidebar, tab bar,
    * modals, dropdowns. Drives the `--font-size-base` CSS variable.
    */
-  globalFontSize: z.number().min(10).max(20).default(13),
+  globalFontSize: z.number().min(10).max(20).default(GD.globalFontSize),
   /**
    * Defaults for board-element text. See `DefaultBoardFontSizeSchema`.
    */
   defaultBoardFontSize: DefaultBoardFontSizeSchema,
   systemFonts: z
     .array(z.string())
-    .default(() => ['Inter', 'Arial', 'Georgia', 'Courier New', 'Verdana']),
+    .default(() => [...GD.systemFonts]),
   /**
    * Per-surface UI scale factors (1.0 = 100%). Range 0.5–2.0, default 1.0.
    * Wired into CSS via `--ui-toolbar-scale`, `--ui-board-toolbar-scale`,
    * `--ui-tabbar-scale`, `--ui-minimap-scale`, `--ui-waypoint-scale`.
    */
-  globalToolbarScale: z.number().min(0.5).max(2.0).default(1.0),
-  boardToolbarScale: z.number().min(0.5).max(2.0).default(1.0),
-  tabBarScale: z.number().min(0.5).max(2.0).default(1.0),
-  minimapScale: z.number().min(0.5).max(2.0).default(1.0),
-  waypointScale: z.number().min(0.5).max(2.0).default(1.0),
-  toolbarColor: z.string().default(''),
-  tabBarColor: z.string().default(''),
-  radarEnabled: z.boolean().default(true),
+  globalToolbarScale: z.number().min(0.5).max(2.0).default(GD.globalToolbarScale),
+  boardToolbarScale: z.number().min(0.5).max(2.0).default(GD.boardToolbarScale),
+  tabBarScale: z.number().min(0.5).max(2.0).default(GD.tabBarScale),
+  minimapScale: z.number().min(0.5).max(2.0).default(GD.minimapScale),
+  waypointScale: z.number().min(0.5).max(2.0).default(GD.waypointScale),
+  toolbarColor: z.string().default(GD.toolbarColor),
+  tabBarColor: z.string().default(GD.tabBarColor),
+  radarEnabled: z.boolean().default(GD.radarEnabled),
   /**
    * Recently-used colours shown above the colour picker presets. Capped
    * at 8 to match the picker's two-row grid (`ColorPicker.svelte` slices
    * to 8 and uses `grid-template-columns: repeat(8, 1fr)`).
    */
-  recentColors: z.array(z.string()).max(8).default(() => []),
+  recentColors: z.array(z.string()).max(8).default(() => [...GD.recentColors]),
   /**
    * Per-board undo/redo stack size. The default of 500 covers the long
    * tail of "I refactored the board and want to step back" without growing
@@ -270,20 +271,20 @@ export const GeneralSettingsSchema = z.object({
    * the body, so 5000 is the upper bound. The historyStore reads this via
    * `setMaxHistory` from the App-level settings $effect.
    */
-  historyLimit: z.number().int().min(10).max(5000).default(500),
+  historyLimit: z.number().int().min(10).max(5000).default(GD.historyLimit),
   /**
    * Vault-relative path of the folder that receives newly-created tiles
    * and files dropped onto the board. Empty string means use the vault
    * root. Toggled per-folder via the tree-icon button in the vault
    * sidebar; persisted to .filo/app.json.
    */
-  activeRootFolder: z.string().default(''),
+  activeRootFolder: z.string().default(GD.activeRootFolder),
   /**
    * When true, the vault sidebar shows the full filename including the
    * extension (e.g. `Notes.md`); when false, the extension is hidden for
    * a cleaner look. Rename inputs always show the full name regardless.
    */
-  showFileExtensions: z.boolean().default(false),
+  showFileExtensions: z.boolean().default(GD.showFileExtensions),
   /**
    * Vault sidebar sort + group settings. Sort is the primary ordering
    * field; Group acts as a secondary sort within equal primary values
@@ -294,10 +295,10 @@ export const GeneralSettingsSchema = z.object({
    * manual order (drag-and-drop in the sidebar). This is the new default
    * so a fresh vault opens in whatever order the user arranges.
    */
-  sidebarSortField: z.enum(['none', 'name', 'modified', 'type', 'size']).default('none'),
-  sidebarSortDirection: z.enum(['asc', 'desc']).default('asc'),
-  sidebarGroupField: z.enum(['none', 'name', 'modified', 'type', 'size']).default('none'),
-  sidebarGroupDirection: z.enum(['asc', 'desc']).default('asc'),
+  sidebarSortField: z.enum(['none', 'name', 'modified', 'type', 'size']).default(GD.sidebarSortField),
+  sidebarSortDirection: z.enum(['asc', 'desc']).default(GD.sidebarSortDirection),
+  sidebarGroupField: z.enum(['none', 'name', 'modified', 'type', 'size']).default(GD.sidebarGroupField),
+  sidebarGroupDirection: z.enum(['asc', 'desc']).default(GD.sidebarGroupDirection),
   hoverButtons: HoverButtonsSchema,
 }).passthrough();
 

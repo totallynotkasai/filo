@@ -19,7 +19,9 @@ import type { BoardFileData } from '../lib/boards/boardSaver';
 import {
   buildBoardSettingsFromGlobal,
   buildBoardSettingsFromTheme,
+  mergeBoardStyleSettings,
 } from '../lib/styles/buildBoardDefaults';
+import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { vaultStore } from './vault.svelte';
 import { normalizePath, stripLeadingSlash, toVaultRelative } from '../lib/utils/path';
 import type { BoardContext } from './boardStoreTypes';
@@ -159,6 +161,34 @@ function cleanupAfterBoardRemoved(boardId: string): Promise<void> {
  * `boardCacheStore.cache[currentBoardId]`. The factory is bound to its
  * pane's spatial/canvas/selection scopes.
  */
+/**
+ * Merges the style block `build` returns into every board of the project.
+ * The board cache's entry is the one a board renders from and saves, so
+ * writing it updates an open board too.
+ */
+async function applyStyleToAllBoards(
+  build: (type: Board['type']) => Record<string, unknown> | null,
+): Promise<{ updated: number; skipped: string[] }> {
+  const identity = captureVaultIdentity();
+  await boardCacheStore.ensureAllLoaded();
+  const project = vaultStore.project;
+  if (!project || !isStillSameVault(identity)) return { updated: 0, skipped: [] };
+  let updated = 0;
+  const skipped: string[] = [];
+  for (const b of project.boards ?? []) {
+    const cached = boardCacheStore.cache[b.id];
+    const built = build(b.type);
+    if (!cached || !built) {
+      skipped.push(b.name);
+      continue;
+    }
+    const existing = (cached.board.settings ?? {}) as Record<string, unknown>;
+    boardCacheStore.updateBoardSettings(b.id, mergeBoardStyleSettings(existing, built));
+    updated++;
+  }
+  return { updated, skipped };
+}
+
 export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
   // ── Pane state (the only $state in the scope) ──
   let currentBoardId = $state<string | null>(null);
@@ -494,33 +524,26 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
     },
 
     /**
-     * Walks every board in the project and overwrites its `settings` block
-     * with a fresh snapshot of the current Global Defaults. Per-tile / per-
-     * frame / per-connection style overrides are NOT touched — only the
-     * per-board layer.
+     * Writes the current Global Defaults' style fields into every board's
+     * settings, keeping each board's other settings (saved views, default
+     * folder, Mind Map toggles, Task List group / sort). Per-tile / per-frame /
+     * per-connection overrides are not touched. Boards not yet in the cache
+     * are loaded first; the names of any that still can't be updated (their
+     * file failed to load) are returned so the caller can say so.
      */
-    applyGlobalDefaultsToAllBoards(): void {
-      const project = vaultStore.project;
-      if (!project) return;
-      const globals = project.settings;
-      for (const b of project.boards ?? []) {
-        const next = buildBoardSettingsFromGlobal(b.type, globals);
-        boardCacheStore.updateBoardSettings(b.id, next);
-      }
+    async applyGlobalDefaultsToAllBoards(): Promise<{ updated: number; skipped: string[] }> {
+      return applyStyleToAllBoards((type) => {
+        const globals = vaultStore.project?.settings;
+        return globals ? buildBoardSettingsFromGlobal(type, globals) : null;
+      });
     },
 
     /**
-     * Same as `applyGlobalDefaultsToAllBoards` but sources its values from
-     * the schema-default `ProjectSettings` — empty colours that fall back to
-     * the active CSS theme's variables.
+     * Same as `applyGlobalDefaultsToAllBoards` but with the schema-default
+     * style (empty colours, which fall back to the active theme's variables).
      */
-    applyThemeDefaultsToAllBoards(): void {
-      const project = vaultStore.project;
-      if (!project) return;
-      for (const b of project.boards ?? []) {
-        const next = buildBoardSettingsFromTheme(b.type);
-        boardCacheStore.updateBoardSettings(b.id, next);
-      }
+    async applyThemeDefaultsToAllBoards(): Promise<{ updated: number; skipped: string[] }> {
+      return applyStyleToAllBoards((type) => buildBoardSettingsFromTheme(type));
     },
 
     // ── Board CRUD (delegated) ──

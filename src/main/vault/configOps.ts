@@ -4,6 +4,7 @@ import { atomicWriteFile, ensureDir, pathExists } from './filenameUtils';
 import { createExclusiveFile } from './exclusiveCreate';
 import { assertSafeFilename } from '../utils/pathSecurity';
 import { PAYLOAD_LIMITS } from '../utils/payloadLimits';
+import { generalSettingsDefaults } from '../../shared/generalSettingsDefaults';
 
 /**
  * Vault configuration file operations.
@@ -92,52 +93,12 @@ export async function initVaultConfig(vaultRoot: string): Promise<void> {
 
   // Create default config files if they don't exist.
   //
-  // `app.json` mirrors the field set produced by `configWriteScheduler` so
-  // a freshly initialised vault has the same shape on disk that subsequent
-  // saves will produce — no missing-then-appearing keys. Field defaults
-  // here MUST match `GeneralSettingsSchema` defaults in
-  // `src/renderer/schema/settings.ts`; the schema can't be imported across
-  // the main/renderer boundary, so this object is the manual mirror.
+  // `app.json` is seeded from the same defaults `GeneralSettingsSchema` uses
+  // (`shared/generalSettingsDefaults.ts`), so a fresh vault has every key a
+  // later save writes, with the same values.
+  const general = generalSettingsDefaults();
   const defaults: Record<ConfigFile, unknown> = {
-    'app.json': {
-      globalFont: 'Inter, system-ui, sans-serif',
-      globalFontSize: 13,
-      defaultBoardFontSize: {
-        tileTitle: 14,
-        tileBody: 13,
-        connectionLabel: 12,
-        frameTitle: 15,
-        kanbanColumnTitle: 14,
-        kanbanCardTitle: 13,
-        kanbanCardBody: 12,
-        taskListTitle: 16,
-        taskItem: 13,
-      },
-      systemFonts: ['Inter', 'Arial', 'Georgia', 'Courier New', 'Verdana'],
-      globalToolbarScale: 1,
-      boardToolbarScale: 1,
-      tabBarScale: 1,
-      minimapScale: 1,
-      waypointScale: 1,
-      toolbarColor: '',
-      tabBarColor: '',
-      radarEnabled: true,
-      recentColors: [],
-      activeRootFolder: '',
-      sidebarSortField: 'none',
-      sidebarSortDirection: 'asc',
-      sidebarGroupField: 'none',
-      sidebarGroupDirection: 'asc',
-      showFileExtensions: false,
-      hoverButtons: {
-        tiles: true,
-        cards: true,
-        tasks: true,
-        frames: true,
-        connectionLabels: true,
-        columns: true,
-      },
-    },
+    'app.json': general,
     // appearance.json is fully Filo-owned: activeTheme + font only. Must
     // match the writer's payload shape in
     // `configWriteScheduler.buildConfigPayloads` exactly, so the first
@@ -146,7 +107,7 @@ export async function initVaultConfig(vaultRoot: string): Promise<void> {
     // writer to round-trip it.
     'appearance.json': {
       activeTheme: 'light',
-      font: 'Inter, system-ui, sans-serif',
+      font: general.globalFont,
     },
     'defaults.json': {
       mindmap: {},

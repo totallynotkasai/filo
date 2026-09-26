@@ -69,7 +69,7 @@
     max="10"
     placeholder="Inherit"
     value={(read('defaults.column.borderWidth') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.column.borderWidth', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.column.borderWidth', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -83,7 +83,7 @@
     step="0.05"
     placeholder="Inherit"
     value={(read('defaults.column.shadowIntensity') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.column.shadowIntensity', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.column.shadowIntensity', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -110,7 +110,7 @@
     step="10"
     placeholder="Inherit"
     value={(read('defaults.column.width') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.column.width', (e.target as HTMLInputElement).value, (v) => parseInt(v, 10))}
+    onchange={(e) => updateNumberOrInherit('defaults.column.width', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -123,7 +123,7 @@
     max="48"
     placeholder="Inherit"
     value={(read('defaults.column.fontSizeTitle') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.column.fontSizeTitle', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.column.fontSizeTitle', e.currentTarget)}
   />
 </div>
 
@@ -166,7 +166,7 @@
     max="10"
     placeholder="Inherit"
     value={(read('defaults.card.borderWidth') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.card.borderWidth', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.card.borderWidth', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -180,7 +180,7 @@
     step="0.05"
     placeholder="Inherit"
     value={(read('defaults.card.shadowIntensity') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.card.shadowIntensity', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.card.shadowIntensity', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -206,7 +206,7 @@
     max="48"
     placeholder="Inherit"
     value={(read('defaults.card.fontSizeTitle') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.card.fontSizeTitle', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.card.fontSizeTitle', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -219,6 +219,6 @@
     max="48"
     placeholder="Inherit"
     value={(read('defaults.card.fontSizeBody') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.card.fontSizeBody', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.card.fontSizeBody', e.currentTarget)}
   />
 </div>

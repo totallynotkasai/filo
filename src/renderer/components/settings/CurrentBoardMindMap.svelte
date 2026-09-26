@@ -85,7 +85,7 @@
     max="10"
     placeholder="Inherit"
     value={(read('defaults.tile.borderWidth') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.tile.borderWidth', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.tile.borderWidth', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -99,7 +99,7 @@
     step="0.05"
     placeholder="Inherit"
     value={(read('defaults.tile.shadowIntensity') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.tile.shadowIntensity', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.tile.shadowIntensity', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -125,7 +125,7 @@
     max="48"
     placeholder="Inherit"
     value={(read('defaults.tile.fontSizeTitle') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.tile.fontSizeTitle', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.tile.fontSizeTitle', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -138,7 +138,7 @@
     max="48"
     placeholder="Inherit"
     value={(read('defaults.tile.fontSizeBody') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.tile.fontSizeBody', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.tile.fontSizeBody', e.currentTarget)}
   />
 </div>
 
@@ -160,7 +160,7 @@
     max="10"
     placeholder="Inherit"
     value={(read('defaults.connectionPath.pathSize') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.connectionPath.pathSize', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.connectionPath.pathSize', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -222,7 +222,7 @@
     max="24"
     placeholder="Inherit"
     value={(read('defaults.connectionPath.arrowSize') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.connectionPath.arrowSize', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.connectionPath.arrowSize', e.currentTarget)}
   />
 </div>
 
@@ -251,7 +251,7 @@
     max="32"
     placeholder="Inherit"
     value={(read('defaults.connectionLabel.fontSize') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.connectionLabel.fontSize', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.connectionLabel.fontSize', e.currentTarget)}
   />
 </div>
 
@@ -289,7 +289,7 @@
     step="0.05"
     placeholder="Inherit"
     value={(read('defaults.frame.backgroundOpacity') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.frame.backgroundOpacity', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.frame.backgroundOpacity', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -323,7 +323,7 @@
     max="10"
     placeholder="Inherit"
     value={(read('defaults.frame.borderWidth') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.frame.borderWidth', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.frame.borderWidth', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -337,7 +337,7 @@
     step="0.05"
     placeholder="Inherit"
     value={(read('defaults.frame.shadowIntensity') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.frame.shadowIntensity', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.frame.shadowIntensity', e.currentTarget)}
   />
 </div>
 <div class="setting-row">
@@ -363,7 +363,7 @@
     max="48"
     placeholder="Inherit"
     value={(read('defaults.frame.fontSizeTitle') as number | undefined) ?? ''}
-    onchange={(e) => updateNumberOrInherit('defaults.frame.fontSizeTitle', (e.target as HTMLInputElement).value, parseFloat)}
+    onchange={(e) => updateNumberOrInherit('defaults.frame.fontSizeTitle', e.currentTarget)}
   />
 </div>
 

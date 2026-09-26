@@ -575,6 +575,7 @@
       id="project-settings"
       title="Settings"
       width="680px"
+      isolateShortcuts
       beforeClose={() => confirmDiscardSettings(pendingSettingsStore, uiStore)}
     >
       <ProjectSettingsModal />

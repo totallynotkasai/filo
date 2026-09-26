@@ -8,6 +8,7 @@ import {
   TaskPlacementSchema,
 } from './placement';
 import { uniqueBy, uniqueStrings, idString } from './schemaUtils';
+import type { BoardType } from '../../shared/types';
 
 /**
  * Per-board override blocks for the style cascade.
@@ -546,6 +547,20 @@ export const DocumentBoardSchema = BaseBoardSchema.extend({
  * orphaned fields accumulate over time; this is acceptable because (a) board
  * files are small and (b) the user owns the format and can hand-edit JSON.
  */
+/**
+ * The schema a board's `settings` block must pass for the board file to
+ * load. The Settings dialog clamps to it and validates against it before an
+ * Apply writes, so an edit there can't make a board unloadable.
+ */
+export function boardSettingsSchemaFor(type: BoardType): z.ZodType {
+  switch (type) {
+    case 'mindmap': return MindMapSettingsSchema;
+    case 'kanban': return KanbanSettingsSchema;
+    case 'tasklist': return TaskListSettingsSchema;
+    case 'document': return DocumentSettingsSchema;
+  }
+}
+
 export const BoardSchema = z.discriminatedUnion('type', [
   MindMapBoardSchema,
   KanbanBoardSchema,

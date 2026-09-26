@@ -3,6 +3,8 @@
   import { themeStore } from '../../stores/theme.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { reportError } from '../../lib/utils/errorBus';
+  import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
+  import { settleUnappliedEdits } from '../../lib/settings/unappliedEditsPrompt';
   import { ACCENT_COLOR } from '../../constants/defaults';
   import { listBuiltinThemes, THEME_VAR_NAMES } from '../../lib/themes/themeManager';
   import type { ThemeId } from '../../../shared/types';
@@ -33,32 +35,36 @@
 
   async function selectThemeById(id: string) {
     if (!vaultStore.path) return;
-    const result = await themeStore.applyById(vaultStore.path, id);
-    if (!result.ok) {
-      reportError(
-        'ThemeManager.applyById',
-        result.error ?? `Theme "${id}" could not be applied`,
-        `Theme "${id}" could not be applied${result.error ? ` — ${result.error}` : ''}. Reverted to default.`,
-      );
-      return;
-    }
-    if ((builtInIds as readonly string[]).includes(id)) {
-      // In systemOnly mode the user is explicitly preserving their
-      // canvas/tile/connection palette — don't persist the theme as the
-      // active one AND don't wipe their color overrides.
-      if (!themeStore.systemOnly) {
-        vaultStore.setTheme(id as ThemeId);
-        resetSettingsColorsToThemeDefaults();
-        // Flush the active-theme + color resets to disk immediately.
-        // vaultStore.setTheme calls markMetaDirty which only schedules a
-        // 300ms-debounced write; without this await, a hard quit inside
-        // that window reverts to the previously-persisted theme.
-        try {
-          await vaultStore.save();
-        } catch (err) {
-          reportError('ThemeManager.persist', err, 'Failed to save theme selection');
-        }
+    // A built-in theme resets the default colours (unless systemOnly, where
+    // the user keeps their palette). The Global Defaults tab holds a copy of
+    // those colours, so its edits are settled first and the copy is taken
+    // again after: an Apply of the old copy would put the old colours back.
+    const resetsColours = (builtInIds as readonly string[]).includes(id) && !themeStore.systemOnly;
+    if (resetsColours && !(await settleUnappliedEdits('global', 'switch theme'))) return;
+    try {
+      const result = await themeStore.applyById(vaultStore.path, id);
+      if (!result.ok) {
+        reportError(
+          'ThemeManager.applyById',
+          result.error ?? `Theme "${id}" could not be applied`,
+          `Theme "${id}" could not be applied${result.error ? ` — ${result.error}` : ''}. Reverted to default.`,
+        );
+        return;
       }
+      if (!resetsColours) return;
+      vaultStore.setTheme(id as ThemeId);
+      resetSettingsColorsToThemeDefaults();
+      // Flush the active-theme + color resets to disk immediately.
+      // vaultStore.setTheme calls markMetaDirty which only schedules a
+      // 300ms-debounced write; without this await, a hard quit inside
+      // that window reverts to the previously-persisted theme.
+      try {
+        await vaultStore.save();
+      } catch (err) {
+        reportError('ThemeManager.persist', err, 'Failed to save theme selection');
+      }
+    } finally {
+      if (resetsColours) pendingSettingsStore.startGlobal();
     }
   }
 

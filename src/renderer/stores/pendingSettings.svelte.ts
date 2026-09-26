@@ -1,139 +1,201 @@
 import type { ProjectSettings } from '../schema/index';
+import {
+  MindMapDefaultsSchema,
+  KanbanDefaultsSchema,
+  TaskListDefaultsSchema,
+  DocumentDefaultsSchema,
+  boardSettingsSchemaFor,
+} from '../schema/index';
+import type { BoardType } from '../../shared/types';
+import type { z } from 'zod';
 import { vaultStore } from './vault.svelte';
 import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 
 /**
- * Key-sorted JSON used by `hasUnsavedChanges`: two settings trees compare
- * equal iff every (path, value) pair matches, regardless of key insertion
- * order. Cheap given the small settings tree.
+ * The part of `project.settings` the Global Defaults tab edits: the
+ * per-board-type style defaults (`defaults.json`). Everything else in
+ * `project.settings` (the General tab, recent colours, a theme's reset of
+ * the default colours) is written live by other parts of the dialog, so the
+ * pending copy must never hold it: an Apply would put back whatever it
+ * held when the dialog opened.
  */
-function stableStringify(value: unknown): string {
-  return JSON.stringify(value, (_key, v) => {
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      const sorted: Record<string, unknown> = {};
-      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
-        sorted[k] = (v as Record<string, unknown>)[k];
-      }
-      return sorted;
-    }
-    return v;
-  });
+export const GLOBAL_DEFAULTS_KEYS = ['mindmap', 'kanban', 'tasklist', 'document'] as const;
+type GlobalDefaultsKey = (typeof GLOBAL_DEFAULTS_KEYS)[number];
+export type GlobalDefaults = Pick<ProjectSettings, GlobalDefaultsKey>;
+
+const GLOBAL_DEFAULTS_SCHEMAS: Record<GlobalDefaultsKey, z.ZodType> = {
+  mindmap: MindMapDefaultsSchema,
+  kanban: KanbanDefaultsSchema,
+  tasklist: TaskListDefaultsSchema,
+  document: DocumentDefaultsSchema,
+};
+
+/** What an Apply did: wrote something, found nothing to write, or refused. */
+export type ApplyResult =
+  | { ok: true; changed: boolean }
+  | { ok: false; message: string };
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 /**
- * Pending-settings store — backs the Settings modal's Apply/Cancel UX.
- *
- * Two scopes are tracked in parallel:
- *
- *   - Global defaults (`pending`) — a deep clone of
- *     `vaultStore.project.settings` that the Global tab edits.
- *   - Current board (`pendingBoardSettings`) — a deep clone of the
- *     active board's `settings` block (including the per-board
- *     `defaults` cascade override). The
- *     Current Board tab edits this.
- *
- * Components that want to honour the pending session read from
- * `pendingSettingsStore.effective` / `effectiveBoardSettings`. Both
- * return the editable copy during a session and the live values
- * otherwise, so the same controls work inside and outside the modal.
- *
- * `apply()` writes both copies back to their respective stores and
- * marks metadata / board dirty (which schedules debounced writes).
- * `cancel()` discards both.
+ * Drops `undefined` values and objects left empty, so an override set and
+ * then cleared back to Inherit (which leaves `defaults: { tile: {} }`)
+ * compares equal to never having been set.
  */
+function prune(value: unknown): unknown {
+  if (!isPlainObject(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(value).sort()) {
+    const v = prune(value[k]);
+    if (v === undefined) continue;
+    if (isPlainObject(v) && Object.keys(v).length === 0) continue;
+    out[k] = v;
+  }
+  return out;
+}
 
-let pending = $state<ProjectSettings | null>(null);
-let pendingBoardSettings = $state<Record<string, unknown> | null>(null);
-let pendingBoardId = $state<string | null>(null);
+/** Key-order-independent comparison form of a settings tree. */
+function comparable(value: unknown): string {
+  return JSON.stringify(prune(value));
+}
 
 function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function setNestedField(
-  obj: Record<string, unknown>,
-  path: string,
-  value: unknown,
-): void {
+function sliceOf(settings: ProjectSettings): GlobalDefaults {
+  return {
+    mindmap: settings.mindmap,
+    kanban: settings.kanban,
+    tasklist: settings.tasklist,
+    document: settings.document,
+  };
+}
+
+function firstIssue(error: z.ZodError, prefix: string): string {
+  const issue = error.issues[0];
+  if (!issue) return 'the values are not valid';
+  const path = [prefix, ...issue.path.map(String)].filter(Boolean).join('.');
+  return path ? `${path}: ${issue.message}` : issue.message;
+}
+
+/**
+ * Sets the field at a dotted path, creating intermediate objects. Setting
+ * `undefined` deletes the key and any parent it leaves empty, so clearing an
+ * override removes it rather than leaving `{}` behind.
+ */
+function setNestedField(obj: Record<string, unknown>, path: string, value: unknown): void {
   const parts = path.split('.');
+  const chain: Array<[Record<string, unknown>, string]> = [];
   let cursor: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
     if (key === undefined) continue; // i < parts.length - 1; narrow for the type-checker
-    const next = cursor[key];
-    if (typeof next !== 'object' || next === null) {
-      // Create intermediate objects on-the-fly so the user can set a
-      // nested field like `defaults.tile.headerColor` even when the
-      // board's settings.defaults block doesn't exist yet.
+    if (!isPlainObject(cursor[key])) {
+      if (value === undefined) return; // nothing there to clear
       cursor[key] = {};
     }
+    chain.push([cursor, key]);
     cursor = cursor[key] as Record<string, unknown>;
   }
   const lastKey = parts[parts.length - 1];
-  if (lastKey !== undefined) cursor[lastKey] = value; // split() always yields >= 1 part
+  if (lastKey === undefined) return; // split() always yields >= 1 part
+  if (value !== undefined) {
+    cursor[lastKey] = value;
+    return;
+  }
+  delete cursor[lastKey];
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const link = chain[i];
+    if (!link) break;
+    const [parent, key] = link;
+    const child = parent[key];
+    if (isPlainObject(child) && Object.keys(child).length === 0) delete parent[key];
+    else break;
+  }
+}
+
+/**
+ * Pending-settings store: backs the Settings dialog's Apply / Revert.
+ *
+ * Two scopes are tracked in parallel:
+ *
+ *   - Global Defaults (`pending`): a copy of the per-board-type style
+ *     defaults only (see `GLOBAL_DEFAULTS_KEYS`).
+ *   - Current Board (`pendingBoardSettings`): a copy of one board's
+ *     `settings` block, pinned to `pendingBoardId`.
+ *
+ * `effective` / `effectiveBoardSettings` return the editable copy during a
+ * session and the live values otherwise, so the same controls work inside
+ * and outside the dialog.
+ */
+
+let pending = $state<GlobalDefaults | null>(null);
+let pendingBoardSettings = $state<Record<string, unknown> | null>(null);
+let pendingBoardId = $state<string | null>(null);
+let pendingBoardType = $state<BoardType | null>(null);
+
+function liveBoardSettings(boardId: string): Record<string, unknown> | undefined {
+  // Prefer the cache (authoritative, and it survives a tab switch); fall
+  // back to the active board if the cache has no entry.
+  const cached = boardCacheStore.cache[boardId];
+  if (cached) return cached.board.settings as Record<string, unknown>;
+  const active = boardStore.current;
+  return active?.id === boardId ? (active.settings as Record<string, unknown>) : undefined;
 }
 
 export const pendingSettingsStore = {
-  /** Whether an Apply/Cancel session is currently in progress. */
+  /** Whether an Apply / Revert session is in progress. */
   get active(): boolean {
     return pending !== null || pendingBoardSettings !== null;
   },
 
-  /**
-   * True when the active session has edits that diverge from
-   * the live store values. Drives the modal's discard-changes confirmation:
-   * a session with no diff (e.g. just opened the modal, or applied/cancelled
-   * before closing) doesn't pester the user. Compares both scopes:
-   *
-   *  - global pending vs `vaultStore.project.settings`
-   *  - board pending vs the cached board's `settings` (looked up by
-   *    `pendingBoardId` so a tab-switch during the session doesn't drift
-   *    the comparison onto the wrong board)
-   *
-   * Uses a stable JSON serialisation so key-order is irrelevant — the
-   * settings tree is small enough that the cost is negligible.
-   */
-  hasUnsavedChanges(): boolean {
-    if (pending !== null) {
-      const live = vaultStore.project?.settings;
-      if (live && stableStringify(pending) !== stableStringify(live)) return true;
-    }
-    if (pendingBoardSettings !== null && pendingBoardId !== null) {
-      // Prefer the cache lookup (authoritative + survives a tab switch);
-      // fall back to the active board if the cache doesn't have an entry.
-      const cached = boardCacheStore.cache[pendingBoardId];
-      const liveSettings =
-        (cached?.board.settings as Record<string, unknown> | undefined) ??
-        (boardStore.current?.id === pendingBoardId
-          ? (boardStore.current.settings as Record<string, unknown>)
-          : undefined);
-      if (
-        liveSettings &&
-        stableStringify(pendingBoardSettings) !== stableStringify(liveSettings)
-      ) {
-        return true;
-      }
-    }
-    return false;
+  /** The Global Defaults copy differs from the live defaults. */
+  hasGlobalChanges(): boolean {
+    if (pending === null) return false;
+    const live = vaultStore.project?.settings;
+    if (!live) return false;
+    return comparable(pending) !== comparable(sliceOf(live));
   },
 
-  // ── Global settings ────────────────────────────────────────────────
+  /** The Current Board copy differs from that board's live settings. */
+  hasBoardChanges(): boolean {
+    if (pendingBoardSettings === null || pendingBoardId === null) return false;
+    const live = liveBoardSettings(pendingBoardId);
+    if (!live) return false;
+    return comparable(pendingBoardSettings) !== comparable(live);
+  },
 
-  get pending(): ProjectSettings | null {
+  /**
+   * True when either tab has edits that differ from the live values. Drives
+   * the dialog's discard-changes confirmation, so a session with nothing to
+   * lose closes without asking.
+   */
+  hasUnsavedChanges(): boolean {
+    return this.hasGlobalChanges() || this.hasBoardChanges();
+  },
+
+  // ── Global Defaults ────────────────────────────────────────────────
+
+  get pending(): GlobalDefaults | null {
     return pending;
   },
 
   /**
-   * Returns the global settings the UI should currently render against.
+   * The project settings the UI should render against: the live settings,
+   * with the pending style defaults laid over them during a session.
    */
   get effective(): ProjectSettings | null {
-    if (pending) return pending;
-    return vaultStore.project?.settings ?? null;
+    const live = vaultStore.project?.settings ?? null;
+    if (!live || !pending) return live;
+    return { ...live, ...pending };
   },
 
-  // ── Board settings ─────────────────────────────────────────────────
+  // ── Current Board ──────────────────────────────────────────────────
 
   get pendingBoardSettings(): Record<string, unknown> | null {
     return pendingBoardSettings;
@@ -143,10 +205,13 @@ export const pendingSettingsStore = {
     return pendingBoardId;
   },
 
+  get pendingBoardType(): BoardType | null {
+    return pendingBoardType;
+  },
+
   /**
-   * Returns the current board's settings (including the `defaults`
-   * override block). Inside a session this is the editable copy;
-   * otherwise it reads straight from the active board.
+   * The current board's settings (including the `defaults` override block).
+   * Inside a session this is the editable copy; otherwise the active board's.
    */
   get effectiveBoardSettings(): Record<string, unknown> | null {
     if (pendingBoardSettings) return pendingBoardSettings;
@@ -157,34 +222,35 @@ export const pendingSettingsStore = {
   // ── Lifecycle ──────────────────────────────────────────────────────
 
   /**
-   * Snapshots only the global ProjectSettings into `pending`. Used to
-   * (re-)arm the Global Defaults tab without disturbing any
-   * uncommitted Current Board edits in `pendingBoardSettings`.
+   * Copies the live style defaults into `pending`. Re-arms the Global
+   * Defaults tab without touching the Current Board copy.
    */
   startGlobal(): void {
     const live = vaultStore.project?.settings;
-    if (live) pending = deepClone(live);
+    if (live) pending = deepClone(sliceOf(live));
   },
 
   /**
-   * Snapshots only the active board's settings into
-   * `pendingBoardSettings`. Used to (re-)arm the Current Board tab
-   * without disturbing any uncommitted Global Defaults edits in
-   * `pending`.
+   * Copies the active board's settings into `pendingBoardSettings`. Re-arms
+   * the Current Board tab without touching the Global Defaults copy.
    */
   startBoard(): void {
     const board = boardStore.current;
     if (board) {
       pendingBoardId = board.id;
+      pendingBoardType = board.type;
       pendingBoardSettings = deepClone(board.settings as Record<string, unknown>);
+    } else {
+      pendingBoardId = null;
+      pendingBoardType = null;
+      pendingBoardSettings = null;
     }
   },
 
   /**
-   * Begins a session by snapshotting both scopes. Used by the modal's
-   * mount effect. Per-tab Apply/Cancel must re-arm only the scope they
-   * just committed (`startGlobal` / `startBoard`) — calling this here
-   * would wipe whatever is still pending in the other tab.
+   * Begins a session by copying both scopes (the dialog's mount). Per-tab
+   * Apply / Revert re-arm only their own scope (`startGlobal` /
+   * `startBoard`): this would wipe the other tab's unapplied edits.
    */
   start(): void {
     this.startGlobal();
@@ -192,29 +258,26 @@ export const pendingSettingsStore = {
   },
 
   /**
-   * Mutates a field at a dotted path in the global pending copy.
+   * Sets a field at a dotted path in the Global Defaults copy. Paths start
+   * with a board type (`mindmap.tile.borderWidth`).
    *
-   * We deep-clone before each write so the top-level reference changes
-   * AND every nested object on the path is a fresh reference. This is
-   * what wakes up `$derived` consumers reading deep paths
-   * (LivePreview, ColorPicker `value` props on nested fields) — a
-   * shallow `{ ...pending }` only touches the top-level object and
-   * leaves nested references stable, which can starve nested reads.
+   * Every write deep-clones, so the top-level reference and every object on
+   * the path are new: `$derived` readers of deep paths (LivePreview, a
+   * ColorPicker's `value`) would otherwise miss the change.
    */
   update(path: string, value: unknown): void {
     if (!pending) return;
-    const next = deepClone(pending);
-    // ProjectSettings is a `.passthrough()` schema output, so its inferred
-    // type already carries an index signature compatible with the loose
-    // `Record<string, unknown>` shape that `setNestedField` walks.
+    const top = path.split('.')[0] as GlobalDefaultsKey;
+    if (!GLOBAL_DEFAULTS_KEYS.includes(top)) {
+      console.warn(`[pendingSettings] "${path}" is not a Global Defaults field`);
+      return;
+    }
+    const next: Record<string, unknown> = deepClone(pending);
     setNestedField(next, path, value);
-    pending = next;
+    pending = next as GlobalDefaults;
   },
 
-  /**
-   * Mutates a field at a dotted path in the board pending copy.
-   * Same deep-clone rationale as `update`.
-   */
+  /** Sets a field at a dotted path in the Current Board copy. */
   updateBoard(path: string, value: unknown): void {
     if (!pendingBoardSettings) return;
     const next = deepClone(pendingBoardSettings);
@@ -223,78 +286,82 @@ export const pendingSettingsStore = {
   },
 
   /**
-   * Commits the global pending copy only. Used by the per-tab Apply
-   * inside `BoardDefaults.svelte`.
+   * Writes the Global Defaults copy back into `project.settings`, touching
+   * only the style-defaults keys. Refuses (keeping the copy) when a slice
+   * wouldn't pass its schema, since `defaults.json` would then reset that
+   * board type to factory values on the next load. Nothing to write is a
+   * no-op.
    */
-  applyGlobal(): void {
+  applyGlobal(): ApplyResult {
     const project = vaultStore.project;
-    if (project && pending) {
-      project.settings = deepClone(pending);
-      vaultStore.markMetaDirty();
+    if (!project || !pending) return { ok: true, changed: false };
+    if (!this.hasGlobalChanges()) {
+      pending = null;
+      return { ok: true, changed: false };
     }
-    pending = null;
-  },
-
-  /**
-   * Commits the board pending copy only. Used by the per-tab Apply
-   * inside `CurrentBoardSettings.svelte`.
-   *
-   * Targets `pendingBoardId` (the board that was active when the session
-   * started), NOT `boardStore.current.id`, so switching tabs while the
-   * modal is open doesn't write the snapshotted settings to the wrong
-   * board. Writes through `boardCacheStore.updateBoardSettings` (the
-   * single sink) and mirrors onto the active proxy for immediate
-   * reactivity — same contract as `boardStore.updateSettings`.
-   */
-  applyBoard(): void {
-    if (pendingBoardSettings && pendingBoardId) {
-      const next = deepClone(pendingBoardSettings);
-      const active = boardStore.current;
-      boardCacheStore.updateBoardSettings(pendingBoardId, next);
-      if (active && active.id === pendingBoardId) {
-        (active as { settings: Record<string, unknown> }).settings = next;
+    for (const key of GLOBAL_DEFAULTS_KEYS) {
+      const result = GLOBAL_DEFAULTS_SCHEMAS[key].safeParse(pending[key]);
+      if (!result.success) {
+        return { ok: false, message: `Couldn't apply the Global Defaults: ${firstIssue(result.error, key)}` };
       }
     }
-    pendingBoardSettings = null;
-    pendingBoardId = null;
+    project.settings = { ...project.settings, ...deepClone(pending) };
+    vaultStore.markMetaDirty();
+    pending = null;
+    return { ok: true, changed: true };
   },
 
   /**
-   * Commits both pending copies atomically.
+   * Writes the Current Board copy to `pendingBoardId` (the board the session
+   * started on, not whichever is active now). Refuses (keeping the copy)
+   * when the settings wouldn't pass the board-file schema, since the board
+   * would then fail to load. Goes through `boardCacheStore.updateBoardSettings`
+   * (the single sink) and mirrors onto the active board for reactivity.
    */
-  apply(): void {
-    this.applyGlobal();
-    this.applyBoard();
+  applyBoard(): ApplyResult {
+    if (!pendingBoardSettings || !pendingBoardId) return { ok: true, changed: false };
+    if (!this.hasBoardChanges()) {
+      this.cancelBoard();
+      return { ok: true, changed: false };
+    }
+    const next = prune(pendingBoardSettings) as Record<string, unknown>;
+    if (pendingBoardType) {
+      const result = boardSettingsSchemaFor(pendingBoardType).safeParse(next);
+      if (!result.success) {
+        return { ok: false, message: `Couldn't apply the board settings: ${firstIssue(result.error, '')}` };
+      }
+    }
+    const active = boardStore.current;
+    boardCacheStore.updateBoardSettings(pendingBoardId, next);
+    if (active && active.id === pendingBoardId) {
+      (active as { settings: Record<string, unknown> }).settings = deepClone(next);
+    }
+    this.cancelBoard();
+    return { ok: true, changed: true };
   },
 
-  /**
-   * Discards the global pending copy only.
-   */
+  /** Discards the Global Defaults copy. */
   cancelGlobal(): void {
     pending = null;
   },
 
-  /**
-   * Discards the board pending copy only.
-   */
+  /** Discards the Current Board copy. */
   cancelBoard(): void {
     pendingBoardSettings = null;
     pendingBoardId = null;
+    pendingBoardType = null;
   },
 
-  /**
-   * Discards both pending copies without writing anything.
-   */
+  /** Discards both copies without writing anything. */
   cancel(): void {
-    pending = null;
-    pendingBoardSettings = null;
-    pendingBoardId = null;
+    this.cancelGlobal();
+    this.cancelBoard();
   },
 };
 
-// Vault-swap reset: drops any uncommitted Apply/Cancel session so a settings modal still
+// Vault-swap reset: drops any unapplied session so a settings dialog still
 // open during the swap doesn't write the previous vault's pending values
-// into the new vault's board on a delayed Apply.
+// into the new vault on a delayed Apply.
 onVaultSwap('pre-swap', 'pendingSettings', () => {
   pendingSettingsStore.cancel();
 });

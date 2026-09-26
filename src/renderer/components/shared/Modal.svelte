@@ -29,10 +29,17 @@
      * Defaults to "always allow" so existing modals are unaffected.
      */
     beforeClose?: () => boolean | Promise<boolean>;
+    /**
+     * Keeps app keyboard shortcuts with a modifier (Ctrl+Tab, Ctrl+W …) from
+     * reaching the app behind the dialog. For a dialog whose state is tied to
+     * the active board or tab, which such a shortcut would change underneath
+     * it. Plain keys still reach the dialog's own controls.
+     */
+    isolateShortcuts?: boolean;
     children: Snippet;
   }
 
-  let { id, title, width = '480px', showKeyHints = true, beforeClose, children }: Props = $props();
+  let { id, title, width = '480px', showKeyHints = true, beforeClose, isolateShortcuts = false, children }: Props = $props();
 
   let dialogEl = $state<HTMLDialogElement | null>(null);
 
@@ -106,6 +113,12 @@
       // bypass `beforeClose` and force the modal shut behind its own guard.
       e.stopPropagation();
       void tryClose();
+      return;
+    }
+    if (isolateShortcuts && (e.ctrlKey || e.metaKey || e.altKey)) {
+      // The global shortcut listener is on window, so stopping the bubble
+      // here keeps it from firing; default actions (copy, paste) still run.
+      e.stopPropagation();
     }
   }
 </script>

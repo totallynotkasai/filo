@@ -10,8 +10,8 @@ import { defaultProjectSettings } from '../../schema/index';
  *      bakes the active Global Defaults into its own `settings`, so
  *      future edits to Global Defaults don't retroactively change it.
  *   2. The "Apply Current Global Defaults to all Boards" / "Apply
- *      Theme Defaults to all Boards" buttons — which walk every board
- *      and overwrite each board's settings via this helper.
+ *      Theme Defaults to all Boards" buttons, which merge the style keys
+ *      of this block into every board (`mergeBoardStyleSettings`).
  *
  * The shape mirrors what the per-type `*SettingsSchema` produces, with
  * a `defaults` sub-block that mirrors the corresponding
@@ -90,6 +90,37 @@ export function buildBoardSettingsFromGlobal(
       };
     }
   }
+}
+
+/**
+ * The board-settings keys that are style: colours, pattern, title font size
+ * and the per-board `defaults` cascade block. "Apply … Defaults to all
+ * Boards" overwrites only these. Everything else a board keeps (Kanban
+ * saved views, its default folder, Mind Map snap / semantic zoom /
+ * visibility, Task List group and sort) is not style and must survive.
+ */
+export const BOARD_STYLE_SETTING_KEYS = [
+  'backgroundColor',
+  'backgroundPattern',
+  'accentColor',
+  'titleFontSize',
+  'defaults',
+] as const;
+
+/**
+ * `existing` with its style keys replaced by the ones in `built` (from
+ * `buildBoardSettingsFromGlobal` / `…FromTheme`). A style key `built`
+ * doesn't carry is left as the board has it.
+ */
+export function mergeBoardStyleSettings(
+  existing: BoardSettings,
+  built: BoardSettings,
+): BoardSettings {
+  const next: BoardSettings = { ...existing };
+  for (const key of BOARD_STYLE_SETTING_KEYS) {
+    if (key in built) next[key] = built[key];
+  }
+  return next;
 }
 
 /**

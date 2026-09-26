@@ -3,6 +3,9 @@
   import ColorPicker from '../shared/ColorPicker.svelte';
   import BackgroundImagePicker from '../shared/BackgroundImagePicker.svelte';
   import type { BoardType } from '../../../shared/types';
+  import { ProjectSettingsSchema } from '../../schema/index';
+  import { readPath } from '../../lib/settings/currentBoardHelpers';
+  import { numberBoundsAt, readNumberField } from '../../lib/settings/numberInput';
   import {
     SHAPE_OPTIONS,
     BORDER_STYLE_OPTIONS,
@@ -39,6 +42,23 @@
     pendingSettingsStore.update(path, value);
   }
 
+  /**
+   * Commits a number field, clamped to the settings schema's range for it.
+   * A non-number puts the field back to its last value; blank clears an
+   * `optional` field. An unchecked NaN would save as `null` and reset the
+   * whole board type's defaults on the next load.
+   */
+  function setNumber(input: HTMLInputElement, path: string, optional = false) {
+    const last = readPath(settings, path);
+    const value = readNumberField(
+      input,
+      numberBoundsAt(ProjectSettingsSchema, path),
+      typeof last === 'number' ? last : undefined,
+      optional,
+    );
+    if (value === undefined && !optional) return;
+    update(path, value);
+  }
 
 </script>
 
@@ -102,7 +122,7 @@
       </div>
       <div class="setting-row">
         <label class="setting-label" for="mm-border-width">Border Width</label>
-        <input id="mm-border-width" class="setting-input number-input" type="number" min="0" max="10" value={mindmapDefaults.tile.borderWidth} onchange={(e) => update('mindmap.tile.borderWidth', parseInt((e.target as HTMLInputElement).value))} />
+        <input id="mm-border-width" class="setting-input number-input" type="number" min="0" max="10" value={mindmapDefaults.tile.borderWidth} onchange={(e) => setNumber(e.currentTarget, 'mindmap.tile.borderWidth')} />
       </div>
       <div class="setting-row">
         <label class="setting-label" for="mm-shadow">Shadow Intensity</label>
@@ -125,10 +145,7 @@
           max="48"
           placeholder="—"
           value={mindmapDefaults.tile.fontSizeTitle ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('mindmap.tile.fontSizeTitle', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'mindmap.tile.fontSizeTitle', true)}
         />
       </div>
       <div class="setting-row">
@@ -141,10 +158,7 @@
           max="48"
           placeholder="—"
           value={mindmapDefaults.tile.fontSizeBody ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('mindmap.tile.fontSizeBody', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'mindmap.tile.fontSizeBody', true)}
         />
       </div>
 
@@ -155,7 +169,7 @@
       </div>
       <div class="setting-row">
         <label class="setting-label" for="mm-path-size">Path Size</label>
-        <input id="mm-path-size" class="setting-input number-input" type="number" min="1" max="10" value={mindmapDefaults.connectionPath.pathSize} onchange={(e) => update('mindmap.connectionPath.pathSize', parseInt((e.target as HTMLInputElement).value))} />
+        <input id="mm-path-size" class="setting-input number-input" type="number" min="1" max="10" value={mindmapDefaults.connectionPath.pathSize} onchange={(e) => setNumber(e.currentTarget, 'mindmap.connectionPath.pathSize')} />
       </div>
       <div class="setting-row">
         <label class="setting-label" for="mm-path-type">Path Type</label>
@@ -181,7 +195,7 @@
       </div>
       <div class="setting-row">
         <label class="setting-label" for="mm-arrow-size">Arrow Size</label>
-        <input id="mm-arrow-size" class="setting-input number-input" type="number" min="4" max="24" value={mindmapDefaults.connectionPath.arrowSize} onchange={(e) => update('mindmap.connectionPath.arrowSize', parseInt((e.target as HTMLInputElement).value))} />
+        <input id="mm-arrow-size" class="setting-input number-input" type="number" min="4" max="24" value={mindmapDefaults.connectionPath.arrowSize} onchange={(e) => setNumber(e.currentTarget, 'mindmap.connectionPath.arrowSize')} />
       </div>
 
       <h4 class="subsection-title">Connection Label Defaults</h4>
@@ -203,10 +217,7 @@
           max="32"
           placeholder="—"
           value={mindmapDefaults.connectionLabel.fontSize ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('mindmap.connectionLabel.fontSize', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'mindmap.connectionLabel.fontSize', true)}
         />
       </div>
 
@@ -249,7 +260,7 @@
       </div>
       <div class="setting-row">
         <label class="setting-label" for="mm-frame-border-width">Border Width</label>
-        <input id="mm-frame-border-width" class="setting-input number-input" type="number" min="0" max="10" value={mindmapDefaults.frame.borderWidth} onchange={(e) => update('mindmap.frame.borderWidth', parseInt((e.target as HTMLInputElement).value))} />
+        <input id="mm-frame-border-width" class="setting-input number-input" type="number" min="0" max="10" value={mindmapDefaults.frame.borderWidth} onchange={(e) => setNumber(e.currentTarget, 'mindmap.frame.borderWidth')} />
       </div>
       <div class="setting-row">
         <label class="setting-label" for="mm-frame-shadow">Shadow Intensity</label>
@@ -272,10 +283,7 @@
           max="48"
           placeholder="—"
           value={mindmapDefaults.frame.fontSizeTitle ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('mindmap.frame.fontSizeTitle', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'mindmap.frame.fontSizeTitle', true)}
         />
       </div>
     </div>
@@ -321,7 +329,7 @@
       </div>
       <div class="setting-row">
         <label class="setting-label" for="kb-col-bw">Border Width</label>
-        <input id="kb-col-bw" class="setting-input number-input" type="number" min="0" max="10" value={kanbanDefaults.column.borderWidth} onchange={(e) => update('kanban.column.borderWidth', parseInt((e.target as HTMLInputElement).value))} />
+        <input id="kb-col-bw" class="setting-input number-input" type="number" min="0" max="10" value={kanbanDefaults.column.borderWidth} onchange={(e) => setNumber(e.currentTarget, 'kanban.column.borderWidth')} />
       </div>
       <div class="setting-row">
         <label class="setting-label" for="kb-col-shadow">Shadow Intensity</label>
@@ -344,7 +352,7 @@
           max="2000"
           step="10"
           value={kanbanDefaults.column.width}
-          onchange={(e) => update('kanban.column.width', parseInt((e.target as HTMLInputElement).value, 10))}
+          onchange={(e) => setNumber(e.currentTarget, 'kanban.column.width')}
         />
       </div>
       <div class="setting-row">
@@ -357,10 +365,7 @@
           max="48"
           placeholder="—"
           value={kanbanDefaults.column.fontSizeTitle ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('kanban.column.fontSizeTitle', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'kanban.column.fontSizeTitle', true)}
         />
       </div>
 
@@ -381,7 +386,7 @@
       </div>
       <div class="setting-row">
         <label class="setting-label" for="kb-card-bw">Border Width</label>
-        <input id="kb-card-bw" class="setting-input number-input" type="number" min="0" max="10" value={kanbanDefaults.card.borderWidth} onchange={(e) => update('kanban.card.borderWidth', parseInt((e.target as HTMLInputElement).value))} />
+        <input id="kb-card-bw" class="setting-input number-input" type="number" min="0" max="10" value={kanbanDefaults.card.borderWidth} onchange={(e) => setNumber(e.currentTarget, 'kanban.card.borderWidth')} />
       </div>
       <div class="setting-row">
         <label class="setting-label" for="kb-card-shadow">Shadow Intensity</label>
@@ -404,10 +409,7 @@
           max="48"
           placeholder="—"
           value={kanbanDefaults.card.fontSizeTitle ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('kanban.card.fontSizeTitle', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'kanban.card.fontSizeTitle', true)}
         />
       </div>
       <div class="setting-row">
@@ -420,10 +422,7 @@
           max="48"
           placeholder="—"
           value={kanbanDefaults.card.fontSizeBody ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('kanban.card.fontSizeBody', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'kanban.card.fontSizeBody', true)}
         />
       </div>
     </div>
@@ -465,7 +464,7 @@
       </div>
       <div class="setting-row">
         <label class="setting-label" for="tl-bw">Border Width</label>
-        <input id="tl-bw" class="setting-input number-input" type="number" min="0" max="10" value={tasklistDefaults.task.borderWidth} onchange={(e) => update('tasklist.task.borderWidth', parseInt((e.target as HTMLInputElement).value))} />
+        <input id="tl-bw" class="setting-input number-input" type="number" min="0" max="10" value={tasklistDefaults.task.borderWidth} onchange={(e) => setNumber(e.currentTarget, 'tasklist.task.borderWidth')} />
       </div>
       <div class="setting-row">
         <label class="setting-label" for="tl-shadow">Shadow Intensity</label>
@@ -488,10 +487,7 @@
           max="48"
           placeholder="—"
           value={tasklistDefaults.task.fontSizeTitle ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('tasklist.task.fontSizeTitle', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'tasklist.task.fontSizeTitle', true)}
         />
       </div>
       <div class="setting-row">
@@ -504,10 +500,7 @@
           max="48"
           placeholder="—"
           value={tasklistDefaults.task.fontSizeBody ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('tasklist.task.fontSizeBody', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'tasklist.task.fontSizeBody', true)}
         />
       </div>
 
@@ -532,7 +525,7 @@
       </div>
       <div class="setting-row">
         <label class="setting-label" for="tl-section-bw">Border Width</label>
-        <input id="tl-section-bw" class="setting-input number-input" type="number" min="0" max="10" value={tasklistDefaults.section.borderWidth} onchange={(e) => update('tasklist.section.borderWidth', parseInt((e.target as HTMLInputElement).value))} />
+        <input id="tl-section-bw" class="setting-input number-input" type="number" min="0" max="10" value={tasklistDefaults.section.borderWidth} onchange={(e) => setNumber(e.currentTarget, 'tasklist.section.borderWidth')} />
       </div>
       <div class="setting-row">
         <label class="setting-label" for="tl-section-shadow">Shadow Intensity</label>
@@ -555,10 +548,7 @@
           max="48"
           placeholder="—"
           value={tasklistDefaults.section.fontSizeTitle ?? ''}
-          onchange={(e) => {
-            const v = (e.target as HTMLInputElement).value;
-            update('tasklist.section.fontSizeTitle', v === '' ? undefined : parseFloat(v));
-          }}
+          onchange={(e) => setNumber(e.currentTarget, 'tasklist.section.fontSizeTitle', true)}
         />
       </div>
     </div>
@@ -600,7 +590,7 @@
       </div>
       <div class="setting-row">
         <label class="setting-label" for="doc-bw">Border Width</label>
-        <input id="doc-bw" class="setting-input number-input" type="number" min="0" max="10" value={documentDefaults.document.borderWidth} onchange={(e) => update('document.document.borderWidth', parseInt((e.target as HTMLInputElement).value))} />
+        <input id="doc-bw" class="setting-input number-input" type="number" min="0" max="10" value={documentDefaults.document.borderWidth} onchange={(e) => setNumber(e.currentTarget, 'document.document.borderWidth')} />
       </div>
       <div class="setting-row">
         <label class="setting-label" for="doc-shadow">Shadow Intensity</label>

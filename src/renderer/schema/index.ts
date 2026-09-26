@@ -16,7 +16,7 @@ export type {
   PartialTaskStyle,
 } from './placement';
 
-export { BoardSchema, MindMapBoardSchema, KanbanBoardSchema, TaskListBoardSchema, DocumentBoardSchema, TileGroupSchema } from './board';
+export { BoardSchema, MindMapBoardSchema, KanbanBoardSchema, TaskListBoardSchema, DocumentBoardSchema, TileGroupSchema, boardSettingsSchemaFor } from './board';
 export type { Board, MindMapBoard, KanbanBoard, TaskListBoard, TaskListSection, DocumentBoard, TileGroup } from './board';
 
 export { ConnectionSchema, ConnectionLabelSchema } from './connection';

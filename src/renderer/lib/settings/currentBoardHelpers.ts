@@ -8,6 +8,8 @@
  * field falls through to the global default in the cascade.
  */
 import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
+import { boardSettingsSchemaFor } from '../../schema/index';
+import { numberBoundsAt, readNumberField } from './numberInput';
 
 export function readPath(settings: unknown, path: string): unknown {
   if (!settings) return undefined;
@@ -36,15 +38,20 @@ export function parseBoolean(v: string): boolean | undefined {
   return undefined;
 }
 
-export function updateNumberOrInherit(
-  path: string,
-  raw: string,
-  parser: (s: string) => number,
-): void {
-  if (raw === '' || raw === null) {
-    updatePath(path, undefined);
-    return;
-  }
-  const v = parser(raw);
-  if (Number.isFinite(v)) updatePath(path, v);
+/**
+ * Commits a Current Board number field. Blank clears the override; any
+ * other entry is clamped to the board-file schema's range for that field
+ * (read from the schema, so a saved value always loads again).
+ */
+export function updateNumberOrInherit(path: string, input: HTMLInputElement): void {
+  const type = pendingSettingsStore.pendingBoardType;
+  if (!type) return;
+  const lastGood = readPath(pendingSettingsStore.effectiveBoardSettings, path);
+  const value = readNumberField(
+    input,
+    numberBoundsAt(boardSettingsSchemaFor(type), path),
+    typeof lastGood === 'number' ? lastGood : undefined,
+    true,
+  );
+  updatePath(path, value);
 }

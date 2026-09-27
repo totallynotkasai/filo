@@ -5,6 +5,7 @@ import { MoveTilesCommand } from '../../commands/index';
 import { computeGuides, capCandidatesByDistance, type TileBounds } from './smartGuides';
 import { startEdgePan, stopEdgePan, updateEdgePanMouse } from './edgePan';
 import type { BoardScope } from '../boards/boardScope.svelte';
+import type { Tile } from '../../schema/index';
 
 /**
  * Tile drag action — applied to the tile header element.
@@ -53,6 +54,42 @@ const GRID_SIZE = 20;
  * 16ms on a 1000-tile board.
  */
 const SMART_GUIDE_MAX_CANDIDATES = 100;
+
+/**
+ * Pointerdowns whose selection change the drag action already made. A locked
+ * tile's pointerdown still bubbles to its container (no drag starts), which
+ * must not toggle the selection a second time.
+ */
+const selectionHandled = new WeakSet<Event>();
+
+export function isSelectionHandled(e: Event): boolean {
+  return selectionHandled.has(e);
+}
+
+interface DragTileSource {
+  getTile(id: string): Tile | undefined;
+  getGroupedTileIds(id: string): string[];
+}
+
+/**
+ * The tiles a header drag moves: the dragged tile, the rest of the selection
+ * when the dragged tile is part of it, and every group member of those.
+ * Locked tiles stay put: "locked" means the tile never moves, whatever it is
+ * selected or grouped with.
+ */
+export function tilesToDrag(primaryId: string, selectedIds: string[], board: DragTileSource): Tile[] {
+  const baseIds = selectedIds.includes(primaryId) ? selectedIds : [primaryId];
+  const ids = new Set(baseIds);
+  for (const id of baseIds) {
+    for (const gid of board.getGroupedTileIds(id)) ids.add(gid);
+  }
+  const tiles: Tile[] = [];
+  for (const id of ids) {
+    const tile = board.getTile(id);
+    if (tile && !tile.locked) tiles.push(tile);
+  }
+  return tiles;
+}
 
 export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
   let currentOptions = options;
@@ -126,6 +163,7 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
       } else if (!selectionStore.isSelected(currentOptions.tileId)) {
         selectionStore.select(currentOptions.tileId);
       }
+      selectionHandled.add(e);
     }
 
     if (currentOptions.locked) return;
@@ -144,26 +182,13 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
     lastSnapDx = 0;
     lastSnapDy = 0;
 
-    // Capture starting positions of all tiles to move:
-    // includes selected tiles AND their group members
-    const baseIds = selectionStore.isSelected(currentOptions.tileId)
-      ? [...selectionStore.selectedIds]
-      : [currentOptions.tileId];
-
-    // Expand to include all group members
-    const idsToMove = new Set(baseIds);
-    for (const id of baseIds) {
-      for (const gid of boardStore.getGroupedTileIds(id)) {
-        idsToMove.add(gid);
-      }
-    }
-
     startPositions = new Map();
-    for (const id of idsToMove) {
-      const tile = boardStore.getTile(id);
-      if (tile) {
-        startPositions.set(id, { x: tile.position.x, y: tile.position.y });
-      }
+    for (const tile of tilesToDrag(
+      currentOptions.tileId,
+      selectionStore.isSelected(currentOptions.tileId) ? [...selectionStore.selectedIds] : [],
+      boardStore,
+    )) {
+      startPositions.set(tile.id, { x: tile.position.x, y: tile.position.y });
     }
 
     // Suppress spatial-store revision bumps for the duration of the drag.
@@ -291,8 +316,8 @@ export function tileDragAction(node: HTMLElement, options: TileDragOptions) {
     }
 
     // Smart guides: snap the primary dragged tile, then offset others by the same delta.
-    // Holding Shift disables guides for the duration of the drag.
-    if (canvasStore.snapEnabled && gridSize === 0 && !e.shiftKey) {
+    // They run whenever grid snap is off; holding Shift disables them.
+    if (gridSize === 0 && !e.shiftKey) {
       // Skip re-evaluation when the raw input delta hasn't moved enough since
       // the last evaluation to change snap targets — but still apply the
       // cached snap offset so previously-snapped tiles stay snapped.

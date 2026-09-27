@@ -14,7 +14,7 @@
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { orphansStore } from '../../stores/orphans.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
-  import { tileDragAction } from '../../lib/canvas/tileDrag';
+  import { tileDragAction, isSelectionHandled } from '../../lib/canvas/tileDrag';
   import { tileResizeAction } from '../../lib/canvas/tileResize';
   import { effectiveTileStyle } from '../../lib/styles/effectiveStyle';
   import { getContextMenuKeyPosition } from '../../lib/utils/contextMenuKey';
@@ -199,6 +199,7 @@
     // pointerdown added the tile, then click toggled it back off — the
     // "selects for a split second then deselects" bug.
     if (flowLayout) return;
+    if (isSelectionHandled(e)) return;
     if (e.ctrlKey || e.metaKey) {
       selectionStore.toggle(tile.id);
     } else if (!selectionStore.isSelected(tile.id)) {

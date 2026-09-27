@@ -227,9 +227,11 @@ export function groupKey(r: TaskRow, groupBy: GroupBy, today: Date): GroupKey {
     if (!due) return { key: 'no-date', label: 'No Due Date' };
     due.setHours(0, 0, 0, 0);
     if (due.getTime() < today.getTime()) return { key: 'overdue', label: 'Overdue' };
-    const diff = (due.getTime() - today.getTime()) / 86400000;
-    if (diff < 1) return { key: 'today', label: 'Today' };
-    if (diff < 7) return { key: 'this-week', label: 'This Week' };
+    // Whole calendar days: a day with a clock change lasts 23 or 25 hours,
+    // so the raw millisecond gap to tomorrow can be under one day.
+    const days = Math.round((due.getTime() - today.getTime()) / 86400000);
+    if (days < 1) return { key: 'today', label: 'Today' };
+    if (days < 7) return { key: 'this-week', label: 'This Week' };
     return { key: 'later', label: 'Later' };
   }
   if (groupBy === 'tag') {

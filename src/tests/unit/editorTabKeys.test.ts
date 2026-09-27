@@ -156,6 +156,46 @@ describe('Shift+Tab and Backspace', () => {
     expect(editorMarkdown(ed)).toBe('Alpha');
   });
 
+  it('Backspace at the start of an indented paragraph under another outdents it, not joins it', () => {
+    const ed = makeEditor('Alpha\n\n<p style="margin-left: 24px;">Beta</p>');
+    caretAt(ed, 'Beta');
+    expect(press(ed, 'Backspace')).toBe(true);
+    expect(editorMarkdown(ed)).toBe('Alpha\n\nBeta');
+    press(ed, 'Backspace');
+    expect(editorMarkdown(ed)).toBe('AlphaBeta');
+  });
+
+  it('Tab over lines that reach into a list indents only the plain lines; the list stays Markdown', () => {
+    const ed = makeEditor('Intro\n\n- one\n- two');
+    const listEnd = ed.state.doc.content.size - 3;
+    ed.commands.setTextSelection({ from: 2, to: listEnd });
+    press(ed, 'Tab');
+    expect(editorMarkdown(ed)).toBe('<p style="margin-left: 24px;">Intro</p>\n\n- one\n- two');
+    reloads(ed);
+  });
+
+  it.each([
+    ['closing', 'bold\tafter', 1, 6, '**bold**\tafter'],
+    ['opening', 'before\tbold', 7, 12, 'before\t**bold**'],
+    ['closing, after two tabs', 'bold\t\tafter', 1, 7, '**bold**\t\tafter'],
+  ])('a tab %s a bold run is saved outside it, so the bold survives reload', (_, md, from, to, expected) => {
+    const ed = makeEditor(md);
+    ed.commands.setTextSelection({ from, to });
+    ed.commands.toggleBold();
+    const saved = editorMarkdown(ed);
+    expect(saved).toBe(expected);
+    const ed2 = makeEditor('');
+    expect(loadMarkdownIntoEditor(ed2, saved).lossy).toBe(false);
+    expect(ed2.getHTML()).toContain('<strong>bold</strong>');
+    expect(editorMarkdown(ed2)).toBe(saved);
+  });
+
+  it('a tab inside a bold run keeps its character', () => {
+    const ed = makeEditor('**a\tb**');
+    expect(editorMarkdown(ed)).toBe('**a\tb**');
+    reloads(ed);
+  });
+
   it('Backspace anywhere else is ordinary', () => {
     const ed = makeEditor('Alpha\n\nBeta');
     caretAt(ed, 'Beta');

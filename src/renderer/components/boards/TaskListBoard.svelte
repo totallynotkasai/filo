@@ -73,7 +73,6 @@
   import { sectionIdForPlacementIndex } from '../../lib/tasklist/sectionMath';
   import {
     collectDescendantIds,
-    getTaskDepth,
     type RowDndItem,
   } from '../../lib/tasklist/blockMove';
   import {
@@ -778,22 +777,13 @@
     return { itemsBySection, displaySectionIds, leadingSectionId: LEADING_SECTION_ID };
   });
 
-  const dragController = new TaskDragController({
-    getRows: () => viewModel.rows,
-    getPlacements: () => placements,
-    getSections: () => sections,
-    getSelectedTaskIds: () => multiSelect.selectedTaskIds,
-    getSnapshot: () => dragSnapshot,
-    isCycleTarget: (draggedId, targetId) =>
-      collectDescendantIds(viewModel.rows, draggedId).includes(targetId),
-    isDepthExceeded: (targetId) => getTaskDepth(viewModel.rows, targetId) >= 2,
-    commitIndent: (tileId, newParent) => {
+  // Indent and outdent, shared by the drag and by Tab / Shift+Tab.
+  const indentOps = {
+    commitIndent: (tileId: string, newParent: string): void => {
       const row = viewModel.rows.find((r) => r.tile.id === tileId);
       if (!row || !board) return;
-      // Auto-expand a collapsed new-parent on BOTH paths (command +
-      // note-less fallback), else the indented child is swallowed under the
-      // collapsed parent until the chevron is clicked. The command path batches
-      // the expand into the same undo unit; the rare fallback expands separately.
+      // Expand a collapsed new parent, else the child vanishes under it. The
+      // command path batches the expand into the same undo step.
       const expandParent = collapsedSubtasks.has(newParent);
       const cmd = buildTaskFieldCommand(row, { parent: newParent }, 'Indent task');
       if (!cmd) {
@@ -818,10 +808,19 @@
       }
       cacheVersion++;
     },
-    commitOutdent: (tileId) => {
+    commitOutdent: (tileId: string): void => {
       const row = viewModel.rows.find((r) => r.tile.id === tileId);
       if (row) updateRowField(row, { parent: '' });
     },
+  };
+
+  const dragController = new TaskDragController({
+    getRows: () => viewModel.rows,
+    getPlacements: () => placements,
+    getSections: () => sections,
+    getSelectedTaskIds: () => multiSelect.selectedTaskIds,
+    getSnapshot: () => dragSnapshot,
+    ...indentOps,
     commitReorder: ({ nextPlacements, nextSections, description, isCrossSection }) => {
       if (!board) return;
       // Same-section reorder under a non-manual sort: switch to manual AND
@@ -1125,7 +1124,7 @@
     getSections: () => sections,
     getSortBy: () => sortBy,
     snapshotSections,
-    updateRowField: (r, p) => updateRowField(r, p),
+    ...indentOps,
     tickAndPersist,
     getSelectionSize: () => multiSelect.selectedTaskIds.size,
     clearSelection: () => multiSelect.clearSelection(),

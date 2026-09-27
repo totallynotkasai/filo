@@ -126,7 +126,9 @@ export class MoveFrameCommand extends Command {
     // are primitive strings.
     this.beforePos = { ...beforePos };
     this.afterPos = { ...afterPos };
-    this.containedTileIds = [...containedTileIds];
+    // A locked tile never moved with the frame, so undo and redo must not
+    // shift it by the frame's delta either.
+    this.containedTileIds = containedTileIds.filter((id) => boardStore.getTile(id)?.locked !== true);
     this.description = `Move frame`;
   }
 

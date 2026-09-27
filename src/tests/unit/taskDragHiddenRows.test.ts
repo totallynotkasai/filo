@@ -61,8 +61,6 @@ function setup(opts: {
     getSections: () => opts.sections,
     getSelectedTaskIds: () => opts.selected ?? new Set(),
     getSnapshot: () => snapshot,
-    isCycleTarget: () => false,
-    isDepthExceeded: () => false,
     commitIndent: () => {},
     commitOutdent: () => {},
     commitReorder: (args) => {

@@ -2,6 +2,7 @@
   import { searchStore, type SearchMode } from '../../stores/search.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { navigateToTile } from '../../lib/utils/navigation.svelte';
+  import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import SearchFindAllPopup from './SearchFindAllPopup.svelte';
   import IconButton from '../shared/IconButton.svelte';
 
@@ -66,7 +67,9 @@
     const jump = searchStore.pendingJump;
     if (!jump) return;
     const m = jump.match;
-    navigateToTile(m.boardId, m.tileId);
+    // A note on no board has no tile to show, so it opens as a document.
+    if (m.tileId) navigateToTile(m.boardId, m.tileId);
+    else if (m.filePath) openNoteInDocumentTab(m.filePath);
     searchStore.consumeJump();
   });
 

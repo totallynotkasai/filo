@@ -20,6 +20,7 @@ import { untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { type DndEvent } from 'svelte-dnd-action';
 import { createIndentTracker, type IndentTracker } from './indentGesture';
+import { indentProblem } from './indentRules';
 import {
   resolveDragBlockIds,
   rebuildPlacementsFromDndItems,
@@ -30,7 +31,6 @@ import {
   type RowDndItem,
 } from './blockMove';
 import { moveTaskBlock } from '../tasks/taskMove';
-import { sectionIdForPlacementIndex } from './sectionMath';
 import type { TaskPlacement, TaskListSection } from '../../schema/index';
 
 /**
@@ -70,13 +70,6 @@ export interface TaskDragControllerOptions {
    * position N of M in section S" announcement. The leading sentinel id
    * resolves to "Top". */
   getSectionTitle?: (sectionId: string) => string | undefined;
-  /** True when `targetId` is a transitive descendant of `draggedId` —
-   * indenting under it would create a cycle. */
-  isCycleTarget: (draggedId: string, targetId: string) => boolean;
-  /** True when `targetId` already sits at the deepest level a child can be
-   * added under (depth cap == 2 → target at depth 2 rejects, since indent
-   * would push the child to depth 3 which the model doesn't permit). */
-  isDepthExceeded: (targetId: string) => boolean;
   /** Commit a single-row indent: row's `parent` frontmatter becomes `newParent`. */
   commitIndent: (tileId: string, newParent: string) => void;
   /** Commit a single-row outdent: row's `parent` frontmatter is cleared. */
@@ -468,22 +461,17 @@ export class TaskDragController {
         // `indent.targetTileId` is the row the pointer last hovered, which can
         // sit in a DIFFERENT section than the dragged row (easy near a section
         // boundary or over the leading bucket) even though the drop finalized
-        // in the source section. Re-parenting `dragged` under a foreign-section
-        // row would render it under that parent's section while its placement
-        // stays here (see the cross-section subtask note below), so reject it.
-        const draggedIdx = placements.findIndex((pl) => pl.tileId === draggedId);
-        const targetIdx = placements.findIndex((pl) => pl.tileId === targetId);
-        const crossSectionTarget =
-          draggedIdx >= 0 &&
-          targetIdx >= 0 &&
-          sectionIdForPlacementIndex(sections, draggedIdx) !==
-            sectionIdForPlacementIndex(sections, targetIdx);
-        if (crossSectionTarget) {
-          this.opts.toast('Cannot indent under a task in another section', 'info', 1800);
-        } else if (this.opts.isDepthExceeded(targetId)) {
-          this.opts.toast('Maximum subtask depth reached', 'info', 1800);
-        } else if (this.opts.isCycleTarget(draggedId, targetId)) {
-          this.opts.toast('Cannot indent under own subtask', 'info', 1800);
+        // in the source section; `indentProblem` refuses that, a cycle, and
+        // the depth cap.
+        const problem = indentProblem({
+          rows: this.opts.getRows(),
+          placements,
+          sections,
+          tileId: draggedId,
+          newParentId: targetId,
+        });
+        if (problem) {
+          this.opts.toast(problem, 'info', 1800);
         } else {
           this.opts.commitIndent(draggedId, targetId);
           this.opts.announce(

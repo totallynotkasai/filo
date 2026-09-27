@@ -47,7 +47,7 @@ export interface CanvasScope {
   flyTo(target: CanvasTransform, durationMs?: number): void;
   toggleMinimap(): void;
   setSemanticZoomEnabled(v: boolean): void;
-  toggleSnap(): void;
+  setSnapEnabled(v: boolean): void;
   toggleWaypointsVisible(): void;
   setWaypointsVisible(v: boolean): void;
   /** Writes a camera move still inside its idle window to the board now (save, leave). */
@@ -295,8 +295,8 @@ export function createCanvasScope(): CanvasScope {
       semanticZoomEnabled = v;
     },
 
-    toggleSnap() {
-      snapEnabled = !snapEnabled;
+    setSnapEnabled(v: boolean) {
+      snapEnabled = v;
     },
 
     toggleWaypointsVisible() {

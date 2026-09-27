@@ -12,13 +12,14 @@ describe('normaliseLinkUrl', () => {
     ['//cdn.example.com/a.png', 'https://cdn.example.com/a.png'],
     ['someone@example.com', 'mailto:someone@example.com'],
     ['  example.com  ', 'https://example.com'],
+    ['http://example.com/a', 'https://example.com/a'],
+    ['HTTP://Example.com', 'https://Example.com'],
   ])('adds a scheme to %s', (input, expected) => {
     expect(normaliseLinkUrl(input)).toBe(expected);
   });
 
   it.each([
     'https://example.com',
-    'http://example.com',
     'HTTPS://EXAMPLE.COM',
     'mailto:someone@example.com',
     'tel:+441234567890',

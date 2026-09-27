@@ -53,6 +53,32 @@ export function isArrowConsumingTarget(target: EventTarget | null): boolean {
   return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
 }
 
+const OVERLAY_SELECTOR = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [aria-modal="true"], dialog';
+/** Controls that act on Enter / Space themselves. */
+const ACTIVATES_SELECTOR = 'button, a[href], select, summary, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="tab"], [role="option"], [role="checkbox"], [role="switch"]';
+/** Controls that move on the arrow keys themselves. */
+const ARROWS_SELECTOR = 'select, [role="tab"], [role="option"], [role="radio"], [role="slider"]';
+
+/**
+ * True when a Mind Map key shortcut (N, C, Enter, Backspace, the arrows)
+ * must leave the key alone: a modal dialog is open (Settings, a confirm),
+ * focus is inside a dialog, menu or popup, or a focused control uses this
+ * key itself (Enter on a button, arrows in a tab strip).
+ *
+ * DECISION: letters, Backspace and Delete still reach the board while a
+ * plain button has focus (a toolbar button just clicked, a tile's lock
+ * button), because a button has no use for them.
+ */
+export function isCanvasKeyBlocked(key: string, active: Element | null, doc: Document = document): boolean {
+  if (doc.querySelector('[aria-modal="true"], dialog[open]')) return true;
+  if (!active || active === doc.body) return false;
+  if (active.closest(OVERLAY_SELECTOR)) return true;
+  if (isArrowConsumingTarget(active)) return true;
+  if (key === 'Enter' || key === ' ') return active.closest(ACTIVATES_SELECTOR) !== null;
+  if (isArrowKey(key)) return active.closest(ARROWS_SELECTOR) !== null;
+  return false;
+}
+
 /** Discriminate the four arrow keys. */
 export function isArrowKey(key: string): key is NeighborSelectionInput['key'] {
   return key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight';

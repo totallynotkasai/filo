@@ -401,7 +401,7 @@
           role="menuitemcheckbox"
           class:toggle-active={canvasStore.snapEnabled}
           aria-checked={canvasStore.snapEnabled}
-          onclick={() => { canvasStore.toggleSnap(); closeAllMenus(); }}
+          onclick={() => { boardStore.toggleSnapToGrid(); closeAllMenus(); }}
         >
           <span>Snap Tiles</span>
         </button>

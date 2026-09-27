@@ -382,7 +382,8 @@ filo/
 │   │   │   │   ├── linkUrl.ts         # normaliseLinkUrl: bare domain → https://, address → mailto:; isOpenable (the one scheme list)
 │   │   │   │   ├── linkClicks.ts      # Link clicks: plain click edits in a focused editor, Ctrl/Cmd+click opens
 │   │   │   │   ├── blockTextStyle.ts  # Heading / Normal text clears the blocks' inline font size, family, colour
-│   │   │   │   └── keepSpaces.ts      # Load keeps runs of spaces; soft breaks still join with one space
+│   │   │   │   ├── keepSpaces.ts      # Load keeps runs of spaces; soft breaks still join with one space
+│   │   │   │   └── textEscapes.ts     # The text node: a typed `&amp;` / `&copy;` is saved so it reopens as typed
 │   │   │   ├── tags/                  # Tag editing helpers
 │   │   │   │   ├── noteTagWriter.ts   # Tile/path tag add/remove on a note (fresh-read rewrite)
 │   │   │   │   ├── tagEditConfirm.ts  # Tags-browser delete/rename confirms → tagUndo
@@ -399,6 +400,7 @@ filo/
 │   │   │   │   ├── notesBox.svelte.ts # The row notes box draft
 │   │   │   │   ├── taskContextMenus.ts
 │   │   │   │   ├── frontmatterWriter.ts # Task field edits → note frontmatter deltas
+│   │   │   │   ├── indentRules.ts     # indentProblem: one indent rule for drag and Tab (section, cycle, 3 levels)
 │   │   │   │   ├── taskCreation.ts, taskDeletion.ts, sectionOps.ts, sectionMath.ts, blockMove.ts
 │   │   │   │   ├── taskDragController.svelte.ts, multiSelectController.svelte.ts, indentGesture.ts
 │   │   │   │   └── filtersAndViews.svelte.ts, taskListViewModel.svelte.ts, taskListKeyboardNav.svelte.ts
@@ -441,6 +443,7 @@ filo/
 │   │   │       ├── contextMenuKey.ts
 │   │   │       ├── editableTarget.ts
 │   │   │       ├── errorBus.ts        # Renderer error → toast routing
+│   │   │       ├── openExternal.ts    # openExternalUrl: every link click; http:// refused with a toast
 │   │   │       ├── errorToastAggregator.ts
 │   │   │       ├── listKeyNav.ts
 │   │   │       ├── mediaUrl.ts

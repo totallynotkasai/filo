@@ -122,7 +122,7 @@
         <span class="row-main">
           <span class="row-title">{match.tileTitle || '(untitled)'}</span>
           <span class="row-meta">
-            <span class="row-board">{match.boardName}</span>
+            <span class="row-board">{match.boardId ? match.boardName : 'On no board'}</span>
             {#if match.tags.length > 0}
               <span class="row-tags">{match.tags.map((t) => `#${t}`).join(' ')}</span>
             {/if}

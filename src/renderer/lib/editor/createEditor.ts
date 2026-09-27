@@ -36,8 +36,9 @@ import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
 import { Markdown } from 'tiptap-markdown';
 import { common, createLowlight } from 'lowlight';
 import { FiloListTight, FiloTaskListTight } from './taskListTight';
-import { TabKeys } from './tabKeys';
-import { TabChar } from './tabNode';
+import { IndentBackspace, TabKeys } from './tabKeys';
+import { NoteText } from './textEscapes';
+import { TabChar, withEdgeTabsOutsideRuns } from './tabNode';
 import { KeepSpaces } from './keepSpaces';
 import { isFiloLink } from '../../schema/link';
 import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
@@ -68,6 +69,9 @@ const FontSize = TextStyle.configure({ mergeNestedSpanStyles: false }).extend({
   },
 });
 
+/** Blocks whose lines nest by their own rules, never by the indent attribute. */
+const NESTS_ITSELF = new Set(['listItem', 'taskItem', 'tableCell', 'tableHeader']);
+
 /**
  * Indent extension — adds indent attribute (0–8 levels) to paragraph and heading nodes.
  * Renders as margin-left: N * 24px. Works independently of lists.
@@ -94,12 +98,16 @@ const Indent = Extension.create({
   addCommands() {
     // Every paragraph and heading the selection touches moves together, so
     // Tab over several lines indents them all, as in a word processor.
+    // Lines inside a list or table are left alone: they nest by their own
+    // rules, and an indented list line would be saved as an HTML line,
+    // turning the Markdown list into HTML.
     const indentDelta = (delta: 1 | -1) =>
       () =>
       ({ tr, state, dispatch }: CommandProps): boolean => {
         const { from, to } = state.selection;
         let found = false;
         state.doc.nodesBetween(from, to, (node, pos) => {
+          if (NESTS_ITSELF.has(node.type.name)) return false;
           if (node.type.name !== 'paragraph' && node.type.name !== 'heading') return true;
           found = true;
           const next = Math.max(0, Math.min(8, (node.attrs.indent || 0) + delta));
@@ -147,6 +155,9 @@ interface MarkdownSerializeState {
  * would terminate the container, so nested empty paragraphs fall back to the
  * default (drop) behaviour rather than corrupt the structure.
  */
+/** A paragraph opening like an ordered list item with a `)` delimiter. */
+const ORDERED_PAREN_START = /^( {0,3}\d{1,9})\)(?=[ \t]|$)/;
+
 const ParagraphWithBlankLines = Paragraph.extend({
   addStorage() {
     return {
@@ -162,7 +173,19 @@ const ParagraphWithBlankLines = Paragraph.extend({
             state.closeBlock(node);
             return;
           }
-          state.renderInline(node);
+          // prosemirror-markdown escapes a leading `1.` but not `1)`, which
+          // Markdown also reads as a numbered list item: "1) Buy milk" typed
+          // as text would reopen as a list. Write the delimiter as `1\)`.
+          const first = node.firstChild;
+          const listLike = first?.isText && first.marks.length === 0
+            ? ORDERED_PAREN_START.exec(first.text ?? '')
+            : null;
+          if (listLike) {
+            state.write(`${listLike[1]}\\)`);
+            state.renderInline(withEdgeTabsOutsideRuns(node.cut(listLike[0].length)), false);
+          } else {
+            state.renderInline(withEdgeTabsOutsideRuns(node));
+          }
           state.closeBlock(node);
         },
         parse: {},
@@ -184,7 +207,7 @@ const HeadingWithLayout = Heading.extend({
             state.write(blockLayoutHtml(node));
           } else {
             state.write(`${'#'.repeat(Number(node.attrs.level) || 1)} `);
-            state.renderInline(node, false);
+            state.renderInline(withEdgeTabsOutsideRuns(node), false);
           }
           state.closeBlock(node);
         },
@@ -226,6 +249,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         codeBlock: false, // replaced by CodeBlockLowlight
         paragraph: false, // replaced by ParagraphWithBlankLines (empty-para serialiser)
         heading: false, // replaced by HeadingWithLayout (saves alignment / indent)
+        text: false, // replaced by NoteText (keeps a typed `&amp;` as typed)
         // TipTap 3 bundles these into StarterKit. Link + Underline are registered
         // below with Filo's own config (a duplicate registration would shadow it).
         // TrailingNode MUST stay off: it appends an empty paragraph after a doc
@@ -239,6 +263,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       }),
       ParagraphWithBlankLines,
       HeadingWithLayout,
+      NoteText,
       TextAlign.configure({
         types: ['heading', 'paragraph'],
         alignments: ['left', 'center', 'right', 'justify'],
@@ -315,6 +340,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       KeepSpaces,
       TabChar,
       TabKeys,
+      IndentBackspace,
     ],
 
     onUpdate: ({ editor: e }) => {

@@ -344,8 +344,9 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       // the LOD threshold respects the active board's preference. Mind-map
       // boards expose this in `settings.semanticZoom`; other board types
       // don't have a canvas, so we default to true.
-      const settings = (board as { settings?: { semanticZoom?: boolean } }).settings;
+      const settings = (board as { settings?: { semanticZoom?: boolean; snapToGrid?: boolean } }).settings;
       deps.canvas.setSemanticZoomEnabled(settings?.semanticZoom ?? true);
+      deps.canvas.setSnapEnabled(settings?.snapToGrid ?? false);
 
       // Hydrate the canvas viewport from this board's persisted camera.
       deps.canvas.setBoard(board.type === 'mindmap' ? board.id : null);
@@ -520,6 +521,19 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       const next = !current;
       store.updateSettings({ semanticZoom: next });
       deps.canvas.setSemanticZoomEnabled(next);
+    },
+
+    /**
+     * Toggles the Mind Map's grid snap ("Snap Tiles"), saved on the board
+     * (`settings.snapToGrid`) so it survives a relaunch. Smart Guides run
+     * whenever grid snap is off.
+     */
+    toggleSnapToGrid(): void {
+      if (!currentBoard) return;
+      const current = (currentBoard.settings as { snapToGrid?: boolean })?.snapToGrid ?? false;
+      const next = !current;
+      store.updateSettings({ snapToGrid: next });
+      deps.canvas.setSnapEnabled(next);
     },
 
     /**

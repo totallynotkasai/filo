@@ -8,7 +8,7 @@ import { Extension, type Editor } from '@tiptap/core';
  * - With several lines selected, Tab indents them all and Shift+Tab outdents
  *   (the toolbar's indent, saved as an HTML line, `blockLayout.ts`).
  * - Shift+Tab removes the tab just before the caret, or else one indent step.
- * - Backspace at the start of an indented paragraph removes one indent step.
+ * - Backspace at the start of an indented paragraph removes one indent step (`IndentBackspace`, below).
  * - A list or task item nests / un-nests and a table moves between cells
  *   (their own handlers, which run first); a code block gets a tab character.
  *
@@ -22,6 +22,29 @@ import { Extension, type Editor } from '@tiptap/core';
  * Low priority, so the list, table and tag-suggestion handlers see these keys
  * first.
  */
+
+/**
+ * Backspace at the start of an indented paragraph or heading removes one
+ * indent step. A high priority, unlike `TabKeys`: the core Backspace would
+ * otherwise run first and join the line to the one above.
+ */
+export const IndentBackspace = Extension.create({
+  name: 'filoIndentBackspace',
+  priority: 1000,
+
+  addKeyboardShortcuts() {
+    return {
+      Backspace: ({ editor }) => {
+        const { $from, empty } = editor.state.selection;
+        if (!empty || $from.parentOffset !== 0) return false;
+        const block = $from.parent;
+        if (block.type.name !== 'paragraph' && block.type.name !== 'heading') return false;
+        if (!(Number(block.attrs.indent) > 0)) return false;
+        return editor.commands.decreaseIndent();
+      },
+    };
+  },
+});
 
 /** The ancestor types whose own Tab handling runs first; Tab stays here if it did nothing. */
 const TAB_OWNERS = new Set(['listItem', 'taskItem', 'tableCell', 'tableHeader']);
@@ -93,11 +116,7 @@ export const TabKeys = Extension.create({
         if (empty && $from.nodeBefore?.type.name === 'tab') {
           return editor.commands.deleteRange({ from: $from.pos - 1, to: $from.pos });
         }
-        if (!empty || $from.parentOffset !== 0) return false;
-        const block = $from.parent;
-        if (block.type.name !== 'paragraph' && block.type.name !== 'heading') return false;
-        if (!(Number(block.attrs.indent) > 0)) return false;
-        return editor.commands.decreaseIndent();
+        return false;
       },
 
       Delete: ({ editor }) => {

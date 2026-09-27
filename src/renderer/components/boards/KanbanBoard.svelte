@@ -210,13 +210,12 @@
     untrack(() => dragController.syncColumns(c));
   });
 
-  // Per-column card-dndzone items mirror. Mirrors the column-reorder sync
-  // above: track canonical `columns` and rebuild `dndCardsByColumn`. The
-  // controller skips this while a drag is in flight so the in-progress
-  // items aren't snap-reset mid-gesture.
+  // Per-column card-dndzone items: the cards each column shows, filtered and
+  // sorted, so the items and the DOM match one to one. The controller skips
+  // this while a drag is in flight so the items aren't snap-reset mid-gesture.
   $effect(() => {
-    const c = columns;
-    untrack(() => dragController.syncCards(c));
+    const shown = Object.fromEntries(columns.map((col) => [col.id, filtersAndSort.visiblePlacementsForColumn(col.id).map((p) => p.tileId)]));
+    untrack(() => dragController.syncCards(shown));
   });
 
   // ── New-tile modal state ──
@@ -460,7 +459,7 @@
     // Resolve the pointer-Y once up-front so all cards in this drop batch
     // anchor to the same insertion index (subsequent files in a multi-OS
     // drop get appended after the first via `+ cmds.length`).
-    const baseInsertIndex = computeKanbanInsertIndex(columnId, e.clientY, placements.length);
+    const baseInsertIndex = computeKanbanInsertIndex(columnId, e.clientY, placements.map((p) => p.tileId));
     const cmds: Command[] = [];
 
     // Vault-sidebar drag carries application/x-vault-file

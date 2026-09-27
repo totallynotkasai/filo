@@ -19,7 +19,8 @@ export function isOpenable(href: string): boolean {
  * href that can actually be opened. A bare domain (`example.com`,
  * `www.example.com/page`) gets `https://`, and a bare address (`a@b.com`)
  * gets `mailto:`. Without this a scheme-less href is saved as-is and the link
- * is dead.
+ * is dead. An `http://` address is saved as `https://`: Filo opens only
+ * secure links (see `openExternalUrl`), and most sites serve both.
  *
  * Returns null when nothing openable can be made of it: an empty field, a
  * note file name (`Notes.md` looks like a domain, but it is a file; link a
@@ -36,6 +37,7 @@ function candidateHref(input: string): string | null {
   const url = input.trim();
   if (!url || /\s/.test(url)) return null;
   if (isFiloLink(url)) return url;
+  if (/^http:\/\//i.test(url)) return url.replace(/^http:/i, 'https:');
   if (url.startsWith('//')) return `https:${url}`;
   if (EMAIL_RE.test(url)) return `mailto:${url}`;
   if (DOMAIN_RE.test(url)) {

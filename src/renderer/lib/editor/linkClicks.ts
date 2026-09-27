@@ -1,7 +1,7 @@
 import { isMacOS } from '@tiptap/core';
 import { isFiloLink } from '../../schema/link';
 import { linksStore } from '../../stores/links.svelte';
-import { asSafeOpenExternal } from '../../../shared/untrusted';
+import { openExternalUrl } from '../utils/openExternal';
 import { isOpenable } from './linkUrl';
 
 /** The tooltip line on a link that can be opened. */
@@ -14,9 +14,9 @@ function editableEditorOf(el: Element): HTMLElement | null {
 
 /**
  * Opens a link: `filo://` inside the app, the external schemes through the
- * `media:open-external` IPC. `mailto:` / `tel:` must be matched too, or the
- * click would navigate the renderer (possibly losing unsaved state).
- * `asSafeOpenExternal` is the renderer-side gate; the main handler re-checks.
+ * OS (`openExternalUrl`, which says why when it can't: an `http://` link).
+ * `mailto:` / `tel:` must be matched too, or the click would navigate the
+ * renderer (possibly losing unsaved state).
  * Returns false for anything else, which is left alone.
  */
 function openLink(href: string): boolean {
@@ -25,11 +25,7 @@ function openLink(href: string): boolean {
     return true;
   }
   if (!isOpenable(href)) return false;
-  const safe = asSafeOpenExternal(href);
-  if (!safe) return false;
-  // allow-envelope-bare: fire-and-forget click handler; failure is
-  // user-visible (browser doesn't open) and not worth a toast.
-  void window.filo.invoke('media:open-external', safe);
+  void openExternalUrl(href);
   return true;
 }
 

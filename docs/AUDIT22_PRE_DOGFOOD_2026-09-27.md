@@ -351,6 +351,56 @@ Body `#tag` highlighting is decorative only: real tags live in frontmatter, and 
 - **Task List:** keyboard indent reuses the drag guards.
 - **Editor and links:** escape a leading `1)`. Search also covers notes on no board, or its label is corrected. One `http://` policy with a visible error.
 
+#### Phase 4 status: done (2026-09-27)
+
+All items are fixed except `mindmap-10` (see the deviations). Each fix has a regression test. I checked that the tests bite by putting each bug back one at a time: all 24 reverted fixes were caught by their test, which passes with the fix.
+
+| Item | Fix | Tests |
+|---|---|---|
+| M14 | Frame drag captures only the unlocked tiles it moves, and `MoveFrameCommand` drops locked ids, so undo and redo never shift a locked tile. | `lockedTilesStayPut.test.ts` |
+| M17 | `tilesToDrag` (`lib/canvas/tileDrag.ts`) leaves locked tiles out of a selection or group drag. Align / Distribute leave a locked tile in place, though it still sets the edge the others line up with; Tree and Radial arrange only the unlocked tiles. | `lockedTilesStayPut.test.ts` |
+| M15 | `isCanvasKeyBlocked` (`lib/mindmap/mindMapKeyboard.ts`): no Mind Map key while a modal is open or focus is in a dialog, menu or listbox; Enter / Space stay with a focused button, arrows with a tab strip or list. The global Delete (`tile:delete`) uses the same gate. | `mindMapInteraction.test.ts` |
+| M16 | Smart Guides run whenever grid snap is off (Shift still suspends them). "Snap Tiles" is `boardStore.toggleSnapToGrid`, saved as `settings.snapToGrid` and applied when the board opens. | `mindMapInteraction.test.ts` |
+| mindmap-7 | Tiles in a collapsed frame are left out of box selection, Select All (board and frame), the arrow keys, and leave the selection when the frame collapses. | `mindMapInteraction.test.ts` |
+| mindmap-8 | The header's pointerdown marks the event (`isSelectionHandled`), so the tile container no longer toggles a locked tile's selection a second time. | `lockedTilesStayPut.test.ts` |
+| mindmap-9 | `connectionsStore.drawingOn(board)`: a connection started on another board (split view, tab switch) isn't finished here; the click starts a new one. | `mindMapInteraction.test.ts` |
+| M18 + M19 | The card dndzones get exactly the cards each column shows, filtered and sorted (`syncCards`), so the sort is visible and a hidden card is never picked up. A drop is placed in the saved order next to the visible card it landed by (`insertIndexAmongPlacements`); a file dropped on a column is placed the same way. A reorder inside a sorted column is refused with a toast. | `kanbanFilteredSortedDrag.test.ts`, `kanbanDragController.test.ts` |
+| M20 | One indent rule (`lib/tasklist/indentRules.ts` `indentProblem`) for the drag and Tab: same section, no cycle, three levels at most, counting the task's own subtasks. Tab commits through the drag's `commitIndent`, which is undoable and expands a collapsed new parent. | `taskIndentRules.test.ts`, `taskDragController.test.ts` |
+| lists-5 | Only the focused row itself indents; Tab from a button in the row, and a Tab or Shift+Tab with nothing to do, move focus as usual. | `taskIndentRules.test.ts` |
+| lists-6 | Due-date groups count whole calendar days (`Math.round`), so a 23-hour day doesn't put tomorrow under Today. | `taskListModel.test.ts` |
+| lists-7 | Quick-add takes tags in any script and nested tags (`#work/filo`, `#café`). | `quickAddParser.test.ts` |
+| M21 | A paragraph starting like `1)` is saved as `1\)`, so it reopens as text, not a list. | `editorTyping.test.ts` |
+| M22 | Search also walks every note on no board. Such a match sorts after the boards, shows "On no board" in Find All, and Find opens the note in a Document tab. | `runSearch.test.ts` |
+| M23 | Every link click goes through `lib/utils/openExternal.ts`: an `http://` link shows a toast with **Open with https://**, and a refusal from main is shown. The Insert Link popup saves a typed `http://` as `https://`. | `openExternalUrl.test.ts`, `linkUrl.test.ts` |
+| editor-5 | The editor's text node (`lib/editor/textEscapes.ts`) writes an `&` that starts a character reference as `&amp;`, so typed `&amp;` or `&copy;` reopens as typed. | `editorTyping.test.ts` |
+| editor-6 | The tag popup lists tiles and files of every spelling of the tag, matching the Tags Browser count. | `tagPopupAnyCase.test.ts` |
+| editor-7 | Indent (Tab over several lines, or the toolbar) skips lines inside lists and tables. | `editorTabKeys.test.ts` |
+| editor-8 | Backspace at the start of an indented paragraph is its own high-priority extension (`IndentBackspace`), ahead of the core join. | `editorTabKeys.test.ts` |
+| recent-1 | A tab at the edge of a bold, italic or strikethrough run is saved outside the run (`**bold**\t`, `withEdgeTabsOutsideRuns`). | `editorTabKeys.test.ts` |
+
+**Verification.** `npm run ci:verify` is green: 649 test files, 6276 tests passed, 5 skipped, 68/68 gates, and the test type-check ratchet. A real-app check (built app, Playwright `_electron`, a fresh scratch vault) confirmed:
+- **M21 / editor-5:** typing `1) Buy milk` and `Prices at AT&amp;T` into a Document tab saves `1\) Buy milk` and `AT&amp;amp;T`, and the note stays editable.
+- **M15:** with Settings open (focus not inside the dialog), pressing N creates no tile; after closing it, N creates one.
+- **M16:** Snap Tiles writes `"snapToGrid": true` into the board file.
+- **M22:** Find for a word only in a note on no board finds it (1 / 1), and Enter opens that note as a Document tab.
+- No renderer or console errors.
+
+The drag, lock, frame, Kanban and Task List fixes are covered by the unit specs above. They were not driven by hand.
+
+**Deviations from the plan**
+
+- **mindmap-10 (no tile copy, paste or duplicate) is not done.** It is a new feature, not a fix, and it needs a decision first: does a duplicated text tile show the same note, or a copy of the file? Left for a later phase.
+- **M18: refused, not disabled.** The plan said Sort "disables within-column reorder". The drag can't be disabled for one column only while cross-column moves stay allowed, so a drop inside a sorted column is refused with a toast ("Switch to Manual sort to reorder them") and the cards go back. The old toast that said a hidden reorder was saved is gone.
+- **M17 rule.** Align / Distribute keep a locked tile as a reference but never move it. With a locked tile in the middle, Distribute leaves uneven gaps around it.
+- **M15: letters still work on a focused button.** Only Enter and Space (and arrows in tab strips / lists) are left to the focused control; N, C and Backspace still act on the board right after a toolbar button is clicked.
+- **M20 and sorted order.** Tab indents under the row shown above, as a drag onto that row does, in any sort. The rule also counts the task's own subtasks against the three-level cap, which the drag didn't; the drag now uses the same rule, and its `isCycleTarget` / `isDepthExceeded` options are gone.
+- **lists-5.** Tab from a button inside a row now moves focus instead of indenting the row, a behaviour change.
+- **M23 policy.** `http://` stays refused (main's rule), rather than allowed. The renderer's `asSafeOpenExternal` keeps its documented asymmetry; the new helper catches `http://` before it reaches main. `http://` iframe embeds are unchanged.
+- **editor-6.** Only what the popup lists is case-insensitive. The file list a delete acts on (and its undo snapshot) stays exact-case; `filesForTag` takes an `anyCase` flag for the popup.
+- **recent-1.** I first wrote an edge tab as `&#9;`, but `**bold&#9;**x` still isn't bold in CommonMark (the delimiter follows punctuation and precedes a letter), so the tab is moved outside the run when saving instead. The document itself isn't changed. A tab in the middle of a run keeps its marks, so existing files open unchanged.
+- **Tests changed:** `runSearch.test.ts` pinned "a note on no board is never a match" and now pins the opposite. `taskDragController.test.ts` lost its mocked cycle-guard case (a drag can't reach it with real rows; the rule is tested in `taskIndentRules.test.ts`) and its depth case uses real rows. `kanbanDragController.test.ts` passes shown ids to `syncCards`. `linkUrl.test.ts` expects `http://` to become `https://`.
+- **Housekeeping:** KanbanBoard and TaskListBoard stayed under their line ceilings (1436 / 1960). MindMapBoard's keyboard comment was shortened to keep it under 1000 lines. CLAUDE.md lists the new modules.
+
 ### Phase 5 — workspace polish
 Restore Document tabs, board-folder name and reuse rules, the recovery-modal wording, the Root Directory with board folders on, and the remaining UX lows.
 

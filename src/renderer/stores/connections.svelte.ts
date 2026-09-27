@@ -30,6 +30,15 @@ export const connectionsStore = {
   get connectionMode() { return connectionModeActive; },
   get drawing() { return drawingConnection; },
 
+  /**
+   * The connection being drawn, only if it started on this board. A drawing
+   * begun in the other split pane, or before a tab switch, can't end here:
+   * a connection joins two tiles of one board.
+   */
+  drawingOn(board: { getTile(id: string): unknown }): DrawingConnection | null {
+    return drawingConnection && board.getTile(drawingConnection.fromTileId) ? drawingConnection : null;
+  },
+
   /** True when all connection paths are hidden at the board level. */
   get hideAllPaths() { return !getMindMapFlag('connectionsVisible'); },
   /** True when all connection labels are hidden at the board level. */

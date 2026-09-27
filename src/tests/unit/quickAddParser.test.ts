@@ -35,6 +35,12 @@ describe('parseQuickAdd: tags', () => {
     expect(r.title).toBe('Buy milk');
   });
 
+  it('takes nested and non-ASCII tags', () => {
+    const r = parseQuickAdd('Plan trip #work/filo #café #日本 #Ärger', { now: NOW });
+    expect(r.tags).toEqual(['work/filo', 'café', '日本', 'Ärger']);
+    expect(r.title).toBe('Plan trip');
+  });
+
   it('dedupes repeated tags', () => {
     const r = parseQuickAdd('Buy #x milk #x', { now: NOW });
     expect(r.tags).toEqual(['x']);

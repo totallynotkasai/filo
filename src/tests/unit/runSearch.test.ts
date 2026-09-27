@@ -126,17 +126,36 @@ describe('runVaultSearch — operator filtering', () => {
     expect(result.matches[0].filePath).toBe('a.md');
   });
 
-  it('never returns a match for a note on no board, so every match has a tile to jump to', () => {
+  it('also finds a note on no board, after the boards, with no tile to jump to', () => {
     vaultIndexStore.restoreMetadata('placed.md', parseMarkdown('placed.md', 'frodo here'));
-    vaultIndexStore.restoreMetadata('loose.md', parseMarkdown('loose.md', 'frodo there'));
+    vaultIndexStore.restoreMetadata('loose.md', parseMarkdown('loose.md', '---\ntitle: Loose\n---\nfrodo there'));
     boardCacheStore.hydrate(
       { mm: makeMindMap('Mind Map A', 'mm', { t1: makeTextDef('t1', 'A', 'placed.md') }) },
       { mm: 'a.board.json' },
     );
 
     const result = runVaultSearch(parseQuery('frodo'));
-    expect(result.matches.map((m) => m.filePath)).toEqual(['placed.md']);
-    expect(result.matches.every((m) => typeof m.tileId === 'string' && m.tileId !== '')).toBe(true);
+    expect(result.matches.map((m) => m.filePath)).toEqual(['placed.md', 'loose.md']);
+    const loose = result.matches[1];
+    expect(loose.tileId).toBe('');
+    expect(loose.boardId).toBe('');
+    expect(loose.tileTitle).toBe('Loose');
+    expect(loose.matchKind).toBe('body');
+  });
+
+  it('a note placed on a board is not listed a second time as a loose note', () => {
+    vaultIndexStore.restoreMetadata('Placed.md', parseMarkdown('Placed.md', 'frodo'));
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Mind Map A', 'mm', { t1: makeTextDef('t1', 'A', 'placed.md') }) },
+      { mm: 'a.board.json' },
+    );
+    expect(runVaultSearch(parseQuery('frodo')).matches).toHaveLength(1);
+  });
+
+  it('board: and type: filters leave loose notes out or in as they should', () => {
+    vaultIndexStore.restoreMetadata('loose.md', parseMarkdown('loose.md', 'frodo'));
+    expect(runVaultSearch(parseQuery('frodo board:"Mind Map A"')).matches).toHaveLength(0);
+    expect(runVaultSearch(parseQuery('frodo type:text')).matches).toHaveLength(1);
   });
 
   it('finds matches in tile titles even when there is no body hit', () => {

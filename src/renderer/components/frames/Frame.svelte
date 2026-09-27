@@ -363,7 +363,9 @@
     dragStartPosY = frame.position.y;
     lastFrameX = frame.position.x;
     lastFrameY = frame.position.y;
-    dragContainedTileIds = [...frame.tileIds];
+    // Only unlocked tiles travel with the frame (`moveContainedTiles` skips
+    // locked ones), so only they belong in the undo set.
+    dragContainedTileIds = frame.tileIds.filter((id) => boardStore.getTile(id)?.locked !== true);
     dragHomeBoardId = boardStore.current?.id ?? null;
     // Batch the spatial revision bumps from each contained-tile move so
     // the viewport-culling consumers only re-derive once per RAF, not once

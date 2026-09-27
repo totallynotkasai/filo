@@ -65,8 +65,6 @@ function buildController(opts: {
   sections: TaskListSection[];
   snapshot: SectionItemsSnapshot;
   selected?: Set<string>;
-  isCycleTarget?: (draggedId: string, targetId: string) => boolean;
-  isDepthExceeded?: (targetId: string) => boolean;
 }): { controller: TaskDragController; rec: Recording } {
   const rec: Recording = {
     reorder: [],
@@ -81,8 +79,6 @@ function buildController(opts: {
     getSections: () => opts.sections,
     getSelectedTaskIds: () => opts.selected ?? new Set(),
     getSnapshot: () => opts.snapshot,
-    isCycleTarget: opts.isCycleTarget ?? (() => false),
-    isDepthExceeded: opts.isDepthExceeded ?? (() => false),
     commitIndent: (tileId, newParent) => {
       rec.indent.push({ tileId, newParent });
     },
@@ -407,11 +403,11 @@ describe('TaskDragController — indent / outdent (single, same-section)', () =>
   it('rejects indent when target is at depth cap and toasts the user', () => {
     const { placements, sections, snap } = makeIndentFixture();
     const { controller, rec } = buildController({
-      rows: [row('a'), row('b')],
+      // b is a sub-subtask (b → c → d), so a child of b would be a fourth level.
+      rows: [row('a'), row('b', 'c'), row('c', 'd'), row('d')],
       placements,
       sections,
       snapshot: snap,
-      isDepthExceeded: (id) => id === 'b',
     });
     controller.syncFromSnapshot();
     controller.armRow('S', 'a', 0, 0);
@@ -428,36 +424,6 @@ describe('TaskDragController — indent / outdent (single, same-section)', () =>
 
     expect(rec.indent).toHaveLength(0);
     expect(rec.toast.some((t) => /Maximum subtask depth/i.test(t.msg))).toBe(true);
-    target.remove();
-  });
-
-  it('rejects indent when target is a transitive descendant of dragged (cycle guard)', () => {
-    const { placements, sections, snap } = makeIndentFixture();
-    // Rows are both top-level — `resolveDragBlockIds` returns [draggedId] only,
-    // so the single-row indent branch IS reached. The cycle check callback
-    // models the calling component's check that target is in dragged's subtree.
-    const { controller, rec } = buildController({
-      rows: [row('a'), row('b')],
-      placements,
-      sections,
-      snapshot: snap,
-      isCycleTarget: (draggedId, targetId) => draggedId === 'a' && targetId === 'b',
-    });
-    controller.syncFromSnapshot();
-    controller.armRow('S', 'a', 0, 0);
-    controller.onConsiderRows('S', dndEvent([{ id: 'b' }, { id: 'a' }], 'a'));
-
-    const target = document.createElement('div');
-    target.dataset.taskId = 'b';
-    document.body.appendChild(target);
-    const evt = new PointerEvent('pointermove', { clientX: 100, clientY: 5, bubbles: true });
-    Object.defineProperty(evt, 'target', { value: target });
-    window.dispatchEvent(evt);
-
-    controller.onFinalizeRows('S', dndEvent([{ id: 'b' }, { id: 'a' }], 'a'));
-
-    expect(rec.indent).toHaveLength(0);
-    expect(rec.toast.some((t) => /Cannot indent under own subtask/i.test(t.msg))).toBe(true);
     target.remove();
   });
 
@@ -562,8 +528,6 @@ describe('TaskDragController — pointerdown snapshot (Phase 1 fix)', () => {
       getSections: () => sections,
       getSelectedTaskIds: () => selected,
       getSnapshot: () => snap,
-      isCycleTarget: () => false,
-      isDepthExceeded: () => false,
       commitIndent: () => {},
       commitOutdent: () => {},
       commitReorder: (args) => rec.reorder.push(args),
@@ -702,8 +666,6 @@ describe('TaskDragController — stale tile guard', () => {
       getSections: () => sections,
       getSelectedTaskIds: () => new Set(),
       getSnapshot: () => snap,
-      isCycleTarget: () => false,
-      isDepthExceeded: () => false,
       commitIndent: (tileId, newParent) => rec.indent.push({ tileId, newParent }),
       commitOutdent: (tileId) => rec.outdent.push(tileId),
       commitReorder: (args) => rec.reorder.push(args),

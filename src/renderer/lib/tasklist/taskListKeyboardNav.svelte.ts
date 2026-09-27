@@ -18,7 +18,7 @@
  * Why the deps closure pattern:
  *   The nav controller needs live reads of `viewModel.rows`,
  *   `viewModel.filteredRows`, `placements`, `sections`, `sortBy`, plus the
- *   host's `snapshotSections` / `updateRowField` / `tickAndPersist`
+ *   host's `snapshotSections` / `commitIndent` / `tickAndPersist`
  *   helpers. Threading them through getters keeps the class free of
  *   cross-store imports.
  */
@@ -38,6 +38,7 @@ import {
 import { isEditableTextTarget } from '../utils/editableTarget';
 import { collectDescendantIds } from './blockMove';
 import { sectionIdForPlacementIndex } from './sectionMath';
+import { indentProblem } from './indentRules';
 import { moveTaskBlock } from '../tasks/taskMove';
 import type { SortBy, TaskRow } from '../tasks/taskListModel';
 
@@ -50,8 +51,10 @@ export interface TaskListKeyboardNavDeps {
   getSortBy: () => SortBy;
   /** Snapshot for the undo command. */
   snapshotSections: () => { sections: TaskListSection[]; tasks: TaskPlacement[] };
-  /** Frontmatter-writer's `updateRowField` — used by Tab/Shift+Tab indent. */
-  updateRowField: (row: TaskRow, patch: Record<string, unknown>) => void;
+  /** The drag's indent / outdent (an undoable parent edit that expands a
+   *  collapsed new parent), used by Tab / Shift+Tab. */
+  commitIndent: (tileId: string, newParent: string) => void;
+  commitOutdent: (tileId: string) => void;
   tickAndPersist: () => void;
   /** Multi-select hooks for Escape handling within the keydown handler. */
   getSelectionSize: () => number;
@@ -108,21 +111,39 @@ export class TaskListKeyboardNav {
     if (next) this.focusRowById(next);
   }
 
-  indentFocused(row: TaskRow, outdent: boolean): void {
+  /**
+   * Tab / Shift+Tab on a focused row. Returns false when there is nothing to
+   * indent or outdent (the first row, a row already under the one above, a
+   * top-level row on Shift+Tab): the key then moves focus as usual, so Tab
+   * never traps keyboard users on the list.
+   */
+  indentFocused(row: TaskRow, outdent: boolean): boolean {
     if (outdent) {
-      if (row.parent) this.deps.updateRowField(row, { parent: '' });
-      return;
+      if (!row.parent) return false;
+      this.deps.commitOutdent(row.tile.id);
+      return true;
     }
-    // Indent under the visible row directly above the focused row.
+    // Indent under the visible row directly above the focused row, by the
+    // same rules as a drag: same section, no cycle, three levels at most.
     const ids = this.deps.getFilteredRows().map((r) => r.tile.id);
     const idx = ids.indexOf(row.tile.id);
-    if (idx <= 0) return;
+    if (idx <= 0) return false;
     const newParentId = ids[idx - 1];
-    if (!newParentId) return; // idx > 0 and < ids.length; narrow for the type-checker
-    // Cycle guard: target cannot be a descendant of focused.
-    if (collectDescendantIds(this.deps.getRows(), row.tile.id).includes(newParentId)) return;
-    if (row.parent === newParentId) return;
-    this.deps.updateRowField(row, { parent: newParentId });
+    if (!newParentId) return false; // idx > 0 and < ids.length; narrow for the type-checker
+    if (row.parent === newParentId) return false;
+    const problem = indentProblem({
+      rows: this.deps.getRows(),
+      placements: this.deps.getPlacements(),
+      sections: this.deps.getSections(),
+      tileId: row.tile.id,
+      newParentId,
+    });
+    if (problem) {
+      uiStore.toast(problem, 'info', 1800);
+      return true;
+    }
+    this.deps.commitIndent(row.tile.id, newParentId);
+    return true;
   }
 
   /**
@@ -232,11 +253,9 @@ export class TaskListKeyboardNav {
 
   /**
    * Capture-phase keydown handler bound to this board's scroll container.
-   * Capture (not bubble) intercepts Tab BEFORE the browser's native focus
-   * stepping kicks in — without that, pressing Tab while a row's sub-button
-   * has focus moves focus to the next button outside the board, since the
-   * bubble-phase preventDefault arrives too late for some focus-traversal
-   * paths. Scoped to the container so a multi-tab layout doesn't see two
+   * Capture (not bubble) intercepts Tab on a focused row BEFORE the
+   * browser's native focus stepping kicks in, since the bubble-phase
+   * preventDefault arrives too late for some focus-traversal paths. Scoped to the container so a multi-tab layout doesn't see two
    * boards racing for the same keystroke.
    */
   handleBoardKeydown = (e: KeyboardEvent): void => {
@@ -268,9 +287,13 @@ export class TaskListKeyboardNav {
       // here keeps the resolution robust if a sub-handler ever defers.
       const focused = this.focusedTaskRow(e.target);
       if (!focused) return;
-      e.preventDefault();
-      e.stopPropagation();
-      this.indentFocused(focused, e.shiftKey);
+      // Only the row itself indents: Tab from one of its buttons steps on
+      // to the next control, as everywhere else.
+      if (!(e.target instanceof HTMLElement) || !e.target.classList.contains('task-item')) return;
+      if (this.indentFocused(focused, e.shiftKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       return;
     }
     if (e.key === 'Escape' && this.deps.getSelectionSize() > 0) {

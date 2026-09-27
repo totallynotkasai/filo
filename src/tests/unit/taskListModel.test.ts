@@ -267,6 +267,14 @@ describe('groupKey — all 6 groupBys including category', () => {
     expect(groupKey(makeRow({ dueDate: '2026-05-16' }), 'dueDate', TODAY).key).toBe('today');
   });
 
+  it('groupBy "dueDate" — tomorrow is not "today" on a day the clocks go forward', () => {
+    // A 23-hour day: tomorrow's midnight is 23 hours after today's. Built from
+    // tomorrow's local midnight so the test holds in any time zone.
+    const tomorrow = new Date(2026, 2, 30);
+    const shortToday = new Date(tomorrow.getTime() - 23 * 3600 * 1000);
+    expect(groupKey(makeRow({ dueDate: '2026-03-30' }), 'dueDate', shortToday).key).toBe('this-week');
+  });
+
   it('groupBy "dueDate" — within the week → "this-week"', () => {
     expect(groupKey(makeRow({ dueDate: '2026-05-20' }), 'dueDate', TODAY).key).toBe('this-week');
   });

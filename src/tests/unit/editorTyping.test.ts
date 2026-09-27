@@ -83,3 +83,39 @@ describe('typing is saved as typed', () => {
     expect(ed.getHTML()).not.toContain('filo-tag');
   });
 });
+
+describe('typed text that Markdown would read as something else', () => {
+  /** Types `text` into a fresh note, saves, reloads, and returns both sides. */
+  function typeSaveReload(text: string): { saved: string; reloaded: Editor } {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, '');
+    ed.commands.focus('end');
+    type(ed, text);
+    const saved = editorMarkdown(ed);
+    const reloaded = makeEditor();
+    expect(loadMarkdownIntoEditor(reloaded, saved).lossy).toBe(false);
+    return { saved, reloaded };
+  }
+
+  it('"1) Buy milk" stays a line of text, not a numbered list', () => {
+    const { saved, reloaded } = typeSaveReload('1) Buy milk');
+    expect(saved).toBe('1\\) Buy milk');
+    expect(reloaded.getHTML()).toBe('<p>1) Buy milk</p>');
+    expect(editorMarkdown(reloaded)).toBe(saved);
+  });
+
+  it('a "3)" later in the line is left alone', () => {
+    const { saved } = typeSaveReload('Step 3) done');
+    expect(saved).toBe('Step 3) done');
+  });
+
+  it.each(['&amp;', 'AT&amp;T', '&copy; 2026', '&#169;', '&#x1F600;'])('a typed %j reopens as typed', (text) => {
+    const { reloaded } = typeSaveReload(text);
+    expect(reloaded.state.doc.textContent).toBe(text);
+  });
+
+  it('a lone & is saved as it is', () => {
+    const { saved } = typeSaveReload('Tom & Jerry; R&D');
+    expect(saved).toBe('Tom & Jerry; R&D');
+  });
+});

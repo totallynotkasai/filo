@@ -10,7 +10,7 @@
   import FrameComponent from '../frames/Frame.svelte';
   import WaypointMarker from '../canvas/WaypointMarker.svelte';
   import MindMapPopups from './MindMapPopups.svelte';
-  import { getContext } from 'svelte';
+  import { getContext, untrack } from 'svelte';
   import { BOARD_SCOPE_KEY, isActiveScope, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { connectionsStore } from '../../stores/connections.svelte';
   import { uiStore } from '../../stores/ui.svelte';
@@ -48,6 +48,7 @@
   import {
     findNeighborTile,
     isArrowConsumingTarget,
+    isCanvasKeyBlocked,
     isArrowKey,
   } from '../../lib/mindmap/mindMapKeyboard';
   import { VisibleTilesViewModel } from '../../lib/mindmap/visibleTilesViewModel.svelte';
@@ -77,6 +78,7 @@
     canvas: canvasStore,
     selection: selectionStore,
     spatial: spatialStore,
+    hiddenTileIds: () => viewModel.hiddenByFrame,
   });
   $effect(() => { marquee.setContainer(canvasContainer ?? null); });
 
@@ -138,6 +140,15 @@
     board: boardStore,
     canvas: canvasStore,
     spatial: spatialStore,
+  });
+
+  // Collapsing a frame hides its tiles, so they leave the selection too:
+  // Delete, Align or a drag must never act on a tile the user can't see.
+  $effect(() => {
+    const hidden = viewModel.hiddenByFrame;
+    for (const id of hidden) {
+      if (untrack(() => selectionStore.isSelected(id))) selectionStore.deselect(id);
+    }
   });
 
   function createTileAtViewportCenter(): void {
@@ -328,7 +339,8 @@
         uiStore.toast(`Waypoint "${name}" saved`, 'success', 1500);
       },
       onSelectAll: () => {
-        selectionStore.selectMultiple(Object.values(boardStore.tiles).map((t) => t.id));
+        const hidden = viewModel.hiddenByFrame;
+        selectionStore.selectMultiple(Object.keys(boardStore.tiles).filter((id) => !hidden.has(id)));
       },
       onOrphanCatcher: () => uiStore.openModal('orphan-catcher'),
       onRemoveBroken: brokenCount > 0 ? () => {
@@ -369,7 +381,7 @@
           ),
         );
       },
-      onSelectAll: () => selectionStore.selectMultiple(frame.tileIds),
+      onSelectAll: () => selectionStore.selectMultiple(frame.tileIds.filter((id) => !viewModel.hiddenByFrame.has(id))),
       // Context-menu delete shares the same confirm
       // gate as the Frame.svelte trash button so neither entry point
       // can rip out a frame without a stop-the-world confirmation.
@@ -399,25 +411,12 @@
     }
   }
 
-  // ── Keyboard handler ──
-  //
-  // Keyboard-operable Mind Map.
-  // Bindings (only fire when focus is NOT inside an editable text target):
-  //
-  //   • Escape         — cancel connection-drawing / exit connection mode
-  //   • Arrow keys     — replace selection with the nearest neighbour in
-  //                      the pressed direction (anchored on the most-recent
-  //                      selected tile)
-  //   • Ctrl+Shift+Arrow — extend selection in the pressed direction
-  //   • Ctrl+Arrow     — move the selected tile(s) by 10 canvas px
-  //   • N              — create a new tile near the focused selection (or
-  //                      the viewport centre if nothing is selected)
-  //   • Enter          — start renaming the focused tile (selects its
-  //                      TileHeader title input; falls back to focus-only
-  //                      when no header is mounted)
-  //   • Del / Backspace — delete the selected tile(s) via the standard
-  //                      cascade-aware confirm gate
-  //   • C              — start a connection from the focused tile
+  // ── Keyboard handler ── (never while typing, or while a dialog or menu is open)
+  //   Escape: cancel connection drawing / mode. Arrows: select the nearest
+  //   neighbour. Ctrl+Shift+Arrow: extend the selection. Ctrl+Arrow: move the
+  //   selection 10 px. N: new tile beside the selection (or mid-viewport).
+  //   Enter: rename the selected tile. Backspace: delete the selection
+  //   (Delete is the global tile:delete). C: start a connection.
   function handleKeydown(e: KeyboardEvent) {
     // Pane-scope gate. `<svelte:window onkeydown>` fires for
     // EVERY mounted Mind Map pane, so without this an inactive split pane would
@@ -428,6 +427,8 @@
     if (!isActiveScope(scope)) return;
     // TipTap (and any input/textarea) needs Ctrl+Arrow for word-jump.
     if (isArrowConsumingTarget(document.activeElement)) return;
+    // A dialog, menu or focused control owns the key (Settings open, Enter on a button).
+    if (isCanvasKeyBlocked(e.key, document.activeElement)) return;
 
     if (e.key === 'Escape') {
       if (connectionsStore.drawing) {
@@ -442,7 +443,8 @@
       e.preventDefault();
       const ids = [...selectionStore.selectedIds];
       const tilesMap = boardStore.tiles;
-      const tilesArr = Object.values(tilesMap);
+      // A tile inside a collapsed frame is not drawn, so the keys skip it.
+      const tilesArr = Object.values(tilesMap).filter((t) => !viewModel.hiddenByFrame.has(t.id));
       if (tilesArr.length === 0) return;
 
       if (ids.length === 0) {
@@ -497,7 +499,8 @@
     // neighbour in that direction.
     if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && isArrowKey(e.key)) {
       const tilesMap = boardStore.tiles;
-      const tilesArr = Object.values(tilesMap);
+      // A tile inside a collapsed frame is not drawn, so the keys skip it.
+      const tilesArr = Object.values(tilesMap).filter((t) => !viewModel.hiddenByFrame.has(t.id));
       if (tilesArr.length === 0) return;
       e.preventDefault();
       const ids = [...selectionStore.selectedIds];

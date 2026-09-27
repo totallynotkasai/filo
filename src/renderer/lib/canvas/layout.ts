@@ -182,7 +182,18 @@ export function alignTiles(
     }
   }
 
+  // Locked tiles stay put, but still count as the edge or span the others
+  // line up with.
+  for (const t of selected) if (t.locked) result.delete(t.id);
   return result;
+}
+
+/** Locked tiles never move, so a layout arranges only the unlocked ones. */
+function unlockedIds(tiles: Record<string, Tile>, ids: string[]): string[] {
+  return ids.filter((id) => {
+    const t = tiles[id];
+    return !!t && !t.locked;
+  });
 }
 
 // ── Tree Layout ──
@@ -216,6 +227,7 @@ export function layoutTree(
   direction: 'horizontal' | 'vertical' = 'horizontal',
 ): PositionMap {
   const result: PositionMap = new Map();
+  selectedIds = unlockedIds(tiles, selectedIds);
   if (selectedIds.length === 0) return result;
 
   const selectedSet = new Set(selectedIds);
@@ -447,6 +459,7 @@ export function layoutRadial(
   selectedIds: string[],
 ): PositionMap {
   const result: PositionMap = new Map();
+  selectedIds = unlockedIds(tiles, selectedIds);
   if (selectedIds.length === 0) return result;
 
   const selected = selectedIds.map(id => tiles[id]).filter(isTile);

@@ -82,6 +82,7 @@ import { uiStore } from './ui.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { cloneTagsFile, sameJson, mergeTagsThreeWay } from '../lib/vault/tagsFileMerge';
 import { countTagUsage, type TagCounts } from '../lib/tags/tagBrowserFilter';
+import { sameTag } from '../lib/vault/sidebarTagFilter';
 
 let file = $state<TagsFile>(emptyTagsFile());
 let isHydrated = $state(false);
@@ -406,14 +407,23 @@ export const fileTagsStore = {
     return pureTagsForFile(file, path);
   },
 
-  /** Files carrying `tagName`: notes (by frontmatter) and tagged media files. */
-  filesForTag(tagName: string): string[] {
+  /**
+   * Files carrying `tagName`: notes (by frontmatter) and tagged media files.
+   * Exact spelling (the delete and its undo act on this list); `anyCase`
+   * also lists `Project` for `project`, as the Tags Browser counts them.
+   */
+  filesForTag(tagName: string, anyCase = false): string[] {
+    const has = (tags: readonly string[]): boolean =>
+      anyCase ? tags.some((t) => sameTag(t, tagName)) : tags.includes(tagName);
     // Path order: the index holds notes in the order their reads finished.
     const notes = vaultIndexStore.allMetadata()
-      .filter((m) => noteTags(m.path).includes(tagName))
+      .filter((m) => has(noteTags(m.path)))
       .map((m) => m.path)
       .sort((a, b) => normalizeVaultRelative(a).localeCompare(normalizeVaultRelative(b)));
-    return [...notes, ...pureFilesForTag(file, tagName).filter((p) => !isNotePath(p))];
+    const media = anyCase
+      ? Object.entries(file.fileTags).filter(([, tags]) => has(tags)).map(([p]) => p)
+      : pureFilesForTag(file, tagName);
+    return [...notes, ...media.filter((p) => !isNotePath(p))];
   },
 
   allTagNames(): string[] {
@@ -425,14 +435,16 @@ export const fileTagsStore = {
   },
 
   /**
-   * Returns every tile on every loaded board that carries the given tag name,
-   * read from wherever the tile's tags live.
+   * Returns every tile on every loaded board that carries the given tag name
+   * in any spelling (`Project` for `project`), read from wherever the
+   * tile's tags live. The Tags Browser counts every spelling as one tag, so
+   * the lists it opens do too.
    */
   getTilesWithTag(tagName: string): TaggedTile[] {
     const results: TaggedTile[] = [];
     for (const boardId of Object.keys(boardCacheStore.cache)) {
       for (const tile of Object.values(boardCacheStore.getFullTilesForBoard(boardId))) {
-        if (tile.tags.includes(tagName)) {
+        if (tile.tags.some((t) => sameTag(t, tagName))) {
           results.push({ id: tile.id, boardId, type: tile.type, title: tile.title, tags: tile.tags, path: tagFileOfTile(tile) });
         }
       }
@@ -454,7 +466,7 @@ export const fileTagsStore = {
       Array.from(excludePaths).map((p) => normalizeVaultRelative(p)),
     );
     const out: Array<{ path: string; title: string; tags: string[] }> = [];
-    for (const path of this.filesForTag(tagName)) {
+    for (const path of this.filesForTag(tagName, true)) {
       if (normExcluded.has(normalizeVaultRelative(path))) continue;
       const title = isNotePath(path) ? noteTitle(path) : (path.split('/').pop() ?? path);
       out.push({ path, title, tags: this.tagsForFile(path) });

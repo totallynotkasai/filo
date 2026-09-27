@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { IframeTile } from '../../schema/index';
   import { isSafeIframeUrl } from '../../lib/utils/urlSafety';
-  import { asSafeIframeSrc, asSafeOpenExternal } from '../../../shared/untrusted';
+  import { asSafeIframeSrc } from '../../../shared/untrusted';
+  import { openExternalUrl } from '../../lib/utils/openExternal';
   import IconButton from '../shared/IconButton.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateAttachmentSrcCommand } from '../../commands/index';
@@ -25,10 +26,7 @@
   const safeSrc = $derived(asSafeIframeSrc(tile.url));
 
   function openExternally(target: string | null | undefined): void {
-    const safe = asSafeOpenExternal(target);
-    if (!safe) return;
-    // allow-envelope-bare: fire-and-forget UI handler; failure is visible (browser doesn't open)
-    void window.filo.invoke('media:open-external', safe);
+    if (target) void openExternalUrl(target);
   }
 
   function handleLoad() {

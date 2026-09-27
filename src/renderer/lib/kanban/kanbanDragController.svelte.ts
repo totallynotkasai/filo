@@ -10,6 +10,14 @@ import { uiStore } from '../../stores/ui.svelte';
 import { MoveCardCommand, MoveCardsCommand } from '../../commands/index';
 import { isEditableTextTarget } from '../utils/editableTarget';
 import type { KanbanSortBy } from './kanbanFiltersAndSort.svelte';
+import { insertIndexAmongPlacements } from './kanbanInsertPosition';
+
+const SORT_LABELS: Record<Exclude<KanbanSortBy, 'manual'>, string> = {
+  title: 'title',
+  created: 'date created',
+  dueDate: 'due date',
+  priority: 'priority',
+};
 
 /** Shape of items handed to the per-column card dndzones.
  *
@@ -188,20 +196,27 @@ export class KanbanDragController {
   }
 
   /**
-   * Rebuild `dndCardsByColumn` from the canonical column / placement state.
-   * Skipped while a card drag is in progress so the dndzone keeps its
-   * in-flight items (otherwise we'd snap the dragged item back). The host
-   * calls this from an `$effect` that depends on `columns` (untracked, like
+   * Rebuild `dndCardsByColumn` from the cards each column shows, in the order
+   * it shows them (filtered and sorted). The items must be exactly the
+   * rendered cards: a hidden card in `items` has no DOM node, so the library
+   * would pick the wrong card. Skipped while a card drag is in progress so
+   * the dndzone keeps its in-flight items (otherwise we'd snap the dragged
+   * item back). The host calls this from an `$effect` (untracked, like
    * `syncColumns`).
    */
-  syncCards(columns: KanbanBoardType['columns']): void {
+  syncCards(visibleByColumn: Record<string, string[]>): void {
     if (this.dragTileId !== null) return;
     const next: Record<string, KanbanCardDndItem[]> = {};
-    for (const col of columns) {
-      const placements = (col.tilePlacements ?? []) as KanbanTilePlacement[];
-      next[col.id] = placements.map((p) => ({ id: p.tileId }));
+    for (const [colId, ids] of Object.entries(visibleByColumn)) {
+      next[colId] = ids.map((id) => ({ id }));
     }
     this.dndCardsByColumn = next;
+  }
+
+  /** The column's card ids in the board's saved (manual) order. */
+  private placementIds(columnId: string): string[] {
+    const col = this.deps.getColumns().find((c) => c.id === columnId);
+    return ((col?.tilePlacements ?? []) as KanbanTilePlacement[]).map((p) => p.tileId);
   }
 
   /**
@@ -320,14 +335,11 @@ export class KanbanDragController {
       return;
     }
 
-    // Find the source column + position from the pre-drag snapshot.
+    // Find the source column from the pre-drag snapshot.
     let fromColumnId: string | null = null;
-    let fromPosition = 0;
     for (const [colId, snap] of Object.entries(this.dndCardsBeforeDrag)) {
-      const idx = snap.findIndex((it) => it.id === draggedId);
-      if (idx >= 0) {
+      if (snap.some((it) => it.id === draggedId)) {
         fromColumnId = colId;
-        fromPosition = idx;
         break;
       }
     }
@@ -338,13 +350,36 @@ export class KanbanDragController {
       return;
     }
 
-    const isMultiDrag = this.dragBlockIds.length > 1;
+    // A sorted column shows the sort's order, so a reorder inside it would
+    // be saved but never seen. Refuse it and put the cards back.
+    const sortBy = this.deps.getActiveSortBy();
+    if (sortBy !== 'manual' && fromColumnId === columnId) {
+      this.dndCardsByColumn = {
+        ...this.dndCardsByColumn,
+        [columnId]: this.dndCardsBeforeDrag[columnId] ?? items,
+      };
+      uiStore.toast(`Cards are sorted by ${SORT_LABELS[sortBy]}. Switch to Manual sort to reorder them.`, 'info', 3500);
+      this.resetCardDrag();
+      return;
+    }
 
-    // No-op detection. Single-card: same column AND same index. Multi-card:
-    // every block member already at the column the anchor is landing in, in
-    // the same relative order. The cheap heuristic — same column + same
-    // anchor index — covers the common within-column hover-and-drop case.
-    if (!isMultiDrag && fromColumnId === columnId && fromPosition === dropIdx) {
+    const isMultiDrag = this.dragBlockIds.length > 1;
+    // `items` holds only the cards on screen, so the drop is placed in the
+    // saved order next to the visible neighbour it was dropped by.
+    const fromPosition = this.placementIds(fromColumnId).indexOf(draggedId);
+    if (fromPosition < 0) {
+      this.resetCardDrag();
+      return;
+    }
+    const toPosition = insertIndexAmongPlacements(
+      items.map((it) => it.id),
+      draggedId,
+      new SvelteSet(isMultiDrag ? this.dragBlockIds : [draggedId]),
+      this.placementIds(columnId),
+    );
+
+    // No-op detection: a single card put back in its own place.
+    if (!isMultiDrag && fromColumnId === columnId && fromPosition === toPosition) {
       this.resetCardDrag();
       return;
     }
@@ -355,12 +390,11 @@ export class KanbanDragController {
           boardId,
           this.dragBlockIds,
           columnId,
-          dropIdx,
+          toPosition,
           this.dragBlockSnapshots,
         ),
       );
       this.deps.tickAndPersist();
-      this.warnIfSortHidesManualOrder(fromColumnId, columnId);
       uiStore.toast(
         `Moved ${this.dragBlockIds.length} cards`,
         'success',
@@ -371,10 +405,9 @@ export class KanbanDragController {
     }
 
     historyStore.execute(
-      new MoveCardCommand(boardId, draggedId, fromColumnId, fromPosition, columnId, dropIdx),
+      new MoveCardCommand(boardId, draggedId, fromColumnId, fromPosition, columnId, toPosition),
     );
     this.deps.tickAndPersist();
-    this.warnIfSortHidesManualOrder(fromColumnId, columnId);
     this.resetCardDrag();
   };
 
@@ -445,20 +478,6 @@ export class KanbanDragController {
       destroy(): void {},
     };
   };
-
-  private warnIfSortHidesManualOrder(sourceColumnId: string | null, targetColumnId: string): void {
-    // When sort is non-manual, a within-column reorder is still saved to the
-    // placement array but render-time sorting will override the visual order.
-    // Cross-column moves remain visually effective (they change column membership).
-    const sortBy = this.deps.getActiveSortBy();
-    if (sortBy === 'manual') return;
-    if (sourceColumnId !== targetColumnId) return;
-    uiStore.toast(
-      `Drag order saved but hidden by "${sortBy}" sort. Switch to Manual sort to see it.`,
-      'info',
-      3500,
-    );
-  }
 
   // ── Column drag/drop (reorder via svelte-dnd-action) ──
 

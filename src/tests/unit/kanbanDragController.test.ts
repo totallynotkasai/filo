@@ -114,22 +114,9 @@ describe('KanbanDragController — syncCards', () => {
     window.matchMedia = vi.fn(() => mql) as unknown as typeof window.matchMedia;
   });
 
-  it('mirrors column placements into dndCardsByColumn with only {id}', () => {
-    const columns = [
-      {
-        id: 'col-a',
-        title: 'A',
-        tilePlacements: [{ tileId: 't1' }, { tileId: 't2' }],
-      },
-      {
-        id: 'col-b',
-        title: 'B',
-        tilePlacements: [{ tileId: 't3' }],
-      },
-    ] as unknown as KanbanBoard['columns'];
-
-    const c = new KanbanDragController(noopDeps(columns));
-    c.syncCards(columns);
+  it("mirrors each column's shown cards into dndCardsByColumn with only {id}", () => {
+    const c = new KanbanDragController(noopDeps());
+    c.syncCards({ 'col-a': ['t1', 't2'], 'col-b': ['t3'] });
 
     expect(c.dndCardsByColumn).toEqual({
       'col-a': [{ id: 't1' }, { id: 't2' }],
@@ -144,13 +131,10 @@ describe('KanbanDragController — syncCards', () => {
     ] as unknown as KanbanBoard['columns'];
 
     const c = new KanbanDragController(noopDeps(initial));
-    c.syncCards(initial);
+    c.syncCards({ 'col-a': ['t1'] });
     c.dragTileId = 't1';
 
-    const next = [
-      { id: 'col-a', title: 'A', tilePlacements: [] },
-    ] as unknown as KanbanBoard['columns'];
-    c.syncCards(next);
+    c.syncCards({ 'col-a': [] });
 
     // Mirror retains the pre-drag snapshot so the dndzone doesn't snap the
     // dragged item back out of the destination zone.

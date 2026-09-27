@@ -1,9 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { LinkTile } from '../../schema/index';
-  import { reportError } from '../../lib/utils/errorBus';
-  import { invokeOk } from '../../lib/utils/invokeOk';
-  import { asSafeOpenExternal } from '../../../shared/untrusted';
+  import { openExternalUrl } from '../../lib/utils/openExternal';
 
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateAttachmentSrcCommand } from '../../commands/index';
@@ -123,20 +121,7 @@
 
   async function openLink() {
     if (!tile.url) return;
-    // Gate the URL with `asSafeOpenExternal` before the IPC
-    // call. The main handler re-checks (defence-in-depth) but rejecting
-    // here avoids the roundtrip and surfaces the failure inline.
-    const safe = asSafeOpenExternal(tile.url);
-    if (!safe) { reportError('LinkTile.open', null, `URL "${tile.url}" rejected (scheme not in https/http/mailto/tel allowlist).`); return; }
-    try {
-      await invokeOk('media:open-external', safe);
-    } catch (err) {
-      reportError(
-        'LinkTile.open',
-        err,
-        `Failed to open ${tile.url} in the system browser`,
-      );
-    }
+    await openExternalUrl(tile.url);
   }
 </script>
 

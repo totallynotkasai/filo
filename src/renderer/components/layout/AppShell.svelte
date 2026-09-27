@@ -35,6 +35,7 @@
   import { createTile } from '../../stores/tiles.svelte';
   import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
   import { requestDeleteSelected, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
+  import { isCanvasKeyBlocked } from '../../lib/mindmap/mindMapKeyboard';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { installLinkClickHandling } from '../../lib/editor/linkClicks';
@@ -339,7 +340,8 @@
       registerCommandWithShortcut({
         name: 'tile:delete', label: 'Remove Selected', description: 'Remove Selected',
         binding: { key: 'Delete' },
-        enabled: onMindMap,
+        // Not while a dialog or menu is open over the board.
+        enabled: () => onMindMap() && !isCanvasKeyBlocked('Delete', document.activeElement),
         execute: () => requestDeleteSelected(deleteSelectionDeps),
       }),
 

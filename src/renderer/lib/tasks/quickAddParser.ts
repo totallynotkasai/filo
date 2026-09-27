@@ -16,7 +16,7 @@
  *   @5pm | @17:30 | @9:00am                → dueTime (24h HH:MM)
  *   !low | !med | !medium | !high | !urgent → priority
  *   !!                                     → priority: urgent (shorthand)
- *   #tag-name (any number)                 → tags
+ *   #tag-name, #area/sub-tag (any number)  → tags
  *   =status-name                           → status
  *
  * Tokens are removed from the title. Whitespace is normalised. The first
@@ -135,8 +135,10 @@ export function parseQuickAdd(
   let priority: QuickAddPriority | undefined;
   let status: string | undefined;
 
-  // Tags (multiple, global).
-  working = working.replace(/\s#([a-zA-Z0-9_-]+)(?=\s)/g, (_full, tag: string) => {
+  // Tags (multiple, global). Any letters or digits, in any script, plus `_`
+  // and `-`; `/` nests (`#work/filo`). A spaced tag can't be typed as one
+  // word, so it goes through the tag row instead.
+  working = working.replace(/\s#([\p{L}\p{M}\p{N}_-]+(?:\/[\p{L}\p{M}\p{N}_-]+)*)(?=\s)/gu, (_full, tag: string) => {
     tags.push(tag);
     return ' ';
   });

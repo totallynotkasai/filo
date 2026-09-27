@@ -1,9 +1,10 @@
 /**
  * Vault-wide Search engine.
  *
- * Walks every loaded tile across every board in the active vault and
- * produces a flat list of `SearchMatch` records ordered for deterministic
- * cycling through Find / Find All.
+ * Walks every loaded tile across every board in the active vault, plus
+ * every note that sits on no board, and produces a flat list of
+ * `SearchMatch` records ordered for deterministic cycling through Find /
+ * Find All.
  *
  * Sources of truth:
  *  - File-backed matches (Text Tile body, frontmatter, headings) come from
@@ -32,17 +33,18 @@ import type { FileMetadata } from '../vault/vaultIndex';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
-import { defTitle, mediaTags, noteTags } from '../../stores/noteMeta';
+import { defTitle, mediaTags, noteTags, noteTitle } from '../../stores/noteMeta';
+import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 
 /** Single match record surfaced to the Search panel + ReplaceAll command. */
 export interface SearchMatch {
-  /** Owning board ID. */
+  /** Owning board ID; '' for a note on no board. */
   boardId: string;
-  /** Owning board name (resolved at query time for the Find All popup). */
+  /** Owning board name (resolved at query time for the Find All popup); '' for a note on no board. */
   boardName: string;
   /**
-   * Tile that exposes this match. Search walks the tiles on loaded boards,
-   * so every match has one; a note on no board is never a match.
+   * Tile that exposes this match; '' for a note on no board, which Find
+   * opens in a Document tab instead.
    */
   tileId: string;
   /** Tile title. */
@@ -158,7 +160,7 @@ interface TileEnumeration {
   boardId: string;
   boardName: string;
   tileId: string;
-  def: TileDefinition;
+  type: TileType;
   /** The tile's title and tags, read from where they live. */
   title: string;
   tags: string[];
@@ -186,7 +188,7 @@ function enumerateTiles(): TileEnumeration[] {
     for (const [tileId, def] of Object.entries(data.tileDefs ?? {})) {
       const filePath = getDefFilePath(def);
       const metadata = filePath ? vaultIndexStore.getMetadata(filePath) : null;
-      out.push({ boardId, boardName, tileId, def, title: defTitle(def), tags: getDefTags(def, filePath), filePath, metadata });
+      out.push({ boardId, boardName, tileId, type: def.type, title: defTitle(def), tags: getDefTags(def, filePath), filePath, metadata });
     }
     // Inline tiles (link / iframe / timer) live on the mind-map board
     // itself, not in tileDefs. No backing file but they still need to be
@@ -194,9 +196,26 @@ function enumerateTiles(): TileEnumeration[] {
     if (data.board.type === 'mindmap') {
       const mm = data.board as { inlineTiles?: Record<string, TileDefinition> };
       for (const [tileId, def] of Object.entries(mm.inlineTiles ?? {})) {
-        out.push({ boardId, boardName, tileId, def, title: defTitle(def), tags: getDefTags(def, null), filePath: null, metadata: null });
+        out.push({ boardId, boardName, tileId, type: def.type, title: defTitle(def), tags: getDefTags(def, null), filePath: null, metadata: null });
       }
     }
+  }
+  // Notes on no board: the search covers the whole vault, not only what is
+  // placed on a board. Each counts once, as a text item with no board.
+  const placed = new Set<VaultPath>();
+  for (const t of out) if (t.type === 'text' && t.filePath) placed.add(vaultPath(t.filePath));
+  for (const metadata of vaultIndexStore.allMetadata()) {
+    if (placed.has(vaultPath(metadata.path))) continue;
+    out.push({
+      boardId: '',
+      boardName: '',
+      tileId: '',
+      type: 'text',
+      title: noteTitle(metadata.path),
+      tags: noteTags(metadata.path),
+      filePath: metadata.path,
+      metadata,
+    });
   }
   return out;
 }
@@ -232,7 +251,7 @@ function tilePassesOperator(tile: TileEnumeration, op: OperatorFilter): boolean 
       return normaliseEq(v, op.value);
     }
     case 'type': {
-      return tile.def.type === op.value;
+      return tile.type === op.value;
     }
   }
 }
@@ -249,6 +268,8 @@ function normaliseEq(left: unknown, right: string): boolean {
  * predictable).
  */
 function compareMatches(a: SearchMatch, b: SearchMatch): number {
+  // Notes on no board come after every board.
+  if (!a.boardId !== !b.boardId) return a.boardId ? -1 : 1;
   const boardA = a.boardName.toLowerCase();
   const boardB = b.boardName.toLowerCase();
   if (boardA < boardB) return -1;
@@ -342,7 +363,7 @@ export function runVaultSearch(query: ParsedQuery): { matches: SearchMatch[]; tr
           boardName: t.boardName,
           tileId: t.tileId,
           tileTitle: t.title,
-          tileType: t.def.type,
+          tileType: t.type,
           filePath: t.filePath,
           matchStart: off.start,
           matchEnd: off.end,
@@ -359,7 +380,7 @@ export function runVaultSearch(query: ParsedQuery): { matches: SearchMatch[]; tr
     // video / audio / file / link / iframe / timer have no body content for
     // the engine to scan.
     if (!bodyRegex || !t.filePath || !t.metadata) continue;
-    if (t.def.type !== 'text') continue;
+    if (t.type !== 'text') continue;
     if (scannedFiles.has(t.filePath)) {
       // Already produced body matches via another tile on a different board.
       // The Find All popup intentionally lists those matches under the FIRST
@@ -376,7 +397,7 @@ export function runVaultSearch(query: ParsedQuery): { matches: SearchMatch[]; tr
         boardName: t.boardName,
         tileId: t.tileId,
         tileTitle: t.title,
-        tileType: t.def.type,
+        tileType: t.type,
         filePath: t.filePath,
         matchStart: off.start,
         matchEnd: off.end,
@@ -398,7 +419,7 @@ function toTitleMatch(t: TileEnumeration, start: number, end: number, text: stri
     boardName: t.boardName,
     tileId: t.tileId,
     tileTitle: t.title,
-    tileType: t.def.type,
+    tileType: t.type,
     filePath: t.filePath,
     matchStart: start,
     matchEnd: end,

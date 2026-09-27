@@ -47,7 +47,7 @@
     e.stopPropagation();
     e.preventDefault();
 
-    const drawing = connectionsStore.drawing;
+    const drawing = connectionsStore.drawingOn(boardStore);
 
     if (!drawing) {
       // Start drawing from this bubble

@@ -1,3 +1,4 @@
+import { SvelteSet } from 'svelte/reactivity';
 import type { CanvasScope } from '../../stores/canvas.svelte';
 import type { SelectionScope } from '../../stores/selection.svelte';
 import type { SpatialScope } from '../../stores/spatial.svelte';
@@ -17,15 +18,19 @@ export class MarqueeSelectionController {
   private readonly canvasScope: CanvasScope;
   private readonly selectionScope: SelectionScope;
   private readonly spatialScope: SpatialScope;
+  private readonly hiddenTileIds: () => ReadonlySet<string>;
 
   constructor(deps: {
     canvas: CanvasScope;
     selection: SelectionScope;
     spatial: SpatialScope;
+    /** Tiles inside a collapsed frame: not drawn, so never box-selected. */
+    hiddenTileIds?: () => ReadonlySet<string>;
   }) {
     this.canvasScope = deps.canvas;
     this.selectionScope = deps.selection;
     this.spatialScope = deps.spatial;
+    this.hiddenTileIds = deps.hiddenTileIds ?? (() => new SvelteSet<string>());
   }
 
   setContainer(el: HTMLElement | null): void {
@@ -76,7 +81,8 @@ export class MarqueeSelectionController {
           right: box.right,
           bottom: box.bottom,
         });
-        this.selectionScope.selectMultiple(ids);
+        const hidden = this.hiddenTileIds();
+        this.selectionScope.selectMultiple(ids.filter((id) => !hidden.has(id)));
       }
     }
 

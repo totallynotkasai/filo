@@ -1,9 +1,34 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+/**
+ * The editor's dependencies, pre-bundled when the dev server starts. The
+ * boards that use them are lazy chunks, so without this Vite can find them
+ * only when a board first opens, then re-optimises and reloads the page.
+ * Read from package.json so a new TipTap extension is covered without an edit
+ * here. `@tiptap/pm` has no root entry, so its subpaths are named.
+ */
+function editorDepsToPrebundle(): string[] {
+  const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8')) as {
+    dependencies?: Record<string, string>;
+  };
+  const tiptap = Object.keys(pkg.dependencies ?? {}).filter(
+    (name) => name.startsWith('@tiptap/') && name !== '@tiptap/pm',
+  );
+  return [
+    ...tiptap,
+    '@tiptap/pm/model',
+    '@tiptap/pm/state',
+    '@tiptap/pm/view',
+    'tiptap-markdown',
+    'lowlight',
+  ];
+}
 
 export default defineConfig({
   main: {
@@ -57,6 +82,9 @@ export default defineConfig({
       },
     ],
     root: '.',
+    optimizeDeps: {
+      include: editorDepsToPrebundle(),
+    },
     build: {
       outDir: 'dist/renderer',
       rollupOptions: {

@@ -10,6 +10,7 @@
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { boardRegistry } from '../../core/boardRegistry';
+  import { loadBoardModule } from '../../core/boardModules';
   import {
     BOARD_SCOPE_KEY,
     type BoardScope,
@@ -27,14 +28,19 @@
 
   let tab = $derived(tabStore.tabs.find((t) => t.id === tabId));
   let boardType = $derived(tab?.boardType ?? null);
-  let boardComponentLoader = $derived.by(() => {
-    if (!boardType) return null;
-    return boardRegistry[boardType]?.component ?? null;
-  });
-  // Resolve the lazy import into a stable promise so unrelated
-  // reactive updates don't re-trigger the {#await}. `import()` caches the
-  // module, so any re-load after the first is effectively instant.
-  let boardModule = $derived(boardComponentLoader ? boardComponentLoader() : null);
+  // The board's module once loaded (rendered at once), or a promise for it
+  // on first open. Derived from the type alone, so unrelated reactive
+  // updates don't re-trigger the {#await}.
+  let boardModule = $derived(
+    boardType && boardRegistry[boardType] ? loadBoardModule(boardType) : null,
+  );
+
+  // The tab this pane's scope has been pointed at by the effect below. The
+  // board component renders only once it matches the shown tab: on a tab
+  // switch the `{#key}` block rebuilds before this effect re-runs, and a board
+  // mounted then would start against the previous board's scope (its view
+  // state effects hydrate for, and then write into, the other board's file).
+  let pinnedTabId = $state<string | null>(null);
 
   // ── Load board data when tab changes ──
   // IMPORTANT: Only track `tab` — untrack all project data reads to prevent
@@ -42,6 +48,7 @@
   $effect(() => {
     const t = tab;
     if (!t) {
+      pinnedTabId = null;
       scope.board.clearBoard();
       scope.selection.clear();
       // Flush any pending viewport persist for the OUTGOING board and
@@ -55,6 +62,7 @@
     if (t.boardType === 'document') {
       scope.selection.clear();
       scope.canvas.setBoard(null);
+      pinnedTabId = t.id;
       return;
     }
 
@@ -104,15 +112,26 @@
       const entry = boardRegistry[t.boardType];
       scope.canvas.setBoard(entry?.usesCanvas ? board.id : null);
     });
+    pinnedTabId = t.id;
   });
 </script>
+
+{#snippet loading()}
+  <div class="board-loading">
+    <p class="board-loading-label" role="status">Loading board…</p>
+  </div>
+{/snippet}
 
 {#if tab}
   {#key tab.id}
     <div class="board-transition">
-      {#if boardModule}
+      {#if boardModule && pinnedTabId !== tab.id}
+        <!-- Only until the effect above has pinned the scope; that runs in
+             the same flush, before the browser paints. -->
+        {@render loading()}
+      {:else if boardModule}
         {#await boardModule}
-          <div class="board-loading"></div>
+          {@render loading()}
         {:then mod}
           {@const ActiveBoardComponent = mod.default}
           <ActiveBoardComponent {tabId} />
@@ -159,12 +178,32 @@
     background: var(--canvas-bg);
   }
 
-  /* Brief placeholder while the lazily-imported board chunk
-     loads on first open (instant on subsequent opens — the module is cached). */
+  /* Placeholder while the lazily-imported board chunk loads on first open
+     (instant once the idle preload or an earlier open has cached the module). */
   .board-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 100%;
     height: 100%;
     background: var(--canvas-bg);
+  }
+
+  /* Shown only if the load takes over 150ms, so a fast load never flashes
+     the text. The delay needs no timer: the label appears when the delay ends,
+     and it is gone as soon as the module resolves. The reduced-motion rule in
+     style.css shortens the fade but keeps the delay. */
+  .board-loading-label {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+    opacity: 0;
+    animation: boardLoadingLabelIn 0.15s ease 150ms forwards;
+  }
+
+  @keyframes boardLoadingLabelIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   .placeholder-label {

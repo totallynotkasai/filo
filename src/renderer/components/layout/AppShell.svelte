@@ -39,6 +39,8 @@
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { installLinkClickHandling } from '../../lib/editor/linkClicks';
   import { loadVaultFonts } from '../../lib/fonts/importedFonts';
+  import { scheduleBoardModulePreload } from '../../lib/boards/boardModulePreload';
+  import { allBoardModuleLoaders } from '../../core/boardModules';
   import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
   import { confirmDiscardSettings } from '../../lib/settings/confirmDiscardSettings';
   import { pickAndOpenVault } from '../../stores/vaultOpen';
@@ -165,6 +167,15 @@
   $effect(() => {
     const path = vaultStore.path;
     if (path) void loadVaultFonts(path);
+  });
+
+  // Load every board type's code once the app is idle after a vault opens, so
+  // the first open of a board doesn't show an empty pane while its chunk loads.
+  // Keyed on a derived path, so a replaced project object doesn't restart it.
+  const openVaultPath = $derived(vaultStore.project === null ? null : vaultStore.path);
+  $effect(() => {
+    if (!openVaultPath) return;
+    return scheduleBoardModulePreload(allBoardModuleLoaders());
   });
 
   // Expose the Global Toolbar and Tab Bar heights as CSS custom properties

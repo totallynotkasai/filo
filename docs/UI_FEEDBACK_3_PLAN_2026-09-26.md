@@ -477,6 +477,62 @@ packaged build.
 - If a load still takes over 150ms, show "Loading board…" instead of the empty
   `.board-loading` area.
 
+### Item 5: done (2026-09-27). Deviations from the plan
+
+- **The preload.** `scheduleBoardModulePreload(loaders)` (`lib/boards/boardModulePreload.ts`)
+  waits 1s, then `requestIdleCallback` (2s timeout; straight away where there is none, as in
+  jsdom) and runs every loader. A failed load is ignored, because opening that board runs the
+  import again and shows "Failed to load board". `AppShell` calls it from an effect on the open
+  vault's path (a `$derived`, so replacing the project object doesn't restart it) and cancels it
+  on a vault close or swap.
+- **Found on the way and fixed: the flash wasn't only the first load.** In the real app, a
+  board whose chunk had already loaded still showed the empty placeholder for about 35ms on
+  every open. `BoardRouter` called the registry's loader on each open, and each call returned a
+  new `import()` promise. That promise settles later than the one microtask Svelte's `{#await}`
+  waits before it shows the pending branch. So preloading alone would not have removed the
+  flash. New `core/boardModules.ts`: `loadBoardModule(type)` returns the module itself once it has
+  loaded (a plain value, which `{#await}` renders at once) and a promise before that.
+  `allBoardModuleLoaders()` gives the preload the same function, so the preload fills that
+  cache. The cache is marked `allow-module-state`, because loaded code isn't vault data.
+- **Found on the way and fixed: a board could mount against the previous board's scope.**
+  On a tab switch, `BoardRouter`'s `{#key}` block rebuilds before its `$effect` re-points the
+  pane scope at the new board. With a cached module the board rendered in that gap. The
+  characterisation spec *bytesOnDisk › boards … reopened after a relaunch, leave every byte
+  alone* caught it: the Task List's lastView effects hydrated for the **Kanban** board still in
+  the scope, and their teardown wrote into `Kanban 1.board.json`, although nothing had been edited.
+  The always-async `{#await}` had only hidden this by delaying every mount by a few ticks.
+  `BoardRouter` now keeps `pinnedTabId`, set by that effect, and renders the board component
+  only once it matches the shown tab. Until then, in the same flush and before any paint, it
+  shows the loading placeholder. The spec failed on every run before this fix and passes after
+  it.
+- **"Loading board…" has no timer.** The label is always in the placeholder, with
+  `role="status"`. A CSS animation keeps it at opacity 0 for 150ms, then fades it in. If the
+  module resolves first, the placeholder goes away and the label is never seen. There is no
+  component timer to clear. The global reduced-motion rule shortens the fade but keeps the delay.
+- **`optimizeDeps.include`.** The list is read from `package.json`: every `@tiptap/*` dependency
+  except `@tiptap/pm`, which has no root entry, so its `model`, `state` and `view` subpaths are
+  named, plus `tiptap-markdown` and `lowlight`. A new TipTap extension is then covered without
+  editing the config.
+- **Found, not changed:** in the production build, `index.html` preloads the `tiptap`,
+  `lowlight` and `markdown-tools` chunks at startup (they are requested at 6ms, before any
+  vault opens). So the ~1 MB editor code is loaded for the Home screen after all, despite the
+  comment in `boardRegistry.ts`. Only the board components themselves are deferred. This is
+  outside Item 5's scope and is noted here for a later look.
+- **Tests added:** `boardModulePreload` (unit: the delay, the idle wait, cancelling before and
+  after the delay, a failing loader) and `boardRouterLoading` (component: the label while a
+  chunk loads, and an already-loaded board rendering in the first flush with no second load).
+  I proved the second case catches the bug by making `loadBoardModule` call the loader again,
+  which made the case fail. The stale-scope write is pinned by the existing characterisation
+  spec above.
+- **Checks:** `npm run ci:verify` passes (5972 tests, 68/68 gates), and so does
+  `ci:test-typecheck`. Dev: `electron-vite dev` pre-bundles every listed dependency at start,
+  with no warnings. Real app (scratch vault, Playwright `_electron`, `item5check.mjs`): about 1s
+  after the vault opens, the Kanban, Task List and Document chunks load without any board being
+  opened. The Mind Map chunk had already loaded for the restored tab. Opening Kanban then shows
+  no placeholder at all (before the cache fix, it showed one for 35ms). Opening it before the
+  preload shows the placeholder for 41ms, with the label still invisible. The only other
+  placeholder is the restored Mind Map tab's first load (99ms). There were no console errors.
+
 ---
 
 ## Verification (every item)

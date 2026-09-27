@@ -172,6 +172,38 @@ path is collinear with the bubble normal, for a side bubble and for a corner bub
 
 Accepted as is: Smart still falls back to a curve when there is nothing to route around.
 
+### Phase 1: status and deviations (done 2026-09-27)
+
+`computeSmartPath` now routes stub to stub and returns `[bubble, stub, route, stub, bubble]`.
+New cases in `unit/pathCalc.test.ts` ("leaves and arrives along the bubble normal"): side
+bubbles, arriving straight down into a top bubble, corner bubbles, and never running along the
+target tile's edge. Three of the four fail on the old router. The side-to-side case passed
+before too, since a straight-across route already arrived head-on. Checked in the built app:
+side, top and corner arrows all arrive along the normal.
+
+Deviations from the plan:
+
+1. **The stubs replace the bubbles on the grid axes; they are not added alongside them.** A
+   bubble lies on its tile's edge, so keeping its x / y as grid lines would still give A* a line
+   running along that edge. The heuristic also measures to the end stub.
+2. **Two existing tests had bubble indices that didn't match their geometry.**
+   `smartPathObstacles.test.ts` used bubbles 1 → 3 for a right-edge → left-edge link, and the 3×3
+   grid case in `pathCalc.test.ts` used 4 → 0 for points just outside the top-left and
+   bottom-right tiles. With stubs, those normals put a stub inside a tile, and the route
+   correctly fell back to a curve. The indices now match the geometry (3 → 7 and 0 → 4).
+3. **Accepted: a stub inside another tile falls back to a curve.** When a neighbouring tile is
+   closer than 25 px to the bubble, the stub lands inside it, A* has no first move, and the
+   route falls back to a curve (the same fallback as any failed route).
+4. **Seen, not changed:** A* has no penalty for bends, so of two equally long routes it can
+   pick one with an extra jog (for example, dropping to the other stub's y straight after
+   leaving). This is cosmetic, so it's out of scope for this fix.
+5. **Found while checking, not fixed here:** `board:create` (`main/ipc/board.ipc.ts`) makes
+   the returned path with `fullPath.replace(vaultRoot, '')`. When the vault root is spelled with
+   other separators or drive-letter case, the replace does nothing. The board then keeps an
+   absolute path, and every later save of it is refused. `npm run scratch-vault` with a
+   forward-slash `FILO_SCRATCH_VAULT` shows it. This bug predates Phase 0, and it's flagged
+   as a separate task.
+
 ---
 
 ## Phase 2: Floating board toolbar pin

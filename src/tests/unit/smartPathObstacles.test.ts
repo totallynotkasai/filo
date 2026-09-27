@@ -23,7 +23,7 @@ describe('smart path routing with source/target in the obstacle set (audit 5.6)'
     idx.insert('B', 400, 0, 100, 100); // target [400..500]
     const from = { x: 100, y: 50 }; // A right-edge bubble
     const to = { x: 400, y: 50 }; // B left-edge bubble
-    const d = computePath(from, to, 1, 3, 'smart', idx);
+    const d = computePath(from, to, 3, 7, 'smart', idx);
     expect(isPolyline(d)).toBe(true);
     expect(isCurveFallback(d)).toBe(false);
   });
@@ -35,7 +35,7 @@ describe('smart path routing with source/target in the obstacle set (audit 5.6)'
     idx.insert('M', 200, -20, 100, 140); // blocks the straight y=50 line
     const from = { x: 100, y: 50 };
     const to = { x: 400, y: 50 };
-    const d = computePath(from, to, 1, 3, 'smart', idx);
+    const d = computePath(from, to, 3, 7, 'smart', idx);
     // A* found a routed polyline despite A and B being in the obstacle set —
     // obstacle avoidance is not defeated.
     expect(isPolyline(d)).toBe(true);

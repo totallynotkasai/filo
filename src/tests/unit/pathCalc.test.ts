@@ -136,7 +136,9 @@ describe('pathCalc', () => {
       // Straight line passes through the centre tile at (250, 250)..(350, 330).
       const from = { x: 40, y: 40 };
       const to = { x: 560, y: 520 };
-      const d = computePath(from, to, 4, 0, 'smart', index);
+      // Bubbles face away from the tiles they sit beside, so the stubs stay
+      // clear of them.
+      const d = computePath(from, to, 0, 4, 'smart', index);
 
       expect(d.startsWith(`M ${from.x} ${from.y}`)).toBe(true);
       expect(d).toContain(' L ');
@@ -156,6 +158,79 @@ describe('pathCalc', () => {
 
       const d = computePath({ x: 0, y: 0 }, { x: 300, y: 300 }, 4, 0, 'smart', index);
       expect(d).toMatch(/^M 0 0 C /);
+    });
+
+    // The arrowhead is angled off the last segment, so the route must leave
+    // and arrive along the bubble's normal, never along the tile's edge.
+    describe('leaves and arrives along the bubble normal', () => {
+      // A [0..100]² on the left, B [400..500]×[0..100] on the right, and a
+      // wall between them so A* actually routes.
+      function boardWithWall(): SpatialIndex {
+        const index = new SpatialIndex();
+        index.insert('A', 0, 0, 100, 100);
+        index.insert('B', 400, 0, 100, 100);
+        index.insert('wall', 200, -20, 100, 140);
+        return index;
+      }
+
+      // Asserts a→b points the same way as (nx, ny): parallel and not reversed.
+      function expectAlong(
+        a: { x: number; y: number },
+        b: { x: number; y: number },
+        normal: { nx: number; ny: number },
+      ): void {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        expect(dx * normal.ny - dy * normal.nx).toBe(0);
+        expect(dx * normal.nx + dy * normal.ny).toBeGreaterThan(0);
+      }
+
+      function firstAndLastSegments(d: string): {
+        first: [{ x: number; y: number }, { x: number; y: number }];
+        last: [{ x: number; y: number }, { x: number; y: number }];
+      } {
+        expect(d).not.toMatch(/ C /);
+        const pts = pathAnchors(d);
+        expect(pts.length).toBeGreaterThanOrEqual(3);
+        return {
+          first: [pts[0], pts[1]],
+          last: [pts[pts.length - 2], pts[pts.length - 1]],
+        };
+      }
+
+      it('side bubbles: out of the right edge, into the left edge', () => {
+        const d = computePath({ x: 100, y: 50 }, { x: 400, y: 50 }, 3, 7, 'smart', boardWithWall());
+        const { first, last } = firstAndLastSegments(d);
+        expectAlong(first[0], first[1], { nx: 1, ny: 0 });
+        expectAlong(last[0], last[1], { nx: 1, ny: 0 });
+        expect(last[1]).toEqual({ x: 400, y: 50 });
+      });
+
+      it('arrives straight down into a top bubble, not sliding along the top edge', () => {
+        const d = computePath({ x: 100, y: 50 }, { x: 450, y: 0 }, 3, 1, 'smart', boardWithWall());
+        const { last } = firstAndLastSegments(d);
+        expectAlong(last[0], last[1], { nx: 0, ny: 1 });
+        expect(last[1]).toEqual({ x: 450, y: 0 });
+      });
+
+      it('corner bubbles: leaves and arrives diagonally', () => {
+        const d = computePath({ x: 100, y: 100 }, { x: 400, y: 0 }, 4, 0, 'smart', boardWithWall());
+        const { first, last } = firstAndLastSegments(d);
+        expectAlong(first[0], first[1], { nx: 1, ny: 1 });
+        expectAlong(last[0], last[1], { nx: 1, ny: 1 });
+        expect(last[1]).toEqual({ x: 400, y: 0 });
+      });
+
+      it('never runs along the target tile edge', () => {
+        const d = computePath({ x: 100, y: 50 }, { x: 450, y: 0 }, 3, 1, 'smart', boardWithWall());
+        const pts = pathAnchors(d);
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = pts[i];
+          const b = pts[i + 1];
+          const onTopEdge = a.y === 0 && b.y === 0 && Math.max(a.x, b.x) > 400 && Math.min(a.x, b.x) < 500;
+          expect(onTopEdge).toBe(false);
+        }
+      });
     });
   });
 

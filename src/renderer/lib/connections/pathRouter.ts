@@ -114,6 +114,14 @@ function computeElbowPath(
  * The Hanan grid is built from obstacle bounding box edges + padding,
  * ensuring paths always travel along obstacle boundaries.
  * Falls back to curved if no spatial index or no nearby obstacles.
+ *
+ * The route runs between two stubs one PADDING out along each bubble's
+ * normal, not between the bubbles themselves. A bubble sits on its tile's
+ * edge and a segment lying on an edge doesn't count as crossing the tile, so a
+ * route from the bubble itself could slide in along the edge, and the
+ * arrowhead (angled off the last segment) would point sideways across the
+ * tile. With the stubs the path leaves and arrives along the normal, like
+ * Elbow, and diagonally at a corner bubble.
  */
 function computeSmartPath(
   from: PathPoint,
@@ -146,9 +154,16 @@ function computeSmartPath(
     return computeCurvedPath(from, to, fromBubble, toBubble);
   }
 
-  // Build Hanan grid: unique X and Y coordinates from obstacle edges + start/end
-  const xSet = new Set<number>([from.x, to.x]);
-  const ySet = new Set<number>([from.y, to.y]);
+  const fromNormal = getBubbleNormal(fromBubble);
+  const toNormal = getBubbleNormal(toBubble);
+  const start: PathPoint = { x: from.x + fromNormal.nx * PADDING, y: from.y + fromNormal.ny * PADDING };
+  const end: PathPoint = { x: to.x + toNormal.nx * PADDING, y: to.y + toNormal.ny * PADDING };
+
+  // Build Hanan grid: unique X and Y coordinates from obstacle edges + the
+  // stubs. The bubbles' own coordinates stay off the grid: they lie on tile
+  // edges, which is exactly where the route must not run.
+  const xSet = new Set<number>([start.x, end.x]);
+  const ySet = new Set<number>([start.y, end.y]);
 
   for (const o of obstacles) {
     xSet.add(o.minX - PADDING);
@@ -160,10 +175,10 @@ function computeSmartPath(
   const X = Array.from(xSet).sort((a, b) => a - b);
   const Y = Array.from(ySet).sort((a, b) => a - b);
 
-  const startXi = X.indexOf(from.x);
-  const startYi = Y.indexOf(from.y);
-  const endXi = X.indexOf(to.x);
-  const endYi = Y.indexOf(to.y);
+  const startXi = X.indexOf(start.x);
+  const startYi = Y.indexOf(start.y);
+  const endXi = X.indexOf(end.x);
+  const endYi = Y.indexOf(end.y);
 
   if (startXi === -1 || startYi === -1 || endXi === -1 || endYi === -1) {
     return computeCurvedPath(from, to, fromBubble, toBubble);
@@ -192,11 +207,12 @@ function computeSmartPath(
     parent: ANode | null;
   }
 
+  const startH = Math.abs(start.x - end.x) + Math.abs(start.y - end.y);
   const startNode: ANode = {
-    x: from.x, y: from.y, xi: startXi, yi: startYi,
+    x: start.x, y: start.y, xi: startXi, yi: startYi,
     g: 0,
-    h: Math.abs(from.x - to.x) + Math.abs(from.y - to.y),
-    f: Math.abs(from.x - to.x) + Math.abs(from.y - to.y),
+    h: startH,
+    f: startH,
     parent: null,
   };
 
@@ -253,7 +269,7 @@ function computeSmartPath(
       if (prev !== undefined && g >= prev) continue;
 
       gScore.set(nKey, g);
-      const h = Math.abs(nx - to.x) + Math.abs(ny - to.y);
+      const h = Math.abs(nx - end.x) + Math.abs(ny - end.y);
       const neighbor: ANode = { x: nx, y: ny, xi: nxi, yi: nyi, g, h, f: g + h, parent: current };
 
       const existingIdx = openList.findIndex((n) => n.xi === nxi && n.yi === nyi);
@@ -269,13 +285,14 @@ function computeSmartPath(
     return computeCurvedPath(from, to, fromBubble, toBubble);
   }
 
-  // Reconstruct and simplify the path
-  const raw: PathPoint[] = [];
+  // Reconstruct and simplify the path: bubble, stub, route, stub, bubble
+  const raw: PathPoint[] = [to];
   let node: ANode | null = found;
   while (node) {
     raw.unshift({ x: node.x, y: node.y });
     node = node.parent;
   }
+  raw.unshift(from);
 
   const simplified = simplifyPolyline(raw);
   const first = simplified[0];

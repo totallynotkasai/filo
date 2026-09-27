@@ -23,7 +23,8 @@ import {
 } from '../lib/styles/buildBoardDefaults';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { vaultStore } from './vault.svelte';
-import { normalizePath, stripLeadingSlash, toVaultRelative } from '../lib/utils/path';
+import { normalizePath, samePath, stripLeadingSlash, toVaultRelative } from '../lib/utils/path';
+import { rebasePin } from '../lib/vault/folderPinPaths';
 import type { BoardContext } from './boardStoreTypes';
 import { makeHistorySlice } from './boardHistory';
 import { makeConnectionsSlice } from './boardConnections';
@@ -476,15 +477,15 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       if (!vp) return;
       const rel = toVaultRelative(absPath, vp) ?? '';
       const current = (currentBoard.settings as { defaultFolder?: string }).defaultFolder ?? '';
-      const next = rel === current ? '' : rel;
+      const next = samePath(rel, current) ? '' : rel;
       store.updateSettings({ defaultFolder: next });
     },
 
     /**
      * Walks every cached board and clears `settings.defaultFolder` on any
-     * board whose pin matches `deletedPath` (or is a descendant of it). When
-     * `newPath` is provided, the pin is rewritten with the new prefix instead
-     * of cleared.
+     * board whose pin matches `deletedPath` (or is a descendant of it),
+     * case-folded. When `newPath` is provided, the pin is rewritten with the
+     * new prefix instead of cleared.
      */
     clearBoardDefaultFolderIfMatches(deletedPath: string, newPath?: string): string[] {
       const vp = vaultStore.path;
@@ -499,10 +500,8 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
         const settings = (data.board as { settings?: { defaultFolder?: string } }).settings;
         const current = settings?.defaultFolder ?? '';
         if (!current) continue;
-        if (current !== deletedRel && !current.startsWith(deletedRel + '/')) continue;
-        const next = newPath
-          ? newRel + current.slice(deletedRel.length)
-          : '';
+        const next = rebasePin(current, deletedRel, newRel);
+        if (next === null || next === current) continue;
         const merged = { ...(settings ?? {}), defaultFolder: next };
         boardCacheStore.updateBoardSettings(boardId, merged);
         touched.push(boardId);

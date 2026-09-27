@@ -2,10 +2,13 @@ import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { boardStore } from '../../stores/board.svelte';
 import { fileTagsStore } from '../../stores/fileTags.svelte';
 import { uiStore } from '../../stores/ui.svelte';
+import { vaultStore } from '../../stores/vault.svelte';
+import { flushScheduledConfig } from '../boards/configWriteScheduler';
 import { reportError } from '../utils/errorBus';
 import { clearPendingRenameCascade, type RenameCascadeEntry } from './renameCascadeSentinel';
 import { isStillSameVault, type VaultIdentity } from './vaultIdentity';
 import { renameAllPathKeys } from './renamePathKeys';
+import { followRenameInPins } from './folderPins';
 
 /**
  * Where a pending rename stands on disk: `moved` when the old path is gone and
@@ -46,7 +49,8 @@ export async function discardRenameCascade(
 
 /**
  * The recovery prompt's Retry. Re-applies the path rewrites (board refs,
- * path-keyed stores, media tags in `.filo/tags.json`) for every pending entry
+ * path-keyed stores, media tags in `.filo/tags.json`, the Root Directory and
+ * board folder pins) for every pending entry
  * whose rename the disk confirms, and clears the breadcrumb on full success.
  * An entry whose old path still exists, or whose new path doesn't, is not
  * replayed: rewriting old → new then would point boards and open notes at a
@@ -82,6 +86,7 @@ export async function repairRenameCascade(
   const notOnDisk = allEntries.filter((_, i) => states[i] === 'other');
   const probeFailed = states.includes('unknown');
   const repairedBoards = new Set<string>();
+  let rootMoved = false;
   for (const entry of entries) {
     try {
       // Re-apply the moved board's OWN path-key (the `.board.json` file that
@@ -97,6 +102,17 @@ export async function repairRenameCascade(
       for (const id of boardStore.propagateRename(entry.oldPath, entry.newPath)) {
         repairedBoards.add(id);
       }
+      // A pin on the renamed folder (or one inside it) follows, as in the
+      // live cascade; otherwise the tree reconcile finds it missing and
+      // clears it.
+      const pins = followRenameInPins(
+        vaultStore.project?.settings.general,
+        () => vaultStore.markMetaDirty(),
+        entry.oldPath,
+        entry.newPath,
+      );
+      for (const id of pins.boardIds) repairedBoards.add(id);
+      if (pins.rootMoved) rootMoved = true;
     } catch (err) {
       reportError(
         'vault.rename-cascade-recovery',
@@ -121,6 +137,17 @@ export async function repairRenameCascade(
   if (flush.failed.length > 0) {
     uiStore.pushToast({
       text: `${verb} partially succeeded — ${flush.failed.length} board file${flush.failed.length === 1 ? '' : 's'} still failed: ${flush.failed.join(', ')}. Open each board and re-save manually.`,
+      type: 'error',
+      duration: 0,
+    });
+    return null;
+  }
+  // The Root Directory lives in `app.json`: keep the breadcrumb until it is saved.
+  const configFailed = rootMoved ? ((await flushScheduledConfig(() => null))?.failed ?? []) : [];
+  if (!isStillSameVault(captured)) return null;
+  if (configFailed.length > 0) {
+    uiStore.pushToast({
+      text: `${verb} updated the board files but couldn't save the Root Directory to .filo/app.json. Reopen the vault to retry.`,
       type: 'error',
       duration: 0,
     });

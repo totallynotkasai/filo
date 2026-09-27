@@ -38,6 +38,11 @@ export interface ConfigWriteArgs {
   theme: string;
   workspace: WorkspaceState;
   layout: WorkspaceLayout;
+  /**
+   * The vault's display name (`project.name`), saved as `app.json` `name`.
+   * It lives on the project, not in `settings.general`, so it must be passed.
+   */
+  name?: string;
 }
 
 /**
@@ -183,6 +188,7 @@ function buildConfigPayloads(
   theme: string,
   workspace: WorkspaceState,
   layout?: WorkspaceLayout,
+  name?: string,
 ): Record<BundledConfigTarget, string> {
   return {
     'config:save-workspace': JSON.stringify({
@@ -202,10 +208,13 @@ function buildConfigPayloads(
     'app.json': JSON.stringify({
       // Spread the in-memory general slice first so passthrough/unknown
       // keys (and any schema-known key absent from the explicit list below,
-      // e.g. `historyLimit`, plus the vault `name`) survive the round-trip
-      // instead of being dropped on every save. The explicit fallbacks below
-      // still pin defaults for the known keys.
+      // e.g. `historyLimit`) survive the round-trip instead of being dropped
+      // on every save. The explicit fallbacks below still pin defaults for
+      // the known keys.
       ...settings.general,
+      // The vault name lives on the project; the spread above only carries
+      // the name loaded at open, so a rename would otherwise never be saved.
+      ...(name ? { name } : {}),
       globalFont: settings.general?.globalFont ?? '',
       globalFontSize: settings.general?.globalFontSize ?? 13,
       defaultBoardFontSize: settings.general?.defaultBoardFontSize ?? {},
@@ -250,8 +259,9 @@ export function seedConfigSnapshots(
   theme: string,
   workspace: WorkspaceState,
   layout?: WorkspaceLayout,
+  name?: string,
 ): void {
-  const payloads = buildConfigPayloads(settings, theme, workspace, layout);
+  const payloads = buildConfigPayloads(settings, theme, workspace, layout, name);
   for (const [target, payload] of Object.entries(payloads) as [BundledConfigTarget, string][]) {
     lastWrittenConfigs.set(target, payload);
   }
@@ -275,8 +285,9 @@ export async function writeConfigs(
   theme: string,
   workspace: WorkspaceState,
   layout?: WorkspaceLayout,
+  name?: string,
 ): Promise<{ failed: string[]; error?: unknown }> {
-  const payloads = buildConfigPayloads(settings, theme, workspace, layout);
+  const payloads = buildConfigPayloads(settings, theme, workspace, layout, name);
 
   const failed: string[] = [];
   // The first failure a re-fire could fix, and whether any failure can't be
@@ -417,7 +428,7 @@ const configScheduler = createScheduler<ConfigWriteArgs>({
   name: 'configWriteScheduler',
   debounceMs: BOARD_WRITE_DEBOUNCE_MS,
   performWrite: async (args) => {
-    return writeConfigs(args.vaultRoot, args.settings, args.theme, args.workspace, args.layout);
+    return writeConfigs(args.vaultRoot, args.settings, args.theme, args.workspace, args.layout, args.name);
   },
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: CONFIG_SENTINEL_PATH }),
   getFailureId: () => CONFIG_SENTINEL_PATH,
@@ -449,7 +460,7 @@ export function scheduleConfigWrite(
 export function unsavedConfigPayloads(): Array<{ name: string; json: string }> {
   const args = latestConfigArgs?.();
   if (!args) return [];
-  const payloads = buildConfigPayloads(args.settings, args.theme, args.workspace, args.layout);
+  const payloads = buildConfigPayloads(args.settings, args.theme, args.workspace, args.layout, args.name);
   return (Object.entries(payloads) as [BundledConfigTarget, string][])
     .filter(([target, json]) => lastWrittenConfigs.get(target) !== json)
     .map(([target, json]) => ({ name: target === 'config:save-workspace' ? 'workspace.json' : target, json }));

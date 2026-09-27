@@ -518,13 +518,14 @@ export async function copyFileIntoVault(
 ): Promise<ChannelResult<'vault:copy-file'>> {
   return withDrainedWrites(async () => {
     return window.filo.invoke('vault:copy-file', ...args);
-  }, { paths: [copyTarget(args[0], args[2] ?? args[1])] });
+  }, { paths: [copyTarget(args[0], args[2] ?? '')] });
 }
 
-/** Where an import lands: the source's file name in the destination folder. */
+/** Where an import lands: the source's file name in the destination folder ('' = vault root). */
 function copyTarget(sourcePath: string, destFolder: string): string {
   const name = toPosix(sourcePath).split('/').pop() ?? '';
-  return `${toPosix(destFolder).replace(/\/+$/, '')}/${name}`;
+  const folder = toPosix(destFolder).replace(/\/+$/, '');
+  return folder ? `${folder}/${name}` : name;
 }
 
 // ── Test-only helpers ─────────────────────────────────────────────────

@@ -8,7 +8,7 @@ import { isInsideVault, vaultRelativeFromAbsolute } from './vaultPath';
 import { buildTextTileDefForNote } from './markdownTileSeed';
 import { copyFileIntoVault } from '../vault/vaultOperations';
 import type { TextTile, Tile } from '../../schema/index';
-import { getActiveContentFolderAbs } from '../vault/conventionPaths';
+import { getActiveContentFolder } from '../vault/conventionPaths';
 import { historyStore } from '../../stores/history.svelte';
 import { AddTilesCommand } from '../../commands/index';
 // Pane-scoped, NOT the global board/canvas facades. A `drop` carries no
@@ -153,10 +153,10 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
 
     const files = Array.from(e.dataTransfer.files);
     const vaultDir = vaultStore.path;
-    // Destination for newly-copied files. Cascade: vault-wide pin →
-    // active board's per-board pin → vault root. The resolver returns ''
-    // when there is no open vault, so vaultDir wins via the OR fallback.
-    const targetDir = getActiveContentFolderAbs(scope.board.current) || vaultDir;
+    // Vault-relative folder for newly copied files ('' = vault root). The
+    // copy names the vault itself as its root argument (main refuses any
+    // other path there) and this folder as its destination.
+    const targetFolder = getActiveContentFolder(scope.board.current);
 
     if (!vaultDir) {
       uiStore.toast('Open a vault first to enable file drops', 'info', 2000);
@@ -219,7 +219,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
           // writers drain before the copy lands; otherwise a 300 ms-armed
           // `.board.json` write could fire after the copy and either
           // clobber the new file's referent or stamp a stale tile def.
-          const res = await copyFileIntoVault(sourcePath, targetDir);
+          const res = await copyFileIntoVault(sourcePath, vaultDir, targetFolder);
           if (res.success) {
             // Refresh the file tree so the newly copied file is in the
             // `knownVaultPaths` snapshot before broken-ref detection runs on
@@ -238,7 +238,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
           // Filename collisions get a `(1)`, `(2)`, … suffix server-side.
           //
           // Same drain-before-IPC contract as the .md branch.
-          const res = await copyFileIntoVault(sourcePath, targetDir);
+          const res = await copyFileIntoVault(sourcePath, vaultDir, targetFolder);
 
           if (res.success) {
             const storedPath = res.relativePath || res.path;

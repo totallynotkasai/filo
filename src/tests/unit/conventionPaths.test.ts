@@ -4,7 +4,6 @@ import {
   nextUniqueMdPath,
   normalizeRootFolder,
   getActiveContentFolder,
-  getActiveContentFolderAbs,
 } from '@renderer/lib/vault/conventionPaths';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Board } from '@renderer/schema/index';
@@ -159,9 +158,4 @@ describe('conventionPaths', () => {
     });
   });
 
-  describe('getActiveContentFolderAbs', () => {
-    it('returns empty string when no vault is open', () => {
-      expect(getActiveContentFolderAbs(null)).toBe('');
-    });
-  });
 });

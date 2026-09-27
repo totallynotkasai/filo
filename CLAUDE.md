@@ -323,6 +323,9 @@ filo/
 │   │   │   │   ├── externalChangeWindows.ts # Self-write / attachment-delete / note-rename grace windows
 │   │   │   │   ├── keepLocalBackup.ts # backupThenRead: back up, read, re-stat (Keep mine overwrites only what it backed up)
 │   │   │   │   ├── relinkTargets.ts   # Which files a broken tile may be re-linked to (a file tile: any)
+│   │   │   │   ├── folderPins.ts      # Root Directory + board folder pins: follow renames, clear on delete
+│   │   │   │   ├── folderPinPaths.ts  # Case-folded pin path rules (no store imports)
+│   │   │   │   ├── treeFolderMoves.ts # Folder renames read off two tree reads (Windows reports only the folder names)
 │   │   │   │   ├── unsavedMessages.ts # Close / open / quit wording for unsaved work, by cause
 │   │   │   │   ├── sidebarTagFilter.ts # Files a tag (or child tag) selects; tree cut down to them
 │   │   │   │   ├── sidebarFileMenu.ts # The sidebar file / folder context menu

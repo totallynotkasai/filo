@@ -14,6 +14,7 @@ import {
   markRenameCascadeFlushFailed,
 } from '../lib/vault/renameCascadeSentinel';
 import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
+import { followRenameInPins } from '../lib/vault/folderPins';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { beginRenameInFlight, endRenameInFlight } from '../lib/vault/renameInFlight';
 import {
@@ -432,23 +433,11 @@ async function runRename(
         // Open documents were re-keyed to the new path by the
         // renameAllPathKeys sweep above.
 
-        // Propagate the rename into `activeRootFolder` if it pointed at the
-        // renamed folder (or lived inside it). Without this, the next
-        // text-tile autosave resolves through the stale path and resurrects
-        // the old folder via `fs.mkdir(..., recursive)`.
-        const project = ctx.getProject();
-        if (project?.settings.general) {
-          const currentRoot = project.settings.general.activeRootFolder ?? '';
-          if (currentRoot === oldRel || currentRoot.startsWith(oldRel + '/')) {
-            const suffix = currentRoot.slice(oldRel.length);
-            project.settings.general.activeRootFolder = newRel + suffix;
-            ctx.markMetaDirty();
-          }
-        }
-        // Same propagation for per-board defaultFolder pins on every cached
-        // board. Pass `newPath` so the helper rewrites the prefix instead of
-        // clearing the pin.
-        boardStore.clearBoardDefaultFolderIfMatches(oldPath, newPath);
+        // Carry the Root Directory and every board's folder pin over to the
+        // new name. Without this, the next file created through a pin
+        // resolves the stale path and resurrects the old folder via
+        // `fs.mkdir(..., recursive)`.
+        followRenameInPins(ctx.getProject()?.settings.general, () => ctx.markMetaDirty(), oldRel, newRel);
         // Mark any rebound board dirty so the next debounced
         // write lands at the new on-disk path. Without this, the cache
         // entry mapped under the new path never persists and the next

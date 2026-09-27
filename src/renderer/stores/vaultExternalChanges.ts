@@ -13,6 +13,8 @@ import {
 } from '../lib/vault/renameCascadeSentinel';
 import { PendingWritesFailedError, withDrainedWrites } from '../lib/vault/vaultOperations';
 import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
+import { allPins, confirmedFolderMove, followRenameInPins, NO_PIN_MOVES } from '../lib/vault/folderPins';
+import { flushScheduledConfig } from '../lib/boards/configWriteScheduler';
 import {
   captureVaultIdentity,
   isStillSameVault,
@@ -163,7 +165,10 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
      *      old path. Without this the next autosave through
      *      `vault:write-file-text` resurrects the old folder via
      *      mkdir-recursive.
-     *   7. Propagate per-board `defaultFolder` pins (same protection).
+     *   7. Propagate per-board `defaultFolder` pins (same protection). When
+     *      the watcher reports a folder rename as per-file renames (its
+     *      reconcile walk does), the pins also follow the folder a file
+     *      rename reveals, once the disk confirms the old folder is gone.
      *   8. Write a rename-cascade sentinel BEFORE the flush. A crash
      *      between propagateRename and the .board.json write surfaces a
      *      retry prompt on next vault open.
@@ -319,40 +324,46 @@ async function runExternalRenameCascade(
   // synchronous cache mutations below corrupt the new vault's cache with the
   // old vault's rename paths. Bail if the vault changed.
   if (captured && !isStillSameVault(captured)) return;
+  const vaultRoot = ctx.getVaultPath();
+  const general = ctx.getProject()?.settings.general;
+  // A folder rename can reach Filo as one rename per file (the watcher's
+  // reconcile walk reports it so), so a pin on that folder only follows if
+  // the move is read off the file paths and confirmed on disk. Probed before any cache mutation below, so a swap
+  // during the probe leaves nothing half-applied.
+  const folderMove = vaultRoot
+    ? await confirmedFolderMove(vaultRoot, oldRel, newRel, allPins(general))
+    : null;
+  if (captured && !isStillSameVault(captured)) return;
   // The path-keyed sweeps (`renameAllPathKeys`) already ran in
   // `handleExternalRename`, before the drain.
   const renamedBoardIds = boardCacheStore.renameBoardPath(oldRel, newRel);
   const changedBoardIds = boardStore.propagateRename(oldRel, newRel);
   fileTagsStore.renameFile(oldRel, newRel);
   fileTagsStore.renameFolder(oldRel, newRel);
-  // Lay the rename-cascade breadcrumb against the outgoing vault root HERE,
-  // before the tag-flush await and its swap bail: propagateRename already
-  // mutated the in-memory cache, so a swap during the flush would otherwise
-  // abandon the cascade with no retry. Only when a board was touched — the
-  // later edits run after the bail. The no-swap path reuses this id below.
-  const vaultRoot = ctx.getVaultPath();
-  let sentinelId: string | null = null;
-  if (
-    (changedBoardIds.length > 0 || renamedBoardIds.length > 0) &&
-    vaultRoot &&
-    oldRel &&
-    newRel
-  ) {
-    try {
-      sentinelId = await writePendingRenameCascade(vaultRoot, {
-        oldPath: oldRel,
-        newPath: newRel,
-        // Include renamed boards (own .board.json moved), not just
-        // reference-changed boards, so the breadcrumb names the full set.
-        affectedBoardIds: [...new Set([...changedBoardIds, ...renamedBoardIds])],
-      });
-    } catch (err) {
-      reportError(
-        'vault.handleRename.sentinel',
-        err,
-        "Couldn't record a rename-recovery sentinel for the external rename — the cascade will proceed without crash protection",
-      );
-    }
+  // Carry the Root Directory and each board's folder pin along: for the
+  // renamed path itself, and for the folder a file rename revealed. Without
+  // this the tree reconcile finds the old folder missing and clears them.
+  const markMetaDirty = (): void => ctx.markMetaDirty();
+  const pins = followRenameInPins(general, markMetaDirty, oldRel, newRel);
+  const folderPins = folderMove
+    ? followRenameInPins(general, markMetaDirty, folderMove.oldFolder, folderMove.newFolder)
+    : NO_PIN_MOVES;
+  const rootMoved = pins.rootMoved || folderPins.rootMoved;
+  // Lay the rename-cascade breadcrumbs against the outgoing vault root HERE,
+  // before the tag-flush await and its swap bail: the cache and the pins are
+  // already rewritten, so a swap during the flush would otherwise abandon the
+  // cascade with no retry. Recovery replays each entry's path rewrites and
+  // pin moves; a revealed folder move gets its own entry, since the file
+  // entry's paths don't name the pinned folder.
+  const boardWork = [...new Set([...changedBoardIds, ...renamedBoardIds, ...pins.boardIds])];
+  const sentinelIds: string[] = [];
+  if (vaultRoot && oldRel && newRel && (boardWork.length > 0 || pins.rootMoved)) {
+    const id = await layRenameBreadcrumb(vaultRoot, oldRel, newRel, boardWork);
+    if (id) sentinelIds.push(id);
+  }
+  if (vaultRoot && folderMove && (folderPins.boardIds.length > 0 || folderPins.rootMoved)) {
+    const id = await layRenameBreadcrumb(vaultRoot, folderMove.oldFolder, folderMove.newFolder, folderPins.boardIds);
+    if (id) sentinelIds.push(id);
   }
   // Persist the tag-membership rename now rather than on the misc debounce: a
   // crash after the board flush below but before that debounce would leave
@@ -390,45 +401,16 @@ async function runExternalRenameCascade(
       vaultIndexStore.renameKey(path, newRel + path.slice(oldRel.length));
     }
   }
-  const project = ctx.getProject();
-  if (project?.settings.general) {
-    const currentRoot = project.settings.general.activeRootFolder ?? '';
-    if (currentRoot === oldRel || currentRoot.startsWith(oldRel + '/')) {
-      const suffix = currentRoot.slice(oldRel.length);
-      project.settings.general.activeRootFolder = newRel + suffix;
-      ctx.markMetaDirty();
-    }
-  }
-  const defaultFolderBoardIds = boardStore.clearBoardDefaultFolderIfMatches(oldRel, newRel);
 
   for (const boardId of renamedBoardIds) {
     boardCacheStore.markDirty(boardId);
   }
 
-  // Skip the sentinel write entirely when the cascade touched nothing. Three
-  // independent signals contribute:
-  //
-  //  - propagateRename's `changedBoardIds` — boards whose tile defs
-  //    referenced the renamed file (text-tile filename, image src,
-  //    coverImage, frame backgroundImage, etc.).
-  //  - renameBoardPath's `renamedBoardIds` — boards whose own
-  //    `.board.json` file moved.
-  //  - clearBoardDefaultFolderIfMatches's `defaultFolderBoardIds` —
-  //    boards whose per-board `defaultFolder` pin matched the old
-  //    path (rewrites mark those boards dirty via the cache).
-  //
-  // When all three are empty there's no cascade state to recover, so a
-  // sentinel would be pure noise (typically an in-app rename's watcher echo
-  // that survived suppression).
-  //
-  // The activeRootFolder rewrite above is a project-level change
-  // — `markMetaDirty` handles the persist on its own; the
-  // sentinel guards board cascade only, so we still skip when
-  // it's the lone change.
-  const hasCascadeWork =
-    changedBoardIds.length > 0 ||
-    renamedBoardIds.length > 0 ||
-    defaultFolderBoardIds.length > 0;
+  // Skip the flush entirely when the cascade touched nothing: no board
+  // referenced the renamed path, no `.board.json` moved, and no pin followed.
+  // A sentinel would then be pure noise (typically an in-app rename's
+  // watcher echo that survived suppression).
+  const hasCascadeWork = boardWork.length > 0 || folderPins.boardIds.length > 0 || rootMoved;
   if (!hasCascadeWork) {
     // If the tag flush above failed (or a path-keyed sweep threw), there is no
     // board cascade to carry a recovery sentinel. Lay down a minimal one so
@@ -450,43 +432,22 @@ async function runExternalRenameCascade(
         );
       }
     }
-    // Nothing else to flush and no board sentinel to clear. Bail before the
-    // sentinel write + flushAllDirty pair.
+    // Nothing else to flush and no board sentinel to clear.
     return;
   }
 
-  // Write the board-cascade sentinel here only if the early breadcrumb wasn't
-  // laid down — i.e. only the defaultFolder pin changed (computed after the
-  // bail, so it can't appear in the early breadcrumb).
-  if (sentinelId === null && vaultRoot && oldRel && newRel) {
-    try {
-      sentinelId = await writePendingRenameCascade(vaultRoot, {
-        oldPath: oldRel,
-        newPath: newRel,
-        affectedBoardIds: [...changedBoardIds],
-      });
-    } catch (err) {
-      reportError(
-        'vault.handleRename.sentinel',
-        err,
-        "Couldn't record a rename-recovery sentinel for the external rename — the cascade will proceed without crash protection",
-      );
-    }
-  }
-
   const flushResult = await boardCacheStore.flushAllDirty();
+  // The Root Directory lives in `app.json`: save it now, so the breadcrumb is
+  // only cleared once the moved pin is on disk.
+  const configFailed = rootMoved ? ((await flushScheduledConfig(() => null))?.failed ?? []) : [];
   if (flushResult.failed.length > 0) {
     uiStore.pushToast({
       text: `External rename propagated, but failed to update ${flushResult.failed.length} board file${flushResult.failed.length === 1 ? '' : 's'}: ${flushResult.failed.join(', ')}. Re-save the affected boards.`,
       type: 'error',
       duration: 0,
     });
-    if (vaultRoot && sentinelId) {
-      await markRenameCascadeFlushFailed(
-        vaultRoot,
-        sentinelId,
-        flushResult.failed.slice(),
-      ).catch((err) => {
+    for (const id of vaultRoot ? sentinelIds : []) {
+      await markRenameCascadeFlushFailed(vaultRoot, id, flushResult.failed.slice()).catch((err) => {
         reportError(
           'vault.handleRename.sentinel',
           err,
@@ -494,14 +455,38 @@ async function runExternalRenameCascade(
         );
       });
     }
-  } else if (vaultRoot && sentinelId && pathKeysOk) {
-    await clearPendingRenameCascade(vaultRoot, sentinelId).catch((err) => {
-      reportError(
-        'vault.handleRename.sentinel',
-        err,
-        "Couldn't clear completed rename-cascade sentinel",
-      );
-    });
+  } else if (vaultRoot && pathKeysOk && tagsFlushOk && configFailed.length === 0) {
+    for (const id of sentinelIds) {
+      await clearPendingRenameCascade(vaultRoot, id).catch((err) => {
+        reportError(
+          'vault.handleRename.sentinel',
+          err,
+          "Couldn't clear completed rename-cascade sentinel",
+        );
+      });
+    }
+  }
+}
+
+/**
+ * Writes one rename-cascade breadcrumb. Returns its id, or `null` when it
+ * couldn't be written (reported; the cascade goes on without crash cover).
+ */
+async function layRenameBreadcrumb(
+  vaultRoot: string,
+  oldPath: string,
+  newPath: string,
+  affectedBoardIds: string[],
+): Promise<string | null> {
+  try {
+    return await writePendingRenameCascade(vaultRoot, { oldPath, newPath, affectedBoardIds });
+  } catch (err) {
+    reportError(
+      'vault.handleRename.sentinel',
+      err,
+      "Couldn't record a rename-recovery sentinel for the external rename — the cascade will proceed without crash protection",
+    );
+    return null;
   }
 }
 

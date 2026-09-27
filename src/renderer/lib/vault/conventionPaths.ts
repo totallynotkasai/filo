@@ -113,16 +113,3 @@ export function getActiveContentFolder(board: Board | null): string {
   }
   return '';
 }
-
-/**
- * Absolute-path companion for callers that need a filesystem dir (e.g. OS
- * file drops onto the canvas). Returns `''` when there is no open vault.
- */
-export function getActiveContentFolderAbs(board: Board | null): string {
-  const vaultPath = vaultStore.path;
-  if (!vaultPath) return '';
-  const folder = getActiveContentFolder(board);
-  if (!folder) return vaultPath;
-  const root = normalizePath(vaultPath);
-  return `${root}/${stripLeadingSlash(folder)}`;
-}

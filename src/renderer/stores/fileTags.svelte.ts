@@ -408,9 +408,11 @@ export const fileTagsStore = {
 
   /** Files carrying `tagName`: notes (by frontmatter) and tagged media files. */
   filesForTag(tagName: string): string[] {
+    // Path order: the index holds notes in the order their reads finished.
     const notes = vaultIndexStore.allMetadata()
       .filter((m) => noteTags(m.path).includes(tagName))
-      .map((m) => m.path);
+      .map((m) => m.path)
+      .sort((a, b) => normalizeVaultRelative(a).localeCompare(normalizeVaultRelative(b)));
     return [...notes, ...pureFilesForTag(file, tagName).filter((p) => !isNotePath(p))];
   },
 

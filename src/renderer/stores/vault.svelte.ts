@@ -28,12 +28,13 @@ import {
 } from '../lib/vault/tagRewriteSentinel';
 import { readPendingRenameCascades } from '../lib/vault/renameCascadeSentinel';
 import { discardRenameCascade, repairRenameCascade } from '../lib/vault/renameCascadeRepair';
+import { folderMovesBetween } from '../lib/vault/treeFolderMoves';
+import { clearPinsOfMissingFolders } from '../lib/vault/folderPins';
 import { assertBaselinesSeeded } from '../lib/vault/fileBaselineRegistry';
 import {
   sortTree,
   filterTree,
   treesEqual,
-  directoryExistsInTree,
   flattenTreePaths,
   type SortConfig,
 } from '../lib/vault/vaultTreeSort';
@@ -60,6 +61,7 @@ import {
   hasFailedWrites,
   type BoardFileData,
 } from '../lib/boards/boardSaver';
+import type { ConfigWriteArgs } from '../lib/boards/configWriteScheduler';
 import {
   dispatchExternalChangeBatch,
   type ExternalChangeEvent,
@@ -219,13 +221,7 @@ function getBoardWriteArgs(
   return { vaultRoot: vaultPath, boardPath, cached };
 }
 
-function getConfigWriteArgs(): {
-  vaultRoot: string;
-  settings: ProjectSettings;
-  theme: string;
-  workspace: WorkspaceState;
-  layout: ReturnType<typeof workspaceStore.serialize>;
-} | null {
+function getConfigWriteArgs(): ConfigWriteArgs | null {
   if (!vaultPath || !currentProject) return null;
   const settings = JSON.parse(JSON.stringify(currentProject.settings)) as ProjectSettings;
   const workspace: WorkspaceState = tabStore.serialize();
@@ -235,6 +231,7 @@ function getConfigWriteArgs(): {
     theme: currentProject.theme ?? 'light',
     workspace,
     layout: workspaceStore.serialize(),
+    name: currentProject.name,
   };
 }
 
@@ -385,6 +382,7 @@ function commitVaultCandidate(
     candidate.project.theme,
     candidate.project.workspace,
     workspaceStore.serialize(),
+    candidate.project.name,
   );
   workspaceStore.setChangeListener(() => markMetaDirty());
   // Hydrate tabs LAST: at this point currentProject, boardCache, and
@@ -954,6 +952,10 @@ export const vaultStore = {
 
   // ── Active root folder slice ──
   ...rootFolderSlice,
+  // The spread above copies the slice's getters as values frozen at module
+  // load (''), so the live getters must be defined here, after it.
+  get activeRootFolder(): string { return rootFolderSlice.activeRootFolder; },
+  get activeRootFolderAbs(): string { return rootFolderSlice.activeRootFolderAbs; },
 
   // ── Folder ops slice (create/rename/delete/move) ──
   ...folderOpsSlice,
@@ -1302,31 +1304,23 @@ export const vaultStore = {
    * `git mv` could evict the renamed board before its rebind applied).
    */
   async refreshTreeAndCleanup(): Promise<void> {
+    const before = fileTree;
     const refreshed = await this.refreshTree();
     // Every walk below treats `fileTree` as the truth about disk. After a
     // FAILED read the tree is stale: a board created since the last good read
     // would be evicted (pending writes cancelled, tabs closed — recent edits
     // lost). Skip; the next successful refresh re-runs the cleanup.
     if (!refreshed) return;
-    // External deletion of the active-root folder (OS file explorer, git,
-    // sync clients) — clear the stale pointer so the next autosave
-    // doesn't resurrect it.
-    const rel = currentProject?.settings.general?.activeRootFolder ?? '';
-    if (rel && !directoryExistsInTree(fileTree, this.activeRootFolderAbs)) {
-      this.clearActiveRootFolderIfMatches(rel);
+    // A folder another program renamed is followed first (pins, tile refs,
+    // boards inside it), so nothing below finds it missing.
+    for (const move of vaultPath ? folderMovesBetween(before, fileTree, vaultPath) : []) {
+      await this.handleExternalRename(move.oldFolder, move.newFolder);
     }
-    // Per-board pins suffer the same external-delete hazard. Walk every
-    // cached board's pin and clear any whose folder no longer exists in
-    // the live tree.
+    // A pinned folder deleted by another program: clear the pin.
+    if (vaultPath) {
+      clearPinsOfMissingFolders(fileTree, vaultPath, currentProject?.settings.general, (rel) => this.clearActiveRootFolderIfMatches(rel));
+    }
     const root = vaultPath ? normalizePath(vaultPath) : '';
-    for (const data of Object.values(boardStore.cache)) {
-      const pin = (data.board as { settings?: { defaultFolder?: string } })
-        .settings?.defaultFolder ?? '';
-      if (!pin || !root) continue;
-      if (!directoryExistsInTree(fileTree, `${root}/${pin}`)) {
-        boardStore.clearBoardDefaultFolderIfMatches(pin);
-      }
-    }
     // External deletion of a `.board.json` file (OS file explorer, git,
     // sync clients) — the in-memory cache survives the disk deletion unless
     // reconciled here, so a deleted board would reappear with its cached

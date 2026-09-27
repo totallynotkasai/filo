@@ -33,6 +33,9 @@ export const PATH_FIELDS: ReadonlySet<string> = new Set([
   'beforeCover',
   'afterCover',
   'backgroundImage',
+  // The folder pin of a board: a board-settings undo that carries it must
+  // restore the folder under its current name, not a name a rename retired.
+  'defaultFolder',
   'fromPath',
   'toPath',
   'oldPath',

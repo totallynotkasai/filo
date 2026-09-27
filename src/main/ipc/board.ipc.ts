@@ -45,7 +45,7 @@ import { vaultRegistry } from '../services/vaultRegistry';
 import { getActiveWatcher } from './vault.ipc';
 import { snapshotForRecovery, listRecoverySnapshots, type SnapshotPurpose } from '../services/recoverySnapshot';
 import { sweepOrphanTmpFiles } from '../services/orphanTmpSweep';
-import { toPosix } from '../../shared/pathUtils';
+import { relativePosix } from '../utils/pathHelpers';
 import {
   assertPayloadByteSize,
   jsonPayloadByteSize,
@@ -276,7 +276,11 @@ export function registerBoardHandlers(): void {
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:create');
       const fullPath = await createBoardFile(vaultRoot, name, data, subfolder);
       assertWithinVault(vaultRoot, fullPath);
-      const relativePath = toPosix(fullPath.replace(vaultRoot, '')).replace(/^\/+/, '');
+      // `path.relative`, not a string strip: the root the renderer sends can be
+      // spelled differently from the path `createBoardFile` joined (forward
+      // slashes, a trailing separator), and a strip that misses returns an
+      // absolute path every later `board:save` of the board refuses.
+      const relativePath = relativePosix(vaultRoot, fullPath);
       // The name is picked inside `createBoardFile`, so the echo can only be
       // hidden after the write; the watcher's debounce still holds the event
       // then. Unhidden, the create reaches the renderer as an external change

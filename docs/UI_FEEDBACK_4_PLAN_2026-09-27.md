@@ -8,7 +8,7 @@ board-specific folders.
 It ships as six phases. Each phase is its own commit and must pass `npm run ci:verify`
 before the next one starts. Nothing is pushed until the user says so.
 
-Order: **0 → 1 → 2 → 3 → 4 → 5**. Phase 0 fixes existing bugs in the folder-pin and
+Order: **0 → 1 → 1b → 2 → 3 → 4 → 5**. Phase 1b was added after Phase 1 found its bug. Phase 0 fixes existing bugs in the folder-pin and
 vault-name code that Phase 5 builds on. Every board gets a pin once board folders are
 on, so these bugs would get much more visible.
 
@@ -201,8 +201,45 @@ Deviations from the plan:
    the returned path with `fullPath.replace(vaultRoot, '')`. When the vault root is spelled with
    other separators or drive-letter case, the replace does nothing. The board then keeps an
    absolute path, and every later save of it is refused. `npm run scratch-vault` with a
-   forward-slash `FILO_SCRATCH_VAULT` shows it. This bug predates Phase 0, and it's flagged
-   as a separate task.
+   forward-slash `FILO_SCRATCH_VAULT` shows it. This bug predates Phase 0. It is fixed in
+   Phase 1b.
+
+---
+
+## Phase 1b: `board:create` returns an absolute path
+
+Added after Phase 1, which found it. Phase 5 builds on `board:create` (a board inside its
+folder, a refused name clash), so it's fixed before then.
+
+### Why it misbehaves
+
+`board:create` (`main/ipc/board.ipc.ts`) made the path it returns with
+`toPosix(fullPath.replace(vaultRoot, ''))`. `createBoardFile` builds `fullPath` with
+`path.join`, which normalises the root. When the root the renderer sent is spelled
+differently (forward slashes on Windows, a trailing separator), the replace finds nothing,
+and the handler returns the absolute path. `persistNewBoard` keeps it as the board's path.
+Every later `board:save` and `vault:stat` refuses it as an unsafe path. So the new board is
+never saved, and closing the vault leaves the crash marker behind.
+
+### Fix
+
+The path is `relativePosix(vaultRoot, fullPath)` (`main/utils/pathHelpers.ts`, `path.relative`),
+which doesn't depend on how the root is spelled.
+
+Test: `unit/boardCreateRelativePath.test.ts` runs the real handler with the root as given,
+with forward slashes, with a trailing separator, and (on Windows) with the other drive-letter
+case. It also creates into a subfolder. The forward-slash and trailing-separator cases fail on
+the old code.
+
+### Phase 1b: status and deviations (done 2026-09-27)
+
+Done as planned. No other main-process handler builds a relative path by stripping the root
+as a string. The shared `toVaultRelative` does slice by the root's length, but only after a
+case-folded, normalised prefix match, so it's safe. `npm run scratch-vault` with a
+forward-slash `FILO_SCRATCH_VAULT` now builds cleanly.
+
+One test note: the drive-letter-case case already passed on the old code, because
+`fullPath` is joined from the same string, so the strip still matched. It stays as a guard.
 
 ---
 

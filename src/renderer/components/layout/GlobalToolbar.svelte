@@ -166,25 +166,8 @@
 </script>
 
 <header class="global-toolbar" style="height: calc(44px * var(--ui-toolbar-scale, 1));">
-  <!-- Left section: Sidebar toggle + Home + Project -->
+  <!-- Left section: Home + Project + Undo / Redo + Sidebar toggle -->
   <div class="toolbar-section">
-    <!-- Far left and always there while a vault is open, so a sidebar
-         hidden with Hide Vault (docked or floating) can always come back. -->
-    {#if showSidebarToggle}
-      <IconButton
-        title={uiStore.sidebarOpen ? 'Hide Sidebar' : 'Show Sidebar'}
-        ariaLabel="Toggle sidebar"
-        active={uiStore.sidebarOpen}
-        pressed={uiStore.sidebarOpen}
-        onclick={() => uiStore.toggleSidebar()}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="2"/>
-          <line x1="9" y1="3" x2="9" y2="21"/>
-        </svg>
-      </IconButton>
-    {/if}
-
     <IconButton title="Home" ariaLabel="Home screen" onclick={handleGoHome}>
       <FiloLogo size={20} />
     </IconButton>
@@ -321,6 +304,23 @@
         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
       </svg>
     </IconButton>
+
+    <!-- Always there while a vault is open, so a sidebar hidden with Hide
+         Vault (docked or floating) can always come back. -->
+    {#if showSidebarToggle}
+      <IconButton
+        title={uiStore.sidebarOpen ? 'Hide Sidebar' : 'Show Sidebar'}
+        ariaLabel="Toggle sidebar"
+        active={uiStore.sidebarOpen}
+        pressed={uiStore.sidebarOpen}
+        onclick={() => uiStore.toggleSidebar()}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <line x1="9" y1="3" x2="9" y2="21"/>
+        </svg>
+      </IconButton>
+    {/if}
   </div>
 
   <!-- Center section: Text formatting -->

@@ -52,11 +52,13 @@ function toolbarToggle(app: CharApp): HTMLElement | null {
   return app.el.querySelector<HTMLElement>('.global-toolbar button[aria-label="Toggle sidebar"]');
 }
 
-/** The global toolbar's sidebar toggle, and whether it is the toolbar's first button. */
-export function toolbarToggleState(app: CharApp): { shown: boolean; first: boolean; pressed: boolean } {
+/** The global toolbar's sidebar toggle, and whether it sits straight after Redo. */
+export function toolbarToggleState(app: CharApp): { shown: boolean; afterRedo: boolean; pressed: boolean } {
   const btn = toolbarToggle(app);
-  const first = app.el.querySelector('.global-toolbar button') === btn;
-  return { shown: btn !== null, first, pressed: btn?.getAttribute('aria-pressed') === 'true' };
+  const buttons = [...app.el.querySelectorAll('.global-toolbar button')];
+  const redo = buttons.findIndex((b) => b.getAttribute('aria-label') === 'Redo');
+  const afterRedo = btn !== null && redo >= 0 && buttons[redo + 1] === btn;
+  return { shown: btn !== null, afterRedo, pressed: btn?.getAttribute('aria-pressed') === 'true' };
 }
 
 /** Click the global toolbar's sidebar toggle. */

@@ -1,8 +1,8 @@
 /**
  * Characterisation: the sidebar's Hide Vault button hides the sidebar and
  * leaves the vault open, docked or floating. The toolbar's sidebar toggle,
- * first in the global toolbar, brings it back, and the hidden state is saved
- * per machine so it survives a restart. Closing the vault is in the vault menu.
+ * right after Undo / Redo in the global toolbar, brings it back, and the
+ * hidden state is saved per machine so it survives a restart. Closing the vault is in the vault menu.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp } from './harness/app';
@@ -27,13 +27,13 @@ describe('Hide Vault', () => {
   it('hides the docked sidebar without closing the vault, and the toolbar toggle brings it back', async () => {
     const app = await startApp({ 'Note.md': 'Hello\n' });
     expect(sidebarView(app)).toBe('docked');
-    expect(toolbarToggleState(app)).toEqual({ shown: true, first: true, pressed: true });
+    expect(toolbarToggleState(app)).toEqual({ shown: true, afterRedo: true, pressed: true });
 
     await hideVault(app);
     expect(sidebarView(app)).toBe('hidden');
     expect(hideVaultReachable(app)).toBe(false);
     // The vault is still open: its toolbar toggle is still there.
-    expect(toolbarToggleState(app)).toEqual({ shown: true, first: true, pressed: false });
+    expect(toolbarToggleState(app)).toEqual({ shown: true, afterRedo: true, pressed: false });
     expect((await savedSidebarState()).open).toBe(false);
 
     await clickToolbarToggle(app);

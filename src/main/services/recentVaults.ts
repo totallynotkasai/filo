@@ -3,12 +3,15 @@ import { join } from 'path';
 import { promises as fs } from 'fs';
 import { atomicWriteFile } from '../vault/filenameUtils';
 import { logMainError } from '../utils/mainLogger';
+import { safeVaultColor } from '../../shared/vaultColor';
 
 export interface RecentVault {
   path: string;
   name: string;
   lastOpened: number; // Unix timestamp ms
   pinned?: boolean;
+  /** The vault's colour (its General `vaultColor`), so Home can show it before the vault opens. */
+  color?: string;
 }
 
 export interface RecentVaultsPreferences {
@@ -123,13 +126,21 @@ export async function setOpenLastVaultOnLaunch(enabled: boolean): Promise<void> 
 
 /**
  * Adds or bumps a vault in the recent list. Preserves the existing `pinned`
- * flag if the path is already present.
+ * flag if the path is already present, and its colour unless `color` is
+ * given (an empty string clears it).
  */
-export async function addRecentVault(path: string, name: string): Promise<RecentVault[]> {
+export async function addRecentVault(path: string, name: string, color?: string): Promise<RecentVault[]> {
   const file = await readFile();
   const existing = file.vaults.find((r) => r.path === path);
   const filtered = file.vaults.filter((r) => r.path !== path);
-  filtered.unshift({ path, name, lastOpened: Date.now(), pinned: existing?.pinned });
+  const kept = safeVaultColor(color === undefined ? existing?.color : color);
+  filtered.unshift({
+    path,
+    name,
+    lastOpened: Date.now(),
+    pinned: existing?.pinned,
+    ...(kept ? { color: kept } : {}),
+  });
   file.vaults = trimVaults(filtered);
   await writeFile(file);
   return file.vaults;

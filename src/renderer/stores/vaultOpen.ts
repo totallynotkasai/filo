@@ -7,12 +7,14 @@
  */
 import { vaultStore } from './vault.svelte';
 import { invokeOk } from '../lib/utils/invokeOk';
+import { activeVaultColor } from './vaultColor';
 
 export interface RecentVault {
   name: string;
   path: string;
   lastOpened: number;
   pinned?: boolean;
+  color?: string;
 }
 
 /**
@@ -29,7 +31,8 @@ export async function pickAndOpenVault(): Promise<boolean> {
 }
 
 /**
- * Put the open vault at the top of the recent list. Returns the new list, or
+ * Put the open vault at the top of the recent list, with its current name and
+ * colour (so a rename or a new colour reaches Home too). Returns the new list, or
  * null when it couldn't be recorded: the list is convenience state, so a
  * failure (a network share briefly offline) leaves the shown list as it was.
  */
@@ -38,7 +41,7 @@ export async function rememberOpenVault(): Promise<RecentVault[] | null> {
   const name = vaultStore.projectName;
   if (!path || !name) return null;
   try {
-    const { recents } = await invokeOk('vault:add-recent', path, name);
+    const { recents } = await invokeOk('vault:add-recent', path, name, activeVaultColor());
     return recents;
   } catch {
     return null;

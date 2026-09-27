@@ -21,6 +21,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
   import { pathsEqual } from '../../lib/utils/path';
+  import { SORT_FIELDS, GROUP_FIELDS, DIRECTIONS } from '../../constants/vaultSidebarOptions';
   import type {
     VaultSortField,
     VaultSortDirection,
@@ -74,32 +75,6 @@
       right: window.innerWidth - r.right,
     };
   }
-
-  // Sort By offers a "None" option in addition to the four fields. None
-  // disables ordering and uses the persisted manual order — drag-and-drop
-  // in the sidebar is only enabled while None is active.
-  const SORT_FIELDS: { value: VaultSortField; label: string }[] = [
-    { value: 'none', label: 'None' },
-    { value: 'name', label: 'Name' },
-    { value: 'modified', label: 'Date Modified' },
-    { value: 'type', label: 'Type' },
-    { value: 'size', label: 'Size' },
-  ];
-
-  // Group By offers a "None" option in addition to the four fields. None
-  // disables the secondary sort entirely.
-  const GROUP_FIELDS: { value: VaultGroupField; label: string }[] = [
-    { value: 'none', label: 'None' },
-    { value: 'name', label: 'Name' },
-    { value: 'modified', label: 'Date Modified' },
-    { value: 'type', label: 'Type' },
-    { value: 'size', label: 'Size' },
-  ];
-
-  const DIRECTIONS: { value: VaultSortDirection; label: string }[] = [
-    { value: 'asc', label: 'Ascending' },
-    { value: 'desc', label: 'Descending' },
-  ];
 
   function toggleMenu(menu: 'sort' | 'group') {
     if (openMenu === menu) {

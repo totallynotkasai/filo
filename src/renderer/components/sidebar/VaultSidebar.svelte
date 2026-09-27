@@ -2,6 +2,7 @@
   import { dragHandleZone, type DndEvent } from 'svelte-dnd-action';
   import type { FileTreeNode } from '../../../shared/types';
   import { vaultStore } from '../../stores/vault.svelte';
+  import { activeVaultColor } from '../../stores/vaultColor';
   import { uiStore } from '../../stores/ui.svelte';
   import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
   import { reportError } from '../../lib/utils/errorBus';
@@ -414,7 +415,12 @@
       onpointerup={dragHandlers?.onPointerUp}
       onpointercancel={dragHandlers?.onPointerCancel}
     >
-      <h2 class="sidebar-title">Vault</h2>
+      <h2 class="sidebar-title">
+        {#if activeVaultColor()}
+          <span class="vault-swatch" style:background={activeVaultColor()} aria-hidden="true"></span>
+        {/if}
+        Vault
+      </h2>
       {#if vaultStore.isOpen}
         <VaultSidebarToolbar />
       {/if}
@@ -643,10 +649,20 @@
   }
 
   .sidebar-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 15px;
     font-weight: 600;
     color: var(--text-primary);
     margin: 0;
+  }
+
+  .vault-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
 
   .search-bar {

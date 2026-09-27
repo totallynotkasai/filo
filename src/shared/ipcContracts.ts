@@ -67,6 +67,7 @@ export interface RecentVault {
   name: string;
   lastOpened: number;
   pinned?: boolean;
+  color?: string;
 }
 // Mirrors `src/main/services/sidebarState.ts:26`.
 export interface SidebarState {
@@ -202,7 +203,8 @@ export interface IpcChannelMap {
     result: RecentVault[];
   };
   'vault:add-recent': {
-    args: [path: string, name: string];
+    // `color`: the vault's colour; left out, the stored one is kept.
+    args: [path: string, name: string, color?: string];
     // `ok`-discriminated so a failed add (validation / missing
     // directory) is distinguishable from a genuinely empty list; the renderer
     // leaves the displayed recents intact on `{ ok: false }` instead of wiping

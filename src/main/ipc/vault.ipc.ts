@@ -44,6 +44,7 @@ import {
   clearRecentVaults,
 } from '../services/recentVaults';
 import { vaultRegistry } from '../services/vaultRegistry';
+import { safeVaultColor } from '../../shared/vaultColor';
 import { ipcErrorCode } from './ipcErrorCode';
 import { noteReadEncoding, isRegisteredNonUtf8, renameNonUtf8 } from '../services/nonUtf8Registry';
 
@@ -798,7 +799,7 @@ export function registerVaultHandlers(): void {
   const isSafeRecentString = (s: string, max: number): boolean =>
     s.length > 0 && s.length <= max && !s.includes('\0');
 
-  ipcMain.handle('vault:add-recent', async (_event, path: unknown, name: unknown) => {
+  ipcMain.handle('vault:add-recent', async (_event, path: unknown, name: unknown, color: unknown) => {
     // Typed `{ ok, recents }` envelope: a bare `[]` on failure would be
     // indistinguishable from an empty list, and the renderer would wipe the
     // displayed recents on a transient stat failure (e.g. a network share
@@ -812,6 +813,10 @@ export function registerVaultHandlers(): void {
     if (!isSafeRecentString(name, MAX_RECENT_NAME_LEN)) {
       return { ok: false, code: 'INVALID_ARG', error: 'vault name is empty, too long, or contains a null byte' };
     }
+    // Absent keeps the stored colour; anything but a hex colour clears it.
+    if (color !== undefined && typeof color !== 'string') {
+      return { ok: false, code: 'INVALID_ARG', error: 'vault colour must be a string' };
+    }
     // Confirm the path is an existing directory before persisting it, so a
     // typo / deleted folder / file path never lands in the recent list.
     try {
@@ -822,7 +827,7 @@ export function registerVaultHandlers(): void {
     } catch (err) {
       return { ok: false, code: 'ENOENT', error: String(err) };
     }
-    return { ok: true, recents: await addRecentVault(path, name) };
+    return { ok: true, recents: await addRecentVault(path, name, color === undefined ? undefined : safeVaultColor(color)) };
   });
 
   ipcMain.handle('vault:remove-recent', async (_event, path: unknown) => {

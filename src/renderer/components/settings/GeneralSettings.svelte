@@ -4,6 +4,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { reportError } from '../../lib/utils/errorBus';
   import ColorPicker from '../shared/ColorPicker.svelte';
+  import VaultSidebarSettings from './VaultSidebarSettings.svelte';
   import { applyFontDefaultsToAllExisting as applyFontDefaultsToAllExistingLib } from '../../lib/styles/applyDefaultsToAll';
   import { defaultProjectSettings, GeneralSettingsSchema } from '../../schema/index';
   import { numberBoundsAt, readNumberField } from '../../lib/settings/numberInput';
@@ -291,6 +292,11 @@
 
   <div class="setting-divider"></div>
 
+  {#if vaultStore.project}
+    <VaultSidebarSettings />
+    <div class="setting-divider"></div>
+  {/if}
+
   <!-- Global Font -->
   <div class="setting-row">
     <label class="setting-label" for="global-font">Global Font {loadingFonts ? '(loading…)' : ''}</label>
@@ -477,24 +483,6 @@
         <span class="toggle-thumb"></span>
       </span>
       <span class="toggle-label">{settings.radarEnabled ? 'On' : 'Off'}</span>
-    </button>
-  </div>
-
-  <!-- File Extensions Toggle -->
-  <div class="setting-row">
-    <label class="setting-label" for="file-ext-toggle">Show file extensions in vault</label>
-    <button
-      id="file-ext-toggle"
-      class="toggle-btn"
-      class:active={settings.showFileExtensions}
-      onclick={() => updateSetting('showFileExtensions', !settings.showFileExtensions)}
-      role="switch"
-      aria-checked={settings.showFileExtensions}
-    >
-      <span class="toggle-track">
-        <span class="toggle-thumb"></span>
-      </span>
-      <span class="toggle-label">{settings.showFileExtensions ? 'On' : 'Off'}</span>
     </button>
   </div>
 

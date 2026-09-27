@@ -1,9 +1,9 @@
 <script lang="ts">
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { invokeOk } from '../../lib/utils/invokeOk';
   import { pickAndOpenVault, rememberOpenVault, type RecentVault } from '../../stores/vaultOpen';
   import FiloLogo from '../shared/FiloLogo.svelte';
+  import { safeVaultColor } from '../../../shared/vaultColor';
   interface Props {
     onReturnToVault?: () => void;
   }
@@ -67,7 +67,7 @@
     try {
       const loaded = await vaultStore.openVault(candidate.path);
       if (loaded) {
-        await recordOpen(candidate.path, candidate.name);
+        await saveRecentVault();
         onReturnToVault?.();
       } else {
         uiStore.toast(
@@ -88,20 +88,6 @@
       return b.lastOpened - a.lastOpened;
     }),
   );
-
-  async function recordOpen(path: string, name: string): Promise<void> {
-    try {
-      // `invokeOk` throws on the `{ ok: false }` failure branch (validation /
-      // missing directory), so a failed add lands in the catch and the
-      // displayed list is left INTACT rather than wiped on a transient stat
-      // miss (e.g. a network-share vault briefly offline).
-      const { recents } = await invokeOk('vault:add-recent', path, name);
-      recentVaults = recents;
-    } catch {
-      // Best-effort — recent list is non-critical UI state. Leave the
-      // currently-shown list untouched rather than clearing it on a failed add.
-    }
-  }
 
   async function removeRecent(path: string): Promise<void> {
     try {
@@ -157,7 +143,7 @@
     try {
       const loaded = await vaultStore.openVault(recent.path);
       if (loaded) {
-        await recordOpen(recent.path, recent.name);
+        await saveRecentVault();
         onReturnToVault?.();
       } else {
         uiStore.toast('Could not open vault. It may have been moved or deleted.', 'warning');
@@ -169,6 +155,9 @@
     }
   }
 
+  // Records the vault just opened under its own name and colour (it may have
+  // been renamed or recoloured since the entry was written). A failed add
+  // leaves the shown list as it was rather than wiping it.
   async function saveRecentVault(): Promise<void> {
     const recents = await rememberOpenVault();
     if (recents) recentVaults = recents;
@@ -261,7 +250,11 @@
                  descendants) and break AT. -->
             <div class="recent-item" class:pinned={recent.pinned} style="animation-delay: {i * 0.04}s">
               <button class="recent-open" onclick={() => handleOpenRecent(recent)} aria-label="Open {recent.name}">
-                <span class="recent-icon">
+                <span
+                  class="recent-icon"
+                  class:tinted={safeVaultColor(recent.color) !== ''}
+                  style:--vault-color={safeVaultColor(recent.color) || null}
+                >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                     <polyline points="14 2 14 8 20 8"/>
@@ -594,6 +587,12 @@
     background: var(--ui-surface);
     color: var(--text-tertiary);
     flex-shrink: 0;
+  }
+
+  /* The vault's colour: the icon in it, on a faint wash of it. */
+  .recent-icon.tinted {
+    color: var(--vault-color, var(--text-tertiary));
+    background: color-mix(in srgb, var(--vault-color, transparent) 18%, transparent);
   }
 
   .recent-info {

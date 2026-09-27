@@ -179,6 +179,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
         },
         "general": {
           "activeRootFolder": "",
+          "boardFolders": false,
           "boardToolbarScale": 1,
           "defaultBoardFontSize": {
             "connectionLabel": 12,
@@ -224,6 +225,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
           "tabBarColor": "",
           "tabBarScale": 1,
           "toolbarColor": "",
+          "vaultColor": "",
           "waypointScale": 1,
         },
         "kanban": {
@@ -359,6 +361,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
         },
         "general": {
           "activeRootFolder": "",
+          "boardFolders": false,
           "boardToolbarScale": 1,
           "defaultBoardFontSize": {
             "connectionLabel": 12,
@@ -404,6 +407,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
           "tabBarColor": "",
           "tabBarScale": 1,
           "toolbarColor": "",
+          "vaultColor": "",
           "waypointScale": 1,
         },
         "kanban": {
@@ -764,6 +768,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
           },
           "general": {
             "activeRootFolder": "",
+            "boardFolders": false,
             "boardToolbarScale": 1,
             "defaultBoardFontSize": {
               "connectionLabel": 12,
@@ -809,6 +814,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
             "tabBarColor": "",
             "tabBarScale": 1,
             "toolbarColor": "",
+            "vaultColor": "",
             "waypointScale": 1,
           },
           "kanban": {

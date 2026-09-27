@@ -234,6 +234,8 @@ function buildConfigPayloads(
       sidebarGroupField: settings.general?.sidebarGroupField ?? 'none',
       sidebarGroupDirection: settings.general?.sidebarGroupDirection ?? 'asc',
       showFileExtensions: settings.general?.showFileExtensions ?? false,
+      vaultColor: settings.general?.vaultColor ?? '',
+      boardFolders: settings.general?.boardFolders ?? false,
       hoverButtons: settings.general?.hoverButtons ?? {},
     }, null, 2),
     // appearance.json is fully Filo-owned: activeTheme + font only. The write is

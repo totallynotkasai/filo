@@ -179,6 +179,7 @@ filo/
 │   │   │   ├── vaultRecovery.ts       # `.filo/.dirty.<machineId>` sentinel + recovery modal
 │   │   │   ├── vaultLeaveGuard.ts     # saveBeforeLeaving: close / open another vault save first, ask only if work is left
 │   │   │   ├── vaultOpen.ts           # pickAndOpenVault: folder picker → openVault → Recent vaults (Home, vault menu, Ctrl+O)
+│   │   │   ├── vaultColor.ts          # activeVaultColor: the open vault's colour (toolbar, sidebar header)
 │   │   │   ├── unsavedRescue.ts       # keepRescueCopies → `.filo/recovery/<ts>-unsaved/` (notes, boards, `_filo__*.json` for `.filo/` state)
 │   │   │   ├── heldDecisions.ts       # Changes held for a Reload / Keep mine answer (the save popover re-opens each prompt)
 │   │   │   ├── saveStateFeed.ts       # unsavedWork() + held decisions + reported failures → the save indicator
@@ -280,7 +281,8 @@ filo/
 │   │   │   ├── defaults.ts            # TILE_DEFAULTS, FRAME_DEFAULTS, ACCENT_COLOR
 │   │   │   ├── styleOptions.ts        # Style option lists, read from the `schema/styleEnums.ts` enums
 │   │   │   ├── menuVocabulary.ts      # Context-menu labels, icons, plural headings; order Open, Style, Tags, Lock, Remove, Delete
-│   │   │   └── taskPriorities.ts      # Task / Kanban priority display metadata (color + label)
+│   │   │   ├── taskPriorities.ts      # Task / Kanban priority display metadata (color + label)
+│   │   │   └── vaultSidebarOptions.ts # Sidebar Sort By / Group By choices (sidebar menus + settings)
 │   │   │
 │   │   ├── lib/                       # Pure logic, no UI
 │   │   │   ├── notes/                 # The note model's pure half + note flows
@@ -517,6 +519,7 @@ filo/
 │   │       │   ├── LivePreview.svelte
 │   │       │   ├── ThemeManager.svelte
 │   │       │   ├── TrashSettings.svelte # Settings → Trash: Restore / Empty trash
+│   │       │   ├── VaultSidebarSettings.svelte # General → Vault Sidebar: name, colour, sort / group, extensions, Root Directory
 │   │       │   └── KeyboardShortcuts.svelte
 │   │       ├── modals/                # Other modal dialogs
 │   │       │   ├── ProjectSettings.svelte  # Tabbed wrapper around settings/
@@ -545,6 +548,7 @@ filo/
 │   │   ├── sentinelPaths.ts           # Per-machine sentinel names (`.filo/.dirty.<machineId>` …)
 │   │   ├── fileNames.ts               # fileStemFromTitle, fileNameProblem (shared filename rules)
 │   │   ├── conflictCopy.ts            # The one sync-client conflict-copy detector
+│   │   ├── vaultColor.ts              # safeVaultColor: only #rgb / #rrggbb (app.json, recent-vaults.json, inline styles)
 │   │   ├── pathUtils.ts               # toPosix / stripLeadingSlash / normalizePath / toVaultRelative (main + renderer)
 │   │   ├── systemLocale.ts            # OS regional-format locale, passed to the preload as a process argument
 │   │   ├── ipcSchemas.ts              # Per-channel Zod payload validation

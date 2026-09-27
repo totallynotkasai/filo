@@ -44,6 +44,8 @@ export const GENERAL_SETTINGS_DEFAULTS = {
   sidebarSortDirection: 'asc',
   sidebarGroupField: 'none',
   sidebarGroupDirection: 'asc',
+  vaultColor: '',
+  boardFolders: false,
   hoverButtons: {
     tiles: true,
     cards: true,

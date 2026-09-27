@@ -27,6 +27,7 @@
 
 import { SvelteSet } from 'svelte/reactivity';
 import type { FileTreeNode } from '../../../shared/types';
+import { safeVaultColor } from '../../../shared/vaultColor';
 import type {
   Project,
   ProjectSettings,
@@ -633,6 +634,8 @@ export function parseSettingsSlices(
     sidebarGroupField: typeof appConfig.sidebarGroupField === 'string' ? appConfig.sidebarGroupField : undefined,
     sidebarGroupDirection: typeof appConfig.sidebarGroupDirection === 'string' ? appConfig.sidebarGroupDirection : undefined,
     showFileExtensions: typeof appConfig.showFileExtensions === 'boolean' ? appConfig.showFileExtensions : false,
+    vaultColor: safeVaultColor(appConfig.vaultColor),
+    boardFolders: appConfig.boardFolders === true,
     hoverButtons: appConfig.hoverButtons ?? {},
     historyLimit: appConfig.historyLimit,
   };

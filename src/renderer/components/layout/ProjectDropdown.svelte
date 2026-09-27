@@ -1,7 +1,8 @@
 <script lang="ts">
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { pickAndOpenVault } from '../../stores/vaultOpen';
+  import { pickAndOpenVault, rememberOpenVault } from '../../stores/vaultOpen';
+  import { activeVaultColor } from '../../stores/vaultColor';
   import Dropdown from './Dropdown.svelte';
 
   let projectDropdownOpen = $state(false);
@@ -56,8 +57,10 @@
   }
 
   function commitRename() {
-    if (renameValue.trim()) {
-      vaultStore.setName(renameValue.trim());
+    const next = renameValue.trim();
+    if (next && next !== vaultStore.projectName) {
+      vaultStore.setName(next);
+      void rememberOpenVault();
     }
     showRenameInput = false;
   }
@@ -67,7 +70,7 @@
   }
 </script>
 
-<Dropdown label={vaultStore.projectName || 'Vault'} bind:open={projectDropdownOpen}>
+<Dropdown label={vaultStore.projectName || 'Vault'} swatch={activeVaultColor()} bind:open={projectDropdownOpen}>
   {#if showRenameInput}
     <div class="rename-project-row">
       <label class="rename-label" for="rename-project">Vault name:</label>

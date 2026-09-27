@@ -99,7 +99,7 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'vault:get-launch-preference': z.tuple([]),
   'vault:set-open-on-launch': z.tuple([unknownArg]),
   'vault:list-recents': z.tuple([]),
-  'vault:add-recent': z.tuple([unknownArg, unknownArg]),
+  'vault:add-recent': z.tuple([unknownArg, unknownArg, optionalString]),
   'vault:remove-recent': z.tuple([unknownArg]),
   'vault:pin-recent': z.tuple([unknownArg, unknownArg]),
   'vault:clear-recents': z.tuple([]),

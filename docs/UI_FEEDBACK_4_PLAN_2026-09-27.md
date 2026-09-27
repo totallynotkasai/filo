@@ -409,6 +409,50 @@ It saves at once through `markMetaDirty`, like the rest of General, and writes t
 Tests: schema defaults for the new keys; an `app.json` round-trip; a recent-vaults colour
 round-trip.
 
+### Phase 4: status and deviations (done 2026-09-27)
+
+General settings now opens with a **Vault Sidebar** section (while a vault is open): vault
+name, vault colour, Sort by and Group by (each with its direction), Show file extensions,
+and the Root Directory with a Clear button. Everything saves at once to `.filo/app.json`.
+The vault colour shows as a dot before the vault name in the global toolbar and before
+"Vault" in the sidebar header, and it tints the vault's icon in the Home recent list.
+Tests: `unit/vaultSidebarSettings.test.ts` (defaults, a hex colour and the switch read from
+`app.json`, a bad value read as the default without resetting the rest of General, a
+write → read round-trip, `safeVaultColor`), `unit/recentVaultsColor.test.ts` (the real
+`vault:add-recent` handler: the colour survives a restart, is kept when an add leaves it out,
+keeps the pin, is cleared by `''`, a bad colour is stored as none, a non-string is refused),
+and the updated `zodDefaultsSnapshot.test.ts`. Checked in the built app: rename, colour, sort
+and extensions all land in `app.json` and `recent-vaults.json`, and the three dots / tint
+show the colour.
+
+Deviations from the plan:
+
+1. **The Board-specific folders switch is not shown yet.** `general.boardFolders` is in the
+   schema, the shared defaults, the loader and the `app.json` writer (with tests), but the
+   switch itself comes with Phase 5. Until then it would change nothing, and the project
+   rule is no placeholder features.
+2. **The section is its own component**, `components/settings/VaultSidebarSettings.svelte`,
+   placed inside `GeneralSettings.svelte` right after the launch setting. That keeps one
+   concern per file, and `GeneralSettings.svelte` shrinks (817 → 805 lines).
+3. **Show file extensions moved** into the section. It is no longer in the main General list,
+   so there is one switch, not two.
+4. **Only `#rgb` / `#rrggbb` is kept as a vault colour** (`shared/vaultColor.ts`
+   `safeVaultColor`, used by the loader, the recent-vaults service and every place that shows
+   it). The value comes from files another program can edit and ends up in inline styles.
+   Anything else reads as no colour, and the loader normalises it first, so a bad value can't
+   make the whole General slice fall back to defaults.
+5. **`vault:add-recent` takes an optional third argument, the colour.** Left out, the stored
+   colour is kept; `''` clears it. The renderer always sends the open vault's colour through
+   `rememberOpenVault`, which now runs on every open (Home's recent list and auto-open used to
+   write back the entry's old name). So a vault renamed or recoloured from any place, and a
+   rename from the vault name menu, reaches Home too.
+6. **Sort and Group option lists are shared** (`constants/vaultSidebarOptions.ts`) by the
+   sidebar's menus and the section. A direction menu is disabled while its field is None.
+7. **Colour display:** the toolbar dot comes from a new optional `swatch` prop on the shared
+   `Dropdown`. No colour, no dot.
+8. **Clear Root Directory** empties `general.activeRootFolder`; the pin is still set from the
+   sidebar's tree button (Phase 5c changes what that button means with board folders on).
+
 ---
 
 ## Phase 5: Board folders and board names

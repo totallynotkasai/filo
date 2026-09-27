@@ -6,10 +6,12 @@
     label: string;
     open?: boolean;
     align?: 'left' | 'right';
+    /** A colour dot before the label (the vault's colour); empty shows none. */
+    swatch?: string;
     children: Snippet;
   }
 
-  let { label, open = $bindable(false), align = 'left', children }: Props = $props();
+  let { label, open = $bindable(false), align = 'left', swatch = '', children }: Props = $props();
 
   let dropdownRef = $state<HTMLDivElement | null>(null);
   let triggerRef = $state<HTMLButtonElement | null>(null);
@@ -77,6 +79,9 @@
     aria-haspopup="menu"
     aria-label={label}
   >
+    {#if swatch}
+      <span class="dropdown-swatch" style:background={swatch} aria-hidden="true"></span>
+    {/if}
     <span class="dropdown-label">{label}</span>
     <svg class="dropdown-chevron" class:open width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
       <polyline points="6 9 12 15 18 9"/>
@@ -124,6 +129,14 @@
 
   .dropdown-trigger:active {
     background: var(--ui-surface-active);
+  }
+
+  .dropdown-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-right: 2px;
   }
 
   .dropdown-chevron {

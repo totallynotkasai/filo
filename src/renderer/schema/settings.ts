@@ -304,6 +304,17 @@ export const GeneralSettingsSchema = z.object({
   sidebarSortDirection: z.enum(['asc', 'desc']).default(GD.sidebarSortDirection),
   sidebarGroupField: z.enum(['none', 'name', 'modified', 'type', 'size']).default(GD.sidebarGroupField),
   sidebarGroupDirection: z.enum(['asc', 'desc']).default(GD.sidebarGroupDirection),
+  /**
+   * The vault's colour, `#rgb` / `#rrggbb`, or empty for none. Shown beside
+   * the vault name (toolbar, sidebar header, Home). The loader reads anything
+   * else as empty (`safeVaultColor`), so a bad value never resets the slice.
+   */
+  vaultColor: z.string().default(GD.vaultColor),
+  /**
+   * Board-specific folders: each board keeps its `.board.json` and the
+   * files it creates in a folder named after it.
+   */
+  boardFolders: z.boolean().default(GD.boardFolders),
   hoverButtons: HoverButtonsSchema,
 }).passthrough();
 

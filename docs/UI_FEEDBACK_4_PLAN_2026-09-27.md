@@ -273,6 +273,50 @@ One test note: the drive-letter-case case already passed on the old code, becaus
 Tests: helper unit tests (pinned blocks drag, cancel ends drag, clamp); a workspace
 round-trip of `boardToolbars`; a component test that the pin toggles.
 
+### Phase 2: status and deviations (done 2026-09-27)
+
+All three toolbars (Mind Map, Kanban, Task List) drag by their background, have a pin
+button at the end, and keep their position and pin per board in `.filo/workspace.json`.
+Tests: `unit/floatingToolbarDrag.test.ts` (background-only, right press, pinned, cancel,
+clamp), new `boardToolbars` cases in `unit/workspace.test.ts` (per board, pinned refuses
+move / dock, no entry for a docked unpinned toolbar, removal, round-trip, bad entries
+dropped), `component/boardToolbarPin.test.ts` (the real Task List toolbar: pin toggles,
+drag saves for that board only, pinned ignores drag and right-click, right-click docks),
+and a new characterisation case in `honestSaveState.test.ts` (a pinned Kanban toolbar
+stays put and is still pinned after reopening the vault).
+
+Deviations from the plan:
+
+1. **Entry shape is `{ position: { x, y } | null, pinned }`, not `{ x, y, pinned }`.** A
+   docked toolbar can be pinned too (pinning is about stopping accidental drags, not only
+   about a dragged spot), so the position must be able to be absent. A docked, unpinned
+   toolbar has no entry at all.
+2. **Two modules, not one.** `lib/canvas/floatingToolbarDrag.ts` is the pure pointer
+   helper the plan named (plus `clampToolbarPosition` / `floatingToolbarStyle`).
+   `lib/boards/boardToolbar.svelte.ts` wraps it with the reactive state and the workspace
+   store (`createBoardToolbar`), so each toolbar needs only a few lines instead of three
+   copies of the same drag, pin and reset wiring.
+3. **Board id from the board scope.** Kanban and Task List read the board id from the
+   `BOARD_SCOPE_KEY` context instead of a new prop, so the allowlisted `KanbanBoard.svelte`
+   and `TaskListBoard.svelte` don't grow.
+4. **Right-click reset now on all three toolbars.** Only Kanban had it. For consistency the
+   Mind Map and Task List toolbars dock again on a right-click of the background too
+   (ignored while pinned). The reset stops the event so the board's own context menu
+   doesn't open over it.
+5. **A cancelled drag puts the toolbar back** where it was before the drag (nothing is
+   saved), rather than leaving it at the last pointer position.
+6. **The Task List toolbar**, docked, still sits in the board's corner (`position: absolute`).
+   Once dragged it becomes `position: fixed` in window pixels, like the other two.
+7. **No migration of the old `kanbanToolbar` key** (no legacy support needed). An old
+   value is ignored and dropped on the next workspace save. The new-vault seed also loses
+   the dead `rightSidebar` key, beside `sideToolbar` and `vaultSidebar`.
+8. **Pin icon** is shared: `PIN_ICON_PATH` in `constants/icons.ts`, drawn by
+   `components/shared/PinIcon.svelte` (filled while pinned), like the Style icon.
+9. **`KanbanSideToolbar.svelte` shrank** (1473 → 1439 lines); its allowlist ceiling is
+   lowered to match.
+10. Accepted: undoing a board delete brings the board back with a docked, unpinned
+    toolbar; the toolbar entry is removed with the board and is not part of the trash.
+
 ---
 
 ## Phase 3: Hide Vault

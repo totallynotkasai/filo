@@ -10,6 +10,9 @@
 
 import { createId } from '../lib/utils/ids';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import type { ToolbarPosition } from '../lib/canvas/floatingToolbarDrag';
+
+export type { ToolbarPosition };
 
 export interface PaneLeaf {
   type: 'leaf';
@@ -29,32 +32,58 @@ export interface PaneSplit {
 
 export type PaneNode = PaneLeaf | PaneSplit;
 
-/** Where the user dragged a floating board toolbar, in window pixels. */
-export interface ToolbarPosition {
-  x: number;
-  y: number;
+/**
+ * One board's floating side toolbar. `position` is where the user dragged it
+ * (null: docked where its stylesheet puts it). A pinned toolbar can't be
+ * dragged or reset, docked or not.
+ */
+export interface BoardToolbarState {
+  position: ToolbarPosition | null;
+  pinned: boolean;
 }
 
 export interface WorkspaceLayout {
   paneTree: PaneNode | null;
   activePaneId: string | null;
   sidebarWidth: number;
-  /** The Kanban side toolbar's resting position; null keeps it docked. */
-  kanbanToolbar: ToolbarPosition | null;
+  /** Each board's side toolbar, by board id. A board left docked and unpinned has no entry. */
+  boardToolbars: Record<string, BoardToolbarState>;
 }
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
   paneTree: null,
   activePaneId: null,
   sidebarWidth: 260,
-  kanbanToolbar: null,
+  boardToolbars: {},
 };
+
+const DOCKED_TOOLBAR: BoardToolbarState = { position: null, pinned: false };
 
 function asToolbarPosition(value: unknown): ToolbarPosition | null {
   if (!value || typeof value !== 'object') return null;
   const { x, y } = value as { x?: unknown; y?: unknown };
   if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) return null;
   return { x: Math.round(x), y: Math.round(y) };
+}
+
+/** Validated by hand like the rest of the layout: a bad entry is dropped, never the file. */
+function asBoardToolbars(value: unknown): Record<string, BoardToolbarState> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, BoardToolbarState> = {};
+  for (const [boardId, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!boardId || !entry || typeof entry !== 'object') continue;
+    const { position, pinned } = entry as { position?: unknown; pinned?: unknown };
+    const state: BoardToolbarState = { position: asToolbarPosition(position), pinned: pinned === true };
+    if (state.position || state.pinned) out[boardId] = state;
+  }
+  return out;
+}
+
+/** The toolbar map with `boardId` set to `next`; a docked, unpinned toolbar needs no entry. */
+function withBoardToolbar(boardId: string, next: BoardToolbarState): Record<string, BoardToolbarState> {
+  const { [boardId]: _old, ...rest } = layout.boardToolbars;
+  void _old;
+  return next.position || next.pinned ? { ...rest, [boardId]: next } : rest;
 }
 
 const MAX_LEAVES = 3;
@@ -158,7 +187,7 @@ export const workspaceStore = {
   get sidebarWidth() { return layout.sidebarWidth; },
   get activePaneId() { return layout.activePaneId; },
   get paneTree() { return layout.paneTree; },
-  get kanbanToolbar() { return layout.kanbanToolbar; },
+  get boardToolbars() { return layout.boardToolbars; },
   get leafCount() { return countLeaves(layout.paneTree); },
   get leaves() { return collectLeaves(layout.paneTree); },
 
@@ -182,11 +211,34 @@ export const workspaceStore = {
     notify();
   },
 
-  setKanbanToolbar(position: ToolbarPosition | null) {
+  /** A board's side toolbar; docked and unpinned when it has no entry. */
+  boardToolbar(boardId: string): BoardToolbarState {
+    return layout.boardToolbars[boardId] ?? DOCKED_TOOLBAR;
+  },
+
+  /** Moves a board's toolbar (null docks it). A pinned toolbar stays where it is. */
+  setBoardToolbarPosition(boardId: string, position: ToolbarPosition | null) {
+    if (!boardId) return;
+    const current = workspaceStore.boardToolbar(boardId);
+    if (current.pinned) return;
     const next = asToolbarPosition(position);
-    const current = layout.kanbanToolbar;
-    if (next?.x === current?.x && next?.y === current?.y) return;
-    layout = { ...layout, kanbanToolbar: next };
+    if (next?.x === current.position?.x && next?.y === current.position?.y) return;
+    layout = { ...layout, boardToolbars: withBoardToolbar(boardId, { ...current, position: next }) };
+    notify();
+  },
+
+  setBoardToolbarPinned(boardId: string, pinned: boolean) {
+    if (!boardId) return;
+    const current = workspaceStore.boardToolbar(boardId);
+    if (current.pinned === pinned) return;
+    layout = { ...layout, boardToolbars: withBoardToolbar(boardId, { ...current, pinned }) };
+    notify();
+  },
+
+  /** A deleted board's toolbar entry goes with it. */
+  removeBoardToolbar(boardId: string) {
+    if (!(boardId in layout.boardToolbars)) return;
+    layout = { ...layout, boardToolbars: withBoardToolbar(boardId, DOCKED_TOOLBAR) };
     notify();
   },
 
@@ -401,7 +453,7 @@ export const workspaceStore = {
       paneTree,
       activePaneId,
       sidebarWidth: persisted.sidebarWidth ?? DEFAULT_LAYOUT.sidebarWidth,
-      kanbanToolbar: asToolbarPosition(persisted.kanbanToolbar),
+      boardToolbars: asBoardToolbars(persisted.boardToolbars),
     };
   },
 

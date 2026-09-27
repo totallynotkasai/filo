@@ -13,12 +13,14 @@
    * `+ Add Tile` button inside each column body).
    */
   import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
-  import { workspaceStore, type ToolbarPosition } from '../../stores/workspace.svelte';
+  import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
+  import { createBoardToolbar } from '../../lib/boards/boardToolbar.svelte';
+  import PinIcon from '../shared/PinIcon.svelte';
   import { KANBAN_COLUMN_DEFAULTS } from '../../constants/defaults';
   import { handleListKeyNav, focusFirstItem } from '../../lib/utils/listKeyNav';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
-  import { tick, onDestroy } from 'svelte';
+  import { tick, onDestroy, getContext } from 'svelte';
 
   type SortBy = 'manual' | 'title' | 'created' | 'dueDate' | 'priority';
 
@@ -86,64 +88,11 @@
   // menu closes so reopening always starts fresh.
   let tagSearch = $state('');
 
-  // Drag state for movable toolbar. The resting position is layout state,
-  // saved in `.filo/workspace.json` by the workspace store (main refuses
-  // `.filo/` on the generic vault channels); reset via right-click.
-  function clampToWindow(p: ToolbarPosition): ToolbarPosition {
-    return { x: Math.max(0, Math.min(window.innerWidth - 60, p.x)), y: Math.max(0, Math.min(window.innerHeight - 60, p.y)) };
-  }
-
-  const savedPosition = workspaceStore.kanbanToolbar;
-  let isDragging = $state(false);
-  let dragPosition = $state<ToolbarPosition | null>(savedPosition ? clampToWindow(savedPosition) : null);
-  let dragOffset = $state({ x: 0, y: 0 });
-
-  function onDragStart(e: PointerEvent) {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    // Don't drag if pressing inside a button, menu, or any group container
-    if (target.closest('.toolbar-btn, .toolbar-menu, .toolbar-group')) return;
-    isDragging = true;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    dragOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-
-  function onDragMove(e: PointerEvent) {
-    if (!isDragging) return;
-    const maxX = window.innerWidth - 60;
-    const maxY = window.innerHeight - 60;
-    dragPosition = {
-      x: Math.max(0, Math.min(maxX, e.clientX - dragOffset.x)),
-      y: Math.max(0, Math.min(maxY, e.clientY - dragOffset.y)),
-    };
-  }
-
-  function onDragEnd(e: PointerEvent) {
-    if (!isDragging) return;
-    isDragging = false;
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    // Persist final position so the toolbar reopens at the saved spot
-    // after a reload. Drag-in-flight intermediate positions are not
-    // written — only the resting position.
-    workspaceStore.setKanbanToolbar(dragPosition);
-  }
-
-  function onContextMenu(e: MouseEvent) {
-    // Right-click the toolbar background (not buttons / menus) — reset
-    // toolbar to its default docked position. Lightweight discoverable
-    // affordance; no settings UI required.
-    const tgt = e.target as HTMLElement | null;
-    if (tgt && tgt.closest('.toolbar-btn, .toolbar-menu, .toolbar-group')) return;
-    e.preventDefault();
-    dragPosition = null;
-    workspaceStore.setKanbanToolbar(null);
-  }
-
-  let positionStyle = $derived(
-    dragPosition
-      ? `left: ${dragPosition.x}px; top: ${dragPosition.y}px; right: auto; transform: none;`
-      : ''
+  // Movable, pinnable toolbar; its position and pin are per board.
+  const boardScope = getContext<BoardScope>(BOARD_SCOPE_KEY);
+  const toolbar = createBoardToolbar(
+    () => boardScope.board.current?.id ?? '',
+    '.toolbar-btn, .toolbar-menu, .toolbar-group',
   );
 
   function closeAllMenusExcept(keep: 'manage' | 'view' | 'filter' | 'sort' | 'views' | null) {
@@ -386,13 +335,15 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="side-toolbar"
-  class:dragging={isDragging}
-  style="z-index: var(--z-side-toolbar); {positionStyle}"
-  onpointerdown={onDragStart}
-  onpointermove={onDragMove}
-  onpointerup={onDragEnd}
-  oncontextmenu={onContextMenu}
-  title="Drag to move. Right-click background to reset position."
+  class:dragging={toolbar.dragging}
+  class:pinned={toolbar.pinned}
+  style="z-index: var(--z-side-toolbar); {toolbar.style}"
+  onpointerdown={toolbar.handlers.onpointerdown}
+  onpointermove={toolbar.handlers.onpointermove}
+  onpointerup={toolbar.handlers.onpointerup}
+  onpointercancel={toolbar.handlers.onpointercancel}
+  oncontextmenu={toolbar.oncontextmenu}
+  title={toolbar.pinned ? undefined : 'Drag to move. Right-click background to reset position.'}
 >
   <div class="toolbar-group">
     <button
@@ -661,6 +612,17 @@
       </div>
     {/if}
   </div>
+
+  <button
+    class="toolbar-btn"
+    class:active={toolbar.pinned}
+    onclick={() => { closeAllMenusExcept(null); toolbar.togglePin(); }}
+    title={toolbar.pinned ? 'Unpin toolbar' : 'Pin toolbar'}
+    aria-label="Pin toolbar"
+    aria-pressed={toolbar.pinned}
+  >
+    <PinIcon size={18} filled={toolbar.pinned} />
+  </button>
 </div>
 
 {#if savePromptOpen}
@@ -799,6 +761,10 @@
   .side-toolbar.dragging {
     cursor: grabbing;
     opacity: 0.9;
+  }
+
+  .side-toolbar.pinned {
+    cursor: default;
   }
 
   .toolbar-btn {

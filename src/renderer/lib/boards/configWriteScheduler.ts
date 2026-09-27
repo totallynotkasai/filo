@@ -197,7 +197,7 @@ function buildConfigPayloads(
       paneTree: layout?.paneTree ?? null,
       activePaneId: layout?.activePaneId ?? null,
       sidebarWidth: layout?.sidebarWidth ?? 260,
-      kanbanToolbar: layout?.kanbanToolbar ?? null,
+      boardToolbars: layout?.boardToolbars ?? {},
     }, null, 2),
     'defaults.json': JSON.stringify({
       mindmap: settings.mindmap ?? {},

@@ -118,9 +118,6 @@ export async function initVaultConfig(vaultRoot: string): Promise<void> {
     'hotkeys.json': {},
     'workspace.json': {
       openTabs: [],
-      vaultSidebar: { open: true, width: 260 },
-      rightSidebar: { open: false, width: 300, activeTab: 'backlinks' },
-      sideToolbar: { position: 'right', pinned: true },
     },
     'viewports.json': {},
     'sidebar-order.json': {},

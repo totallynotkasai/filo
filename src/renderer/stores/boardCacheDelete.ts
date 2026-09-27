@@ -8,6 +8,7 @@ import {
 import { markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
 import { trashVaultPath } from '../lib/vault/vaultOperations';
 import { reportError } from '../lib/utils/errorBus';
+import { workspaceStore } from './workspace.svelte';
 
 /** The board cache's own state, handed to this slice. */
 export interface BoardDeleteContext {
@@ -36,8 +37,8 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
   return {
     /**
      * Drops every cache-side trace of a board: paths, cache map entry, the
-     * Project's boards array entry, any pending debounced write, and the
-     * viewport map entry. Does NOT touch disk — the caller is responsible
+     * Project's boards array entry, any pending debounced write, the
+     * viewport map entry and the side toolbar's position / pin. Does NOT touch disk — the caller is responsible
      * for the `.board.json` file (it never existed, went to the trash via
      * `deleteBoard`, or disappeared externally and this is the
      * reconciliation path).
@@ -64,6 +65,7 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
       // Drop the entry from the unified viewports map and schedule a
       // debounced flush so .filo/viewports.json reflects the deletion.
       removeViewport(boardId);
+      workspaceStore.removeBoardToolbar(boardId);
       return true;
     },
 

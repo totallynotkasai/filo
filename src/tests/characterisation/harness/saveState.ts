@@ -26,6 +26,28 @@ export async function dragKanbanToolbar(app: CharApp, x: number, y: number): Pro
   await settle(100);
 }
 
+/** Click the Kanban side toolbar's pin button. */
+export async function toggleKanbanToolbarPin(app: CharApp): Promise<void> {
+  const pin = kanbanToolbar(app).querySelector<HTMLButtonElement>('button[aria-label="Pin toolbar"]');
+  if (!pin) throw new Error('no pin button on the Kanban toolbar');
+  pin.click();
+  await settle(100);
+}
+
+/** Whether the Kanban side toolbar shows as pinned. */
+export function kanbanToolbarPinned(app: CharApp): boolean {
+  const pin = kanbanToolbar(app).querySelector('button[aria-label="Pin toolbar"]');
+  return pin?.getAttribute('aria-pressed') === 'true';
+}
+
+/** The board toolbars `.filo/workspace.json` holds on disk (position and pin per board). */
+export function savedBoardToolbars(app: CharApp): Array<{ position: { x: number; y: number } | null; pinned: boolean }> {
+  const workspace = JSON.parse(app.read('.filo/workspace.json')) as {
+    boardToolbars?: Record<string, { position: { x: number; y: number } | null; pinned: boolean }>;
+  };
+  return Object.values(workspace.boardToolbars ?? {});
+}
+
 /** Where the Kanban toolbar sits, or null while it is docked. */
 export function kanbanToolbarPosition(app: CharApp): { x: number; y: number } | null {
   const bar = kanbanToolbar(app);

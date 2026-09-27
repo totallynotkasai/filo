@@ -9,7 +9,11 @@
    *   - Filter    (Tag multi / Status / Priority / Show Completed)
    *   - View      (Tags Browser)
    */
+  import { getContext } from 'svelte';
   import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+  import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
+  import { createBoardToolbar } from '../../lib/boards/boardToolbar.svelte';
+  import PinIcon from '../shared/PinIcon.svelte';
 
   type GroupBy = 'status' | 'priority' | 'tag' | 'dueDate' | 'category' | 'none';
   type SortBy = 'title' | 'created' | 'dueDate' | 'priority' | 'manual';
@@ -120,6 +124,14 @@
     savePromptName = '';
   }
 
+  // Movable, pinnable toolbar. Docked, it sits in the board's corner; once
+  // dragged it is placed in window pixels like the Mind Map and Kanban ones.
+  const boardScope = getContext<BoardScope>(BOARD_SCOPE_KEY);
+  const toolbar = createBoardToolbar(
+    () => boardScope.board.current?.id ?? '',
+    '.toolbar-btn, .toolbar-menu, .toolbar-group',
+  );
+
   let knownTags = $derived<Array<[string, number]>>(Array.from(vaultIndexStore.allTags()));
 
   // Dismiss the open menu (filter / group / sort / view /
@@ -210,7 +222,20 @@
   );
 </script>
 
-<div class="side-toolbar" bind:this={toolbarRootEl} style:z-index="var(--z-side-toolbar)">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="side-toolbar"
+  class:dragging={toolbar.dragging}
+  class:pinned={toolbar.pinned}
+  bind:this={toolbarRootEl}
+  style="z-index: var(--z-side-toolbar); {toolbar.style}"
+  onpointerdown={toolbar.handlers.onpointerdown}
+  onpointermove={toolbar.handlers.onpointermove}
+  onpointerup={toolbar.handlers.onpointerup}
+  onpointercancel={toolbar.handlers.onpointercancel}
+  oncontextmenu={toolbar.oncontextmenu}
+  title={toolbar.pinned ? undefined : 'Drag to move. Right-click background to reset position.'}
+>
   <button class="toolbar-btn" onclick={onAddTask} title="Add Task" aria-label="Add task">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
       <line x1="12" y1="5" x2="12" y2="19" />
@@ -492,6 +517,17 @@
       </div>
     {/if}
   </div>
+
+  <button
+    class="toolbar-btn"
+    class:active={toolbar.pinned}
+    onclick={() => { closeAll(); toolbar.togglePin(); }}
+    title={toolbar.pinned ? 'Unpin toolbar' : 'Pin toolbar'}
+    aria-label="Pin toolbar"
+    aria-pressed={toolbar.pinned}
+  >
+    <PinIcon size={18} filled={toolbar.pinned} />
+  </button>
 </div>
 
 {#if savePromptOpen}
@@ -545,6 +581,17 @@
     border: 1px solid var(--ui-border-light);
     border-radius: 10px;
     box-shadow: var(--ui-shadow);
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .side-toolbar.dragging {
+    cursor: grabbing;
+    opacity: 0.9;
+  }
+
+  .side-toolbar.pinned {
+    cursor: default;
   }
 
   .toolbar-btn {

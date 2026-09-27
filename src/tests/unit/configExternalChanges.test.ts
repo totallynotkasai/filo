@@ -15,7 +15,7 @@ import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
 
 const VAULT = '/vault';
 const workspace: WorkspaceState = { openTabs: [], activeTabId: '' };
-const layout = (sidebarWidth: number) => ({ paneTree: null, activePaneId: null, sidebarWidth, kanbanToolbar: null });
+const layout = (sidebarWidth: number) => ({ paneTree: null, activePaneId: null, sidebarWidth, boardToolbars: {} });
 const settingsWith = (mindmap: Record<string, unknown>): ProjectSettings =>
   ({ general: { globalFont: 'fixed' }, mindmap, kanban: {}, tasklist: {}, document: {} } as ProjectSettings);
 

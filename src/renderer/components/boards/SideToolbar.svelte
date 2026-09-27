@@ -8,6 +8,8 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { connectionsStore } from '../../stores/connections.svelte';
   import { uiStore } from '../../stores/ui.svelte';
+  import { createBoardToolbar } from '../../lib/boards/boardToolbar.svelte';
+  import PinIcon from '../shared/PinIcon.svelte';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -31,44 +33,10 @@
   let toolbarEl = $state<HTMLElement | null>(null);
   let lastTrigger: HTMLElement | null = null;
 
-  // ── Drag state for movable toolbar ──
-  let isDragging = $state(false);
-  let dragPosition = $state<{ x: number; y: number } | null>(null);
-  let dragOffset = $state({ x: 0, y: 0 });
-
-  function onDragStart(e: PointerEvent) {
-    // Only drag on left-click directly on the toolbar background, not on buttons/dropdowns
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest('.side-btn, .side-dropdown, .toolbar-group')) return;
-
-    isDragging = true;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    dragOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-
-  function onDragMove(e: PointerEvent) {
-    if (!isDragging) return;
-    // Clamp to viewport bounds
-    const maxX = window.innerWidth - 60;
-    const maxY = window.innerHeight - 60;
-    dragPosition = {
-      x: Math.max(0, Math.min(maxX, e.clientX - dragOffset.x)),
-      y: Math.max(0, Math.min(maxY, e.clientY - dragOffset.y)),
-    };
-  }
-
-  function onDragEnd(e: PointerEvent) {
-    if (!isDragging) return;
-    isDragging = false;
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-  }
-
-  let positionStyle = $derived(
-    dragPosition
-      ? `left: ${dragPosition.x}px; top: ${dragPosition.y}px; right: auto; transform: none;`
-      : ''
+  // ── Movable, pinnable toolbar; its position and pin are per board ──
+  const toolbar = createBoardToolbar(
+    () => boardStore.current?.id ?? '',
+    '.side-btn, .side-dropdown, .toolbar-group',
   );
 
   let inConnectionMode = $derived(connectionsStore.connectionMode);
@@ -345,13 +313,17 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="side-toolbar"
-  class:dragging={isDragging}
-  style="z-index: var(--z-side-toolbar); {positionStyle}"
+  class:dragging={toolbar.dragging}
+  class:pinned={toolbar.pinned}
+  style="z-index: var(--z-side-toolbar); {toolbar.style}"
   bind:this={toolbarEl}
-  onpointerdown={onDragStart}
-  onpointermove={onDragMove}
-  onpointerup={onDragEnd}
+  onpointerdown={toolbar.handlers.onpointerdown}
+  onpointermove={toolbar.handlers.onpointermove}
+  onpointerup={toolbar.handlers.onpointerup}
+  onpointercancel={toolbar.handlers.onpointercancel}
+  oncontextmenu={toolbar.oncontextmenu}
   onclick={(e) => e.stopPropagation()}
+  title={toolbar.pinned ? undefined : 'Drag to move. Right-click background to reset position.'}
 >
 
   <!-- New Tile -->
@@ -565,6 +537,18 @@
       <line x1="12" y1="17" x2="12.01" y2="17"/>
     </svg>
   </button>
+
+  <!-- Pin: keeps the toolbar where it is on this board -->
+  <button
+    class="side-btn"
+    title={toolbar.pinned ? 'Unpin toolbar' : 'Pin toolbar'}
+    aria-label="Pin toolbar"
+    aria-pressed={toolbar.pinned}
+    class:active={toolbar.pinned}
+    onclick={() => { closeAllMenus(); toolbar.togglePin(); }}
+  >
+    <PinIcon filled={toolbar.pinned} />
+  </button>
 </div>
 
 <style>
@@ -587,6 +571,10 @@
   .side-toolbar.dragging {
     cursor: grabbing;
     opacity: 0.9;
+  }
+
+  .side-toolbar.pinned {
+    cursor: default;
   }
 
   .toolbar-group {

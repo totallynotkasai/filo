@@ -25,6 +25,9 @@ import {
 import {
   dragKanbanToolbar,
   kanbanToolbarPosition,
+  kanbanToolbarPinned,
+  toggleKanbanToolbarPin,
+  savedBoardToolbars,
   onlyBoardFile,
   clickAddKanbanColumn,
   kanbanColumnTitles,
@@ -49,8 +52,7 @@ describe('the Kanban side toolbar', () => {
     await quiesce();
 
     expect(errorToasts()).toEqual([]);
-    const workspace = JSON.parse(app.read('.filo/workspace.json')) as { kanbanToolbar?: unknown };
-    expect(workspace.kanbanToolbar).toEqual({ x: 140, y: 90 });
+    expect(savedBoardToolbars(app)).toEqual([{ position: { x: 140, y: 90 }, pinned: false }]);
 
     const result = await closeVault(app);
     expect(result.done).toBe(true);
@@ -63,6 +65,20 @@ describe('the Kanban side toolbar', () => {
     await dragKanbanToolbar(app, 200, 120);
     await reopenVault(app);
     expect(kanbanToolbarPosition(app)).toEqual({ x: 200, y: 120 });
+  });
+
+  it('a pinned toolbar stays put, and is still pinned when the vault is reopened', async () => {
+    const app = await startApp();
+    await createBoard(app, 'kanban');
+    await dragKanbanToolbar(app, 200, 120);
+    await toggleKanbanToolbarPin(app);
+    await dragKanbanToolbar(app, 400, 300);
+    expect(kanbanToolbarPosition(app)).toEqual({ x: 200, y: 120 });
+
+    await reopenVault(app);
+    expect(kanbanToolbarPinned(app)).toBe(true);
+    expect(kanbanToolbarPosition(app)).toEqual({ x: 200, y: 120 });
+    expect(savedBoardToolbars(app)).toEqual([{ position: { x: 200, y: 120 }, pinned: true }]);
   });
 });
 

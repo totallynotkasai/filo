@@ -347,6 +347,7 @@ filo/
 │   │   │   │   ├── textTilePath.ts
 │   │   │   │   ├── viewportCache.ts
 │   │   │   │   ├── toggleLockSelection.ts # Ctrl+L rule (lock all if any unlocked), one undo step
+│   │   │   │   ├── boardToolbar.svelte.ts # A board's floating side toolbar: drag, pin, right-click dock (per board, `.filo/workspace.json`)
 │   │   │   │   ├── componentFlush.ts  # registerComponentFlush: what a mounted view holds, handed over by a save or a leave
 │   │   │   │   └── writeStateTracking.ts # trackComponentWrite + counters
 │   │   │   ├── canvas/                # Canvas engine (custom pointer events)
@@ -359,6 +360,7 @@ filo/
 │   │   │   │   ├── markdownTileSeed.ts
 │   │   │   │   ├── layout.ts          # Auto-layout algorithms
 │   │   │   │   ├── orphanCatcher.ts
+│   │   │   │   ├── floatingToolbarDrag.ts # Shared toolbar drag: background only, pin blocks it, cancel reverts, clamp to window
 │   │   │   │   ├── vaultPath.ts
 │   │   │   │   └── smartGuides.ts     # Alignment guide calculations
 │   │   │   ├── connections/           # Connection path routing

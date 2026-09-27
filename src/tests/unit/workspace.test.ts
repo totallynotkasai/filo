@@ -150,7 +150,7 @@ describe('workspaceStore', () => {
       paneTree: split,
       activePaneId: 'leaf_1',
       sidebarWidth: 320,
-      kanbanToolbar: { x: 40, y: 80 },
+      boardToolbars: { board_1: { position: { x: 40, y: 80 }, pinned: true } },
     };
 
     workspaceStore.hydrate(before);
@@ -173,5 +173,76 @@ describe('workspaceStore', () => {
     workspaceStore.hydrate({ sidebarWidth: 500 });
     expect(workspaceStore.sidebarWidth).toBe(500);
     expect(workspaceStore.activePaneId).toBeNull();
+  });
+});
+
+describe('workspaceStore board toolbars', () => {
+  beforeEach(() => {
+    workspaceStore.reset();
+    workspaceStore.setChangeListener(null);
+  });
+
+  it('keeps a position and pin per board', () => {
+    workspaceStore.setBoardToolbarPosition('a', { x: 10.4, y: 20.6 });
+    workspaceStore.setBoardToolbarPinned('b', true);
+    expect(workspaceStore.boardToolbar('a')).toEqual({ position: { x: 10, y: 21 }, pinned: false });
+    expect(workspaceStore.boardToolbar('b')).toEqual({ position: null, pinned: true });
+    expect(workspaceStore.boardToolbar('c')).toEqual({ position: null, pinned: false });
+  });
+
+  it('a pinned toolbar is neither moved nor docked', () => {
+    workspaceStore.setBoardToolbarPosition('a', { x: 10, y: 20 });
+    workspaceStore.setBoardToolbarPinned('a', true);
+    workspaceStore.setBoardToolbarPosition('a', { x: 99, y: 99 });
+    workspaceStore.setBoardToolbarPosition('a', null);
+    expect(workspaceStore.boardToolbar('a').position).toEqual({ x: 10, y: 20 });
+  });
+
+  it('a docked, unpinned toolbar has no entry, and a deleted board loses its entry', () => {
+    workspaceStore.setBoardToolbarPosition('a', { x: 10, y: 20 });
+    workspaceStore.setBoardToolbarPosition('a', null);
+    expect(workspaceStore.boardToolbars).toEqual({});
+
+    workspaceStore.setBoardToolbarPinned('b', true);
+    let notified = 0;
+    workspaceStore.setChangeListener(() => notified++);
+    workspaceStore.removeBoardToolbar('b');
+    workspaceStore.removeBoardToolbar('b');
+    expect(workspaceStore.boardToolbars).toEqual({});
+    expect(notified).toBe(1);
+  });
+
+  it('round-trips through serialize and hydrate', () => {
+    workspaceStore.setBoardToolbarPosition('a', { x: 140, y: 90 });
+    workspaceStore.setBoardToolbarPinned('a', true);
+    workspaceStore.setBoardToolbarPinned('b', true);
+    const snapshot = JSON.parse(JSON.stringify(workspaceStore.serialize())) as WorkspaceLayout;
+    workspaceStore.reset();
+    workspaceStore.hydrate(snapshot);
+    expect(workspaceStore.boardToolbars).toEqual({
+      a: { position: { x: 140, y: 90 }, pinned: true },
+      b: { position: null, pinned: true },
+    });
+  });
+
+  it('hydrate drops bad entries and keeps the good ones', () => {
+    workspaceStore.hydrate({
+      boardToolbars: {
+        good: { position: { x: 1, y: 2 }, pinned: false },
+        badPos: { position: { x: 'no', y: 2 }, pinned: true },
+        docked: { position: null, pinned: false },
+        junk: 'nope',
+        nan: { position: { x: Number.NaN, y: 2 } },
+      } as unknown as WorkspaceLayout['boardToolbars'],
+    });
+    expect(workspaceStore.boardToolbars).toEqual({
+      good: { position: { x: 1, y: 2 }, pinned: false },
+      badPos: { position: null, pinned: true },
+    });
+  });
+
+  it('hydrate ignores a toolbar map that is not an object', () => {
+    workspaceStore.hydrate({ boardToolbars: [1, 2] as unknown as WorkspaceLayout['boardToolbars'] });
+    expect(workspaceStore.boardToolbars).toEqual({});
   });
 });

@@ -7,6 +7,7 @@
   import { normalizePath, toPosix } from '../../lib/utils/path';
   import { openVaultFileExternally } from '../../lib/utils/openVaultFile';
   import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
+  import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -55,7 +56,7 @@
       // Drain pending writers before the copy so a debounced
       // tile-definition write doesn't fire against a stale `filePath`
       // before the new file lands on disk.
-      const res = await copyFileIntoVault(sourcePath, vaultDir);
+      const res = await copyFileIntoVault(sourcePath, vaultDir, getActiveContentFolder(boardStore.current));
 
       if (!res.success) {
         reportError(

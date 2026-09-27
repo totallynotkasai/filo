@@ -147,7 +147,8 @@ function makeBoard(name: string): BoardFileData {
       id: 'kb',
       type: 'kanban',
       name,
-      emoji: '',
+      // A loaded board's name is its file stem, so the version marker is the emoji.
+      emoji: name,
       createdAt: 0,
       updatedAt: 0,
       settings: {},
@@ -203,7 +204,7 @@ describe('case-divergent board reload rebinds the stored path', () => {
     });
 
     // The board reloaded…
-    expect((boardCacheStore.cache.kb!.board as KanbanBoard).name).toBe('from-disk');
+    expect((boardCacheStore.cache.kb!.board as KanbanBoard).emoji).toBe('from-disk');
     // …and the stored path tracks the OS casing now (no stale-casing desync →
     // no phantom-file write / "missing on disk" eviction on a synced FS).
     expect(boardStore.paths.kb).toBe('folder/board.board.json');

@@ -6,7 +6,8 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { workspaceStore } from '../../stores/workspace.svelte';
   import { boardStore } from '../../stores/board.svelte';
-  import { renameBoard } from '../../stores/boardIdentity';
+  import { boardRenameProblem, renameBoard } from '../../stores/boardIdentity';
+  import { freeNewBoardName, newBoardNameProblem } from '../../lib/boards/newBoardPlace';
   import { createId } from '../../lib/utils/ids';
   import { computeKeyboardReorder } from '../../lib/boards/boardReorder';
   import type { BoardType } from '../../../shared/types';
@@ -31,22 +32,14 @@
   let newBoardName = $state('');
   let newBoardType = $state<BoardType>('mindmap');
 
-  // E.10 — disable Create when the typed name is empty or already in use.
-  // Lower-case compare so "Notes" vs "notes" collisions still flag (board
-  // file paths are case-insensitive on Windows/mac).
-  const takenBoardNames = $derived(
-    new Set(
-      (vaultStore.project?.boards ?? []).map((b) => b.name.trim().toLowerCase()),
-    ),
-  );
+  // Disable Create when the typed name is empty, can't be a file name (the
+  // name is the `.board.json` stem), or is taken where the board would go.
+  // Case-folded, as the file system compares names.
   const trimmedNewBoardName = $derived(newBoardName.trim());
   const newBoardNameError = $derived.by(() => {
     if (!showNewBoard) return null;
     if (trimmedNewBoardName === '') return null; // empty is "not yet ready", not an error
-    if (takenBoardNames.has(trimmedNewBoardName.toLowerCase())) {
-      return `A board named "${trimmedNewBoardName}" already exists.`;
-    }
-    return null;
+    return newBoardNameProblem(trimmedNewBoardName);
   });
   const canCreateBoard = $derived(
     trimmedNewBoardName !== '' && newBoardNameError === null,
@@ -54,14 +47,7 @@
 
   // Auto-suggest a non-colliding name so the user can hit Create without typing.
   function suggestBoardName(): string {
-    const taken = new Set(
-      (vaultStore.project?.boards ?? []).map((b) => b.name),
-    );
-    const base = 'Untitled Board';
-    if (!taken.has(base)) return base;
-    let n = 2;
-    while (taken.has(`${base} ${n}`)) n++;
-    return `${base} ${n}`;
+    return freeNewBoardName('Untitled Board');
   }
 
   function openNewBoardForm() {
@@ -183,11 +169,9 @@
     // Persist via boardStore so the .board.json file is actually written
     // and the cache is registered. Pushing to project.boards directly
     // skips the disk write and silently breaks every subsequent save.
+    // A failure has already said why.
     const persisted = await boardStore.persistNewBoard(board);
-    if (!persisted) {
-      uiStore.toast('Failed to create board', 'error');
-      return;
-    }
+    if (!persisted) return;
 
     // Open it in a new tab
     tabStore.open(board.id, board.name, board.type);
@@ -204,13 +188,25 @@
     renameValue = board.name;
   }
 
+  // The name is the board's file name: a name that can't be one, or that
+  // another board in its folder has, is shown while typing.
+  const renameProblem = $derived.by(() => {
+    if (!renamingBoardId) return null;
+    const current = vaultStore.project?.boards.find((b) => b.id === renamingBoardId)?.name;
+    if (renameValue.trim() === current) return null;
+    return boardRenameProblem(renamingBoardId, renameValue);
+  });
+
   async function commitRename() {
     if (!renamingBoardId || !renameValue || !vaultStore.project) {
       renamingBoardId = null;
       return;
     }
-    renameBoard(renamingBoardId, renameValue);
+    const id = renamingBoardId;
+    const current = vaultStore.project.boards.find((b) => b.id === id)?.name;
     renamingBoardId = null;
+    // A refused name toasts its reason and keeps the old one.
+    if (renameValue.trim() !== current) await renameBoard(id, renameValue);
   }
 
   function deleteBoard(boardId: string) {
@@ -399,13 +395,20 @@
                     // Stop the Enter from bubbling to the surrounding row's
                     // `onkeydown` (which would re-open the board on commit).
                     e.stopPropagation();
-                    commitRename();
+                    // A refused name keeps the field open so it can be fixed.
+                    if (!renameProblem) void commitRename();
                   } else if (e.key === 'Escape') {
                     e.stopPropagation();
                     renamingBoardId = null;
                   }
                 }}
+                class:invalid={renameProblem !== null}
+                aria-invalid={renameProblem !== null}
+                aria-describedby={renameProblem ? 'board-rename-problem' : undefined}
               />
+              {#if renameProblem}
+                <span class="board-rename-problem" id="board-rename-problem" role="alert">{renameProblem}</span>
+              {/if}
             {:else}
               <span class="board-name">{board.emoji ? `${board.emoji} ` : ''}{board.name}</span>
             {/if}
@@ -658,6 +661,15 @@
 
   .board-rename-input:focus:not(:focus-visible) {
     outline: none;
+  }
+
+  .board-rename-input.invalid {
+    border-color: var(--accent-danger, #d83b3b);
+  }
+
+  .board-rename-problem {
+    color: var(--accent-danger, #d83b3b);
+    font-size: 12px;
   }
 
   .board-action-btn {

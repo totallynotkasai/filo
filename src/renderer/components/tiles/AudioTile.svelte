@@ -10,6 +10,7 @@
   import { UpdateAttachmentSrcCommand } from '../../commands/index';
   import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
   import { mediaErrorText } from '../../lib/utils/mediaErrorText';
+  import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -99,7 +100,7 @@
 
           try {
             const vaultPath = vaultStore.path;
-            const res = await window.filo.invoke('media:save-audio', vaultPath, base64data, fileName);
+            const res = await window.filo.invoke('media:save-audio', vaultPath, base64data, fileName, getActiveContentFolder(boardStore.current));
             if (res.success) {
               boardStore.updateTile(tile.id, {
                 src: res.path,

@@ -42,7 +42,8 @@ function makeBoard(name: string): BoardFileData {
       id: 'kb',
       type: 'kanban',
       name,
-      emoji: '',
+      // A loaded board's name is its file stem, so the version marker is the emoji.
+      emoji: name,
       createdAt: 0,
       updatedAt: 0,
       settings: {},
@@ -55,7 +56,7 @@ function makeBoard(name: string): BoardFileData {
 }
 
 function boardName(): string {
-  return (boardCacheStore.cache.kb!.board as KanbanBoard).name;
+  return (boardCacheStore.cache.kb!.board as KanbanBoard).emoji ?? '';
 }
 
 // Raw-route filo stub (mirrors boardLoader.test): handlers' return value IS the

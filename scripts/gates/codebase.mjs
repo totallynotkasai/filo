@@ -52,6 +52,7 @@ const CHARACTERISATION_SPECS = {
   'vaultShortcuts.test.ts': 9,
   'errorStates.test.ts': 7,
   'folderPinsAndVaultName.test.ts': 4,
+  'boardFolders.test.ts': 8,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

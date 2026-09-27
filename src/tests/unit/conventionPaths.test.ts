@@ -4,6 +4,7 @@ import {
   nextUniqueMdPath,
   normalizeRootFolder,
   getActiveContentFolder,
+  resolveContentFolder,
 } from '@renderer/lib/vault/conventionPaths';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Board } from '@renderer/schema/index';
@@ -149,12 +150,31 @@ describe('conventionPaths', () => {
       expect(getActiveContentFolder(makeBoard(''))).toBe('');
     });
 
-    it('returns the per-board pin when set and no vault-wide pin', () => {
-      expect(getActiveContentFolder(makeBoard('Inbox'))).toBe('Inbox');
+    it('ignores the board pin while board folders are off (no vault open: off)', () => {
+      expect(getActiveContentFolder(makeBoard('Inbox'))).toBe('');
+    });
+  });
+
+  // One pin: board folders on → the board's own folder; off → the vault-wide
+  // Root Directory. The other pin never applies.
+  describe('resolveContentFolder', () => {
+    it('board folders on: the board pin, whatever the Root Directory', () => {
+      expect(resolveContentFolder({ boardFolders: true, rootFolder: 'Root', boardFolder: 'Plan' })).toBe('Plan');
     });
 
-    it('normalises Windows separators and trailing slashes in per-board pin', () => {
-      expect(getActiveContentFolder(makeBoard('Notes\\Sub\\'))).toBe('Notes/Sub');
+    it('board folders on, pin toggled off (or no board): the vault root, not the Root Directory', () => {
+      expect(resolveContentFolder({ boardFolders: true, rootFolder: 'Root', boardFolder: '' })).toBe('');
+      expect(resolveContentFolder({ boardFolders: true, rootFolder: 'Root', boardFolder: undefined })).toBe('');
+    });
+
+    it('board folders off: the Root Directory, never the board pin', () => {
+      expect(resolveContentFolder({ boardFolders: false, rootFolder: 'Root', boardFolder: 'Plan' })).toBe('Root');
+      expect(resolveContentFolder({ boardFolders: false, rootFolder: '', boardFolder: 'Plan' })).toBe('');
+    });
+
+    it('normalises Windows separators and trailing slashes', () => {
+      expect(resolveContentFolder({ boardFolders: true, rootFolder: '', boardFolder: 'Notes\\Sub\\' })).toBe('Notes/Sub');
+      expect(resolveContentFolder({ boardFolders: false, rootFolder: '/Notes\\Sub/', boardFolder: '' })).toBe('Notes/Sub');
     });
   });
 

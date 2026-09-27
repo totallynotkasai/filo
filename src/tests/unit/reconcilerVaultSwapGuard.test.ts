@@ -52,7 +52,8 @@ function makeBoard(name: string): BoardFileData {
       id: 'kb',
       type: 'kanban',
       name,
-      emoji: '',
+      // A loaded board's name is its file stem, so the version marker is the emoji.
+      emoji: name,
       createdAt: 0,
       updatedAt: 0,
       settings: {},
@@ -120,7 +121,7 @@ describe('Audit-6 H3/H4/L27 — reconciler vault-identity guard', () => {
 
     await dispatchExternalChange({ kind: 'board', filename: REL, eventType: 'change' });
 
-    expect((boardCacheStore.cache.kb!.board as KanbanBoard).name).toBe('from-disk');
+    expect((boardCacheStore.cache.kb!.board as KanbanBoard).emoji).toBe('from-disk');
   });
 
   // ── H3 — tags reconciler (worst case: persists to disk) ──

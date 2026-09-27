@@ -15,6 +15,7 @@ import {
   toggleBoardFolder,
   rootDirectoryFolder,
   boardFolder,
+  setBoardFolders,
 } from './harness/vaultFolders';
 
 afterEach(async () => {
@@ -52,6 +53,7 @@ describe('a pinned folder renamed by another program', () => {
     const app = await startApp({ 'Old/a.md': 'A\n' });
     await createBoard(app, 'kanban');
     await addKanbanColumn(app);
+    await setBoardFolders(app, true);
     await toggleBoardFolder(app, 'Old');
     expect(boardFolder(app)).toBe('Old');
 

@@ -125,6 +125,10 @@ export async function startApp(
     // transform can take many seconds when the whole test run shares the CPU.
     const { boardRegistry } = await import('@renderer/core/boardRegistry');
     await Promise.all(Object.values(boardRegistry).map((entry) => entry.component?.()));
+    // Each case closes its vault, which shows Home, and Home opens the last
+    // vault on its own when this is on: a race with the next case's open,
+    // against a temp vault that is being deleted.
+    await window.filo.invoke('vault:set-open-on-launch', false);
     const { default: App } = await import('@renderer/App.svelte');
     appEl = document.createElement('div');
     document.body.appendChild(appEl);

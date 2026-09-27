@@ -9,6 +9,7 @@ import {
   UpdateCoverImageCommand,
 } from '../../commands/index';
 import { copyFileIntoVault } from '../vault/vaultOperations';
+import { getActiveContentFolder } from '../vault/conventionPaths';
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
 import { openNoteInDocumentTab } from '../notes/openNote';
 
@@ -134,7 +135,7 @@ export function makeKanbanFrontmatterWriter(
     // image lands on disk.
     const src = paths[0];
     if (!src) return; // paths non-empty (checked above)
-    const res = await copyFileIntoVault(src, vaultRoot);
+    const res = await copyFileIntoVault(src, vaultRoot, getActiveContentFolder(board));
     if (!res.success) {
       uiStore.toast(`Failed to import image: ${res.error ?? 'unknown error'}`, 'error', 3000);
       return;

@@ -527,3 +527,89 @@ Task List task / quick-add / subtask / `.md` drop, note templates, and mind-map 
   4. rename the folder by hand, then rename the board: the folder stays
   5. rename the `.board.json` in the sidebar: the board name follows
   6. switch board folders off: new files go to the Root Directory or the vault root
+
+### Phase 5: status and deviations (done 2026-09-27)
+
+A board's name is now its `.board.json` stem everywhere. Renaming a board (tab or Board
+Browser) renames its file; renaming the file (sidebar or another program) renames the board;
+on load the stem wins. A name the file system can't take, or another board's name in the same
+folder, is shown inline and refused. General → Vault Sidebar has the **Board-specific
+folders** switch. With it on, a new board gets a folder named after it (inside the Root
+Directory, or at the vault root) holding its `.board.json`, its `settings.defaultFolder` pins
+that folder, and everything the board creates goes there. The folder follows a board rename
+while it still has the board's name. The sidebar's bookmark button is gone; the one tree
+button follows the 5c table and is green while active.
+
+Tests: `unit/boardNaming.test.ts` (name rules, new-board place, the folder-follow rule, free
+names), new `resolveContentFolder` cases in `unit/conventionPaths.test.ts` (the 5c table),
+`component/boardFolderCreationPaths.test.ts` (the real File tile, Audio tile and background
+picker, plus the Kanban cover and OS-drop import, all write into the board's folder; all five
+fail with the 5d changes reverted), and `characterisation/boardFolders.test.ts` (the six plan
+cases plus an illegal name and a same-folder clash; registered in the `characterisation-suite`
+gate). The two rename-follow cases were checked to fail with the rule disabled. Checked in
+the built app: the switch lands in `app.json`, a new Kanban board is `Kanban 1/Kanban
+1.board.json` with its folder's tree button green, its first card lands in `Kanban 1/`,
+`Q3: plan` shows "Names can't contain ":"" by the tab, and renaming to `Plan` gives
+`Plan/Plan.board.json` with the card moved along. That check found the tab strip sits at the
+bottom of the window, so the tab's message now opens above the input when there's no room
+below.
+
+Deviations from the plan:
+
+1. **`board:create` is an exclusive create.** It used to sanitise the name and bump a taken
+   one to ` (2)`, which would leave a board named differently from its file. It now uses the
+   name verbatim (the stem itself must pass `assertSafeFilename`, so a trailing dot or space
+   is refused too) and creates through `createExclusiveFile`, so a taken name fails with
+   `EEXIST` and nothing is overwritten. The renderer turns that into "A board named … already
+   exists in …".
+2. **Names Filo picks itself are made free first.** A new tab's board ("Kanban 1"), the Board
+   Browser's suggestion ("Untitled Board 2") and a template's board take the first name whose
+   file is free where the board would go (`lib/boards/newBoardPlace.ts`). New-tab numbering is
+   now the lowest free number rather than "count + 1". Only a name the user typed is refused.
+3. **Two new modules.** `lib/boards/boardNaming.ts` holds the pure rules (name problem, new-board
+   place, folder-follow rule, free names); `lib/boards/newBoardPlace.ts` applies them to the open
+   vault (the tree plus the board cache, since the tree refresh after a create lands a moment
+   later). The board-name-follows-file rule is a rename sweep (`boardIdentity.names`),
+   installed from `App.svelte`, so it runs from every rename cascade: in-app, external, the
+   folder pairing from Phase 0c and crash recovery.
+4. **Rename order: the file first, then the folder.** If the folder rename fails, or its new
+   name is already taken, the board keeps its new name and a notice says the folder kept its
+   own. The folder-follow compare is case-folded, and only runs with board folders on (a board
+   that merely sits in a same-named folder with the switch off never moves the folder).
+5. **The sidebar rename of a `.board.json` to another board's name is refused.** It used to
+   offer "Overwrite file?", which would have destroyed the other board.
+6. **On load the stem wins in memory only.** Nothing is written for it; the next save carries
+   the name. The duplicate-board-id ranking still compares against the name the JSON declares
+   (`LoadBoardResult.declaredName`), since the loaded name now always matches.
+7. **A pre-existing bug: `fileNameProblem` let a backslash through.** Its character class had
+   `\|` (just `|`), so `a\b` passed the inline check and then failed in main. Fixed in
+   `shared/fileNames.ts`; a note title with `\` now gets `-` in its file name too.
+8. **5c details.** With board folders on, the tree button is disabled with "Open a board to
+   choose its folder" while no board is open. The vault-wide Root Directory can then only be
+   set from the sidebar while board folders are off; Settings still shows it (it is where new
+   board folders go) and can clear it. The hint under it says so.
+9. **5d: `BackgroundImagePicker` takes an optional `folder`.** The frame style popup passes
+   its pane's board folder; the Current Board and Global Defaults settings pickers fall back to
+   the active board's. The Kanban OS drop gets `destFolder` from `KanbanBoard.svelte` with a
+   same-line change, so that allowlisted file doesn't grow.
+10. **Name fields.** The tab rename shows its message in a fixed-position note under the input
+    (the tab strip clips anything below it). Enter does nothing while the name is refused; a
+    blur with a refused name toasts the reason and keeps the old name. The Board Browser's
+    rename and its New Board form use the same check (the form compared board names
+    vault-wide; it now checks the file where the new board would go).
+11. **`persistNewBoard` says why a create failed**, so the "Failed to create board" toasts in
+    `TabBar` / `BoardBrowser` / `TemplateBrowser` are gone (a failure used to show two).
+12. **Existing tests updated.** Four reconciler tests used `board.name` as the "disk version"
+    marker, which the stem now overrides; they use the emoji. The per-board pin cases in
+    `conventionPaths.test.ts`, `dragDropPinnedFolder.test.ts` and
+    `taskListFilePathPersistence.test.ts` turn board folders on. `boardFileEncodingRoundTrip`
+    (d) now expects the refusal. The Phase 0 board-pin characterisation case turns board
+    folders on before pinning.
+13. **Characterisation harness race fixed.** Since Phase 4 every open writes the recent-vaults
+    list, so closing a case's vault showed Home, which auto-opened that (temp, being deleted)
+    vault and raced the next case's open ("Failed to open vault"). The harness now turns off
+    "open last vault on launch" before mounting the app.
+
+Accepted as is: a board rename is not on the board's undo stack (it wasn't before either; it
+is a disk rename). A tab whose board file is missing still re-creates it under the tab's name
+(`BoardRouter`); a clash there is refused with the same message.

@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * The Vault Sidebar section of General settings: the vault's name and
-   * colour, and how the sidebar lists files. Sort and Group change the same
+   * colour, how the sidebar lists files, and where new files go (board
+   * folders, Root Directory). Sort and Group change the same
    * setting as the sidebar's own buttons. Everything saves at once to
    * `.filo/app.json`; a new name or colour also refreshes the vault's Home entry.
    */
@@ -69,7 +70,15 @@
     vaultStore.markMetaDirty();
   }
 
+  function setBoardFolders(on: boolean): void {
+    const general = vaultStore.project?.settings.general;
+    if (!general) return;
+    general.boardFolders = on;
+    vaultStore.markMetaDirty();
+  }
+
   let showExtensions = $derived(vaultStore.project?.settings.general?.showFileExtensions ?? false);
+  let boardFolders = $derived(vaultStore.project?.settings.general?.boardFolders ?? false);
   let rootDirectory = $derived(vaultStore.activeRootFolder);
 </script>
 
@@ -171,8 +180,30 @@
 
   <div class="setting-row">
     <div class="setting-label-stack">
+      <label class="setting-label" for="board-folders-toggle">Board-specific folders</label>
+      <span class="setting-hint">Each new board gets its own folder, and everything it creates goes there. The sidebar's "Use as root directory" button then picks the open board's folder.</span>
+    </div>
+    <button
+      id="board-folders-toggle"
+      class="toggle-btn"
+      class:active={boardFolders}
+      onclick={() => setBoardFolders(!boardFolders)}
+      role="switch"
+      aria-checked={boardFolders}
+    >
+      <span class="toggle-track">
+        <span class="toggle-thumb"></span>
+      </span>
+      <span class="toggle-label">{boardFolders ? 'On' : 'Off'}</span>
+    </button>
+  </div>
+
+  <div class="setting-row">
+    <div class="setting-label-stack">
       <span class="setting-label">Root Directory</span>
-      <span class="setting-hint">New files go here. Set it with a folder's "Use as root directory" button in the sidebar.</span>
+      <span class="setting-hint">{boardFolders
+        ? 'New boards get their folder here.'
+        : 'New files go here.'} Set it with a folder's "Use as root directory" button in the sidebar while board-specific folders are off.</span>
     </div>
     <div class="root-directory">
       <span class="root-path" class:unset={!rootDirectory} title={rootDirectory || undefined}>

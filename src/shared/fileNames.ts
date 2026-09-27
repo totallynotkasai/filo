@@ -17,8 +17,8 @@ export const RESERVED_WINDOWS_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /** Characters no file name may carry on some supported OS (incl. separators). */
-const ILLEGAL_NAME_CHARS = /[<>:"/\|?*\u0000-\u001f\u007f]/g;
-const ILLEGAL_NAME_CHAR = /[<>:"/\|?*\u0000-\u001f\u007f]/;
+const ILLEGAL_NAME_CHARS = /[<>:"/\\|?*\u0000-\u001f\u007f]/g;
+const ILLEGAL_NAME_CHAR = /[<>:"/\\|?*\u0000-\u001f\u007f]/;
 
 /** Longest stem a derived name may have, leaving room for ` (n).md` and a folder. */
 const MAX_STEM_LENGTH = 200;

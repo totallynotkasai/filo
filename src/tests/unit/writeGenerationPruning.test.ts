@@ -472,7 +472,8 @@ describe('Audit-16 4.8 — a self-write echo diverging under a newer queued writ
         id: 'kb',
         type: 'kanban',
         name,
-        emoji: '',
+        // A loaded board's name is its file stem, so the version marker is the emoji.
+        emoji: name,
         createdAt: 0,
         updatedAt: 0,
         settings: {},
@@ -485,7 +486,7 @@ describe('Audit-16 4.8 — a self-write echo diverging under a newer queued writ
   }
 
   function boardName(): string {
-    return (boardCacheStore.cache.kb!.board as KanbanBoard).name;
+    return (boardCacheStore.cache.kb!.board as KanbanBoard).emoji ?? '';
   }
 
   function warningToasts(): number {

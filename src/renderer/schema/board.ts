@@ -196,10 +196,11 @@ const BaseBoardSettingsSchema = z.object({
    */
   backgroundPattern: BackgroundPatternSchema.optional(),
   /**
-   * Vault-relative folder (POSIX slashes, no leading/trailing '/') where new
-   * text tiles created on this board are written. Empty string ⇒ vault root.
-   * Overridden by the vault-wide `activeRootFolder` when one is set. Toggled
-   * via the bookmark button in `VaultFileItem`.
+   * Vault-relative folder (POSIX slashes, no leading/trailing '/') where the
+   * files this board creates are written, used only while board-specific
+   * folders are on (`general.boardFolders`). Empty string ⇒ vault root. A
+   * new board sets it to its own folder; the sidebar's Root Directory button
+   * toggles it (see `getActiveContentFolder`).
    */
   defaultFolder: z.string().default(''),
 }).passthrough();

@@ -28,7 +28,7 @@ import { makeTaskCreator } from '@renderer/lib/tasklist/taskCreation';
 import { resolveTextTileVaultPath } from '@renderer/lib/boards/textTilePath';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
-import type { TaskListBoard as TaskListBoardType, Tile, TileDefinition } from '@renderer/schema/index';
+import type { Project, TaskListBoard as TaskListBoardType, Tile, TileDefinition } from '@renderer/schema/index';
 
 function makeBoard(defaultFolder: string): TaskListBoardType {
   return {
@@ -83,6 +83,10 @@ describe('Audit-12 H1 — Task List creation persists filePath', () => {
     boardCacheStore.clear();
     vaultIndexStore.clear();
     vaultStore.setPath('/vault');
+    // A board's own folder pin applies only with board-specific folders on.
+    vi.spyOn(vaultStore, 'project', 'get').mockReturnValue(
+      { settings: { general: { boardFolders: true } } } as unknown as Project,
+    );
     installFiloMock((channel: string) => {
       if (channel === 'vault:read-file-text') {
         return { success: true, content: '---\ncompleted: false\n---\n', mtimeMs: 1, size: 24 };

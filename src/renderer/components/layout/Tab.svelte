@@ -6,7 +6,7 @@
   import { getContextMenuKeyPosition } from '../../lib/utils/contextMenuKey';
   import { noteTitle } from '../../stores/noteMeta';
   import { setNoteTitle } from '../../lib/notes/setNoteTitle';
-  import { renameBoard, setBoardEmoji } from '../../stores/boardIdentity';
+  import { boardRenameProblem, renameBoard, setBoardEmoji } from '../../stores/boardIdentity';
 
   const RENAME_ICON = 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z';
 
@@ -83,6 +83,22 @@
     }
   });
 
+  // A board's name is its file name, so a name the file system can't take (or
+  // one another board in its folder has) is shown as it is typed. A note's
+  // title may hold anything.
+  const renameProblem = $derived(
+    isRenaming && !notePath && renameValue.trim() !== displayName
+      ? boardRenameProblem(tab.boardId, renameValue)
+      : null,
+  );
+  const problemAnchor = $derived.by(() => {
+    if (!renameProblem || !renameInputEl) return null;
+    // Above the input when the tab strip sits at the bottom of the window.
+    const r = renameInputEl.getBoundingClientRect();
+    const above = r.bottom + 48 > window.innerHeight;
+    return { x: r.left, y: above ? r.top - 4 : r.bottom + 4, above };
+  });
+
   function commitRename() {
     // Escape sets isRenaming=false, then the input unmounts and its blur
     // fires here — don't commit the rename the user just aborted. (Now that
@@ -91,12 +107,15 @@
     isRenaming = false;
     if (!renameValue || renameValue === displayName) return;
     if (notePath) void setNoteTitle(notePath, renameValue, tab.boardId);
-    else renameBoard(tab.boardId, renameValue);
+    // A refused name toasts its reason and keeps the old one.
+    else void renameBoard(tab.boardId, renameValue);
   }
 
   function handleRenameKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') commitRename();
-    else if (e.key === 'Escape') isRenaming = false;
+    // Enter on a refused name keeps the field open so it can be fixed.
+    if (e.key === 'Enter') {
+      if (!renameProblem) commitRename();
+    } else if (e.key === 'Escape') isRenaming = false;
   }
 
   function handleDblClick() {
@@ -225,7 +244,19 @@
       onblur={commitRename}
       onkeydown={handleRenameKeydown}
       aria-label="Rename {displayName}"
+      class:invalid={renameProblem !== null}
+      aria-invalid={renameProblem !== null}
+      aria-describedby={renameProblem ? 'tab-rename-problem-' + tab.id : undefined}
     />
+    {#if renameProblem && problemAnchor}
+      <span
+        class="tab-rename-problem"
+        class:above={problemAnchor.above}
+        id={'tab-rename-problem-' + tab.id}
+        role="alert"
+        style="left: {problemAnchor.x}px; top: {problemAnchor.y}px;"
+      >{renameProblem}</span>
+    {/if}
   {:else}
     <span class="tab-name">{displayName}</span>
   {/if}
@@ -335,6 +366,29 @@
 
   .tab-rename:focus:not(:focus-visible) {
     outline: none;
+  }
+
+  .tab-rename.invalid {
+    border-color: var(--accent-danger);
+  }
+
+  /* Fixed, because the tab strip clips anything below its own height. */
+  .tab-rename-problem {
+    position: fixed;
+    z-index: var(--z-tooltip);
+    max-width: 260px;
+    padding: 4px 8px;
+    border: 1px solid var(--accent-danger);
+    border-radius: 4px;
+    background: var(--ui-surface);
+    color: var(--accent-danger);
+    font-size: 12px;
+    white-space: normal;
+    pointer-events: none;
+  }
+
+  .tab-rename-problem.above {
+    transform: translateY(-100%);
   }
 
   .tab-close {

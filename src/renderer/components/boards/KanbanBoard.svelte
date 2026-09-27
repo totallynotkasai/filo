@@ -43,7 +43,7 @@
     importKanbanFileTile,
   } from '../../lib/kanban/kanbanFileDropHandler';
   import { makeKanbanFrontmatterWriter } from '../../lib/kanban/kanbanFrontmatterWriter';
-  import { makeKanbanTileCreator } from '../../lib/kanban/kanbanTileCreation';
+  import { makeKanbanTileCreator, newCardFolder } from '../../lib/kanban/kanbanTileCreation';
   import { computeKanbanInsertIndex } from '../../lib/kanban/kanbanInsertPosition';
   import { flushLastViewForBoard } from '../../lib/boards/lastViewFlush';
   import { registerComponentFlush } from '../../lib/boards/componentFlush';
@@ -514,7 +514,7 @@
           tileId,
           sourcePath,
           fileName: file.name,
-          vaultRoot,
+          vaultRoot, destFolder: newCardFolder(board),
           allTilesById,
           refreshTree: async () => { await vaultStore.refreshTree(); },
         });

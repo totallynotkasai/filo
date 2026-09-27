@@ -272,8 +272,13 @@ export function registerBoardHandlers(): void {
       // Reject DOS device names (CON, NUL, LPT1, ...) on the board name:
       // `CON.board.json` would open a console device handle on Windows and
       // the write would no-op or hang the IPC.
+      // The name is also the file stem, used verbatim (never sanitised), so a
+      // trailing dot or space in the name itself is refused too.
+      assertSafeFilename(name, { forCreation: true });
       assertSafeFilename(`${name}.board.json`, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:create');
+      // A taken name fails here with EEXIST (`TARGET_EXISTS` to the renderer),
+      // before anything is written.
       const fullPath = await createBoardFile(vaultRoot, name, data, subfolder);
       assertWithinVault(vaultRoot, fullPath);
       // `path.relative`, not a string strip: the root the renderer sends can be
@@ -281,11 +286,10 @@ export function registerBoardHandlers(): void {
       // slashes, a trailing separator), and a strip that misses returns an
       // absolute path every later `board:save` of the board refuses.
       const relativePath = relativePosix(vaultRoot, fullPath);
-      // The name is picked inside `createBoardFile`, so the echo can only be
-      // hidden after the write; the watcher's debounce still holds the event
-      // then. Unhidden, the create reaches the renderer as an external change
-      // to a board the user may already be editing, and asks "modified
-      // externally".
+      // Hidden after the write (a refused create changes nothing); the
+      // watcher's debounce still holds the event then. Unhidden, the create
+      // reaches the renderer as an external change to a board the user may
+      // already be editing, and asks "modified externally".
       getActiveWatcher()?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
       // The new file's stat seeds the renderer's drift baseline, so the first
       // save has an anchor without waiting for a load. Best-effort: without

@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import { join, dirname } from 'path';
-import { atomicWriteFile, ensureDir, pathExists, sanitizeFilename } from './filenameUtils';
+import { atomicWriteFile, ensureDir } from './filenameUtils';
+import { createExclusiveFile } from './exclusiveCreate';
 import { relativePosix } from '../utils/pathHelpers';
 import { detectConflictCopyPath } from '../../shared/conflictCopy';
 
@@ -53,9 +54,10 @@ export async function saveBoardFile(filePath: string, data: unknown): Promise<vo
 // ── Create ──
 
 /**
- * Creates a new .board.json file in the vault.
- * Returns the full path to the created file.
- * If a file with the same name exists, appends (2), (3), etc.
+ * Creates `<name>.board.json` in the vault and returns its full path. The
+ * name is used as given: a board's name and its file name are one value, so
+ * a taken name is refused (code `EEXIST`) rather than bumped to ` (2)`,
+ * which would leave the board named differently from its file.
  */
 export async function createBoardFile(
   vaultRoot: string,
@@ -64,21 +66,10 @@ export async function createBoardFile(
   subfolder?: string,
 ): Promise<string> {
   const targetDir = subfolder ? join(vaultRoot, subfolder) : vaultRoot;
-  await ensureDir(targetDir);
-
-  const sanitized = sanitizeFilename(name);
-  let filePath = join(targetDir, `${sanitized}${BOARD_EXTENSION}`);
-
-  if (await pathExists(filePath)) {
-    let counter = 2;
-    while (await pathExists(filePath)) {
-      filePath = join(targetDir, `${sanitized} (${counter})${BOARD_EXTENSION}`);
-      counter++;
-    }
-  }
-
   const json = serializeBoardPayload(data);
-  await atomicWriteFile(filePath, json);
+  await ensureDir(targetDir);
+  const filePath = join(targetDir, `${name}${BOARD_EXTENSION}`);
+  await createExclusiveFile(filePath, json);
   return filePath;
 }
 

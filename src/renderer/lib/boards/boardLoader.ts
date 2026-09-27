@@ -18,6 +18,7 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { baselineSeq, noteBaseline } from '../vault/fileBaselineRegistry';
 import { loadVersionedFile } from '../vault/loadVersionedFile';
 import { detectConflictCopyPath } from '@shared/conflictCopy';
+import { boardNameFromPath } from './boardNaming';
 
 // allow-module-state: immutable lookup table derived from a build-time constant
 const TILE_TYPE_SET: ReadonlySet<string> = new Set(TILE_TYPES);
@@ -314,6 +315,11 @@ export interface LoadBoardResult {
    * `.filo/recovery/` (see snapshot path emitted in the toast).
    */
   orphansPruned: boolean;
+  /**
+   * The name the file's JSON declares. `data.board.name` is the file stem;
+   * this is kept only to rank two files that claim the same board id.
+   */
+  declaredName?: string;
   /**
    * True when `pruneOrphanRefsAndDuplicates` rewrote at least one
    * nested connection / frame / mindmap-group `boardId` to match
@@ -620,9 +626,13 @@ export async function loadBoard(
   // round-trip (the cache stores this object and the writer serialises it), so
   // a forward-compat key a newer Filo wrote isn't dropped. The explicit fields
   // below still pin the validated shape.
+  //
+  // The file stem is the board's name; `board.name` is only its copy, so a
+  // copy that differs (the file renamed while Filo was closed, a hand edit)
+  // gives way. Nothing is written for it; the next save carries the name.
   const normalised: BoardFileData = {
     ...data,
-    board: data.board,
+    board: { ...data.board, name: boardNameFromPath(relPath) },
     tileDefs: data.tileDefs,
     connections: data.connections,
     frames: data.frames,
@@ -640,6 +650,7 @@ export async function loadBoard(
     orphansPruned: orphanReportHasFindings(orphanReport),
     boardIdsNormalized: orphanReport.normalizedBoardIdRefs.length > 0,
     mtimeMs: preStat?.mtimeMs,
+    declaredName: data.board.name,
   };
 }
 
@@ -676,7 +687,7 @@ function compareDuplicateBoards(
   const conflict = Number(isConflictCopy(a.relPath)) - Number(isConflictCopy(b.relPath));
   if (conflict !== 0) return conflict;
   const named = (e: LoadedBoardEntry): number =>
-    baseName(e.relPath).toLowerCase() === `${boardFileStem(e.result.data.board.name)}.board.json` ? 0 : 1;
+    baseName(e.relPath).toLowerCase() === `${boardFileStem(e.result.declaredName ?? e.result.data.board.name)}.board.json` ? 0 : 1;
   const byName = named(a) - named(b);
   if (byName !== 0) return byName;
   const byMtime = (b.result.mtimeMs ?? -Infinity) - (a.result.mtimeMs ?? -Infinity);

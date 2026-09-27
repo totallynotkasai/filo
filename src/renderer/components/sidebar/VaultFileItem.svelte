@@ -83,27 +83,30 @@
     return toVaultRelative(node.path, vaultStore.path) ?? toPosix(node.path);
   }
 
-  // ── Per-board "Default Folder" pin ──
-  // The bookmark sibling button next to the "Use as Root Directory" tree-icon
-  // pins this folder as the destination for the *currently active* board only.
-  // Cascade priority lives in `getActiveContentFolder`: vault-wide pin →
-  // per-board pin → vault root. `boardStore.settingsVersion` is read so the
-  // derived pin value re-evaluates on every settings mutation (Svelte 5's
-  // proxy tracker doesn't always notify when `settings.defaultFolder` is
-  // first stamped onto a board).
+  // ── The one folder pin: where new files go ──
+  // With board folders on, the tree button shows and sets the active board's
+  // own folder (`settings.defaultFolder`); with them off, the vault-wide Root
+  // Directory. `getActiveContentFolder` resolves the same rule, so the green
+  // button is always where files go. `boardStore.settingsVersion` is read so
+  // the board pin re-evaluates on every settings mutation (Svelte 5's proxy
+  // tracker doesn't always notify when `settings.defaultFolder` is first
+  // stamped onto a board).
   const activeBoard = $derived(boardStore.current);
-  const boardFolderRel = $derived.by(() => {
+  const boardFolders = $derived(vaultStore.project?.settings?.general?.boardFolders === true);
+  const pinnedFolderAbs = $derived.by(() => {
+    if (!boardFolders) return vaultStore.activeRootFolderAbs;
     void boardStore.settingsVersion;
-    return (activeBoard?.settings as { defaultFolder?: string } | undefined)?.defaultFolder ?? '';
+    const rel = (activeBoard?.settings as { defaultFolder?: string } | undefined)?.defaultFolder ?? '';
+    return rel && vaultStore.path ? `${vaultStore.path.replace(/[\\/]+$/, '')}/${rel}` : '';
   });
-  const boardFolderAbs = $derived(
-    boardFolderRel && vaultStore.path
-      ? `${vaultStore.path.replace(/[\\/]+$/, '')}/${boardFolderRel}`
-      : '',
-  );
-  const isBoardPinnedHere = $derived(
-    !!activeBoard && node.isDirectory && samePath(boardFolderAbs, node.path),
-  );
+  const isPinnedHere = $derived(node.isDirectory && samePath(pinnedFolderAbs, node.path));
+  const pinDisabled = $derived(boardFolders && !activeBoard);
+
+  function togglePin(e: MouseEvent): void {
+    e.stopPropagation();
+    if (boardFolders) boardStore.setBoardDefaultFolder(node.path);
+    else vaultStore.setActiveRootFolder(node.path);
+  }
 
   function openTagEditor(e: MouseEvent) {
     e.stopPropagation();
@@ -554,51 +557,29 @@
 
   <div
     class="file-actions"
-    class:has-pinned-active={
-      node.isDirectory && (
-        samePath(vaultStore.activeRootFolderAbs, node.path) ||
-        isBoardPinnedHere
-      )
-    }
+    class:has-pinned-active={isPinnedHere}
   >
     {#if node.isDirectory}
       <!--
-        Default Folder for this Board (per-board pin). When active (blue),
-        new tiles created on the *currently active board* and files dropped
-        onto its canvas land in this folder. Disabled when no board is open.
-        Travels with the board (persisted in .board.json). Overridden by the
-        vault-wide "Use as Root Directory" pin when one is set.
-      -->
-      <button
-        class="action-btn board-folder-btn"
-        class:active={isBoardPinnedHere}
-        disabled={!activeBoard}
-        onclick={(e) => { e.stopPropagation(); boardStore.setBoardDefaultFolder(node.path); }}
-        title={activeBoard
-          ? `Default folder for board "${activeBoard.name}"`
-          : 'Open a board to set its default folder'}
-        aria-pressed={isBoardPinnedHere}
-        aria-label="Toggle default folder for current board on {node.name}"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-        </svg>
-      </button>
-      <!--
-        Root Directory toggle. When active (green), new tiles created on
-        the canvas and files dropped onto a board land inside this folder
-        instead of the vault root. Vault-wide, mutually exclusive — only
-        one folder can be the active root at a time. Persisted in
-        .filo/app.json. Stays visible even when the row isn't hovered so
-        the user can see at a glance which folder is currently selected.
-        Overrides the per-board pin above when set.
+        Root Directory toggle: the one folder pin. When active (green), new
+        files (tiles, cards, tasks, drops, recordings, picked files, images)
+        land inside this folder instead of the vault root. With board folders
+        on it is the active board's folder, saved in its .board.json, and is
+        disabled while no board is open; with them off it is vault-wide,
+        saved in .filo/app.json. Stays visible when the row isn't hovered so
+        the user can see at a glance which folder is selected.
       -->
       <button
         class="action-btn root-dir-btn"
-        class:active={samePath(vaultStore.activeRootFolderAbs, node.path)}
-        onclick={(e) => { e.stopPropagation(); vaultStore.setActiveRootFolder(node.path); }}
-        title="Use as Root Directory for new tiles and dropped files"
-        aria-pressed={samePath(vaultStore.activeRootFolderAbs, node.path)}
+        class:active={isPinnedHere}
+        disabled={pinDisabled}
+        onclick={togglePin}
+        title={pinDisabled
+          ? 'Open a board to choose its folder'
+          : boardFolders
+            ? `Use as the folder for board "${activeBoard?.name ?? ''}"`
+            : 'Use as Root Directory for new tiles and dropped files'}
+        aria-pressed={isPinnedHere}
         aria-label="Toggle Root Directory for {node.name}"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -910,16 +891,6 @@
     background: var(--ui-surface-hover);
   }
 
-  /* Per-board "Default Folder" pin — turns blue when this folder is the
-     active board's default destination. Same hover behaviour as root-dir-btn:
-     hidden until row hover, but pinned-visible via .has-pinned-active. */
-  .action-btn.board-folder-btn.active {
-    color: var(--accent-primary, #1f6feb);
-  }
-  .action-btn.board-folder-btn.active:hover {
-    color: var(--accent-primary, #1f6feb);
-    background: var(--ui-surface-hover);
-  }
   .action-btn[disabled] {
     opacity: 0.4;
     cursor: default;

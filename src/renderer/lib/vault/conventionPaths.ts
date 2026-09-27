@@ -4,10 +4,10 @@
  * is never re-derived. The naming primitives below (`fileNameSafe`,
  * `nextUniqueMdPath`, `normalizeRootFolder`) are pure — no IPC, no Svelte.
  *
- * `getActiveContentFolder` / `getActiveContentFolderAbs` resolve the cascade
- * for "where does a new file land": vault-wide pin → per-board pin → vault
- * root. They read `vaultStore` reactively so callers in templates / $derived
- * stay live; the rest of the file remains pure for unit-test reuse.
+ * `getActiveContentFolder` resolves "where does a new file land": the board's
+ * own folder with board folders on, else the vault-wide Root Directory, else
+ * the vault root. It reads `vaultStore` reactively so callers in templates /
+ * $derived stay live; the rest of the file remains pure for unit-test reuse.
  */
 import type { BoardFileData } from '../boards/boardSaver';
 import type { Board } from '../../schema/index';
@@ -88,28 +88,31 @@ export function normalizeRootFolder(activeRootFolder: string | undefined | null)
 }
 
 /**
- * Returns the vault-relative folder where new text files created on `board`
- * should land. POSIX slashes, no leading/trailing '/'. Empty string ⇒ vault
- * root.
- *
- * Cascade (highest precedence first):
- *   1. vaultStore.activeRootFolder   (vault-wide "Use as Root Directory")
- *   2. board.settings.defaultFolder  (per-board pin, persisted in .board.json)
- *   3. ''                            (vault root)
- *
- * Pass `null` when no board is active (e.g. drop fired before the board
- * router resolved); rule 2 is skipped.
- *
- * The board param is read through `.passthrough()`'s untyped escape hatch so
- * the helper is board-type-agnostic — every board variant's
- * `BaseBoardSettingsSchema` carries `defaultFolder`.
+ * The folder new files go in. With board folders on it is the board's own
+ * pin (`settings.defaultFolder`, which a new board sets to its folder); with
+ * them off it is the vault-wide Root Directory. The other pin is ignored, so
+ * the sidebar's one tree button always shows where files go. Empty ⇒ the
+ * vault root. Vault-relative, POSIX, no leading or trailing '/'.
+ */
+export function resolveContentFolder(opts: {
+  boardFolders: boolean;
+  rootFolder: string | undefined | null;
+  boardFolder: unknown;
+}): string {
+  if (!opts.boardFolders) return normalizeRootFolder(opts.rootFolder);
+  return typeof opts.boardFolder === 'string' ? normalizeRootFolder(opts.boardFolder) : '';
+}
+
+/**
+ * `resolveContentFolder` for the open vault and `board` (`null` when no
+ * board is active: with board folders on, files then go to the vault root).
+ * Reads `vaultStore` reactively, so callers in templates / $derived stay live.
+ * Every board variant's settings carry `defaultFolder`.
  */
 export function getActiveContentFolder(board: Board | null): string {
-  const vaultPin = normalizeRootFolder(vaultStore.activeRootFolder);
-  if (vaultPin) return vaultPin;
-  const perBoard = (board?.settings as { defaultFolder?: unknown } | undefined)?.defaultFolder;
-  if (typeof perBoard === 'string' && perBoard.length > 0) {
-    return normalizeRootFolder(perBoard);
-  }
-  return '';
+  return resolveContentFolder({
+    boardFolders: vaultStore.project?.settings?.general?.boardFolders === true,
+    rootFolder: vaultStore.activeRootFolder,
+    boardFolder: (board?.settings as { defaultFolder?: unknown } | undefined)?.defaultFolder,
+  });
 }

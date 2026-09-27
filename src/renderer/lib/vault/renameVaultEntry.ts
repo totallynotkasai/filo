@@ -1,7 +1,8 @@
 import type { FileTreeNode } from '../../../shared/types';
 import { vaultStore } from '../../stores/vault.svelte';
 import { uiStore } from '../../stores/ui.svelte';
-import { toPosix, toVaultRelative } from '../utils/path';
+import { samePath, toPosix, toVaultRelative } from '../utils/path';
+import { BOARD_FILE_SUFFIX, boardNameFromPath } from '../boards/boardNaming';
 
 /**
  * Renames a sidebar entry to `draft` (already validated by the caller with
@@ -24,6 +25,13 @@ export async function renameVaultEntry(node: FileTreeNode, draft: string): Promi
     const newRel = toVaultRelative(newAbsPath, vaultRoot) ?? toPosix(newAbsPath);
     try {
       const exists = await window.filo.invoke('vault:file-exists', vaultRoot, newRel);
+      // A board's file name is its name, so another board's name is refused
+      // like it is everywhere else, never offered as an overwrite. The same
+      // file under another case is not a clash.
+      if (exists && ext === BOARD_FILE_SUFFIX && !samePath(finalName, node.name)) {
+        uiStore.toast(`A board named "${boardNameFromPath(finalName)}" already exists in this folder.`, 'error');
+        return;
+      }
       if (exists) {
         // The in-app ConfirmDialog inherits focus management, reduced motion
         // and the unified Esc/Enter handling.

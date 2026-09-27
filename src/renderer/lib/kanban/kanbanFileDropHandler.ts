@@ -117,15 +117,17 @@ export async function importKanbanFileTile(args: {
   sourcePath: string;
   fileName: string;
   vaultRoot: string;
+  /** The board's folder for new files ('' = vault root). */
+  destFolder: string;
   allTilesById: Record<string, Tile>;
   refreshTree: () => Promise<void>;
 }): Promise<TileDefinition | null> {
-  const { type, tileId, sourcePath, fileName, vaultRoot, allTilesById, refreshTree } = args;
+  const { type, tileId, sourcePath, fileName, vaultRoot, destFolder, allTilesById, refreshTree } = args;
   const now = Date.now();
 
   // Drain-before-IPC lives in copyFileIntoVault, so a debounced `.board.json`
   // write can't race the new file's creation.
-  const res = await copyFileIntoVault(sourcePath, vaultRoot);
+  const res = await copyFileIntoVault(sourcePath, vaultRoot, destFolder);
   if (!res.success) return null;
 
   if (type === 'text') {

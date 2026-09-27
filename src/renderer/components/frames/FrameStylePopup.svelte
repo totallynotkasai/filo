@@ -21,6 +21,7 @@
   const boardStore = scope.board;
   import ColorPicker from '../shared/ColorPicker.svelte';
   import BackgroundImagePicker from '../shared/BackgroundImagePicker.svelte';
+  import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
   import { portal } from '../../lib/utils/portal';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
 
@@ -279,7 +280,7 @@
   <!-- Background Image (Upload) -->
   <div class="style-row bg-image-row">
     <span>Background Image</span>
-    <BackgroundImagePicker value={bgImage} onChange={onBgImageChange} />
+    <BackgroundImagePicker value={bgImage} onChange={onBgImageChange} folder={getActiveContentFolder(boardStore.current)} />
   </div>
 
   <!-- Frame Opacity — applies to header fill + body fill + background image

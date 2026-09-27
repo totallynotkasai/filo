@@ -6,19 +6,26 @@
    * Chromium-security limitation (cannot load file:// URLs directly).
    *
    * Used by FrameStylePopup, CurrentBoardMindMap, BoardDefaults.
+   *
+   * An uploaded image is copied into `folder` (the board's folder for new
+   * files), or, when none is passed, the active board's.
    */
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
+  import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
+  import { boardStore } from '../../stores/board.svelte';
 
   let {
     value,
     onChange,
     title = 'Choose Background Image',
+    folder,
   }: {
     value: string;
     onChange: (newValue: string) => void;
     title?: string;
+    folder?: string;
   } = $props();
 
   let previewUrl = $state('');
@@ -58,7 +65,7 @@
     // before the file lands on disk.
     const src = paths[0];
     if (!src) return; // paths non-empty (checked above)
-    const res = await copyFileIntoVault(src, vaultPath);
+    const res = await copyFileIntoVault(src, vaultPath, folder ?? getActiveContentFolder(boardStore.current));
     if (res.success) {
       onChange(res.relativePath ?? res.path ?? '');
     } else {

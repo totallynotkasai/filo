@@ -10,6 +10,7 @@
   import { createTile } from '../../stores/tiles.svelte';
   import { instantiateLayoutTemplate } from '../../lib/templates/layoutCapture';
   import { fileNameSafe, getActiveContentFolder, nextFreeMdPath } from '../../lib/vault/conventionPaths';
+  import { freeNewBoardName } from '../../lib/boards/newBoardPlace';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import {
     collectTemplateRefs,
@@ -128,12 +129,11 @@
       const obj = instance.boardJson as { type?: string; settings?: Record<string, unknown> };
       const type = obj.type && typeof obj.type === 'string' ? obj.type : 'mindmap';
       const settings = (obj.settings ?? {}) as Record<string, unknown>;
-      const newName = `${ref.name} ${new Date().toISOString().slice(0, 10)}`;
+      // The name is the board's file name, so it must be free where the board goes.
+      const newName = freeNewBoardName(`${ref.name} ${new Date().toISOString().slice(0, 10)}`);
+      // A failure has already said why.
       const created = await boardStore.createBoard(newName, type, settings);
-      if (!created) {
-        uiStore.toast(`Failed to create board from template "${ref.name}"`, 'error');
-        return;
-      }
+      if (!created) return;
       tabStore.open(created.id, created.name, created.type, created.emoji ?? '');
       uiStore.toast(`Created board "${created.name}"`, 'success', 1800);
       uiStore.closeModal();

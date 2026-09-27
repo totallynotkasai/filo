@@ -22,6 +22,7 @@
   import { workspaceStore } from './stores/workspace.svelte';
   import { registerDriftPromptHandlers } from './stores/vaultExternalDriftPrompts';
   import { registerNewNotesInTree } from './stores/newNotesInTree';
+  import { registerBoardNamesFollowFiles } from './stores/boardIdentity';
   import { pushSaveState } from './stores/saveStateFeed';
   import { setHeldDecisionsListener } from './stores/heldDecisions';
 
@@ -30,6 +31,8 @@
   registerDriftPromptHandlers();
   // The watcher never reports our own creates, so a new note re-reads the tree.
   registerNewNotesInTree();
+  // A `.board.json` renamed in the sidebar or by another program renames its board.
+  registerBoardNamesFollowFiles();
 
   // Apply the default theme to the DOM on startup. Routing through
   // themeStore.setBuiltin keeps every theme switch on a single code path.

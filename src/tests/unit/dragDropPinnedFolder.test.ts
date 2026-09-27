@@ -26,6 +26,7 @@ import { resetActiveScope, type BoardScope } from '@renderer/lib/boards/boardSco
 import { historyStore } from '@renderer/stores/history.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import type { Project } from '@renderer/schema/index';
 
 /**
  * A file dropped from the OS onto a mind map while the board has a folder
@@ -46,6 +47,10 @@ describe('mind-map OS drop with a folder pin', () => {
     installFiloMock(() => ({ ok: true, success: true }));
     vaultStore.setPath('C:/vault');
     vi.spyOn(vaultStore, 'refreshTree').mockResolvedValue(true);
+    // A board's own folder pin applies only with board-specific folders on.
+    vi.spyOn(vaultStore, 'project', 'get').mockReturnValue(
+      { settings: { general: { boardFolders: true } } } as unknown as Project,
+    );
     historyStore.clear();
   });
   afterEach(() => {

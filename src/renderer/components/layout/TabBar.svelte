@@ -4,6 +4,7 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { boardStore } from '../../stores/board.svelte';
   import { createId } from '../../lib/utils/ids';
+  import { isVaultFileKnown, newBoardPlace } from '../../lib/boards/newBoardPlace';
   import type { BoardType } from '../../../shared/types';
   import Tab from './Tab.svelte';
   import { boardRegistry } from '../../core/boardRegistry';
@@ -58,10 +59,12 @@
       tasklist: 'Task List',
       document: 'Document',
     };
+    // The lowest number whose file is free where the board would go: a taken
+    // name is refused at create, never bumped to ` (2)`.
     const base = labels[type];
-    if (!vaultStore.project) return `${base} 1`;
-    const existing = vaultStore.project.boards.filter(b => b.name.startsWith(base));
-    return `${base} ${existing.length + 1}`;
+    let n = 1;
+    while (isVaultFileKnown(newBoardPlace(`${base} ${n}`).path)) n++;
+    return `${base} ${n}`;
   }
 
   async function createQuickBoard(type: BoardType) {
@@ -75,11 +78,9 @@
       vaultStore.project.settings,
     );
 
+    // A failure has already said why.
     const ok = await boardStore.persistNewBoard(board);
-    if (!ok) {
-      uiStore.toast('Failed to create board', 'error');
-      return;
-    }
+    if (!ok) return;
     tabStore.open(board.id, board.name, board.type);
   }
 

@@ -209,7 +209,7 @@ filo/
 │   │   │   ├── boardTiles.ts          # Active-board tiles facade
 │   │   │   ├── boardWaypointsGroups.ts
 │   │   │   ├── boardFrontmatterSync.ts  # Rename propagation + cascade delete (history dispatch)
-│   │   │   ├── boardIdentity.ts       # Board rename / emoji: the .board.json, project list and tabs together
+│   │   │   ├── boardIdentity.ts       # Board rename (renames the .board.json, and its folder while named after the board) / emoji; a renamed .board.json renames its board
 │   │   │   ├── boardHistory.ts        # Per-board history facade for boardStore
 │   │   │   ├── boardRefIntegrity.svelte.ts  # Broken file-reference tracking
 │   │   │   ├── boardStoreTypes.ts
@@ -344,6 +344,8 @@ filo/
 │   │   │   │   ├── configDrift.ts     # A `.filo/` config changed or deleted outside Filo: rebase, keep layout, ask for settings, recreate
 │   │   │   │   ├── miscWriteScheduler.ts
 │   │   │   │   ├── writeScheduler.ts  # createScheduler: the shared debounce/retry/timeout primitive
+│   │   │   │   ├── boardNaming.ts     # A board's name is its .board.json stem: name rules, new-board place, folder-follow rule
+│   │   │   │   ├── newBoardPlace.ts   # Where a new board goes in the open vault, and whether its name is free there
 │   │   │   │   ├── seedTextFileForNewTile.ts # Creates the backing .md for a new text tile
 │   │   │   │   ├── tileDefBuilder.ts
 │   │   │   │   ├── textTilePath.ts
@@ -798,6 +800,7 @@ Themes overwrite Global Defaults. They are not a separate layer.
 - **Board JSON `filePath` field** — Vault-relative paths, not absolute. e.g., `"Notes.md"` or `"subfolder/Notes.md"`. The path is a note's only identity (no `contentId` / `docId`); path-keyed maps use the case-folded `VaultPath` and follow renames.
 - **A note that is a symbolic link is read-only.** `vault:read-file-text` reports `link: true` (lstat), the views freeze with *"This note is a link; edit the original."*, and main refuses a write to it (`NOTE_IS_LINK`, `atomicWriteFile({ refuseLink })`), since an atomic rename would replace the link with a plain file. Hard links aren't detected (KNOWN_LIMITATIONS #34).
 - **Titles are not filenames.** A title edit writes frontmatter `title:` and never renames the file. The filename is derived from the title once, at creation (illegal characters become `-`, ` (n)` on collision). The sidebar shows filenames; its context menu offers "Rename file to match title".
+- **A board's name is its file name.** `Plan.board.json` is the board "Plan"; `board.name` in the JSON is a copy, and on load the stem wins. Renaming the board renames the file (and, with board-specific folders on, its folder while that folder still has the board's name); renaming the file renames the board. A name the file system can't take, or another board's name in the same folder, is refused inline, never bumped to ` (2)` (`board:create` is an exclusive create). With `general.boardFolders` on, a new board gets its own folder and `settings.defaultFolder` pins it; `getActiveContentFolder` then uses only the board pin, and with it off only the vault-wide Root Directory.
 - **Only v8 board files load.** The loader accepts exactly `version: 8`. An older or newer board is listed as failed and never written.
 - **Frontmatter writes are source-preserving.** `assembleNoteText` (`lib/notes/noteFile.ts`) hands the fresh frontmatter source to `assembleMarkdownFile` (`lib/editor/markdownSync.ts`), which patches it with `patchFrontmatterSourceCst` (`lib/vault/frontmatterCstModel.ts`), a CST engine on the `yaml` package. It rewrites only the keys whose value changed and emits every untouched key byte-for-byte from the on-disk source: comments, key order, quoting, and exotic scalars (`02134`, `0xFF00FF`, `1_000`) all survive. A full re-dump (`new Document(fm).toString()`) happens only for a new file, a block that isn't a block mapping, or a changed/deleted key carrying an anchor/alias. Remaining narrow losses: KNOWN_LIMITATIONS #1.
   - **One parser.** Reads (`readNoteText`, the vault index via `lib/vault/frontmatterRead.ts`), the tag rewriter and the engine's value-compare all use the `yaml` package. js-yaml and gray-matter are banned from the app (gate `no-jsyaml`; a second parser coerces unquoted dates / `0b1010` / `<<` merges differently). Tests keep js-yaml only as an independent oracle.

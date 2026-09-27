@@ -21,6 +21,8 @@ import { loadBoard } from '../lib/boards/boardLoader';
 import { baselineSeq, noteBaseline } from '../lib/vault/fileBaselineRegistry';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
+import { IpcEnvelopeError } from '@shared/ipcEnvelope';
+import { boardNameProblem, plannedBoardPlace } from '../lib/boards/boardNaming';
 import { normalizePath, toPosix, normalizeVaultRelative, stripLeadingSlash } from '../lib/utils/path';
 import { createId } from '../lib/utils/ids';
 import { uiStore } from './ui.svelte';
@@ -604,6 +606,22 @@ export const boardCacheStore = {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot) return false;
 
+    // The name is the file stem, used as typed: refused, never rewritten.
+    board.name = board.name.trim();
+    const problem = boardNameProblem(board.name);
+    if (problem) {
+      uiStore.toast(`Couldn't create the board: ${problem}`, 'error');
+      return false;
+    }
+    const place = plannedBoardPlace(board.name, {
+      boardFolders: vaultStore.project?.settings?.general?.boardFolders === true,
+      rootFolder: vaultStore.activeRootFolder,
+    });
+    // A board with its own folder keeps everything it creates there.
+    if (place.defaultFolder) {
+      board.settings = { ...board.settings, defaultFolder: place.defaultFolder } as typeof board.settings;
+    }
+
     // Stamp the version on the very first write: the loader accepts only the
     // current format, so a version-less file would be refused on reload.
     const fileData: BoardFileData = {
@@ -620,6 +638,7 @@ export const boardCacheStore = {
         vaultRoot,
         board.name,
         JSON.stringify(fileData, null, 2),
+        place.folder || undefined,
       );
 
       // The create is Filo's own write: its watcher echo is not an external
@@ -646,6 +665,12 @@ export const boardCacheStore = {
 
       return true;
     } catch (err) {
+      const code = err instanceof IpcEnvelopeError ? err.code : undefined;
+      if (code === 'EEXIST' || code === 'TARGET_EXISTS') {
+        const where = place.folder ? ` in "${place.folder}"` : '';
+        uiStore.toast(`A board named "${board.name}" already exists${where}. Choose another name.`, 'error');
+        return false;
+      }
       reportError(
         'boardCache.persist',
         err,

@@ -83,14 +83,18 @@ describe('board file encoding (real fs)', () => {
     expect(await loadBoardFile(p)).toEqual(data);
   });
 
-  it('(d) createBoardFile writes plain JSON and keeps the (2) collision', async () => {
+  // The name is the file stem, so a taken name is refused, never bumped to
+  // ` (2)` (a board named differently from its file), and the first file is
+  // left as it was.
+  it('(d) createBoardFile writes plain JSON and refuses a taken name', async () => {
     const fd = board('X');
     const first = await createBoardFile(root, 'X', JSON.stringify(fd, null, 2));
-    const second = await createBoardFile(root, 'X', JSON.stringify(fd, null, 2));
-    expect(second).toContain('X (2).board.json');
-    for (const p of [first, second]) {
-      expect(typeof JSON.parse(await fs.readFile(p, 'utf-8'))).toBe('object');
-    }
+    const before = await fs.readFile(first, 'utf-8');
+    expect(typeof JSON.parse(before)).toBe('object');
+    await expect(createBoardFile(root, 'X', JSON.stringify(board('other'), null, 2)))
+      .rejects.toMatchObject({ code: 'EEXIST' });
+    expect(await fs.readFile(first, 'utf-8')).toBe(before);
+    expect((await fs.readdir(root)).filter((n) => n.includes('(2)'))).toEqual([]);
   });
 
   it('refuses a string payload that is not a JSON object', async () => {

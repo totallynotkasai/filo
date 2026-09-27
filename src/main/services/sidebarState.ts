@@ -6,8 +6,8 @@ import { atomicWriteFile } from '../vault/filenameUtils';
 import { logMainError } from '../utils/mainLogger';
 
 /**
- * Per-machine sidebar state — width, in-app floating mode flag, and the
- * last floating-panel bounds.
+ * Per-machine sidebar state — shown or hidden (Hide Vault), width, in-app
+ * floating mode flag, and the last floating-panel bounds.
  *
  * Mirrors `windowState.ts`: persisted at `userData/sidebar-state.json`
  * (NOT in the vault) so the user's preferred sidebar width and floating
@@ -24,6 +24,7 @@ const FloatingBoundsSchema = z.object({
 });
 
 const SidebarStateSchema = z.object({
+  open: z.boolean().default(true),
   width: z.number().min(180).max(600).default(240),
   floating: z.boolean().default(false),
   floatingBounds: FloatingBoundsSchema.optional(),
@@ -38,6 +39,7 @@ export type SidebarFloatingBounds = z.infer<typeof FloatingBoundsSchema>;
  */
 export const SidebarPatchSchema = z
   .object({
+    open: z.boolean().optional(),
     width: z.number().optional(),
     floating: z.boolean().optional(),
     floatingBounds: FloatingBoundsSchema.optional(),
@@ -45,7 +47,7 @@ export const SidebarPatchSchema = z
   .strict();
 export type SidebarPatch = z.infer<typeof SidebarPatchSchema>;
 
-const DEFAULT_STATE: SidebarState = { width: 240, floating: false };
+const DEFAULT_STATE: SidebarState = { open: true, width: 240, floating: false };
 
 function statePath(): string {
   return join(app.getPath('userData'), 'sidebar-state.json');
@@ -144,6 +146,9 @@ export async function updateSidebarState(patch: Partial<SidebarState>): Promise<
   const merged: SidebarState = { ...current };
   if (typeof patch.width === 'number') {
     merged.width = Math.max(180, Math.min(600, Math.round(patch.width)));
+  }
+  if (typeof patch.open === 'boolean') {
+    merged.open = patch.open;
   }
   if (typeof patch.floating === 'boolean') {
     merged.floating = patch.floating;

@@ -70,6 +70,7 @@ export interface RecentVault {
 }
 // Mirrors `src/main/services/sidebarState.ts:26`.
 export interface SidebarState {
+  open: boolean;
   width: number;
   floating: boolean;
   floatingBounds?: { x: number; y: number; width: number; height: number };

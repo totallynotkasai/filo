@@ -397,7 +397,8 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<aside class="vault-sidebar" class:open class:embedded={dragHandlers !== undefined} style="z-index: var(--z-sidebar); width: {widthStyle};">
+<!-- Hidden (slid off-screen), it is inert so Tab can't reach its buttons. -->
+<aside class="vault-sidebar" class:open class:embedded={dragHandlers !== undefined} inert={!open} style="z-index: var(--z-sidebar); width: {widthStyle};">
   <div class="sidebar-inner" bind:this={innerEl} onclick={handleSidebarClick}>
     <!--
       Header acts as a drag handle when `dragHandlers` is provided

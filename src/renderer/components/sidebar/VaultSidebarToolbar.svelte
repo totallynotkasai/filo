@@ -422,18 +422,26 @@
     </button>
   {/if}
 
-  <!-- Close vault. Prompts the user to save before
-       releasing the watcher and returning to the home screen. -->
+  <!-- Hide Vault: hides the sidebar (docked or floating); the global
+       toolbar's sidebar toggle brings it back. Closing the vault lives in
+       the vault name dropdown and on Ctrl+Shift+W. The door's arrow points
+       the way the sidebar will go. -->
   <button
     class="sidebar-btn"
-    onclick={() => void vaultStore.closeVault()}
-    title="Close vault"
-    aria-label="Close vault"
+    onclick={() => uiStore.setSidebarOpen(!uiStore.sidebarOpen)}
+    title={uiStore.sidebarOpen ? 'Hide Vault' : 'Show Vault'}
+    aria-label={uiStore.sidebarOpen ? 'Hide vault sidebar' : 'Show vault sidebar'}
+    data-testid="hide-vault"
   >
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-      <polyline points="16 17 21 12 16 7"/>
-      <line x1="21" y1="12" x2="9" y2="12"/>
+      {#if uiStore.sidebarOpen}
+        <polyline points="15 17 10 12 15 7"/>
+        <line x1="10" y1="12" x2="21" y2="12"/>
+      {:else}
+        <polyline points="16 17 21 12 16 7"/>
+        <line x1="21" y1="12" x2="9" y2="12"/>
+      {/if}
     </svg>
   </button>
 </div>

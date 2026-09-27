@@ -178,7 +178,15 @@ const TOAST_MAX_LIFETIME_MS = 15000;
 export const uiStore = {
   // Sidebar
   get sidebarOpen() { return sidebarOpen; },
-  toggleSidebar() { sidebarOpen = !sidebarOpen; },
+  toggleSidebar() { uiStore.setSidebarOpen(!sidebarOpen); },
+  // Hide Vault and the toolbar toggle. Per machine (`sidebar-state.json`),
+  // so a hidden sidebar stays hidden after a restart.
+  setSidebarOpen(open: boolean) {
+    if (sidebarOpen === open) return;
+    sidebarOpen = open;
+    if (!sidebarHydrated) return;
+    void window.filo.invoke('sidebar:set-state', { open });
+  },
 
   // Sidebar width (per-machine, persisted via `sidebar:set-state` IPC).
   get sidebarWidth() { return sidebarWidth; },
@@ -231,6 +239,9 @@ export const uiStore = {
     if (sidebarHydrated) return;
     try {
       const state = await window.filo.invoke('sidebar:get-state');
+      if (typeof state.open === 'boolean') {
+        sidebarOpen = state.open;
+      }
       if (typeof state.width === 'number') {
         sidebarWidth = Math.max(240, Math.min(600, Math.round(state.width)));
       }

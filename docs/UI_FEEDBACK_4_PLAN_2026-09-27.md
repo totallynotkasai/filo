@@ -346,6 +346,41 @@ Deviations from the plan:
 Tests: sidebar-state round-trip with `open`; hiding in floating mode; the button calls hide
 and not close.
 
+### Phase 3: status and deviations (done 2026-09-27)
+
+The sidebar's last button is **Hide Vault**: it hides the sidebar (docked or floating) and
+leaves the vault open. The sidebar toggle is now the first button of the global toolbar,
+shown whenever a vault is open and on screen. The shown / hidden state is saved as `open`
+in `sidebar-state.json` and restored at startup. **Close Vault** is in the vault name
+dropdown (and still on Ctrl+Shift+W).
+Tests: `unit/sidebarStateOpen.test.ts` (default shown, hidden survives a restart with the
+other fields kept, an old file without `open` reads as shown, the patch schema accepts
+`open` and still refuses unknown keys) and a new characterisation spec
+`hideVault.test.ts` with its driver `harness/sidebar.ts` (docked hide leaves the vault
+open and the toggle brings it back; floating hide unmounts the panel and it comes back
+floating; `open` lands on disk; Close Vault from the menu closes the vault and the toggle
+goes with it). The floating case was checked to fail with step 3 reverted.
+
+Deviations from the plan:
+
+1. **Hide Vault is a toggle** (`setSidebarOpen(!sidebarOpen)`), not a one-way
+   `setSidebarOpen(false)`, so the flipped arrow and its label ("Show Vault") are honest
+   if the button is ever reached while hidden. In practice it is only reachable while the
+   sidebar is shown: its arrow then points left, the way the sidebar goes.
+2. **The docked sidebar is `inert` while hidden.** It only slid off-screen before, so Tab
+   could still reach its buttons (Hide Vault included). Now nothing in it is focusable
+   until it is shown again.
+3. **The toolbar toggle sits before the Home button** (the far left), and is hidden on the
+   Home screen as well as with no vault, since there is no sidebar to show there. It
+   comes in through a new `showSidebarToggle` prop from `AppShell` (which owns the
+   "Home is showing" state). It also gets `aria-pressed`, and its title reads
+   "Hide Sidebar" / "Show Sidebar".
+4. **Close Vault in the dropdown shows only while a vault is open**, sits after Save, and
+   uses the old door icon (the arrow pointing out), the one the sidebar button had.
+5. **No component test**; the behaviour is pinned by the characterisation spec instead,
+   which mounts the whole app, so it also covers the `AppShell` / `GlobalToolbar` wiring
+   a mounted `VaultSidebarToolbar` alone would miss.
+
 ---
 
 ## Phase 4: Vault Sidebar section in General settings

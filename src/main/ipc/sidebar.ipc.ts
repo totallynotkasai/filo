@@ -3,7 +3,7 @@ import { loadSidebarState, updateSidebarState, SidebarPatchSchema } from '../ser
 
 /**
  * Sidebar IPC handlers — per-machine state for the vault sidebar:
- * width, in-app floating-mode flag, and last floating-panel bounds.
+ * shown or hidden, width, in-app floating-mode flag, and last floating-panel bounds.
  *
  * The vault sidebar lives entirely inside the main window. When the
  * user toggles "Float", the renderer renders the sidebar as a draggable

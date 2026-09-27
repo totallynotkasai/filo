@@ -459,7 +459,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="app-shell" oncontextmenu={handleContextMenu}>
   <a class="skip-link" href="#main-workspace">Skip to content</a>
-  <GlobalToolbar onGoHome={goHome} />
+  <GlobalToolbar onGoHome={goHome} showSidebarToggle={!shouldShowHome} />
 
   <div class="app-body">
     {#if vaultStore.project !== null && !shouldShowHome && !uiStore.sidebarFloating}
@@ -499,9 +499,10 @@
     Floating vault panel — lives outside `.app-body` (and outside the
     tab/board content) so its position is anchored to the viewport
     rather than the workspace area, and it persists across tab/board
-    switches by virtue of being a sibling of the workspace.
+    switches by virtue of being a sibling of the workspace. Hide Vault
+    removes it; the toolbar's sidebar toggle brings it back.
   -->
-  {#if vaultStore.project !== null && !shouldShowHome && uiStore.sidebarFloating}
+  {#if vaultStore.project !== null && !shouldShowHome && uiStore.sidebarFloating && uiStore.sidebarOpen}
     <FloatingVaultPanel />
   {/if}
 

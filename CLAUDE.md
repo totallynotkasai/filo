@@ -654,7 +654,7 @@ The only state that lives in Electron `userData` (i.e. outside any vault) is the
 | --- | --- |
 | `recent-vaults.json` | Must be readable before any vault is open. |
 | `window-state.json` | Window size/position is per-display, not per-vault. |
-| `sidebar-state.json` | Sidebar width and floating bounds are per-display. |
+| `sidebar-state.json` | Sidebar width and floating bounds are per-display; shown / hidden (Hide Vault) goes with them. |
 | `machine-id.json` | Identifies this machine so crash sentinels in the synced vault (`.filo/.dirty.<machineId>` …) never cross machines. |
 
 Anything else — including overlay positions (Kanban side toolbar etc.), open tabs, viewports, themes, defaults — goes in `.filo/`.

@@ -15,9 +15,11 @@
 
   interface Props {
     onGoHome?: () => void;
+    /** A vault is open and on screen (not Home), so there is a sidebar to show or hide. */
+    showSidebarToggle?: boolean;
   }
 
-  let { onGoHome }: Props = $props();
+  let { onGoHome, showSidebarToggle = false }: Props = $props();
 
   // Toolbar color from `--toolbar-bg`, written to :root by App.svelte
   // whenever `general.toolbarColor` changes. Height derives from
@@ -164,8 +166,25 @@
 </script>
 
 <header class="global-toolbar" style="height: calc(44px * var(--ui-toolbar-scale, 1));">
-  <!-- Left section: Home + Project -->
+  <!-- Left section: Sidebar toggle + Home + Project -->
   <div class="toolbar-section">
+    <!-- Far left and always there while a vault is open, so a sidebar
+         hidden with Hide Vault (docked or floating) can always come back. -->
+    {#if showSidebarToggle}
+      <IconButton
+        title={uiStore.sidebarOpen ? 'Hide Sidebar' : 'Show Sidebar'}
+        ariaLabel="Toggle sidebar"
+        active={uiStore.sidebarOpen}
+        pressed={uiStore.sidebarOpen}
+        onclick={() => uiStore.toggleSidebar()}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <line x1="9" y1="3" x2="9" y2="21"/>
+        </svg>
+      </IconButton>
+    {/if}
+
     <IconButton title="Home" ariaLabel="Home screen" onclick={handleGoHome}>
       <FiloLogo size={20} />
     </IconButton>
@@ -307,20 +326,8 @@
   <!-- Center section: Text formatting -->
   <TextFormattingToolbar />
 
-  <!-- Right section: Sidebar + Board Toolbar Toggles -->
+  <!-- Right section: Board Toolbar Toggle -->
   <div class="toolbar-section">
-    <IconButton
-      title="Toggle Sidebar"
-      ariaLabel="Toggle sidebar"
-      active={uiStore.sidebarOpen}
-      onclick={() => uiStore.toggleSidebar()}
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <rect x="3" y="3" width="18" height="18" rx="2"/>
-        <line x1="9" y1="3" x2="9" y2="21"/>
-      </svg>
-    </IconButton>
-
     <IconButton
       title="Toggle Board Toolbar"
       ariaLabel="Toggle board toolbar"

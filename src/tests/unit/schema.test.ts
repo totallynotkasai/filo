@@ -27,11 +27,16 @@ describe('Zod Schema Validation', () => {
       }
     });
 
-    it('rejects invalid theme values', () => {
+    it('rejects an empty theme id', () => {
       const now = Date.now();
       expect(() =>
-        ProjectSchema.parse({ createdAt: now, updatedAt: now, theme: 'invalid' }),
+        ProjectSchema.parse({ createdAt: now, updatedAt: now, theme: '  ' }),
       ).toThrow();
+    });
+
+    it('accepts a custom theme id', () => {
+      const now = Date.now();
+      expect(ProjectSchema.parse({ createdAt: now, updatedAt: now, theme: 'my-theme' }).theme).toBe('my-theme');
     });
   });
 

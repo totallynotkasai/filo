@@ -7,10 +7,13 @@ import {
   boardSettingsSchemaFor,
 } from '../schema/index';
 import type { BoardType } from '../../shared/types';
+import type { Board } from '../schema/index';
 import type { z } from 'zod';
 import { vaultStore } from './vault.svelte';
 import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
+import { tabStore } from './tabs.svelte';
+import { workspaceStore } from './workspace.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 
 /**
@@ -65,6 +68,37 @@ function comparable(value: unknown): string {
 
 function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/**
+ * `live` with the edits that turned `base` into `edited` applied to it. A
+ * field the user didn't touch keeps its live value, so something else that
+ * changed the settings while the dialog was open (a theme's colour reset, a
+ * Mind Map toggle) isn't written back to the value it had at the start.
+ */
+function applyEdits(base: unknown, edited: unknown, live: unknown): unknown {
+  if (comparable(base) === comparable(edited)) return live;
+  if (!isPlainObject(edited)) return edited === undefined ? undefined : deepClone(edited);
+  const from = isPlainObject(base) ? base : {};
+  const out: Record<string, unknown> = isPlainObject(live) ? { ...live } : {};
+  for (const key of new Set([...Object.keys(from), ...Object.keys(edited)])) {
+    const next = applyEdits(from[key], edited[key], out[key]);
+    if (next === undefined) delete out[key];
+    else out[key] = next;
+  }
+  return out;
+}
+
+/**
+ * The board the Current Board tab edits: the active pane's board, or none
+ * when that pane shows a note (a Document tab), whose pane still holds the
+ * board it showed before.
+ */
+export function settingsBoard(): Board | null {
+  const leaf = workspaceStore.activeLeaf;
+  const tab = leaf ? tabStore.tabs.find((t) => t.id === leaf.tabId) : tabStore.activeTab;
+  if (tab && (tab.notePath !== undefined || tab.boardType === 'document')) return null;
+  return boardStore.current;
 }
 
 function sliceOf(settings: ProjectSettings): GlobalDefaults {
@@ -135,7 +169,11 @@ function setNestedField(obj: Record<string, unknown>, path: string, value: unkno
  */
 
 let pending = $state<GlobalDefaults | null>(null);
+/** The Global Defaults as they were when `pending` was copied. */
+let pendingBase = $state.raw<GlobalDefaults | null>(null);
 let pendingBoardSettings = $state<Record<string, unknown> | null>(null);
+/** The board's settings as they were when `pendingBoardSettings` was copied. */
+let pendingBoardBase = $state.raw<Record<string, unknown> | null>(null);
 let pendingBoardId = $state<string | null>(null);
 let pendingBoardType = $state<BoardType | null>(null);
 
@@ -154,20 +192,20 @@ export const pendingSettingsStore = {
     return pending !== null || pendingBoardSettings !== null;
   },
 
-  /** The Global Defaults copy differs from the live defaults. */
+  /**
+   * The user edited the Global Defaults copy. Compared with the copy's
+   * starting point, not the live settings: a live change made while the
+   * dialog is open is not an edit and must not ask "Discard changes?".
+   */
   hasGlobalChanges(): boolean {
-    if (pending === null) return false;
-    const live = vaultStore.project?.settings;
-    if (!live) return false;
-    return comparable(pending) !== comparable(sliceOf(live));
+    if (pending === null || pendingBase === null) return false;
+    return comparable(pending) !== comparable(pendingBase);
   },
 
-  /** The Current Board copy differs from that board's live settings. */
+  /** The user edited the Current Board copy (see `hasGlobalChanges`). */
   hasBoardChanges(): boolean {
-    if (pendingBoardSettings === null || pendingBoardId === null) return false;
-    const live = liveBoardSettings(pendingBoardId);
-    if (!live) return false;
-    return comparable(pendingBoardSettings) !== comparable(live);
+    if (pendingBoardSettings === null || pendingBoardId === null || pendingBoardBase === null) return false;
+    return comparable(pendingBoardSettings) !== comparable(pendingBoardBase);
   },
 
   /**
@@ -215,7 +253,7 @@ export const pendingSettingsStore = {
    */
   get effectiveBoardSettings(): Record<string, unknown> | null {
     if (pendingBoardSettings) return pendingBoardSettings;
-    const board = boardStore.current;
+    const board = settingsBoard();
     return (board?.settings as Record<string, unknown>) ?? null;
   },
 
@@ -227,23 +265,30 @@ export const pendingSettingsStore = {
    */
   startGlobal(): void {
     const live = vaultStore.project?.settings;
-    if (live) pending = deepClone(sliceOf(live));
+    if (!live) return;
+    pendingBase = deepClone(sliceOf(live));
+    pending = deepClone(pendingBase);
   },
 
   /**
-   * Copies the active board's settings into `pendingBoardSettings`. Re-arms
-   * the Current Board tab without touching the Global Defaults copy.
+   * Copies the settings of the board the Current Board tab edits
+   * (`settingsBoard`) into `pendingBoardSettings`, from the board cache (the
+   * copy that is saved). Re-arms the Current Board tab without touching the
+   * Global Defaults copy.
    */
   startBoard(): void {
-    const board = boardStore.current;
-    if (board) {
+    const board = settingsBoard();
+    const live = board ? liveBoardSettings(board.id) : undefined;
+    if (board && live) {
       pendingBoardId = board.id;
       pendingBoardType = board.type;
-      pendingBoardSettings = deepClone(board.settings as Record<string, unknown>);
+      pendingBoardBase = deepClone(live);
+      pendingBoardSettings = deepClone(live);
     } else {
       pendingBoardId = null;
       pendingBoardType = null;
       pendingBoardSettings = null;
+      pendingBoardBase = null;
     }
   },
 
@@ -294,20 +339,23 @@ export const pendingSettingsStore = {
    */
   applyGlobal(): ApplyResult {
     const project = vaultStore.project;
-    if (!project || !pending) return { ok: true, changed: false };
+    if (!project || !pending || !pendingBase) return { ok: true, changed: false };
     if (!this.hasGlobalChanges()) {
       pending = null;
+      pendingBase = null;
       return { ok: true, changed: false };
     }
+    const next = applyEdits(pendingBase, pending, sliceOf(project.settings)) as GlobalDefaults;
     for (const key of GLOBAL_DEFAULTS_KEYS) {
-      const result = GLOBAL_DEFAULTS_SCHEMAS[key].safeParse(pending[key]);
+      const result = GLOBAL_DEFAULTS_SCHEMAS[key].safeParse(next[key]);
       if (!result.success) {
         return { ok: false, message: `Couldn't apply the Global Defaults: ${firstIssue(result.error, key)}` };
       }
     }
-    project.settings = { ...project.settings, ...deepClone(pending) };
+    project.settings = { ...project.settings, ...deepClone(next) };
     vaultStore.markMetaDirty();
     pending = null;
+    pendingBase = null;
     return { ok: true, changed: true };
   },
 
@@ -319,12 +367,13 @@ export const pendingSettingsStore = {
    * (the single sink) and mirrors onto the active board for reactivity.
    */
   applyBoard(): ApplyResult {
-    if (!pendingBoardSettings || !pendingBoardId) return { ok: true, changed: false };
+    if (!pendingBoardSettings || !pendingBoardId || !pendingBoardBase) return { ok: true, changed: false };
     if (!this.hasBoardChanges()) {
       this.cancelBoard();
       return { ok: true, changed: false };
     }
-    const next = prune(pendingBoardSettings) as Record<string, unknown>;
+    const live = liveBoardSettings(pendingBoardId) ?? {};
+    const next = prune(applyEdits(pendingBoardBase, pendingBoardSettings, live)) as Record<string, unknown>;
     if (pendingBoardType) {
       const result = boardSettingsSchemaFor(pendingBoardType).safeParse(next);
       if (!result.success) {
@@ -343,11 +392,13 @@ export const pendingSettingsStore = {
   /** Discards the Global Defaults copy. */
   cancelGlobal(): void {
     pending = null;
+    pendingBase = null;
   },
 
   /** Discards the Current Board copy. */
   cancelBoard(): void {
     pendingBoardSettings = null;
+    pendingBoardBase = null;
     pendingBoardId = null;
     pendingBoardType = null;
   },

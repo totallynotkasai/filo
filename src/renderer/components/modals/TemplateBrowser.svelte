@@ -564,7 +564,7 @@
   .rename-error {
     margin: 0;
     font-size: 11px;
-    color: var(--ui-danger, #d83b3b);
+    color: var(--accent-danger);
   }
 
   .layout-actions {
@@ -590,8 +590,8 @@
   }
 
   .action-btn.danger:hover {
-    color: var(--ui-danger, #d83b3b);
-    border-color: var(--ui-danger, #d83b3b);
+    color: var(--accent-danger);
+    border-color: var(--accent-danger);
   }
 
   .confirm-popover {
@@ -637,8 +637,8 @@
 
   .confirm-actions button.danger {
     color: var(--accent-on-primary, white);
-    background: var(--ui-danger, #d83b3b);
-    border-color: var(--ui-danger, #d83b3b);
+    background: var(--accent-danger);
+    border-color: var(--accent-danger);
   }
 
   .md-list {

@@ -20,28 +20,22 @@ import {
   KanbanBoardSchema,
   TaskListBoardSchema,
   DocumentBoardSchema,
+  defaultProjectSettings,
 } from '../schema/index';
 import { createId } from '../lib/utils/ids';
-import {
-  buildBoardSettingsFromGlobal,
-  buildBoardSettingsFromTheme,
-} from '../lib/styles/buildBoardDefaults';
+import { buildBoardSettingsFromGlobal } from '../lib/styles/buildBoardDefaults';
 
 /**
- * Snapshots the relevant slice of Global Defaults into a fresh `settings`
- * block for the given board type. When `settings` is undefined (called
- * before a project is loaded, e.g. tests), falls back to schema defaults.
- *
- * After this snapshot is baked into a new board, future edits to Global
- * Defaults do NOT retroactively affect the board — the per-board layer
- * always wins in the cascade.
+ * A new board's `settings` block: no style of its own, so it follows the
+ * Global Defaults (see `buildBoardDefaults.ts` for the rule). `settings`
+ * supplies the one creation-time seed, the Task List title size; undefined
+ * (called before a project is loaded, e.g. tests) uses the schema defaults.
  */
 function snapshotSettings(
   type: BoardType,
   settings: ProjectSettings | Record<string, unknown> | undefined,
 ): Record<string, unknown> {
-  if (!settings) return buildBoardSettingsFromTheme(type);
-  return buildBoardSettingsFromGlobal(type, settings as ProjectSettings);
+  return buildBoardSettingsFromGlobal(type, (settings ?? defaultProjectSettings()) as ProjectSettings);
 }
 
 /**

@@ -42,6 +42,17 @@ let themeCache = $state<Record<string, ThemeFile>>({});
  * the Themes settings panel and NOT persisted across reloads.
  */
 let systemOnly = $state<boolean>(false);
+/**
+ * The built-in theme boards keep while "System colours only" has re-skinned
+ * the chrome with another theme (BoardRouter sets it as the board's
+ * `data-theme`). Null when the whole app shows one theme.
+ */
+let boardTheme = $state<ThemeId | null>(null);
+
+/** Records how the theme just painted covers the boards. */
+function notePainted(): void {
+  boardTheme = systemOnly ? activeTheme : null;
+}
 
 export const themeStore = {
   get active() { return activeTheme; },
@@ -49,6 +60,7 @@ export const themeStore = {
   get available() { return availableThemeIds; },
   get cache() { return themeCache; },
   get systemOnly() { return systemOnly; },
+  get boardTheme() { return boardTheme; },
 
   setSystemOnly(value: boolean) {
     systemOnly = value;
@@ -61,8 +73,11 @@ export const themeStore = {
    * JSON parse failures surface a single aggregated toast naming every bad
    * theme file, so a corrupt `.filo/themes/foo.json` doesn't silently vanish
    * from the picker.
+   *
+   * `reload` names themes to read again even though they are cached: a file
+   * another program changed.
    */
-  async refreshAvailable(vaultRoot: string): Promise<void> {
+  async refreshAvailable(vaultRoot: string, reload: readonly string[] = []): Promise<void> {
     if (!vaultRoot) return;
     // Snapshot identity before the list/load awaits: a swap mid-enumeration
     // must not stamp the outgoing vault's theme catalogue over the incoming
@@ -74,7 +89,12 @@ export const themeStore = {
       const filenames = (await window.filo.invoke('theme:list', vaultRoot)) as string[];
       if (!isStillSameVault(identity)) return;
       const ids = filenames.map((f) => f.replace(/\.json$/i, ''));
-      const next: Record<string, ThemeFile> = { ...themeCache };
+      // Only files still on disk stay cached; one deleted elsewhere is dropped.
+      const next: Record<string, ThemeFile> = {};
+      for (const id of ids) {
+        const cached = themeCache[id];
+        if (cached && !reload.includes(id)) next[id] = cached;
+      }
       const parseFailures: string[] = [];
       for (const id of ids) {
         if (next[id]) continue;
@@ -145,6 +165,7 @@ export const themeStore = {
       // file ID so the UI can highlight the chosen card.
       if (!systemOnly) activeTheme = themeId;
       activeThemeFileId = themeId;
+      notePainted();
       return { ok: true };
     }
     const identity = captureVaultIdentity();
@@ -204,6 +225,7 @@ export const themeStore = {
         const base = file.base ?? 'dark';
         activeTheme = base;
       }
+      notePainted();
       return { ok: true };
     }
     // File missing (theme:load returned null and the cache had no entry).
@@ -244,6 +266,7 @@ export const themeStore = {
       }
       if (!systemOnly) activeTheme = args.activeId;
       activeThemeFileId = args.activeId;
+      notePainted();
       return { ok: true };
     }
 
@@ -271,6 +294,7 @@ export const themeStore = {
       const base = args.activeFile.base ?? 'dark';
       activeTheme = base;
     }
+    notePainted();
     return { ok: true };
   },
 
@@ -282,34 +306,31 @@ export const themeStore = {
     applyBuiltinTheme(theme, { systemOnly });
     if (!systemOnly) activeTheme = theme;
     activeThemeFileId = theme;
+    notePainted();
   },
 
   /**
-   * Saves the current ProjectSettings as a named theme JSON file in
-   * `.filo/themes/`. The file ID is derived from the slugified name.
-   * Returns the file ID on success, or null if no vault is open.
-   *
-   * Format mirrors `ThemeFile`: a `variables` map of CSS custom
-   * properties extracted from current settings. Today the function
-   * does not infer `--ui-*` variables from arbitrary user-chosen
-   * tile/connection colours (those live in per-element style); it
-   * captures only the explicit theme-level settings the user can edit
-   * via the Settings panel.
+   * Paints `file` without making it the active theme: the theme editor's
+   * live preview. `endPreview` paints the active theme again.
    */
-  async saveCurrentAsTheme(
-    vaultRoot: string,
-    name: string,
-    variables: Record<string, string>,
-    base?: ThemeId,
-  ): Promise<string | null> {
-    if (!vaultRoot || !name.trim()) return null;
-    const id = slugify(name);
-    const file: ThemeFile = {
-      id,
-      name: name.trim(),
-      base: base ?? activeTheme,
-      variables,
-    };
+  preview(file: ThemeFile): void {
+    applyCustomTheme(file, { systemOnly: false });
+    boardTheme = null;
+  },
+
+  /** Ends a preview by applying the active theme again. */
+  async endPreview(vaultRoot: string): Promise<void> {
+    await this.applyById(vaultRoot, activeThemeFileId);
+  },
+
+  /**
+   * Writes `file` to `.filo/themes/<file.id>.json`, replacing a theme with
+   * that id (the caller has checked the name with `themeNameProblem`).
+   * Returns the id, or null when the write failed (already toasted).
+   */
+  async saveTheme(vaultRoot: string, file: ThemeFile): Promise<string | null> {
+    if (!vaultRoot || !file.name.trim()) return null;
+    const id = file.id;
     try {
       await trackComponentWrite(
         vaultRoot,
@@ -335,10 +356,8 @@ export const themeStore = {
   },
 
   /**
-   * Deletes a theme file from `.filo/themes/`. Built-in themes are
-   * not protected at this layer — the caller decides whether to allow
-   * deleting them (built-ins are compiled-in constants, so deleting the
-   * file just removes the user's customization).
+   * Moves a custom theme file from `.filo/themes/` into Filo's trash
+   * (Settings → Trash restores it). The caller has confirmed with the user.
    */
   async deleteTheme(vaultRoot: string, themeId: string): Promise<boolean> {
     if (!vaultRoot) return false;
@@ -372,6 +391,7 @@ export const themeStore = {
     availableThemeIds = [];
     themeCache = {};
     systemOnly = false;
+    boardTheme = null;
   },
 };
 
@@ -410,6 +430,7 @@ function applyFallbackLight(): void {
     applyBuiltinTheme('light', { systemOnly: false });
     activeTheme = 'light';
     activeThemeFileId = 'light';
+    boardTheme = null;
   } catch {
     // Built-in 'light' rescue itself failed — there is nothing more we
     // can do at the DOM level. The caller already received { ok: false };
@@ -417,14 +438,6 @@ function applyFallbackLight(): void {
   }
 }
 
-function slugify(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64) || 'theme';
-}
 
 // Vault-swap reset: drops the per-vault custom-theme cache + active-theme tracking so the
 // next vault opens against its own `.filo/themes/` directory rather than
@@ -433,6 +446,7 @@ onVaultSwap('pre-swap', 'theme', () => {
   themeCache = {};
   availableThemeIds = [];
   systemOnly = false;
+  boardTheme = null;
   activeTheme = 'light';
   activeThemeFileId = 'light';
 });

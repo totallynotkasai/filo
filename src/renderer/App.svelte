@@ -18,6 +18,8 @@
   import { describeUnsaved, keepRescueCopies, preservedTmpCount } from './stores/unsavedRescue';
   import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
+  import { themeVersion } from './stores/themeVersion.svelte';
+  import { applyTabBarText, applyToolbarText } from './lib/themes/chromeText';
   import { tabStore } from './stores/tabs.svelte';
   import { workspaceStore } from './stores/workspace.svelte';
   import { registerDriftPromptHandlers } from './stores/vaultExternalDriftPrompts';
@@ -202,9 +204,14 @@
   // through to the CSS-declared fallback in `style.css`). Users can
   // retroactively apply current defaults via the
   // "Apply to all Existing Items" button in General Settings.
+  //
+  // Runs again after every theme paint (`themeVersion`): a theme switch clears
+  // the inline variables the previous theme set, which included the toolbar
+  // and tab bar colours before themes stopped carrying settings.
   $effect(() => {
     const general = vaultStore.project?.settings?.general;
     if (!general) return;
+    void themeVersion.value;
     const root = document.documentElement;
     if (typeof general.globalFontSize === 'number') {
       root.style.setProperty('--font-size-base', `${general.globalFontSize}px`);
@@ -230,13 +237,16 @@
     // Toolbar / tab-bar background colours flow through CSS variables so
     // themes (and the systemOnly switch) can override them at the :root
     // level. Empty string clears the variable so the CSS fallback wins.
+    // Each also gets black or white text so the bar stays readable in any theme.
     if (typeof general.toolbarColor === 'string') {
       if (general.toolbarColor) root.style.setProperty('--toolbar-bg', general.toolbarColor);
       else root.style.removeProperty('--toolbar-bg');
+      applyToolbarText(root, general.toolbarColor);
     }
     if (typeof general.tabBarColor === 'string') {
       if (general.tabBarColor) root.style.setProperty('--tabbar-bg', general.tabBarColor);
       else root.style.removeProperty('--tabbar-bg');
+      applyTabBarText(root, general.tabBarColor);
     }
     if (typeof general.historyLimit === 'number') {
       historyStore.setMaxHistory(general.historyLimit);

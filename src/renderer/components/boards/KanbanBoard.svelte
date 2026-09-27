@@ -1018,7 +1018,7 @@
 >
   <BoardBackground
     pattern={settings.backgroundPattern ?? vaultStore.project?.settings?.kanban?.backgroundPattern}
-    bgColor={settings.backgroundColor}
+    bgColor={settings.backgroundColor || vaultStore.project?.settings?.kanban?.backgroundColor || ''}
   />
 
   {#if findBarOpen}
@@ -1050,7 +1050,7 @@
             clearStaleDndCardStyles={dragController.clearStaleDndCardStyles}
             cardItems={dragController.dndCardsByColumn[column.id] ?? []}
             tilesById={allTilesById}
-            accentColor={settings.accentColor}
+            accentColor={settings.accentColor || vaultStore.project?.settings?.kanban?.accentColor || ''}
             columnStyle={styleForColumn(column)}
             {resolveCardStyle}
             totalCount={(column.tilePlacements ?? []).length}

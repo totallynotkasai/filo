@@ -478,8 +478,8 @@
   }
 
   .text-btn.danger:hover:not(:disabled) {
-    background: var(--ui-danger-soft, var(--ui-surface-hover));
-    color: var(--ui-danger, var(--text-primary));
+    background: var(--menu-danger-bg);
+    color: var(--accent-danger);
   }
 
   .visually-hidden {

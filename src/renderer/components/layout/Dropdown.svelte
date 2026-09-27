@@ -113,7 +113,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--text-primary);
+    color: var(--chrome-fg, var(--text-primary));
     font-size: var(--font-size-base);
     font-weight: 500;
     font-family: var(--font-system);
@@ -123,8 +123,8 @@
   }
 
   .dropdown-trigger:hover {
-    background: var(--ui-surface-hover);
-    color: var(--text-primary);
+    background: var(--chrome-hover, var(--ui-surface-hover));
+    color: var(--chrome-fg, var(--text-primary));
   }
 
   .dropdown-trigger:active {

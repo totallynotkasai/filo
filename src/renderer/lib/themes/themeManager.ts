@@ -23,6 +23,7 @@ import type { ThemeId } from '../../../shared/types';
 import { asSafeThemeValue } from '../../../shared/untrusted';
 import { reportError } from '../utils/errorBus';
 import { themeVersion } from '../../stores/themeVersion.svelte';
+import { SETTINGS_VAR_NAMES, THEME_TOKEN_NAMES } from './themeTokens';
 
 /** Every CSS custom property a Filo theme may set. Used to drive cleanup. */
 export type ThemeVariableMap = Record<string, string>;
@@ -93,100 +94,20 @@ function isSystemVar(prop: string): boolean {
 }
 
 /**
- * Canonical list of system-only variable names. Used to read computed
- * values from a sandbox `[data-theme]` element when applying a built-in
- * theme in `systemOnly` mode — because `getComputedStyle` cannot
- * enumerate CSS custom properties by prefix.
- *
- * Keep in sync with the `[data-theme]` blocks in `src/css/style.css`.
- * Adding a new system variable to the CSS without adding it here means
- * the system-only path will leave it on the previous value.
+ * The system-only variable names: every theme token that styles chrome.
+ * Used to read computed values from a sandbox `[data-theme]` element when
+ * applying a built-in theme in `systemOnly` mode, because `getComputedStyle`
+ * cannot enumerate CSS custom properties by prefix.
  */
-export const SYSTEM_VAR_NAMES: readonly string[] = [
-  // Base surfaces
-  '--ui-bg', '--ui-bg-secondary', '--ui-surface', '--ui-surface-hover',
-  '--ui-surface-active', '--ui-surface-raised',
-  '--ui-border', '--ui-border-light', '--ui-border-focus',
-  '--ui-shadow', '--ui-shadow-lg', '--ui-shadow-elevated',
-  // Text
-  '--text-primary', '--text-secondary', '--text-tertiary',
-  '--text-disabled', '--text-inverse', '--text-on-danger',
-  // Accents / status
-  '--accent-primary', '--accent-primary-hover', '--accent-primary-alpha',
-  '--accent-secondary',
-  '--accent-warning', '--accent-danger', '--accent-danger-hover',
-  '--accent-success', '--accent-info',
-  '--status-error-alpha',
-  // Chrome regions
-  '--toolbar-bg', '--toolbar-border', '--toolbar-shadow', '--toolbar-divider',
-  '--tabbar-bg', '--tabbar-border', '--tab-active-bg', '--tab-hover-bg',
-  '--sidebar-bg', '--sidebar-border',
-  '--menu-bg', '--menu-border', '--menu-hover', '--menu-danger', '--menu-danger-bg',
-  '--modal-backdrop', '--modal-bg',
-  '--toast-bg', '--toast-border',
-  '--scrollbar-track', '--scrollbar-thumb', '--scrollbar-thumb-hover',
-  '--selection-bg', '--selection-border',
-];
+export const SYSTEM_VAR_NAMES: readonly string[] = THEME_TOKEN_NAMES.filter(isSystemVar);
 
 /**
- * Variables that belong to canvas / board content — every shipped theme
- * redefines these per palette, so saving a "current settings as theme"
- * snapshot needs to capture them or the saved theme will fall back to
- * dark-mode defaults on the next apply.
- *
- * Stays in sync with the `[data-theme]` blocks in `src/css/style.css`.
+ * Every CSS custom property a theme holds (`lib/themes/themeTokens.ts`). The
+ * user's font, sizes and scales are not among them: those are settings.
  */
-const CONTENT_VAR_NAMES: readonly string[] = [
-  // Canvas
-  '--canvas-bg', '--canvas-pattern',
-  // Tile
-  '--tile-header-bg', '--tile-body-bg', '--tile-border',
-  // Connection palette (path + label + bubbles + hover)
-  '--connection-path-color', '--connection-arrow-color', '--connection-label-color',
-  '--connection-bubble-fill', '--connection-bubble-stroke',
-  '--connection-bubble-stroke-hover', '--connection-bubble-stroke-active',
-  '--connection-path-hover-glow', '--connection-drawing-stroke',
-  '--connection-label-bg', '--connection-label-border', '--connection-label-shadow',
-  '--connection-label-hover-border', '--connection-label-editing-border',
-  '--connection-label-text-secondary', '--connection-label-text-primary',
-  '--connection-label-btn-hover-bg', '--connection-label-btn-danger',
-  '--connection-label-btn-danger-bg',
-  // Frame chrome — varies per theme; omitting these makes a re-applied
-  // saved theme fall back to the base theme's frame palette.
-  '--frame-selected-glow', '--frame-header-text', '--frame-header-text-muted',
-  '--frame-header-btn-hover-bg', '--frame-header-btn-hover-border',
-  '--frame-header-btn-danger', '--frame-header-btn-danger-bg',
-  '--frame-resize-handle',
-  // Priority palette (Kanban / Task List)
-  '--priority-urgent', '--priority-high', '--priority-medium', '--priority-low',
-];
+export const THEME_VAR_NAMES: readonly string[] = THEME_TOKEN_NAMES;
 
-/**
- * Per-vault user choices that App.svelte / AppShell.svelte write inline
- * onto `:root` (NOT per-theme defaults). Capturing these inside a
- * custom-theme snapshot lets "save current as theme" reflect what the
- * user is actually seeing — globalFontSize, scale sliders, etc. — so a
- * re-applied saved theme restores the same look.
- */
-const USER_OVERRIDE_VAR_NAMES: readonly string[] = [
-  '--font-system', '--font-size-base',
-  '--ui-toolbar-scale', '--ui-board-toolbar-scale', '--ui-tabbar-scale',
-  '--ui-minimap-scale', '--ui-waypoint-scale',
-  '--global-toolbar-height', '--tabbar-height',
-];
-
-/**
- * The complete set of CSS custom properties that "Save current settings
- * as theme" should capture — system + content + user-overrides. Themes
- * are still CSS-variable-only by design (ProjectSettings-level values
- * like default board font sizes can't be saved into a theme), but every
- * variable that drives the visible palette is in this list.
- */
-export const THEME_VAR_NAMES: readonly string[] = [
-  ...SYSTEM_VAR_NAMES,
-  ...CONTENT_VAR_NAMES,
-  ...USER_OVERRIDE_VAR_NAMES,
-];
+const SETTINGS_VARS: ReadonlySet<string> = new Set(SETTINGS_VAR_NAMES);
 
 /**
  * Tracks which CSS custom properties are currently set inline by the
@@ -214,12 +135,15 @@ function clearAppliedCustomProps(): void {
 }
 
 /**
- * Reads the system-only variable values from a built-in theme without
- * touching `:root`'s `data-theme`. Used by `applyBuiltinTheme` in
- * `systemOnly` mode so the user's canvas/tile/connection palette stays
- * on its previous values.
+ * Reads a built-in theme's values for `names` without touching `:root`'s
+ * `data-theme`. `applyBuiltinTheme` in `systemOnly` mode reads the system
+ * variables this way, so the user's canvas/tile/connection palette stays on
+ * its previous values; Duplicate on a built-in theme reads all of them.
  */
-function readBuiltinSystemVars(theme: ThemeId): ThemeVariableMap {
+export function readBuiltinThemeVariables(
+  theme: ThemeId,
+  names: readonly string[] = THEME_VAR_NAMES,
+): ThemeVariableMap {
   const root = getRootElement();
   if (!root) return {};
   // A detached element does not pick up parent CSS, so the sandbox is
@@ -232,7 +156,7 @@ function readBuiltinSystemVars(theme: ThemeId): ThemeVariableMap {
   try {
     const computed = getComputedStyle(sandbox);
     const out: ThemeVariableMap = {};
-    for (const name of SYSTEM_VAR_NAMES) {
+    for (const name of names) {
       const v = computed.getPropertyValue(name).trim();
       if (v) out[name] = v;
     }
@@ -275,7 +199,7 @@ function paintBuiltinTheme(theme: ThemeId, opts: { systemOnly?: boolean }): void
   }
   // System-only: don't touch data-theme (would replace canvas vars).
   // Inline the system vars instead, tracked so the next switch cleans up.
-  const vars = readBuiltinSystemVars(theme);
+  const vars = readBuiltinThemeVariables(theme, SYSTEM_VAR_NAMES);
   for (const [prop, value] of Object.entries(vars)) {
     // Built-in theme values come from `getComputedStyle` against our own
     // CSS, so they're trusted — but routing through the same sanitiser
@@ -326,10 +250,45 @@ function paintCustomTheme(theme: ThemeFile, opts: { systemOnly?: boolean }): voi
   }
   for (const [prop, value] of Object.entries(theme.variables)) {
     if (!prop.startsWith('--')) continue;
+    // A theme saved by an older version carries the user's font, size and
+    // scales; applying them would override the settings, and the next switch
+    // would clear them back to the stylesheet's.
+    if (SETTINGS_VARS.has(prop)) continue;
     if (opts.systemOnly && !isSystemVar(prop)) continue;
     if (applySafeThemeVar(root, prop, value)) {
       appliedCustomProps.push(prop);
     }
+  }
+}
+
+/**
+ * The theme colours on screen now, read off `:root`: the active theme,
+ * built-in or custom. A theme variable that something other than a theme set
+ * inline (App.svelte writes the user's toolbar and tab bar colour settings
+ * there) is read from under that override, so a new theme doesn't capture a
+ * setting.
+ */
+export function snapshotThemeVariables(): ThemeVariableMap {
+  const root = getRootElement();
+  if (!root) return {};
+  const lifted: Array<[string, string]> = [];
+  for (const name of THEME_VAR_NAMES) {
+    if (appliedCustomProps.includes(name)) continue;
+    const inline = root.style.getPropertyValue(name);
+    if (!inline) continue;
+    lifted.push([name, inline]);
+    root.style.removeProperty(name);
+  }
+  try {
+    const computed = getComputedStyle(root);
+    const out: ThemeVariableMap = {};
+    for (const name of THEME_VAR_NAMES) {
+      const v = computed.getPropertyValue(name).trim();
+      if (v) out[name] = v;
+    }
+    return out;
+  } finally {
+    for (const [name, value] of lifted) applySafeThemeVar(root, name, value);
   }
 }
 

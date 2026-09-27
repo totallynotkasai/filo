@@ -306,7 +306,7 @@
 >
   <BoardBackground
     pattern={settings.backgroundPattern ?? vaultStore.project?.settings?.document?.backgroundPattern}
-    bgColor={settings.backgroundColor}
+    bgColor={settings.backgroundColor || vaultStore.project?.settings?.document?.backgroundColor || ''}
   />
   <div class="document-container">
     <div class="document-paper" style={paperInlineStyle}>

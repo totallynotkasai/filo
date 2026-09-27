@@ -54,15 +54,15 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--chrome-fg-muted, var(--text-secondary));
     cursor: pointer;
     transition: background-color 0.12s ease, color 0.12s ease;
     flex-shrink: 0;
   }
 
   .icon-btn:hover:not(.disabled) {
-    background: var(--ui-surface-hover);
-    color: var(--text-primary);
+    background: var(--chrome-hover, var(--ui-surface-hover));
+    color: var(--chrome-fg, var(--text-primary));
   }
 
   .icon-btn:active:not(.disabled) {

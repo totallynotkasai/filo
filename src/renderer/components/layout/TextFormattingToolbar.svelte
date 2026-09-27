@@ -417,7 +417,7 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%235f6368' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 4px center;
-    color: var(--text-primary);
+    color: var(--chrome-fg, var(--text-primary));
     font-size: var(--font-size-base);
     font-family: var(--font-system);
     cursor: pointer;
@@ -425,8 +425,14 @@
     appearance: none;
   }
 
+  /* The native option list has its own light or dark surface. */
+  .toolbar-select option {
+    color: var(--text-primary);
+    background: var(--menu-bg);
+  }
+
   .toolbar-select:hover {
-    background-color: var(--ui-surface-hover);
+    background-color: var(--chrome-hover, var(--ui-surface-hover));
     border-color: var(--ui-border-light);
   }
 
@@ -479,14 +485,14 @@
     height: 22px;
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--chrome-fg-muted, var(--text-secondary));
     cursor: pointer;
     transition: background-color 0.1s ease;
   }
 
   .size-btn:hover {
-    background: var(--ui-surface-hover);
-    color: var(--text-primary);
+    background: var(--chrome-hover, var(--ui-surface-hover));
+    color: var(--chrome-fg, var(--text-primary));
   }
 
   .size-value {
@@ -495,7 +501,7 @@
     justify-content: center;
     width: 28px;
     font-size: 12px;
-    color: var(--text-primary);
+    color: var(--chrome-fg, var(--text-primary));
   }
 
   .toolbar-color-btn {
@@ -508,14 +514,14 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--chrome-fg-muted, var(--text-secondary));
     cursor: pointer;
     gap: 1px;
     transition: background-color 0.1s ease;
   }
 
   .toolbar-color-btn:hover {
-    background: var(--ui-surface-hover);
+    background: var(--chrome-hover, var(--ui-surface-hover));
   }
 
   .color-a {

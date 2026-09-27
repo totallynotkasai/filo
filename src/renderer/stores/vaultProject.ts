@@ -16,11 +16,15 @@ export function makeProjectSlice(ctx: VaultContext) {
       ctx.markMetaDirty();
     },
 
-    setTheme(theme: Project['theme']): void {
+    /**
+     * Records the active theme id (built-in or custom) for `appearance.json`.
+     * Painting it is the theme store's job: a custom id is not a
+     * `data-theme` value.
+     */
+    setTheme(theme: string): void {
       const project = ctx.getProject();
       if (!project) return;
       project.theme = theme;
-      document.documentElement.setAttribute('data-theme', theme);
       ctx.markMetaDirty();
     },
 

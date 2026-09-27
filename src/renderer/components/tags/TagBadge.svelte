@@ -103,7 +103,9 @@
   .tag-badge.variant-outline {
     background: transparent;
     border-color: color-mix(in srgb, var(--tag-color) 40%, transparent);
-    color: var(--tag-color);
+    /* The tag colour pulled towards the theme's text colour, so a tag picked
+       on a light theme still reads on a dark one (and the reverse). */
+    color: color-mix(in srgb, var(--tag-color) 55%, var(--text-primary));
   }
   .tag-badge.variant-outline:hover {
     background: color-mix(in srgb, var(--tag-color) 8%, transparent);

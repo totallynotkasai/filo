@@ -39,6 +39,18 @@ export const TRASH_ID_RE = /^\d{8}T\d{6}Z-[0-9a-f]{6}$/;
 
 export type TrashKind = 'file' | 'folder';
 
+/**
+ * A custom theme file, the one thing under `.filo/` that the user deletes (and
+ * so may restore). The pattern admits a single file directly in
+ * `.filo/themes/`, so a manifest can't steer a restore anywhere else in
+ * Filo's own folder.
+ */
+const THEME_FILE_RE = /^\.filo\/themes\/[^/\\]+\.json$/;
+
+export function isThemeFilePath(originalPath: string): boolean {
+  return THEME_FILE_RE.test(originalPath);
+}
+
 export interface TrashManifest {
   originalPath: string;
   deletedAt: string;
@@ -117,7 +129,7 @@ function parseManifest(raw: string): TrashManifest | null {
   const segments = m.originalPath.split('/');
   if (m.originalPath.startsWith('/') || segments.some((s) => s === '' || s === '.' || s === '..')) return null;
   if (/^[a-zA-Z]:/.test(m.originalPath) || m.originalPath.includes('\\')) return null;
-  if (segments[0]?.toLowerCase() === '.filo') return null;
+  if (segments[0]?.toLowerCase() === '.filo' && !isThemeFilePath(m.originalPath)) return null;
   return { originalPath: m.originalPath, deletedAt: m.deletedAt, machineId: m.machineId, kind: m.kind };
 }
 

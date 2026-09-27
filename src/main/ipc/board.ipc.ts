@@ -12,7 +12,7 @@ import {
   serializeBoardPayload,
 } from '../vault/boardFileOps';
 import { loadKnownHosts } from '../services/syncConflictNotifier';
-import { registerMachineInVault } from '../services/machineIdentity';
+import { getMachineIdentity, registerMachineInVault } from '../services/machineIdentity';
 import {
   initVaultConfig,
   loadConfig,
@@ -30,7 +30,7 @@ import {
   listThemes,
   loadTheme,
   saveTheme,
-  deleteTheme,
+  trashTheme,
   ThemeParseError,
 } from '../vault/configOps';
 import {
@@ -489,7 +489,7 @@ export function registerBoardHandlers(): void {
     try {
       assertActiveVault(vaultRoot);
       assertSafeFilename(name);
-      await deleteTheme(vaultRoot, name);
+      await trashTheme(vaultRoot, name, getMachineIdentity().machineId);
       return { ok: true };
     } catch (err) {
       logMainError(`theme:delete ${name}`, err);

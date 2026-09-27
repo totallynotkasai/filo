@@ -401,8 +401,8 @@
     margin: 4px 0 0;
     padding: 6px 8px;
     font-size: 12px;
-    color: var(--ui-danger, #d33);
-    background: var(--ui-danger-bg, rgba(220, 60, 60, 0.08));
+    color: var(--accent-danger);
+    background: var(--menu-danger-bg);
     border-radius: 4px;
   }
 

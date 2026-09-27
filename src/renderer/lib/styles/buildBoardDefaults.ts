@@ -2,30 +2,70 @@ import type { ProjectSettings, Board } from '../../schema/index';
 import { defaultProjectSettings } from '../../schema/index';
 
 /**
- * Builds a fresh `Board['settings']` block from a `ProjectSettings`
- * source for a given board type.
+ * Board settings blocks built from the Global Defaults or the theme.
  *
- * Used in two places:
- *   1. `boardRegistry.createDefault(...)` — every newly-created board
- *      bakes the active Global Defaults into its own `settings`, so
- *      future edits to Global Defaults don't retroactively change it.
- *   2. The "Apply Current Global Defaults to all Boards" / "Apply
- *      Theme Defaults to all Boards" buttons, which merge the style keys
- *      of this block into every board (`mergeBoardStyleSettings`).
+ * The rule (stated in Settings → Global Defaults and Current Board): a board
+ * follows the Global Defaults for every style field it leaves blank, live, so
+ * a Global Defaults change reaches it; a field set in its Current Board tab is
+ * its own and wins. The cascade (`effectiveStyle.ts`, and the board
+ * background / accent fallbacks in each board view) reads the board layer
+ * first and skips blanks.
  *
- * The shape mirrors what the per-type `*SettingsSchema` produces, with
- * a `defaults` sub-block that mirrors the corresponding
- * `*BoardDefaultsSchema` from `schema/board.ts`. The cascade in
- * `effectiveStyle.ts` reads `defaults` first, so this is what makes the
- * snapshot stick.
+ * Used by:
+ *   1. `boardRegistry.createDefault(...)`: a new board starts with no style of
+ *      its own (`buildBoardSettingsFromGlobal`), so it follows the Global
+ *      Defaults.
+ *   2. "Apply Current Global Defaults to all Boards" merges the same block's
+ *      style keys into every board (`mergeBoardStyleSettings`), clearing
+ *      their own style so they follow the Global Defaults again.
+ *   3. "Apply Theme Defaults to all Boards" writes the schema defaults into
+ *      every board (`buildBoardSettingsFromTheme`): theme colours, factory
+ *      shapes, whatever the Global Defaults say.
  */
 
 type BoardSettings = Record<string, unknown>;
 
+/**
+ * A board's settings with no style of its own: blank colours, no pattern and
+ * an empty `defaults` block, so every style field follows the Global
+ * Defaults. `backgroundPattern` is present as `undefined` so a merge clears a
+ * board's own pattern. The Task List title size is the one creation-time seed
+ * (`general.defaultBoardFontSize.taskListTitle`).
+ */
 export function buildBoardSettingsFromGlobal(
   type: Board['type'],
   src: ProjectSettings,
 ): BoardSettings {
+  const style = { backgroundColor: '', backgroundPattern: undefined, defaults: {} };
+  switch (type) {
+    case 'mindmap':
+      return {
+        ...style,
+        // Per-board flags that the global defaults don't carry.
+        semanticZoom: true,
+        snapToGrid: false,
+        connectionsVisible: true,
+        labelsVisible: true,
+      };
+    case 'kanban':
+      return { ...style, accentColor: '' };
+    case 'tasklist': {
+      const titleFontSize = src.general?.defaultBoardFontSize?.taskListTitle;
+      return {
+        ...style,
+        accentColor: '',
+        groupBy: 'status',
+        sortBy: 'priority',
+        ...(typeof titleFontSize === 'number' && { titleFontSize }),
+      };
+    }
+    case 'document':
+      return { ...style, accentColor: '' };
+  }
+}
+
+/** Every style field of `src` written into a board's own settings. */
+function bakeBoardSettings(type: Board['type'], src: ProjectSettings): BoardSettings {
   switch (type) {
     case 'mindmap': {
       const mm = src.mindmap;
@@ -137,5 +177,5 @@ export function buildBoardSettingsFromTheme(
   type: Board['type'],
 ): BoardSettings {
   const themeDefaults = defaultProjectSettings();
-  return buildBoardSettingsFromGlobal(type, themeDefaults);
+  return bakeBoardSettings(type, themeDefaults);
 }

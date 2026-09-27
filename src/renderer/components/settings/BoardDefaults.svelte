@@ -64,6 +64,10 @@
 
 <div class="board-defaults">
   <h3 class="section-title">Board Defaults</h3>
+  <p class="rule-hint">
+    Every board follows these, for each field it leaves blank in its Current Board tab, including
+    boards you already have. A blank colour here uses the theme's colour.
+  </p>
 
   <div class="setting-row">
     <label class="setting-label" for="board-type-select">Board Type</label>
@@ -619,6 +623,17 @@
     font-weight: 600;
     color: var(--text-primary);
     margin: 0 0 4px;
+  }
+
+  .rule-hint {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin: 0 0 8px;
+    padding: 6px 10px;
+    border-left: 3px solid var(--accent-primary-alpha);
+    background: var(--ui-bg-secondary);
+    border-radius: 3px;
+    line-height: 1.5;
   }
 
   .subsection-title {

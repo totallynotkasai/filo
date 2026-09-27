@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { contrastRatio } from '@renderer/lib/utils/color';
+import { THEME_TOKEN_NAMES } from '@renderer/lib/themes/themeTokens';
 
 // WCAG AA threshold for normal-size body text.
 const WCAG_AA_NORMAL = 4.5;
@@ -12,22 +12,26 @@ const WCAG_AA_LARGE = 3.0;
 
 interface ThemeDefinition {
   id: string;
-  name: string;
   variables: Record<string, string>;
 }
 
 /**
- * Loads every theme JSON from `static/themes/`. Tests run from project root,
- * so the relative resolve is straightforward in either Vitest or CI.
+ * Reads every built-in theme from the `[data-theme='…']` blocks in
+ * `src/css/style.css`, the only place the built-in palettes live.
  */
 function loadThemes(): ThemeDefinition[] {
-  const __filename = fileURLToPath(import.meta.url);
-  const themesDir = resolve(dirname(__filename), '../../../static/themes');
-  const files = readdirSync(themesDir).filter((f) => f.endsWith('.json'));
-  return files.map((file) => {
-    const raw = readFileSync(join(themesDir, file), 'utf-8');
-    return JSON.parse(raw) as ThemeDefinition;
-  });
+  const css = readFileSync(resolve(process.cwd(), 'src/css/style.css'), 'utf-8');
+  const out: ThemeDefinition[] = [];
+  const blockRe = /\[data-theme='([a-z]+)'\]\s*\{([^}]*)\}/g;
+  for (const match of css.matchAll(blockRe)) {
+    const body = (match[2] ?? '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const variables: Record<string, string> = {};
+    for (const decl of body.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) {
+      if (decl[1] && decl[2]) variables[decl[1]] = decl[2].trim();
+    }
+    out.push({ id: match[1] ?? '', variables });
+  }
+  return out;
 }
 
 const themes = loadThemes();
@@ -60,11 +64,27 @@ const PAIRS: Array<[string, string, number, string]> = [
   ['--toolbar-save-busy', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "saving" on toolbar'],
   ['--toolbar-save-error', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "failed" on toolbar'],
   ['--toolbar-save-attention', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "waiting for a decision" on toolbar'],
+  // The warning banner over a read-only or conflicted note.
+  ['--ui-warn-text', '--ui-warn-bg', WCAG_AA_NORMAL, 'warning banner text'],
+  ['--ui-warn-text', '--ui-warn-bg-hover', WCAG_AA_NORMAL, 'warning banner text (hover)'],
 ];
+
+describe('built-in themes', () => {
+  it('are all five read from style.css', () => {
+    expect(themes.map((t) => t.id).sort()).toEqual(['blueprint', 'dark', 'light', 'nature', 'retro']);
+  });
+
+  for (const theme of themes) {
+    it(`${theme.id} defines every theme token`, () => {
+      const missing = THEME_TOKEN_NAMES.filter((name) => !theme.variables[name]);
+      expect(missing).toEqual([]);
+    });
+  }
+});
 
 describe('WCAG AA contrast — built-in themes', () => {
   for (const theme of themes) {
-    describe(`${theme.name} (${theme.id})`, () => {
+    describe(theme.id, () => {
       for (const [textVar, bgVar, threshold, label] of PAIRS) {
         it(`${label} meets ${threshold}:1`, () => {
           const text = theme.variables[textVar];

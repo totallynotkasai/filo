@@ -295,7 +295,7 @@
     border: none;
     border-radius: 8px 8px 0 0;
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--chrome-fg-muted, var(--text-secondary));
     font-size: var(--font-size-base);
     font-family: var(--font-system);
     cursor: pointer;
@@ -307,8 +307,8 @@
   }
 
   .tab:hover {
-    background: var(--tab-hover-bg);
-    color: var(--text-primary);
+    background: var(--chrome-hover, var(--tab-hover-bg));
+    color: var(--chrome-fg, var(--text-primary));
   }
 
   .tab.active {

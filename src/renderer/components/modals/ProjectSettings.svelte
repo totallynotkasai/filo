@@ -7,7 +7,7 @@
   import TrashSettings from '../settings/TrashSettings.svelte';
   import LivePreview from '../settings/LivePreview.svelte';
   import SettingsActionBar from '../settings/SettingsActionBar.svelte';
-  import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
+  import { pendingSettingsStore, settingsBoard } from '../../stores/pendingSettings.svelte';
   import { boardStore } from '../../stores/board.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
@@ -18,8 +18,10 @@
   type SettingsTab = 'general' | 'defaults' | 'current-board' | 'themes' | 'trash';
   let activeTab = $state<SettingsTab>('general');
 
-  // Current Board tab is only meaningful when a board is active.
-  let hasActiveBoard = $derived(boardStore.current !== null);
+  // Current Board tab is only meaningful when a board is active (not a note
+  // in a Document tab, whose pane still holds the board it showed before).
+  let targetBoard = $derived(settingsBoard());
+  let hasActiveBoard = $derived(targetBoard !== null);
 
   // ── Layout ──
   //
@@ -117,7 +119,7 @@
     uiStore.openConfirm({
       title: 'Apply Current Global Defaults to all Boards?',
       body:
-        "This will overwrite every board's style settings (colours, pattern, font sizes and style defaults) with the current Global Defaults. Other board settings, and per-tile, per-frame and per-connection style overrides, are NOT affected. This action cannot be undone.",
+        "Every board's own style settings (colours, pattern, font sizes and style defaults) are cleared, so every board follows the Global Defaults. Other board settings, and per-tile, per-frame and per-connection style overrides, are NOT affected. This action cannot be undone.",
       confirmLabel: 'Apply to all',
       danger: true,
       onConfirm: () => {
@@ -155,7 +157,7 @@
   // and unapplied edits are dropped with a notice rather than applied to a
   // board the user isn't looking at.
   $effect(() => {
-    const activeId = boardStore.current?.id ?? null;
+    const activeId = targetBoard?.id ?? null;
     untrack(() => {
       const pinned = pendingSettingsStore.pendingBoardId;
       if (pinned === null || pinned === activeId) return;
@@ -273,7 +275,7 @@
         {#if activeTab === 'defaults' || activeTab === 'current-board'}
           <LivePreview
             settings={pendingSettingsStore.effective}
-            board={boardStore.current}
+            board={targetBoard}
             boardSettings={pendingSettingsStore.effectiveBoardSettings}
             activeTab={activeTab}
           />

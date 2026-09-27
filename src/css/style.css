@@ -207,6 +207,11 @@ img, svg {
   --status-error-alpha: rgba(255, 107, 107, 0.1);
   --accent-success: #51cf66;
   --accent-info: #74b9ff;
+  /* Warning banner (a read-only note, a conflict notice): text needs 4.5:1 on its background. */
+  --ui-warn-bg: #4a3f1a;
+  --ui-warn-bg-hover: #5c4f20;
+  --ui-warn-border: #d4a72c;
+  --ui-warn-text: #ffe8a3;
 
   /* Priority colours — shared by Kanban card priority pills, Task List
      priority chips, and any other priority affordance. Themes override
@@ -340,6 +345,11 @@ img, svg {
   --status-error-alpha: rgba(234, 67, 53, 0.1);
   --accent-success: #34a853;
   --accent-info: #4285f4;
+  /* Warning banner (a read-only note, a conflict notice): text needs 4.5:1 on its background. */
+  --ui-warn-bg: #fef3c7;
+  --ui-warn-bg-hover: #fcd34d;
+  --ui-warn-border: #f59e0b;
+  --ui-warn-text: #92400e;
 
   --priority-urgent: #d93025;
   --priority-high: #b85500;
@@ -458,6 +468,11 @@ img, svg {
   --status-error-alpha: rgba(239, 83, 80, 0.1);
   --accent-success: #66bb6a;
   --accent-info: #42a5f5;
+  /* Warning banner (a read-only note, a conflict notice): text needs 4.5:1 on its background. */
+  --ui-warn-bg: #3b3418;
+  --ui-warn-bg-hover: #4d4420;
+  --ui-warn-border: #ffca28;
+  --ui-warn-text: #ffe8a3;
 
   --priority-urgent: #ffa0a0;
   --priority-high: #ffa726;
@@ -575,6 +590,11 @@ img, svg {
   --status-error-alpha: rgba(224, 104, 104, 0.1);
   --accent-success: #7ab648;
   --accent-info: #5ea8c8;
+  /* Warning banner (a read-only note, a conflict notice): text needs 4.5:1 on its background. */
+  --ui-warn-bg: #4a3a14;
+  --ui-warn-bg-hover: #5c4a1c;
+  --ui-warn-border: #e8c94e;
+  --ui-warn-text: #fbe7a6;
 
   --priority-urgent: #ffac99;
   --priority-high: #ffb74d;
@@ -692,6 +712,11 @@ img, svg {
   --status-error-alpha: rgba(229, 115, 115, 0.1);
   --accent-success: #81c784;
   --accent-info: #4fc3f7;
+  /* Warning banner (a read-only note, a conflict notice): text needs 4.5:1 on its background. */
+  --ui-warn-bg: #3d3a12;
+  --ui-warn-bg-hover: #4f4a18;
+  --ui-warn-border: #ffcc02;
+  --ui-warn-text: #fff0a8;
 
   --priority-urgent: #ffb3b3;
   --priority-high: #ffb74d;
@@ -917,6 +942,38 @@ img, svg {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01s !important;
   }
+}
+
+/* ============================================================
+   Toolbar / tab bar in a user-chosen colour
+   ============================================================
+   App.svelte writes black or white text for a user's toolbar or tab bar
+   colour (lib/themes/chromeText.ts). Inside each bar it becomes --chrome-*,
+   which the bar's controls read before the theme's text colours. Unset
+   (the theme's own bar colour), --chrome-* is invalid and every var() falls
+   back to the theme. Menus, popups and the active tab have their own
+   background, so they drop --chrome-* again. */
+.global-toolbar {
+  --chrome-fg: var(--toolbar-custom-fg);
+  --chrome-fg-muted: var(--toolbar-custom-fg-muted);
+  --chrome-hover: var(--toolbar-custom-hover);
+}
+
+.tab-bar {
+  --chrome-fg: var(--tabbar-custom-fg);
+  --chrome-fg-muted: var(--tabbar-custom-fg-muted);
+  --chrome-hover: var(--tabbar-custom-hover);
+}
+
+.global-toolbar [role='menu'],
+.global-toolbar [role='dialog'],
+.global-toolbar [role='listbox'],
+.global-toolbar .toolbar-color-panel-fixed,
+.tab-bar [role='menu'],
+.tab-bar .tab.active {
+  --chrome-fg: initial;
+  --chrome-fg-muted: initial;
+  --chrome-hover: initial;
 }
 
 /* ============================================================

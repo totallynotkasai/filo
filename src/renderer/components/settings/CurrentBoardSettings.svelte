@@ -11,8 +11,7 @@
    * shared classnames inside the child components (`.setting-row`,
    * `.setting-label`, etc.).
    */
-  import { boardStore } from '../../stores/board.svelte';
-  import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
+  import { pendingSettingsStore, settingsBoard } from '../../stores/pendingSettings.svelte';
   import ColorPicker from '../shared/ColorPicker.svelte';
   import { BACKGROUND_PATTERN_OPTIONS } from '../../constants/styleOptions';
   import {
@@ -24,7 +23,7 @@
   import CurrentBoardTaskList from './CurrentBoardTaskList.svelte';
   import CurrentBoardDocument from './CurrentBoardDocument.svelte';
 
-  let board = $derived(boardStore.current);
+  let board = $derived(settingsBoard());
   let settings = $derived(pendingSettingsStore.effectiveBoardSettings);
   const read = (path: string): unknown => readPath(settings, path);
 
@@ -43,8 +42,8 @@
     </header>
 
     <p class="cascade-hint">
-      Leave a field blank to inherit from the global default. Fields set here
-      override the global value for this board only.
+      A blank field follows the Global Defaults, and changes with them. A field
+      set here is this board's own and overrides the Global Defaults.
     </p>
 
     <h4 class="subsection-title">Board</h4>

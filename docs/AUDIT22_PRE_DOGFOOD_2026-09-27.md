@@ -285,6 +285,56 @@ The "right after a save" rename (M3), the board-folder rename (M4), the delete p
   - Import takes a theme `.json` file.
   - Fonts, sizes and scales stay settings and are not part of a theme (fixes M11).
 
+#### Phase 3 status: done (2026-09-27)
+
+All items are fixed. Each fix has a regression test. I checked that the tests bite by putting each bug back one at a time: M9, M10, M11, M12, M13, themes-5, live-3, live-4 and recent-2 were each caught by their test, which passes with the fix.
+
+| Item | Fix | Tests |
+|---|---|---|
+| M9 | `Project.theme` is any theme id, built-in or custom. Every theme pick is saved to `appearance.json` (`lib/themes/themeActions.ts` `selectTheme`), so a relaunch opens on a custom theme. | `themes.test.ts` (characterisation: a new theme and a picked theme survive a relaunch), `schema.test.ts` |
+| M10 | New in-app theme editor (below). A theme file changed by another program is read again: the watcher's reconciler passes its id to `refreshAvailable(root, reload)`, and a file deleted elsewhere leaves the cache. | `themeStoreCatalogue.test.ts`, `themeEditorPreview.test.ts` (component) |
+| M11 | A theme is colours only (`lib/themes/themeTokens.ts`). The font, size, scale and toolbar variables are no longer captured, and a theme saved by an older version has them skipped on apply. A new theme's snapshot reads the toolbar and tab bar colours from under the user's own colour settings. App.svelte writes the settings variables again after every theme paint. | `themeSettingsVars.test.ts` |
+| M13 | Delete asks first and moves the file into Filo's trash (`trashTheme`); Settings → Trash restores it and the theme list refreshes. A name that is a built-in theme's name or id ("Light", "Light Mode", "dark") or another custom theme's id is refused inline, never overwritten (`themeNameProblem`). | `themeTrashMain.test.ts`, `themeFiles.test.ts`, `themes.test.ts` |
+| M12 | One rule, stated at the top of Global Defaults and in Current Board: a board follows the Global Defaults, live, for every field it leaves blank; a field set on the board is its own. New boards no longer bake the Global Defaults in. The Kanban, Task List and Document background and accent now fall back to the Global Defaults before the theme. | `buildBoardDefaults.test.ts` (incl. a Global Defaults change reaching a new board), `applyDefaultsToAllBoards.test.ts` |
+| themes-5 | Picking a theme when the user has set Global Defaults colours asks: **Use theme colours**, **Keep my colours** or Cancel. | `themes.test.ts` (all three answers) |
+| themes-9 | `--ui-warn-bg`, `-bg-hover`, `-border`, `-text` are defined in all five themes. The undefined danger names (`--ui-danger`, `--ui-danger-soft`, `--ui-danger-bg`, `--status-error`) are replaced with the defined `--accent-danger` / `--menu-danger-bg`. | `themeContrast.test.ts` (warning text 4.5:1; every theme token defined in every theme) |
+| themes-10 | A user toolbar or tab bar colour gets black or white text, whichever reads better (`lib/themes/chromeText.ts`). The bars' controls read it as `--chrome-*`; menus, popups and the active tab reset it. | `themeHelpers.test.ts` |
+| themes-11 | With "System colours only" on, boards keep the theme they had: BoardRouter gives the board its `data-theme` (`themeStore.boardTheme`), set only once a theme was painted that way. | `themeStoreCatalogue.test.ts` |
+| themes-12 | `static/themes/*.json` deleted, with its `package.json` build entry. | `themeContrast.test.ts` now reads `style.css` |
+| live-3 | The Current Board tab edits `settingsBoard()`: none while the active pane shows a note, so the tab is disabled there. | `pendingSettingsEditsOnly.test.ts`, `themes.test.ts` |
+| live-4 | "Discard settings changes?" compares the dialog's copy with the values it was copied from, not with the live settings. | `pendingSettingsEditsOnly.test.ts` |
+| recent-2 | Apply writes only the fields the user edited, onto the live settings (both tabs). | `pendingSettingsEditsOnly.test.ts` |
+| live-5 | Tag chip text is the tag colour pulled 45% towards the theme's text colour. | (CSS only) |
+
+**The theme editor** (Settings → Themes):
+- **New Theme** starts from the colours on screen and opens the editor. **Import Theme…** reads a theme `.json` and opens the editor on it. Nothing is written until Save.
+- The editor lists 91 colours in 8 groups (backgrounds, text, borders, accents and status, toolbar/tabs/sidebar, canvas/tiles/frames, connections, priorities). Each row has a colour picker and a value box; the box also takes `rgba(…)`. A value that isn't a safe colour is marked and not applied.
+- Every change paints at once, one paint per frame while a picker is dragged. **Save** writes the file and makes it the active theme. **Save as new** does the same under a new name. **Cancel**, closing Settings, or leaving the vault paints the active theme again.
+- A custom theme has Edit, Duplicate and Delete. A built-in theme has Duplicate (on hover), not Edit.
+
+**Verification.** `npm run ci:verify` is green: 644 test files, 6218 tests passed, 5 skipped, 68/68 gates, and the test type-check ratchet. A real-app check (built app, Playwright `_electron`, a fresh scratch vault, two launches) confirmed:
+- **Editor:** changing App background to `#5a2d1a` paints it at once. Save writes `.filo/themes/sunset.json` with no font or size in it, `appearance.json` names `sunset`, and a toast says it was saved.
+- **M9:** after a relaunch the vault opens on Sunset (`--ui-bg` is `#5a2d1a`), marked active in Settings.
+- **M11 / themes-10:** with toolbar colour `#1a2b5c` set in `app.json`, the toolbar icons are white, and switching to Dark Mode keeps both the toolbar colour and the font size.
+- **M13:** Delete asks, then `.filo/themes/sunset.json` is in `.filo/trash`.
+- No renderer or console errors.
+
+**Deviations from the plan**
+
+- **Where the editor lives.** It opens inside the Themes tab, in place of the theme list, rather than in a separate dialog, so Settings' own Esc and close still apply. Closing Settings mid-edit reverts the preview. The theme cards show a Duplicate button on hover; it isn't a separate row.
+- **Editing keeps the file.** Save on an edited theme writes over the same file, even if the name changed, so renaming a theme never leaves the old file behind. Save as new takes an id from the new name.
+- **Deleting the active theme** switches to the built-in theme it was based on, and saves that.
+- **Theme trash.** The trash manifest parser refused every `.filo/` path, so that a synced manifest can't steer a restore into Filo's folder. It now admits exactly one pattern, a single `.filo/themes/<name>.json`. Settings → Trash lists the entry by that path.
+- **M12, existing boards.** Existing boards keep the values they baked in at creation, because a baked value can't be told apart from one the user chose. The Current Board tab shows them as the board's own. "Apply Current Global Defaults to all Boards" now clears every board's own style, so all boards follow the Global Defaults from then on. Visually it gives the same result as before; its confirm text says what it does. "Apply Theme Defaults to all Boards" is unchanged. The Settings live preview still shows the Global Defaults only.
+- **themes-5.** The question now also comes up for custom themes, which never reset colours before. The reset covers every default colour; the old hand-kept list missed the Kanban card header and body, the Task List task header and border, and the document header.
+- **themes-9.** The danger aliases were replaced with existing tokens rather than defined as new ones. `themeContrast.test.ts` used to read `static/themes/*.json`, copies that were never loaded and could drift from the real palettes; it now parses `style.css`. All pairs still pass against the real palettes.
+- **themes-10** covers the global toolbar (icon buttons, vault menu trigger, formatting controls) and inactive tabs. It needs a hex colour, which is what the colour picker produces.
+- **themes-11.** The pinned theme covers everything inside a board, including a board's own side toolbar and in-board menus. A board that was showing a custom theme's colours gets its base built-in theme instead, since "System colours only" already cleared the custom colours.
+- **live-4.** I couldn't make the stray prompt appear on demand. The code had two ways to cause it: the copy was taken from the active board while the compare read the board cache, and any live change (a Mind Map toggle, a theme's colour reset) counted as an edit. The fix removes both.
+- **Also found:** `vaultProject.setTheme` wrote the theme id to `<html data-theme>`, which would have left the app unstyled for a custom id. It now only records the id. The save status colours (`--toolbar-save-*`) were never captured in a saved theme; they are now.
+- **Tests changed:** `buildBoardDefaults.test.ts` was rewritten for the new rule. `applyDefaultsToAllBoards.test.ts` now expects a cleared accent. `schema.test.ts` accepts a custom theme id and rejects a blank one.
+- **Housekeeping:** CLAUDE.md lists the new `lib/themes/` modules and `ThemeEditor.svelte`, drops `static/`, and states the Global Defaults and theme rules under "Override Cascade". The characterisation harness gained `harness/themes.ts`.
+
 ### Tags with spaces (found 2026-09-27, after the audit)
 You expect comma-separated tags such as `Book 1`, but `isValidTagName` ([tagsStorage.ts:233](../src/renderer/lib/vault/tagsStorage.ts:233)) rejects any whitespace. So the tag row, the Tags Browser and the tag editor all refuse `Book 1`. `parseTagsField` ([normalizeTagsField.ts:45](../src/renderer/lib/utils/normalizeTagsField.ts:45)) also splits the string form `tags: "a b"` on spaces.
 

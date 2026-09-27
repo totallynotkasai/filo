@@ -47,7 +47,8 @@ export const ProjectSchema = z.object({
   /** Absolute path to the vault folder (where tiles.json, .md files, and media live). */
   vaultPath: z.string().default(''),
   name: z.string().default(''),
-  theme: z.enum(['light', 'dark', 'blueprint', 'retro', 'nature']).default('light'),
+  /** The active theme: a built-in id, or a custom theme's id (`.filo/themes/<id>.json`). */
+  theme: z.string().trim().min(1).default('light'),
   settings: ProjectSettingsSchema.prefault({}),
   boards: z.array(BoardSchema).default(() => []).refine(...uniqueBy('id', 'boards')),
   connections: z.record(z.string(), ConnectionSchema).default(() => ({})),

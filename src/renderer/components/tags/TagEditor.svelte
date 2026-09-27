@@ -481,7 +481,7 @@
     font-size: 12px;
   }
   .remove-btn:hover {
-    color: var(--status-error, red);
+    color: var(--accent-danger);
   }
   .empty {
     font-size: 11px;

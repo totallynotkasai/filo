@@ -206,12 +206,13 @@ async function reconcileThemeChange(event: ExternalChangeEvent): Promise<void> {
   const captured = captureVaultIdentity();
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
+  // The path is `.filo/themes/<id>.json`. That theme is read again even if it
+  // is cached, so a hand-edit shows.
+  const match = event.filename.match(/^\.filo\/themes\/(.+)\.json$/);
   try {
-    await themeStore.refreshAvailable(vaultRoot);
+    await themeStore.refreshAvailable(vaultRoot, match?.[1] ? [match[1]] : []);
     if (!isStillSameVault(captured)) return;
     // Reapply the active theme if its file was the one that changed.
-    // The path is `.filo/themes/<id>.json` — extract the id and compare.
-    const match = event.filename.match(/^\.filo\/themes\/(.+)\.json$/);
     if (match && match[1] === themeStore.activeFileId) {
       // Best-effort reapply. Failure already routes through `applyById`'s
       // toast pipeline, so we don't double-surface here.

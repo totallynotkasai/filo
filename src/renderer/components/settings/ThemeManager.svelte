@@ -2,23 +2,31 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { themeStore } from '../../stores/theme.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { reportError } from '../../lib/utils/errorBus';
-  import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
-  import { settleUnappliedEdits } from '../../lib/settings/unappliedEditsPrompt';
   import { ACCENT_COLOR } from '../../constants/defaults';
-  import { listBuiltinThemes, THEME_VAR_NAMES } from '../../lib/themes/themeManager';
+  import { listBuiltinThemes } from '../../lib/themes/themeManager';
+  import { BUILTIN_THEME_LABELS, type ThemeEditorSession } from '../../lib/themes/themeFiles';
+  import {
+    deleteCustomTheme,
+    duplicateThemeSession,
+    editThemeSession,
+    importThemeSession,
+    newThemeSession,
+    selectTheme,
+  } from '../../lib/themes/themeActions';
+  import ThemeEditor from './ThemeEditor.svelte';
   import type { ThemeId } from '../../../shared/types';
 
-  let newThemeName = $state('');
-
   const builtInIds = listBuiltinThemes();
-  const builtInLabels: Record<ThemeId, { label: string; preview: string }> = {
-    light: { label: 'Light Mode', preview: '#f8f9fa' },
-    dark: { label: 'Dark Mode', preview: '#1a1a2e' },
-    blueprint: { label: 'Blueprint', preview: '#0a1929' },
-    retro: { label: 'Retro', preview: '#2b1b0e' },
-    nature: { label: 'Nature', preview: '#0a2a1b' },
+  const builtInPreview: Record<ThemeId, string> = {
+    light: '#f8f9fa',
+    dark: '#1a1a2e',
+    blueprint: '#0a1929',
+    retro: '#2b1b0e',
+    nature: '#0a2a1b',
   };
+
+  let editing = $state<ThemeEditorSession | null>(null);
+  let importInput = $state<HTMLInputElement | null>(null);
 
   // Refresh the on-disk theme list whenever this panel is shown.
   $effect(() => {
@@ -33,135 +41,33 @@
   );
   let activeFileId = $derived(themeStore.activeFileId);
 
-  async function selectThemeById(id: string) {
-    if (!vaultStore.path) return;
-    // A built-in theme resets the default colours (unless systemOnly, where
-    // the user keeps their palette). The Global Defaults tab holds a copy of
-    // those colours, so its edits are settled first and the copy is taken
-    // again after: an Apply of the old copy would put the old colours back.
-    const resetsColours = (builtInIds as readonly string[]).includes(id) && !themeStore.systemOnly;
-    if (resetsColours && !(await settleUnappliedEdits('global', 'switch theme'))) return;
+  function openEditor(session: ThemeEditorSession | null): void {
+    if (session) editing = session;
+  }
+
+  async function importFile(e: Event & { currentTarget: HTMLInputElement }): Promise<void> {
+    const file = e.currentTarget.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+    let text: string;
     try {
-      const result = await themeStore.applyById(vaultStore.path, id);
-      if (!result.ok) {
-        reportError(
-          'ThemeManager.applyById',
-          result.error ?? `Theme "${id}" could not be applied`,
-          `Theme "${id}" could not be applied${result.error ? ` — ${result.error}` : ''}. Reverted to default.`,
-        );
-        return;
-      }
-      if (!resetsColours) return;
-      vaultStore.setTheme(id as ThemeId);
-      resetSettingsColorsToThemeDefaults();
-      // Flush the active-theme + color resets to disk immediately.
-      // vaultStore.setTheme calls markMetaDirty which only schedules a
-      // 300ms-debounced write; without this await, a hard quit inside
-      // that window reverts to the previously-persisted theme.
-      try {
-        await vaultStore.save();
-      } catch (err) {
-        reportError('ThemeManager.persist', err, 'Failed to save theme selection');
-      }
-    } finally {
-      if (resetsColours) pendingSettingsStore.startGlobal();
+      text = await file.text();
+    } catch {
+      uiStore.toast(`Couldn't read "${file.name}".`, 'error');
+      return;
     }
-  }
-
-  /**
-   * Resets all color properties in project settings to empty strings
-   * so CSS custom properties from the active theme take over.
-   * Non-color settings (borderWidth, shape, shadowIntensity, etc.) are preserved.
-   */
-  function resetSettingsColorsToThemeDefaults() {
-    if (!vaultStore.project) return;
-    const s = vaultStore.project.settings;
-
-    s.mindmap.backgroundColor = '';
-    s.mindmap.tile.headerColor = '';
-    s.mindmap.tile.bodyColor = '';
-    s.mindmap.tile.borderColor = '';
-    s.mindmap.connectionPath.pathColor = '';
-    s.mindmap.connectionPath.arrowColor = '';
-    s.mindmap.connectionLabel.textColor = '';
-    s.mindmap.connectionLabel.backgroundColor = '';
-    s.mindmap.frame.headerColor = '';
-    s.mindmap.frame.bodyColor = '';
-    s.mindmap.frame.borderColor = '';
-
-    s.kanban.backgroundColor = '';
-    s.kanban.accentColor = '';
-    s.kanban.column.headerColor = '';
-    s.kanban.column.bodyColor = '';
-    s.kanban.column.borderColor = '';
-    s.kanban.card.backgroundColor = '';
-    s.kanban.card.borderColor = '';
-
-    s.tasklist.backgroundColor = '';
-    s.tasklist.accentColor = '';
-    s.tasklist.task.bodyColor = '';
-    s.tasklist.section.headerColor = '';
-    s.tasklist.section.bodyColor = '';
-    s.tasklist.section.borderColor = '';
-
-    s.document.backgroundColor = '';
-    s.document.accentColor = '';
-    s.document.document.bodyColor = '';
-    s.document.document.borderColor = '';
-
-    vaultStore.markMetaDirty();
-  }
-
-  /**
-   * Captures the current theme variables from `:root` so the snapshot
-   * stays faithful to whatever the user is actually seeing — including
-   * any custom theme overrides that are currently active.
-   *
-   * Sources the variable name list from `THEME_VAR_NAMES` so adding a
-   * new themeable variable in one place (themeManager.ts) automatically
-   * extends what "Save current as theme" captures.
-   */
-  function snapshotCurrentVariables(): Record<string, string> {
-    const root = document.documentElement;
-    const computed = getComputedStyle(root);
-    const out: Record<string, string> = {};
-    for (const key of THEME_VAR_NAMES) {
-      const v = computed.getPropertyValue(key).trim();
-      if (v) out[key] = v;
+    const session = importThemeSession(text);
+    if ('error' in session) {
+      uiStore.toast(session.error, 'error');
+      return;
     }
-    return out;
-  }
-
-  async function saveCurrentAsTheme() {
-    const name = newThemeName.trim();
-    if (!name || !vaultStore.path) return;
-    const variables = snapshotCurrentVariables();
-    const id = await themeStore.saveCurrentAsTheme(
-      vaultStore.path,
-      name,
-      variables,
-      themeStore.active,
-    );
-    if (id) {
-      newThemeName = '';
-      uiStore.toast(`Theme "${name}" saved`, 'success');
-    } else {
-      uiStore.toast('Failed to save theme', 'error');
-    }
-  }
-
-  async function deleteCustomTheme(id: string) {
-    if (!vaultStore.path) return;
-    const file = themeStore.cache[id];
-    const ok = await themeStore.deleteTheme(vaultStore.path, id);
-    if (ok) {
-      uiStore.toast(`Deleted theme "${file?.name ?? id}"`, 'info');
-    } else {
-      uiStore.toast(`Failed to delete theme "${file?.name ?? id}"`, 'error');
-    }
+    editing = session;
   }
 </script>
 
+{#if editing}
+  <ThemeEditor session={editing} onclose={() => (editing = null)} />
+{:else}
 <div class="theme-manager">
   <h3 class="section-title">Themes</h3>
 
@@ -172,7 +78,7 @@
   <div class="system-only-row">
     <div class="system-only-text">
       <span class="setting-label">Apply System Colours Only</span>
-      <span class="system-only-hint">Re-skins chrome (toolbar, sidebar, menus, modals, tab bar) without touching canvas, tile, frame, or connection colours.</span>
+      <span class="system-only-hint">Re-skins chrome (toolbar, sidebar, menus, dialogs, tab bar) and leaves boards (canvas, tiles, Kanban and Task List surfaces) on their colours. Lasts until the vault closes.</span>
     </div>
     <button
       class="toggle-btn"
@@ -193,55 +99,74 @@
   <h4 class="subsection-title">Default Themes</h4>
   <div class="theme-grid">
     {#each builtInIds as themeId (themeId)}
-      {@const theme = builtInLabels[themeId]}
-      <button
-        class="theme-card"
-        class:active={activeFileId === themeId}
-        onclick={() => selectThemeById(themeId)}
-        aria-label="Select {theme.label} theme"
-      >
-        <div class="theme-preview" style="background: {theme.preview};">
-          <div class="preview-bar" style="background: {theme.preview === '#f8f9fa' ? '#e0e0e0' : 'rgba(255,255,255,0.1)'}"></div>
-          <div class="preview-content">
-            <div class="preview-dot" style="background: {ACCENT_COLOR}"></div>
-            <div class="preview-line" style="background: {theme.preview === '#f8f9fa' ? '#ccc' : 'rgba(255,255,255,0.2)'}"></div>
+      {@const label = BUILTIN_THEME_LABELS[themeId]}
+      {@const preview = builtInPreview[themeId]}
+      <div class="theme-card-wrap">
+        <button
+          class="theme-card"
+          class:active={activeFileId === themeId}
+          onclick={() => selectTheme(themeId)}
+          aria-label="Select {label} theme"
+        >
+          <div class="theme-preview" style="background: {preview};">
+            <div class="preview-bar" style="background: {preview === '#f8f9fa' ? '#e0e0e0' : 'rgba(255,255,255,0.1)'}"></div>
+            <div class="preview-content">
+              <div class="preview-dot" style="background: {ACCENT_COLOR}"></div>
+              <div class="preview-line" style="background: {preview === '#f8f9fa' ? '#ccc' : 'rgba(255,255,255,0.2)'}"></div>
+            </div>
           </div>
-        </div>
-        <span class="theme-name">{theme.label}</span>
-        {#if activeFileId === themeId}
-          <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" stroke-width="3" aria-hidden="true">
-            <polyline points="20 6 9 17 4 12"/>
+          <span class="theme-name">{label}</span>
+          {#if activeFileId === themeId}
+            <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" stroke-width="3" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          {/if}
+        </button>
+        <button
+          class="card-action"
+          onclick={() => openEditor(duplicateThemeSession(themeId))}
+          title="Duplicate as a custom theme"
+          aria-label="Duplicate {label}"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
           </svg>
-        {/if}
-      </button>
+        </button>
+      </div>
     {/each}
   </div>
 
   <!-- Custom Themes -->
   <h4 class="subsection-title">Custom Themes</h4>
   {#if customThemeIds.length === 0}
-    <p class="empty-text">No custom themes yet. Save your current settings as a theme below.</p>
+    <p class="empty-text">No custom themes yet. New Theme starts from the colours you see now.</p>
   {:else}
     <div class="custom-theme-list">
       {#each customThemeIds as id (id)}
-        {@const theme = themeStore.cache[id]}
+        {@const name = themeStore.cache[id]?.name ?? id}
         <div class="custom-theme-item">
           <button
             class="custom-theme-btn"
             class:active={activeFileId === id}
-            onclick={() => selectThemeById(id)}
+            onclick={() => selectTheme(id)}
+            aria-label="Select {name} theme"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
             </svg>
-            {theme?.name ?? id}
+            {name}
           </button>
-          <button
-            class="delete-btn"
-            onclick={() => deleteCustomTheme(id)}
-            title="Delete theme"
-            aria-label="Delete {theme?.name ?? id}"
-          >
+          <button class="icon-action" onclick={() => openEditor(editThemeSession(id))} title="Edit theme" aria-label="Edit {name}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+            </svg>
+          </button>
+          <button class="icon-action" onclick={() => openEditor(duplicateThemeSession(id))} title="Duplicate theme" aria-label="Duplicate {name}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+          <button class="icon-action delete-btn" onclick={() => deleteCustomTheme(id)} title="Delete theme" aria-label="Delete {name}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -252,26 +177,19 @@
     </div>
   {/if}
 
-  <!-- Save Current as Theme -->
-  <div class="setting-divider"></div>
-  <h4 class="subsection-title">Save Current Settings as Theme</h4>
-  <div class="save-theme-row">
+  <div class="theme-actions">
+    <button class="btn-primary" onclick={() => openEditor(newThemeSession())}>New Theme</button>
+    <button class="btn-secondary" onclick={() => importInput?.click()}>Import Theme…</button>
     <input
-      class="theme-name-input"
-      type="text"
-      placeholder="Theme name..."
-      bind:value={newThemeName}
-      onkeydown={(e) => { if (e.key === 'Enter') saveCurrentAsTheme(); }}
+      bind:this={importInput}
+      hidden
+      type="file"
+      accept=".json,application/json"
+      onchange={importFile}
     />
-    <button
-      class="btn-primary"
-      onclick={saveCurrentAsTheme}
-      disabled={!newThemeName.trim()}
-    >
-      Save Theme
-    </button>
   </div>
 </div>
+{/if}
 
 <style>
   .theme-manager {
@@ -484,7 +402,7 @@
     color: var(--accent-primary);
   }
 
-  .delete-btn {
+  .icon-action {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -498,9 +416,50 @@
     transition: color 0.1s ease, background-color 0.1s ease;
   }
 
+  .icon-action:hover {
+    background: var(--ui-surface-hover);
+    color: var(--text-primary);
+  }
+
   .delete-btn:hover {
-    background: rgba(239, 83, 80, 0.1);
+    background: var(--menu-danger-bg);
     color: var(--accent-danger);
+  }
+
+  .theme-card-wrap {
+    position: relative;
+    display: flex;
+  }
+
+  .theme-card-wrap .theme-card {
+    flex: 1;
+  }
+
+  .card-action {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--ui-border);
+    border-radius: 4px;
+    background: var(--ui-surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.1s ease;
+  }
+
+  .theme-card-wrap:hover .card-action,
+  .card-action:focus-visible {
+    opacity: 1;
+  }
+
+  .card-action:hover {
+    color: var(--text-primary);
   }
 
   .empty-text {
@@ -513,60 +472,50 @@
     border-radius: 6px;
   }
 
-  .setting-divider {
-    height: 1px;
-    background: var(--ui-border);
-    margin: 4px 0;
-  }
-
-  .save-theme-row {
+  .theme-actions {
     display: flex;
     gap: 8px;
     align-items: center;
+    padding-top: 4px;
   }
 
-  .theme-name-input {
-    flex: 1;
-    padding: 8px 12px;
-    border: 1px solid var(--ui-border);
-    border-radius: 6px;
-    background: var(--ui-bg);
-    color: var(--text-primary);
-    font-size: var(--font-size-base);
-    font-family: var(--font-system);
-  }
-
-  .theme-name-input:focus {
-    border-color: var(--ui-border-focus);
-  }
-
-  .theme-name-input:focus:not(:focus-visible) {
-    outline: none;
-  }
-
-  .theme-name-input::placeholder {
-    color: var(--text-tertiary);
-  }
-
-  .btn-primary {
+  .btn-primary,
+  .btn-secondary {
     padding: 8px 16px;
-    border: none;
     border-radius: 6px;
-    background: var(--accent-primary);
-    color: var(--text-inverse);
     font-size: var(--font-size-base);
     font-family: var(--font-system);
     cursor: pointer;
     white-space: nowrap;
-    transition: opacity 0.1s ease;
+    transition: opacity 0.1s ease, background-color 0.1s ease;
   }
 
-  .btn-primary:hover:not(:disabled) {
+  .btn-primary {
+    border: none;
+    background: var(--accent-primary);
+    color: var(--text-inverse);
+  }
+
+  .btn-primary:hover {
     opacity: 0.9;
   }
 
-  .btn-primary:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+  .btn-secondary {
+    border: 1px solid var(--ui-border);
+    background: var(--ui-surface);
+    color: var(--text-primary);
+  }
+
+  .btn-secondary:hover {
+    background: var(--ui-surface-hover);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card-action,
+    .icon-action,
+    .btn-primary,
+    .btn-secondary {
+      transition: none;
+    }
   }
 </style>

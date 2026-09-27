@@ -13,6 +13,7 @@ import { uiStore } from './ui.svelte';
 import { vaultStore } from './vault.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { noteStore } from './notes.svelte';
+import { themeStore } from './theme.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import {
   deleteTrashPermanently,
@@ -50,14 +51,19 @@ function filesUnder(tree: FileTreeNode[], vaultRoot: string, rel: string): strin
 /**
  * Brings the app up to date with items that just came back from the trash
  * (files or folders, vault-relative): the sidebar tree (which also adopts a
- * restored board), the search index, and any open note that was showing as
- * missing. The watcher doesn't report our own restores.
+ * restored board), the search index, any open note that was showing as
+ * missing, and the theme list for a restored theme. The watcher doesn't
+ * report our own restores.
  */
 export async function syncAfterRestore(rels: string[], identity: VaultIdentity): Promise<void> {
   await vaultStore.enqueueRenameQueueWork(() => vaultStore.refreshTreeAndCleanup());
   if (!isStillSameVault(identity)) return;
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
+  if (rels.some((rel) => rel.toLowerCase().startsWith('.filo/themes/'))) {
+    await themeStore.refreshAvailable(vaultRoot);
+    if (!isStillSameVault(identity)) return;
+  }
   const files = rels.flatMap((rel) => filesUnder(vaultStore.rawTree, vaultRoot, rel));
   await vaultIndexStore.applyChanges(files);
   if (!isStillSameVault(identity)) return;

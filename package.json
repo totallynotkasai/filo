@@ -104,7 +104,6 @@
     },
     "files": [
       "dist/**/*",
-      "static/**/*",
       "package.json"
     ],
     "extraMetadata": {

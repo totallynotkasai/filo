@@ -9,7 +9,6 @@ import { themeStore } from './theme.svelte';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
 import { parseSettingsSlices, type VaultCandidateWarning } from '../lib/vault/vaultCandidate';
 import type { BundledConfigFile, ConfigDriftChoice, ConfigExternalHandlers } from '../lib/boards/configDrift';
-import type { Project } from '../schema/index';
 
 /** One prompt per file at a time: a burst of saves shares its answer. */
 const openPrompts = new Map<BundledConfigFile, Promise<ConfigDriftChoice>>();
@@ -79,7 +78,7 @@ function reloadConfigIntoMemory(file: BundledConfigFile, disk: Record<string, un
   if (file === 'appearance.json') {
     const theme = typeof disk.activeTheme === 'string' && disk.activeTheme.trim() ? disk.activeTheme.trim() : 'light';
     if (typeof disk.font === 'string') project.settings.general.globalFont = disk.font;
-    project.theme = theme as Project['theme'];
+    project.theme = theme;
     void themeStore.applyById(vaultRoot, theme);
     return true;
   }

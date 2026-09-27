@@ -3,6 +3,7 @@ import { join } from 'path';
 import { atomicWriteFile, ensureDir, pathExists } from './filenameUtils';
 import { createExclusiveFile } from './exclusiveCreate';
 import { assertSafeFilename } from '../utils/pathSecurity';
+import { moveToTrash } from './trashOps';
 import { PAYLOAD_LIMITS } from '../utils/payloadLimits';
 import { generalSettingsDefaults } from '../../shared/generalSettingsDefaults';
 
@@ -432,11 +433,12 @@ export async function saveTheme(
 }
 
 /**
- * Deletes a theme file from .filo/themes/.
+ * Moves a theme file from .filo/themes/ into Filo's trash, so Settings → Trash
+ * can bring it back. Returns the trash id.
  */
-export async function deleteTheme(vaultRoot: string, themeName: string): Promise<void> {
+export async function trashTheme(vaultRoot: string, themeName: string, machineId: string): Promise<string> {
   assertSafeFilename(themeName);
-  const filePath = join(themesDirPath(vaultRoot), `${themeName}.json`);
-  await fs.unlink(filePath);
+  const { trashId } = await moveToTrash(vaultRoot, `${CONFIG_DIR}/themes/${themeName}.json`, machineId);
+  return trashId;
 }
 

@@ -136,7 +136,7 @@
       sortBy: 'priority' as SortBy,
     },
   );
-  let accent = $derived(settings.accentColor || 'var(--accent-primary)'); // '' ⇒ the theme's accent
+  let accent = $derived(settings.accentColor || vaultStore.project?.settings?.tasklist?.accentColor || 'var(--accent-primary)'); // blank ⇒ Global Defaults, then theme
   // Whitelist known groupBys defensively — a hand-edited or future-version
   // .board.json could store a value we don't render; fall back to 'status'
   // instead of letting downstream `GROUP_ORDER[groupBy]` undefined-crash.
@@ -1303,7 +1303,7 @@
 >
   <BoardBackground
     pattern={settings.backgroundPattern ?? vaultStore.project?.settings?.tasklist?.backgroundPattern}
-    bgColor={settings.backgroundColor}
+    bgColor={settings.backgroundColor || vaultStore.project?.settings?.tasklist?.backgroundColor || ''}
   />
   <div class="tasklist-content">
     <div class="tasklist-quick-add-wrap">

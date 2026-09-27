@@ -339,7 +339,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   const virtualProjectInput = {
     vaultPath: newVaultPath,
     name: (raw.app.name as string) || newVaultPath.split(/[\\/]/).pop() || 'Vault',
-    theme: ((raw.appearance.activeTheme as string) || 'light') as Project['theme'],
+    theme: typeof raw.appearance.activeTheme === 'string' && raw.appearance.activeTheme.trim() ? raw.appearance.activeTheme.trim() : 'light',
     settings,
     boards,
     connections,

@@ -16,6 +16,7 @@
     type BoardScope,
   } from '../../lib/boards/boardScope.svelte';
   import { reportError } from '../../lib/utils/errorBus';
+  import { themeStore } from '../../stores/theme.svelte';
   import type { Board } from '../../schema/index';
 
   interface Props {
@@ -122,9 +123,13 @@
   </div>
 {/snippet}
 
+<!-- "System colours only" re-skins the app's chrome but not boards. Kanban,
+     Task List and Document surfaces are drawn with the same UI tokens as the
+     chrome, so the board keeps the theme it had by carrying its
+     `data-theme` (`themeStore.boardTheme`). -->
 {#if tab}
   {#key tab.id}
-    <div class="board-transition">
+    <div class="board-transition" data-theme={themeStore.boardTheme ?? undefined}>
       {#if boardModule && pinnedTabId !== tab.id}
         <!-- Only until the effect above has pinned the scope; that runs in
              the same flush, before the browser paints. -->

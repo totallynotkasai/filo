@@ -107,7 +107,7 @@ describe('boardStore.applyGlobalDefaultsToAllBoards', () => {
     vi.restoreAllMocks();
   });
 
-  it('merges style into cached boards and names boards it could not load', async () => {
+  it('clears cached boards\' own style and names boards it could not load', async () => {
     const ensure = vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue();
 
     const result = await boardStore.applyGlobalDefaultsToAllBoards();
@@ -115,7 +115,8 @@ describe('boardStore.applyGlobalDefaultsToAllBoards', () => {
     expect(ensure).toHaveBeenCalled();
     expect(result).toEqual({ updated: 1, skipped: ['gone'] });
     const settings = boardCacheStore.cache.kb?.board.settings as Record<string, unknown>;
-    expect(settings.accentColor).toBe('#00ff00');
+    // Blank: the board follows the Global Defaults accent (#00ff00) live.
+    expect(settings.accentColor).toBe('');
     expect(settings.savedViews).toEqual([{ id: 'v', name: 'V' }]);
     expect(settings.defaultFolder).toBe('Cards');
   });

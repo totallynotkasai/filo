@@ -229,7 +229,7 @@
   .error {
     margin: 0;
     font-size: 12px;
-    color: var(--ui-danger, #d83b3b);
+    color: var(--accent-danger);
   }
 
   .actions {

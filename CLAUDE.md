@@ -421,7 +421,12 @@ filo/
 │   │   │   │   ├── tileStyleSupport.ts # Which style fields each tile type renders
 │   │   │   │   └── defaultFontSizes.ts
 │   │   │   ├── themes/                # Theme loading + CSS variable injection
-│   │   │   │   └── themeManager.ts
+│   │   │   │   ├── themeManager.ts    # Paints a built-in or custom theme onto :root; snapshotThemeVariables
+│   │   │   │   ├── themeTokens.ts     # The colours a theme holds, grouped for the editor; the settings variables it never holds
+│   │   │   │   ├── themeFiles.ts      # Custom theme names / ids (no built-in name, no overwrite), import parsing
+│   │   │   │   ├── themeActions.ts    # Pick (saved to appearance.json), delete to Filo's trash, editor sessions
+│   │   │   │   ├── defaultColours.ts  # The Global Defaults colours a theme pick hands back to the theme
+│   │   │   │   └── chromeText.ts      # Black / white text for a user toolbar or tab bar colour
 │   │   │   ├── templates/             # Layout templates
 │   │   │   │   ├── templateService.ts
 │   │   │   │   ├── layoutCapture.ts
@@ -520,7 +525,8 @@ filo/
 │   │       │   ├── CurrentBoardSettings.svelte
 │   │       │   ├── BoardDefaults.svelte
 │   │       │   ├── LivePreview.svelte
-│   │       │   ├── ThemeManager.svelte
+│   │       │   ├── ThemeManager.svelte # Settings → Themes: pick, New / Import, Edit / Duplicate / Delete
+│   │       │   ├── ThemeEditor.svelte # Grouped colour pickers with a live preview; Save / Save as new / Cancel
 │   │       │   ├── TrashSettings.svelte # Settings → Trash: Restore / Empty trash
 │   │       │   ├── VaultSidebarSettings.svelte # General → Vault Sidebar: name, colour, sort / group, extensions, Root Directory
 │   │       │   └── KeyboardShortcuts.svelte
@@ -564,9 +570,6 @@ filo/
 │       ├── component/                 # Vitest: real components mounted in jsdom
 │       ├── characterisation/          # Vitest: whole App against a real temp vault + real IPC handlers
 │       └── e2e/                       # Playwright E2E tests
-│
-├── static/                            # Static assets bundled by Vite
-│   └── themes/                        # Built-in theme JSON files
 │
 └── scripts/                           # Build / dev scripts (electron-vite launcher)
 ```
@@ -773,7 +776,9 @@ When adding a new tile type or board type: register it, implement the interface,
 Per-element style (Tile Style popup) > Current Board Settings (.board.json) > Global Defaults (.filo/defaults.json)
 ```
 
-Themes overwrite Global Defaults. They are not a separate layer.
+A board follows the Global Defaults, live, for every style field it leaves blank (a new board has no style of its own); a field set in its Current Board tab is its own. The Kanban, Task List and Document background and accent fall back the same way. A blank colour anywhere means the theme's colour.
+
+Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, UI scales and toolbar / tab bar colour are settings and a theme never carries them. The built-in palettes live only in `style.css` (`[data-theme='…']`); custom themes are `.filo/themes/<id>.json`, and `appearance.json` names the active one, built-in or custom. Picking a theme clears the Global Defaults colours so the theme shows, after asking when the user set any. Deleting a custom theme moves it to Filo's trash (the one `.filo/` path a trash manifest may name).
 
 ---
 

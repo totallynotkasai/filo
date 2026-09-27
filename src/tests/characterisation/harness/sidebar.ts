@@ -1,13 +1,14 @@
 /**
  * Vault sidebar drivers for the characterisation suite: the sidebar's Hide
  * Vault and Float buttons, the global toolbar's sidebar toggle, the vault
- * menu's Close Vault, and what the per-machine `sidebar-state.json` holds.
+ * menu's items, closing the vault, and what the per-machine
+ * `sidebar-state.json` holds.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { CharApp } from './app';
 import { settle, waitFor } from './app';
-import { $$, click } from './actions';
+import { $$, click, pressShortcut } from './actions';
 
 /** The sidebar as the user sees it: hidden, docked beside the boards, or floating. */
 export type SidebarView = 'hidden' | 'docked' | 'floating';
@@ -69,15 +70,21 @@ export async function clickToolbarToggle(app: CharApp): Promise<void> {
   await settle(100);
 }
 
-/** Vault menu → Close Vault. Resolves once the vault is closed. */
-export async function closeVaultFromMenu(app: CharApp): Promise<void> {
+/** The vault menu's item labels (the menu is opened, read, then closed). */
+export async function vaultMenuItems(app: CharApp): Promise<string[]> {
   const trigger = $$(app.el, 'button.dropdown-trigger').find((b) => b.closest('.global-toolbar') !== null);
   if (!trigger) throw new Error('no vault menu');
   click(trigger);
   await settle();
-  const item = $$(document, 'button.dropdown-item').find((b) => (b.textContent ?? '').trim() === 'Close Vault');
-  if (!item) throw new Error('no Close Vault item');
-  click(item);
+  const items = $$(document, 'button.dropdown-item').map((b) => (b.textContent ?? '').trim());
+  click(trigger);
+  await settle();
+  return items;
+}
+
+/** Ctrl+Shift+W. Resolves once the vault is closed. */
+export async function closeVaultWithShortcut(): Promise<void> {
+  pressShortcut('W', { ctrlKey: true, shiftKey: true });
   const { vaultStore } = await import('@renderer/stores/vault.svelte');
   await waitFor(() => vaultStore.project === null, 'the vault closed', 10000);
   await settle(100);

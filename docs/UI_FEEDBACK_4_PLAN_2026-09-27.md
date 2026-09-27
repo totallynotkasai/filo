@@ -613,3 +613,16 @@ Deviations from the plan:
 Accepted as is: a board rename is not on the board's undo stack (it wasn't before either; it
 is a disk rename). A tab whose board file is missing still re-creates it under the tab's name
 (`BoardRouter`); a clash there is refused with the same message.
+
+---
+
+## Follow-ups after the plan (2026-09-27)
+
+Requested by the user after Phase 5:
+
+1. **The sidebar toggle moved** from the far left of the global toolbar (Phase 3) to right
+   after Undo / Redo. `hideVault.test.ts` now pins that position.
+2. **Close Vault was removed from the vault name menu** (added in Phase 3, step 5). The user
+   found it unnecessary, and it needed several clicks to act. Closing a vault is Ctrl+Shift+W.
+   `hideVault.test.ts` now checks the menu has
+   no Close Vault item and closes with the shortcut.

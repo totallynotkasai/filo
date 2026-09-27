@@ -2,7 +2,8 @@
  * Characterisation: the sidebar's Hide Vault button hides the sidebar and
  * leaves the vault open, docked or floating. The toolbar's sidebar toggle,
  * right after Undo / Redo in the global toolbar, brings it back, and the
- * hidden state is saved per machine so it survives a restart. Closing the vault is in the vault menu.
+ * hidden state is saved per machine so it survives a restart.
+ * Closing the vault is Ctrl+Shift+W; the vault menu has no item for it.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp } from './harness/app';
@@ -13,7 +14,8 @@ import {
   floatSidebar,
   toolbarToggleState,
   clickToolbarToggle,
-  closeVaultFromMenu,
+  vaultMenuItems,
+  closeVaultWithShortcut,
   savedSidebarState,
   resetSidebar,
 } from './harness/sidebar';
@@ -55,10 +57,11 @@ describe('Hide Vault', () => {
   });
 });
 
-describe('Close Vault', () => {
-  it('is in the vault menu, and the sidebar toggle goes with the vault', async () => {
+describe('closing the vault', () => {
+  it('is not in the vault menu; Ctrl+Shift+W closes it, and the sidebar toggle goes with the vault', async () => {
     const app = await startApp({ 'Note.md': 'Hello\n' });
-    await closeVaultFromMenu(app);
+    expect(await vaultMenuItems(app)).not.toContain('Close Vault');
+    await closeVaultWithShortcut();
     expect(toolbarToggleState(app).shown).toBe(false);
   });
 });

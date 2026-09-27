@@ -3,11 +3,12 @@
  * to them after they are set. A renamed vault keeps its name across a
  * reopen, and the Root Directory and a board's folder follow their folder
  * when another program renames it (Explorer reports that as one rename per
- * file inside it), instead of being reset to the vault root.
+ * file inside it), instead of being reset to the vault root. A pinned folder
+ * deleted in the sidebar clears its pins, and undo puts them back.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, waitFor, quiesce, reopenVault } from './harness/app';
-import { createBoard, addKanbanColumn, addKanbanCard, errorToasts } from './harness/actions';
+import { createBoard, addKanbanColumn, addKanbanCard, errorToasts, deleteInSidebar, undo } from './harness/actions';
 import {
   vaultName,
   renameVault,
@@ -76,5 +77,47 @@ describe('a pinned folder renamed by another program', () => {
     await waitFor(() => rootDirectoryFolder(app) === null, 'the Root Directory to be cleared');
     await quiesce(1500);
     expect(app.exists('Old')).toBe(false);
+  });
+});
+
+describe('a pinned folder deleted in the sidebar', () => {
+  it('the Root Directory is cleared, and undo puts it back', async () => {
+    const app = await startApp({ 'Old/a.md': 'A\n', 'Keep.md': 'K\n' });
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    await toggleRootDirectory(app, 'Old');
+    expect(rootDirectoryFolder(app)).toBe('Old');
+
+    await deleteInSidebar(app, 'Old');
+    expect(app.exists('Old')).toBe(false);
+    expect(rootDirectoryFolder(app)).toBe(null);
+
+    await undo(app);
+    await waitFor(() => app.exists('Old/a.md'), 'the folder back');
+    await waitFor(() => rootDirectoryFolder(app) === 'Old', 'the Root Directory back');
+    await quiesce(1500);
+    expect(errorToasts()).toEqual([]);
+
+    await reopenVault(app);
+    expect(rootDirectoryFolder(app)).toBe('Old');
+  });
+
+  it("a board's folder is cleared, and undo puts it back", async () => {
+    const app = await startApp({ 'Old/a.md': 'A\n', 'Keep.md': 'K\n' });
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    await setBoardFolders(app, true);
+    await toggleBoardFolder(app, 'Old');
+    expect(boardFolder(app)).toBe('Old');
+
+    await deleteInSidebar(app, 'Old');
+    expect(app.exists('Old')).toBe(false);
+    expect(boardFolder(app)).toBe(null);
+
+    await undo(app);
+    await waitFor(() => app.exists('Old/a.md'), 'the folder back');
+    await waitFor(() => boardFolder(app) === 'Old', "the board's folder back");
+    await quiesce(1500);
+    expect(errorToasts()).toEqual([]);
   });
 });

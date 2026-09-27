@@ -8,7 +8,10 @@
  * the live stores the same way the vault-open candidate does: cache + path map
  * + `project.boards` + project connections/frames, loader repairs marked dirty,
  * broken-ref detection re-run. A board whose id is already loaded from a
- * DIFFERENT file is not adopted (the duplicate-id notice explains why).
+ * DIFFERENT file is not adopted (the duplicate-id notice explains why),
+ * unless that file is gone from disk: then the board was renamed by another
+ * program without the watcher pairing the two events, and it follows the
+ * rename instead.
  *
  * Vault-identity discipline: the load awaits disk; a swap during it must not
  * inject the outgoing vault's board into the new vault's cache, so the function
@@ -26,7 +29,7 @@ import { vaultStore } from './vault.svelte';
 import { uiStore } from './ui.svelte';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
 
-export type AdoptOutcome = 'adopted' | 'already' | 'duplicate' | 'failed';
+export type AdoptOutcome = 'adopted' | 'already' | 'duplicate' | 'renamed' | 'failed';
 
 /** The boardId whose stored path matches `rel` (case-folded), or null. */
 export function findLoadedBoardIdForPath(rel: string): string | null {
@@ -95,6 +98,21 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
   const id = data.board.id;
   const existingPath = boardCacheStore.paths[id];
   if (existingPath !== undefined) {
+    // The loaded board's own file is gone: this is the same board, renamed or
+    // moved by another program in a way the watcher reported as a delete plus
+    // a create. Follow it like a rename, so it keeps its unsaved edits and tabs
+    // rather than vanishing behind a false duplicate-id warning.
+    if (await isGoneFromDisk(vaultRoot, existingPath)) {
+      if (!isStillSameVault(captured)) return 'failed';
+      if (boardCacheStore.paths[id] !== existingPath) return 'already';
+      // Queued, not awaited: this may itself run on the rename queue.
+      void vaultStore.enqueueRenameQueueWork(() => vaultStore.handleExternalRename(existingPath, relPath), {
+        label: 'boardDiscovery.rename',
+        message: `Filo couldn't follow the board moved from "${existingPath}" to "${relPath}". Reopen the vault to pick it up.`,
+      });
+      return 'renamed';
+    }
+    if (!isStillSameVault(captured)) return 'failed';
     if (opts.quiet) return 'duplicate'; // the background scan: the watcher / open paths notify
     // Same id already loaded from another file (a copy, or a sync conflict
     // fork that keeps the compound suffix). Never adopt over it and never
@@ -125,6 +143,15 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
   }
   vaultStore.recomputeBrokenRefsNow();
   return 'adopted';
+}
+
+/** True only when the disk says the file isn't there; a failed probe proves nothing. */
+async function isGoneFromDisk(vaultRoot: string, relPath: string): Promise<boolean> {
+  try {
+    return (await window.filo.invoke('vault:file-exists', vaultRoot, relPath)) === false;
+  } catch {
+    return false;
+  }
 }
 
 // allow-module-state: per-session record of untracked paths already tried (cleared on vault swap below)
@@ -177,6 +204,8 @@ export function adoptUntrackedTreeBoards(treePaths: Iterable<string>, captured: 
 export async function adoptAndFindBoard(relPath: string): Promise<Board | undefined> {
   const captured = captureVaultIdentity();
   const outcome = await adoptBoardAtRuntime(relPath, captured);
+  // A followed rename runs on the rename queue; wait for it to land.
+  if (outcome === 'renamed') await vaultStore.enqueueRenameQueueWork(async () => undefined);
   if (!isStillSameVault(captured)) return undefined;
   const boardId = findLoadedBoardIdForPath(relPath);
   const board = boardId ? vaultStore.getProject()?.boards.find((b) => b.id === boardId) : undefined;

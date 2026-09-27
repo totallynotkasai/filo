@@ -27,6 +27,7 @@ vi.mock('electron', () => ({
 vi.mock('../../main/ipc/vault.ipc', () => ({
   getActiveWatcher: () => ({
     suppress: (path: string, ms: number) => suppressed.push({ path, ms }),
+    recordOwnWrite: () => {},
   }),
 }));
 

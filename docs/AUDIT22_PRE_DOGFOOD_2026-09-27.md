@@ -238,6 +238,40 @@ The drag fix (C1), redo (H3) and scene breaks (M1) are covered by the characteri
 - New Vault goes through `openVault`. `openVault` returns a reason, and recents are removed only when the folder is confirmed missing, never if pinned.
 - Tile delete prunes `frame.tileIds` and group ids, and undo restores them.
 
+#### Phase 2 status: done (2026-09-27)
+
+All eight items are fixed. Each has a regression test that was run against the unfixed code, failed there, and passes with the fix.
+
+| Item | Fix | Tests |
+|---|---|---|
+| M3 | `board:save` and `board:create` call `recordOwnWrite` with the bytes they wrote (`saveBoardFile` now returns them). `adoptOnce` checks a duplicate id's loaded path on disk: if it is gone, the new file is the same board, renamed, and it runs `handleExternalRename` on the rename queue instead of warning. | `boardWriteOwnBytes.test.ts`, `boardDiscovery.test.ts` (two cases), `boardRenamedOutside.test.ts` (characterisation) |
+| M4 | `clearPinsOfMissingFolders` leaves a board's pin alone while the board's own `.board.json` is missing from the tree too, and clears only that board's pin otherwise. | `folderPinsMissingBoard.test.ts`, `boardRenamedOutside.test.ts` (folder renamed right after a save) |
+| M5 + boards-4 | `handleExternalRename` rebinds a moved `.board.json` (`renameBoardPath`) before `renameAllPathKeys` and before the drain. The name sweep then finds the board at its new path, and the drain writes a queued save to the new path. | `boardRenamedOutside.test.ts` |
+| M6 | `newVault` is `openVault` plus the name: the open sets `.filo/` up once the outgoing vault is closed. | `newVault.test.ts` (characterisation) |
+| M7 | `openVault(path, report?)` fills `report.failure` with `cancelled`, `missing`, `unavailable` or `failed`. `vault:init-config` answers `ENODEV` when the folder's drive or share can't be reached, and `ENOTDIR` for a file. Home (a click and the open-on-launch) removes a recent entry only for `missing`, and never a pinned one. | `homeRecentVaults.test.ts` (component), `boardWriteOwnBytes.test.ts` (the init-config codes) |
+| M8 | The delete snapshots the pins it clears (`pinsUnder`), restores them if the trash move fails, and passes them to `CascadeDeleteCommand`, whose undo restores them and whose redo clears them again. | `folderPinsAndVaultName.test.ts` (two new characterisation cases) |
+| M2 | `mindmapTileOps.removeTile` takes the tile out of every frame and group, and drops a group it leaves empty. `DeleteTilesCommand` and `CascadeDeleteCommand` snapshot the memberships (`lib/boards/tileMemberships.ts`) and restore them on undo. | `tileDeleteMemberships.test.ts` |
+
+**Verification.** `npm run ci:verify` is green: 636 test files, 6153 tests passed, 5 skipped, 68/68 gates. A real-app check (built app, Playwright `_electron`, a fresh scratch vault, two launches) confirmed:
+- **M3 / M5:** `Kanban 1.board.json` renamed to `Roadmap.board.json` in the file system while open: the tab becomes "Roadmap" with its cards, the file holds `"name": "Roadmap"`, nothing reappears at the old path, and no toast is shown.
+- **M6:** Vault menu → New Vault while a vault is open opens the new vault with its `.filo/` folder, and it is listed under Recent vaults.
+- **M7:** with the first vault's folder moved away, clicking its pinned entry on Home keeps the entry and says so; once unpinned, the same click removes it.
+- No renderer or console errors.
+
+The "right after a save" rename (M3), the board-folder rename (M4), the delete pins (M8) and the frame and group membership (M2) are covered by the characterisation and unit specs above. They were not driven by hand.
+
+**Deviations from the plan**
+
+- **M3:** the rename that `adoptOnce` follows is queued, not awaited, because the adoption can itself run on the rename queue. The sidebar open (`adoptAndFindBoard`) waits for it. A duplicate id whose loaded file is still on disk keeps the duplicate warning, and a failed existence probe counts as "still there".
+- **M4:** the rule is "the board's own file is missing from the tree", not a lookup of the provisional-missing state. In `refreshTreeAndCleanup` the pins are cleared before the boards are marked provisionally missing in the same pass, so the state isn't set yet when the pins are checked. A board whose file really went is evicted later, pin and all.
+- **M5 / boards-4:** one change fixes both. The cascade inside the drain no longer calls `renameBoardPath`; it gets the renamed board ids from `handleExternalRename`.
+- **M8:** the plan said to clear the pins only after the move succeeds. I kept the clear *before* the move, because it stops a write that resolves a path through the pin from recreating the folder during the move, and added the restore on failure instead. Undo and a failed move restore a pin only where nothing has set a new one meanwhile. A pin restored beside a name taken meanwhile (`… (restored)`) follows the restored copy.
+- **M6:** the old `newVault` also overwrote an existing `app.json` with just `{ name }`, dropping the seeded defaults (or a real vault's settings, if the chosen folder was one). That is gone: the name is saved through `setName` only when it differs from the default, the folder name.
+- **M7:** the plan said `openVault` "returns a reason". It keeps its boolean result and takes an optional report object instead, so its other callers and some 50 test call sites are unchanged. When a caller asks for the reason, the generic "Failed to open vault" error is left out for a missing or unreachable folder, since the caller shows its own message.
+- **M2:** undo puts back only the deleted tiles, so a tile the user took out of a group after the delete isn't regrouped. A group that emptied out is recreated. Undo of the sidebar delete (`CascadeDeleteCommand`) restores memberships too.
+- **Found during the real-app check, fixed here:** the vault menu's New Vault never added the new vault to Recent vaults; Open Vault did. It now calls `rememberOpenVault` too.
+- **Housekeeping:** `vault.svelte.ts` shrank, so its file-size ceiling is lowered from 1586 to 1573. The `vault.ipc` mocks in `boardCreateBaseline.test.ts` and `boardCreateRelativePath.test.ts` gained `recordOwnWrite`. The characterisation harness gained `newVaultFromMenu` and `recentVaultPaths`.
+
 ### Phase 3 — themes and settings (M9–M13, themes-5/9/10/11/12, live-3/4/5, recent-2)
 - Persist the custom theme id. Re-read a changed theme file.
 - Stop themes capturing font, size, scale and toolbar settings.

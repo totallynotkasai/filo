@@ -103,15 +103,28 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
         delete updatedConns[key];
       }
     }
+    // The tile leaves every frame and group it was in. A reference left behind
+    // makes the next open report "orphan tile refs" and write a recovery
+    // snapshot. Undo puts it back (`tileMemberships.ts`).
+    const frames = cached.frames.map((f) =>
+      f.tileIds.includes(tileId) ? { ...f, tileIds: f.tileIds.filter((id) => id !== tileId) } : f,
+    );
+    const groups = (mm.groups ?? [])
+      .map((g) => (g.tileIds.includes(tileId) ? { ...g, tileIds: g.tileIds.filter((id) => id !== tileId) } : g))
+      .filter((g) => g.tileIds.length > 0);
+
     // Fresh `board` ref alongside the in-place `delete` above
     // (cache-identity convention).
-    ctx.updateEntry(boardId, { board: { ...mm }, tileDefs: restDefs, connections: updatedConns });
+    ctx.updateEntry(boardId, { board: { ...mm, groups }, tileDefs: restDefs, connections: updatedConns, frames });
 
-    ctx.updateProjectConnectionsFrames(({ connections: projConns }) => {
+    ctx.updateProjectConnectionsFrames(({ connections: projConns, frames: projFrames }) => {
       for (const [key, c] of Object.entries(projConns)) {
         if (c.fromTileId === tileId || c.toTileId === tileId) {
           delete projConns[key];
         }
+      }
+      for (const [i, f] of projFrames.entries()) {
+        if (f.tileIds.includes(tileId)) projFrames[i] = { ...f, tileIds: f.tileIds.filter((id) => id !== tileId) };
       }
     });
 

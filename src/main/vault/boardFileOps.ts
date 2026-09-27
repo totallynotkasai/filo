@@ -32,7 +32,7 @@ export async function loadBoardFile(filePath: string): Promise<unknown> {
  * internal callers) is serialised here. A cheap sniff refuses a string that
  * isn't a JSON object without re-parsing a multi-MB board on the hot path.
  */
-function serializeBoardPayload(data: unknown): string {
+export function serializeBoardPayload(data: unknown): string {
   if (typeof data !== 'string') return JSON.stringify(data, null, 2);
   if (data.trimStart()[0] !== '{') throw new Error('board payload is not a JSON object');
   return data;
@@ -44,11 +44,13 @@ function serializeBoardPayload(data: unknown): string {
  * Saves board data to a .board.json file using atomic write.
  * Creates parent directories if they don't exist. A string payload (the
  * renderer's serialised board) is written verbatim — see serializeBoardPayload.
+ * Returns the text written, for the watcher's record of Filo's own bytes.
  */
-export async function saveBoardFile(filePath: string, data: unknown): Promise<void> {
+export async function saveBoardFile(filePath: string, data: unknown): Promise<string> {
   await ensureDir(dirname(filePath));
   const json = serializeBoardPayload(data);
   await atomicWriteFile(filePath, json);
+  return json;
 }
 
 // ── Create ──

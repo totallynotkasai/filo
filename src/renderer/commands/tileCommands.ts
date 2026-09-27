@@ -10,6 +10,7 @@ import { cloneTile } from '../lib/utils/cloneTile';
 import { DeleteCardCommand } from './kanbanCommands';
 import { restoreFiles, retargetPath, stillTrashed, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
+import { captureTileMemberships, restoreTileMemberships, type TileMemberships } from '../lib/boards/tileMemberships';
 
 // ── Tile Commands ──
 
@@ -196,6 +197,8 @@ export class DeleteTilesCommand extends Command {
    * through these to put each card back where it was.
    */
   private kanbanCards: DeleteCardCommand[] = [];
+  /** The frames and groups the tiles were in, for undo. */
+  private memberships: TileMemberships;
 
   constructor(tileIds: string[], options: DeleteTilesOptions = {}) {
     super();
@@ -213,6 +216,7 @@ export class DeleteTilesCommand extends Command {
     if (boardCacheStore.cache[this.targetBoardId]?.board.type === 'kanban') {
       this.kanbanCards = this.tiles.map((t) => new DeleteCardCommand(this.targetBoardId, t.id));
     }
+    this.memberships = captureTileMemberships(this.targetBoardId, this.tiles.map((t) => t.id));
     // Snapshot connections that reference any of these tiles, across EVERY
     // loaded board's cache — not just the active board. `this.snapshot(...)`
     // (JSON round-trip, NOT structuredClone — Svelte 5 $state Proxies throw
@@ -339,6 +343,8 @@ export class DeleteTilesCommand extends Command {
         void boardStore.addTile(tile, { skipEmptySeed: true });
       }
     }
+    // The tiles are in the cache again (addTile writes it before any await).
+    restoreTileMemberships(this.memberships);
     for (const conn of this.connections) {
       // Skip a restored connection whose endpoint tile no
       // longer exists — it was independently deleted between this delete and

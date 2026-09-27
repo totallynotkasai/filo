@@ -42,6 +42,7 @@ import {
   loadVaultCandidate,
   type VaultCandidate,
 } from '../lib/vault/vaultCandidate';
+import { openFailed, openVaultFailureOf, type OpenVaultReport } from '../lib/vault/vaultOpenFailure';
 import {
   beginVaultGeneration,
   captureVaultIdentity,
@@ -973,9 +974,10 @@ export const vaultStore = {
    * fallible I/O against a local snapshot; on success
    * `commitVaultCandidate` swaps globals synchronously. A throw in the
    * candidate phase leaves globals untouched, so the renderer can never
-   * be half-open (path recorded but no watcher / tags / theme).
+   * be half-open (path recorded but no watcher / tags / theme). On false,
+   * `report.failure` says why (the user stayed, the folder is gone…).
    */
-  async openVault(newVaultPath: string): Promise<boolean> {
+  async openVault(newVaultPath: string, report?: OpenVaultReport): Promise<boolean> {
     // Capture the outgoing vault path so a failed candidate load can revert to
     // it. See `revertToOutgoingVault`.
     const outgoingVaultPath: string | null = currentProject ? vaultPath || null : null;
@@ -985,7 +987,7 @@ export const vaultStore = {
     let leave: LeaveOutcome = 'saved';
     if (currentProject) {
       leave = await saveBeforeLeaving(() => this.save(), 'open');
-      if (leave === 'cancelled') return false;
+      if (leave === 'cancelled') return openFailed(report, 'cancelled');
     }
 
     // Mark the swap "in progress" for the window during which the main-side
@@ -1044,7 +1046,8 @@ export const vaultStore = {
       try {
         candidate = await loadVaultCandidate(newVaultPath);
       } catch (err) {
-        reportError('vault', err, 'Failed to open vault');
+        // A caller that asks why (Home) says so itself when the folder is gone.
+        if (!report || openVaultFailureOf(err) === 'failed') reportError('vault', err, 'Failed to open vault');
         // DECISION: the outgoing vault was already torn down above
         // (close-before-load is mandatory — see `revertToOutgoingVault`). Revert to
         // it rather than strand the user on a stale, empty half-open vault.
@@ -1055,7 +1058,7 @@ export const vaultStore = {
           // failed path, locking out every OTHER vault.
           await releaseRegistryBestEffort();
         }
-        return false;
+        return openFailed(report, openVaultFailureOf(err));
       }
 
       commitVaultCandidate(candidate, this);
@@ -1123,30 +1126,14 @@ export const vaultStore = {
   },
 
   /**
-   * Creates a new empty vault. Initialises .filo/ config directory, then opens it.
-   *
-   * Delegates the "save before swap" prompt to `openVault` so the user sees a
-   * single dialog, not two.
+   * Creates a vault in `newVaultPath` and opens it. The open itself sets up
+   * `.filo/` once the outgoing vault is saved and closed (main refuses to set
+   * up a second vault while one is open), then `vaultName` is saved as its name.
    */
   async newVault(newVaultPath: string, vaultName: string = ''): Promise<boolean> {
-    try {
-      await invokeOk('vault:init-config', newVaultPath);
-
-      if (vaultName) {
-        await invokeOk('config:save', newVaultPath, 'app.json', JSON.stringify({
-          name: vaultName,
-        }, null, 2));
-      }
-
-      return this.openVault(newVaultPath);
-    } catch (err) {
-      reportError('vault', err, 'Failed to create vault');
-      // The init-config above may have armed the registry before
-      // `config:save` failed. Only release when no vault is
-      // open — never yank a live vault's registry out from under it.
-      if (!currentProject) await releaseRegistryBestEffort();
-      return false;
-    }
+    const opened = await this.openVault(newVaultPath);
+    if (opened && vaultName && currentProject?.name !== vaultName) this.setName(vaultName);
+    return opened;
   },
 
   /**

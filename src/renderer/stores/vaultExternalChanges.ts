@@ -193,14 +193,18 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       // The file has already moved, so re-key every path-keyed piece of state
       // (note models and their write queues, tabs, undo history, baselines)
       // BEFORE the drain: a note's queued edit then lands in the moved file,
-      // on the base it was built on, instead of failing on the old path.
+      // on the base it was built on, instead of failing on the old path. A
+      // moved `.board.json` is rebound first: the drain would otherwise write
+      // its queued save back to the old path, and the board-name sweep in
+      // `renameAllPathKeys` finds the board only at its new path.
+      const renamedBoardIds = boardCacheStore.renameBoardPath(oldRel, newRel);
       const pathKeysOk = renameAllPathKeys(oldRel, newRel);
 
       // Drain pending writers before the cascade, so the board and tag
       // rewrites below don't race a write still in flight.
       try {
         await withDrainedWrites(
-          () => runExternalRenameCascade(ctx, oldRel, newRel, pathKeysOk, captured),
+          () => runExternalRenameCascade(ctx, oldRel, newRel, renamedBoardIds, pathKeysOk, captured),
           { paths: [oldRel, newRel] },
         );
       } catch (err) {
@@ -316,6 +320,7 @@ async function runExternalRenameCascade(
   ctx: VaultContext,
   oldRel: string,
   newRel: string,
+  renamedBoardIds: string[],
   pathKeysOk: boolean,
   captured?: VaultIdentity,
 ): Promise<void> {
@@ -334,9 +339,8 @@ async function runExternalRenameCascade(
     ? await confirmedFolderMove(vaultRoot, oldRel, newRel, allPins(general))
     : null;
   if (captured && !isStillSameVault(captured)) return;
-  // The path-keyed sweeps (`renameAllPathKeys`) already ran in
-  // `handleExternalRename`, before the drain.
-  const renamedBoardIds = boardCacheStore.renameBoardPath(oldRel, newRel);
+  // The board paths and the path-keyed sweeps (`renameAllPathKeys`) already
+  // moved in `handleExternalRename`, before the drain.
   const changedBoardIds = boardStore.propagateRename(oldRel, newRel);
   fileTagsStore.renameFile(oldRel, newRel);
   fileTagsStore.renameFolder(oldRel, newRel);

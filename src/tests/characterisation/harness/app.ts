@@ -362,6 +362,46 @@ export async function openVaultByShortcut(
   }
 }
 
+/** The folders Home lists under Recent vaults. */
+export async function recentVaultPaths(): Promise<string[]> {
+  const list = (await window.filo.invoke('vault:list-recents')) as Array<{ path: string }>;
+  return list.map((v) => v.path);
+}
+
+/**
+ * Vault menu → New Vault, choosing a new empty folder in the picker. Resolves
+ * once the new vault is open, or with `done: false` when it didn't open.
+ */
+export async function newVaultFromMenu(app: CharApp): Promise<LeaveVaultResult & { other: string }> {
+  const other = mkdtempSync(join(tmpdir(), 'filo-char-vault-'));
+  extraRoots.push(other);
+  const { vaultStore } = await import('@renderer/stores/vault.svelte');
+  folderPicks.answers.splice(0, folderPicks.answers.length, other);
+  try {
+    const result = await leaveVault([], async () => {
+      const trigger = Array.from(app.el.querySelectorAll<HTMLElement>('button.dropdown-trigger'))
+        .find((b) => b.closest('.global-toolbar, header, nav') !== null);
+      if (!trigger) throw new Error('no vault menu');
+      trigger.click();
+      await settle();
+      const item = Array.from(document.querySelectorAll<HTMLElement>('button.dropdown-item'))
+        .find((b) => (b.textContent ?? '').trim() === 'New Vault');
+      if (!item) throw new Error('no New Vault item');
+      item.click();
+      try {
+        await waitFor(() => vaultStore.project !== null && sameFolder(vaultStore.path, other), 'the new vault open', 10000);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    await settle(200);
+    return { ...result, other };
+  } finally {
+    folderPicks.answers.length = 0;
+  }
+}
+
 /** Ctrl+Shift+W. A dialog, if one appears, is answered with `answer` (its first button when none is given). */
 export async function closeVaultByShortcut(_app: CharApp, answer?: string): Promise<LeaveVaultResult> {
   const { vaultStore } = await import('@renderer/stores/vault.svelte');

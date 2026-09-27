@@ -11,6 +11,8 @@ import { fileTagsStore } from '../stores/fileTags.svelte';
 import { restoreFiles, retargetPath, trashFiles, type TrashedItem } from './trashedFiles';
 import { DeleteCardCommand } from './kanbanCommands';
 import { DeleteTaskCommand } from './taskCommands';
+import { restoreClearedPins, type ClearedPin } from '../lib/vault/folderPins';
+import { captureTileMemberships, restoreTileMemberships, type TileMemberships } from '../lib/boards/tileMemberships';
 
 /**
  * Opens the inconsistent-state modal when one or more rollback children threw
@@ -235,6 +237,8 @@ export interface CascadeDeleteOptions {
   trashed?: TrashedItem | null;
   /** `.filo/tags.json` file tags the delete dropped (path → tags). */
   fileTags?: Record<string, string[]>;
+  /** Folder pins (Root Directory, board folders) the delete cleared. */
+  clearedPins?: ClearedPin[];
 }
 
 /**
@@ -269,6 +273,10 @@ export class CascadeDeleteCommand extends Command {
   /** Where the item is when not in the trash: what a redo after undo moves. */
   private itemRel: string | null;
   private fileTags: Record<string, string[]>; // allow-string-path-key: tags.json fileTags keys, put back verbatim
+  /** Pins on the deleted folder or inside it: undo puts them back, redo clears them again. */
+  private clearedPins: ClearedPin[];
+  /** The frames and groups the removed tiles were in, per board. */
+  private memberships: TileMemberships[] = [];
   private hasRun = false;
   /**
    * Kanban cards and Task List tasks, one placement-only delete each, in the
@@ -299,6 +307,7 @@ export class CascadeDeleteCommand extends Command {
       // object — the snapshot contract we want here.
       this.byBoard[boardId] = tiles.map((t) => cloneTile(t));
       this.snapshotPlacements(boardId, tiles);
+      this.memberships.push(captureTileMemberships(boardId, tiles.map((t) => t.id)));
     }
     this.connections = this.snapshot(connections);
     // Capture the vault root so undo/redo can refuse to run against a
@@ -312,6 +321,7 @@ export class CascadeDeleteCommand extends Command {
     this.trashed = opts.trashed ? { ...opts.trashed } : null;
     this.itemRel = opts.trashed?.rel ?? null;
     this.fileTags = this.snapshot(opts.fileTags ?? {});
+    this.clearedPins = this.snapshot(opts.clearedPins ?? []);
     const totalTiles = Object.values(byBoard).reduce((sum, t) => sum + t.length, 0);
     this.description = this.itemRel
       ? `Delete "${this.itemRel}"`
@@ -362,6 +372,10 @@ export class CascadeDeleteCommand extends Command {
       if (!item) return;
       this.trashed = item;
       for (const path of Object.keys(this.fileTags)) fileTagsStore.dropFile(path);
+      if (this.clearedPins.length > 0) {
+        vaultStore.clearActiveRootFolderIfMatches(this.itemRel);
+        boardStore.clearBoardDefaultFolderIfMatches(this.itemRel);
+      }
       void vaultStore.enqueueRenameQueueWork(() => vaultStore.refreshTreeAndCleanup());
     }
 
@@ -393,9 +407,13 @@ export class CascadeDeleteCommand extends Command {
       // doesn't try to trash it again and the next undo retries it.
       if (restored) this.trashed = null;
       if (restored && restored.restoredPath !== restored.rel) {
-        // Restored beside a file that took its old name: the tiles, the tags
-        // and a later redo all follow the restored copy.
+        // Restored beside a file that took its old name: the tiles, the tags,
+        // the pins and a later redo all follow the restored copy.
         this.followRestoredCopy(restored.rel, restored.restoredPath);
+      }
+      // The folder is back, so its pins are too.
+      if (restored) {
+        restoreClearedPins(this.clearedPins, vaultStore.project?.settings.general, () => vaultStore.markMetaDirty());
       }
     }
     for (const [path, tags] of Object.entries(this.fileTags)) {
@@ -424,6 +442,7 @@ export class CascadeDeleteCommand extends Command {
         }
       }
     }
+    for (const m of this.memberships) restoreTileMemberships(m);
     // Style fields come back once the placements they live on exist again: a
     // cover image on a card deleted with its folder has nowhere to land
     // before its card is back.
@@ -460,6 +479,7 @@ export class CascadeDeleteCommand extends Command {
     const tags: Record<string, string[]> = {}; // allow-string-path-key: tags.json fileTags keys
     for (const [path, list] of Object.entries(this.fileTags)) tags[retarget(path)] = list;
     this.fileTags = tags;
+    this.clearedPins = this.clearedPins.map((pin) => ({ ...pin, defaultFolder: retarget(pin.defaultFolder) }));
   }
 }
 

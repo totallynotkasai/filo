@@ -22,6 +22,7 @@ import {
   trashVaultPath,
   withDrainedWrites,
 } from '../lib/vault/vaultOperations';
+import { pinsUnder, restoreClearedPins } from '../lib/vault/folderPins';
 import type { FileTreeNode } from '../../shared/types';
 import type { VaultContext } from './vaultStoreTypes';
 
@@ -101,7 +102,11 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       if (!rel) return false;
       // Clear the active-root pointer and per-board default-folder pins
       // BEFORE the move, so an autosave resolving a path through them can't
-      // recreate the folder via `fs.mkdir(..., recursive)`.
+      // recreate the folder via `fs.mkdir(..., recursive)`. They come back if
+      // the move fails, and on undo.
+      const general = ctx.getProject()?.settings.general;
+      const clearedPins = pinsUnder(general, rel);
+      const restorePins = (): void => restoreClearedPins(clearedPins, general, () => ctx.markMetaDirty());
       ctx.clearActiveRootFolderIfMatches(itemPath);
       boardStore.clearBoardDefaultFolderIfMatches(itemPath);
 
@@ -112,6 +117,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
 
       const result = await trashVaultPath(vaultRoot, rel, drain);
       if (!result.success) {
+        if (isStillSameVault(deleteIdentity)) restorePins();
         uiStore.pushToast({
           text: `Couldn't move "${itemName}" to Filo's trash${result.error ? `: ${result.error}` : ''}. Nothing was deleted; a file inside may be open in another program.`,
           type: 'error',
@@ -159,7 +165,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
 
       const fileTags = fileTagsUnder(rel);
       const { command } = boardStore.cascadeDeleteByVaultPath(rel, {
-        vaultRoot, trashed, fileTags, offStack: noBoardUndo,
+        vaultRoot, trashed, fileTags, clearedPins, offStack: noBoardUndo,
       });
       // Drop tag associations for the item (exact match for a file, prefix
       // for a folder; both are safe either way). Undo puts them back.

@@ -9,6 +9,7 @@ import {
   scanBoardFiles,
   resolveBoardPath,
   scanBoardConflicts,
+  serializeBoardPayload,
 } from '../vault/boardFileOps';
 import { loadKnownHosts } from '../services/syncConflictNotifier';
 import { registerMachineInVault } from '../services/machineIdentity';
@@ -74,6 +75,37 @@ function classifyError(err: unknown): 'NO_ACTIVE_VAULT' | 'FILE_TOO_LARGE' | und
  * These handlers support the design doc's .board.json file model
  * and .filo/ config directory structure.
  */
+/**
+ * Tells the watcher the bytes a board write left on disk. Its cached size and
+ * hash otherwise describe the file before the write until the next reconcile,
+ * so another program renaming the board (or its folder) straight after a save
+ * isn't paired as a rename: the board looks deleted and its new file like a
+ * copy with the same id.
+ */
+function recordBoardWrite(relativePath: string, json: string): void {
+  getActiveWatcher()?.recordOwnWrite(relativePath, Buffer.from(json, 'utf-8'));
+}
+
+/**
+ * `stat` of a folder about to be opened as a vault. A missing folder on a
+ * drive or share that can't be reached (a USB drive unplugged, a share
+ * offline) fails with `ENODEV` instead of `ENOENT`, so the renderer can tell
+ * "moved or deleted" from "not available right now" and keep the recent entry.
+ */
+async function statVaultFolder(vaultRoot: string): Promise<import('fs').Stats> {
+  const { promises: fs } = await import('fs');
+  const { parse } = await import('path');
+  try {
+    return await fs.stat(vaultRoot);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw err;
+    const root = parse(vaultRoot).root;
+    const rootReachable = root ? await fs.stat(root).then(() => true, () => false) : true;
+    if (rootReachable) throw err;
+    throw Object.assign(new Error(`The drive or share holding "${vaultRoot}" isn't available`), { code: 'ENODEV' });
+  }
+}
+
 export function registerBoardHandlers(): void {
 
   // ── Vault Initialization ──
@@ -104,13 +136,12 @@ export function registerBoardHandlers(): void {
       if (typeof vaultRoot !== 'string' || vaultRoot.length === 0) {
         throw new Error('vaultRoot must be a non-empty string');
       }
-      // Pre-stat as a directory before we touch the registry. `fs.stat`
-      // throws ENOENT on a missing path and ENOTDIR on a file — both land
+      // Pre-stat as a directory before we touch the registry. A missing path
+      // (ENOENT, or ENODEV when its drive is gone) and a file (ENOTDIR) land
       // in the catch below as a clean error toast.
-      const { promises: fs } = await import('fs');
-      const stat = await fs.stat(vaultRoot);
+      const stat = await statVaultFolder(vaultRoot);
       if (!stat.isDirectory()) {
-        throw new Error('vaultRoot is not a directory');
+        throw Object.assign(new Error('vaultRoot is not a directory'), { code: 'ENOTDIR' });
       }
       // Refuse to re-anchor if a different vault is already open. Matching
       // path → idempotent success (re-init of the same vault after a
@@ -247,8 +278,9 @@ export function registerBoardHandlers(): void {
       // arrive on a delayed flush.
       const watcher = getActiveWatcher();
       watcher?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
-      await saveBoardFile(fullPath, data);
+      const json = await saveBoardFile(fullPath, data);
       watcher?.suppress(relativePath, 1000);
+      recordBoardWrite(relativePath, json);
       return { ok: true };
     } catch (err) {
       logMainError(`board:save ${relativePath}`, err);
@@ -291,6 +323,7 @@ export function registerBoardHandlers(): void {
       // reaches the renderer as an external change to a board the user may
       // already be editing, and asks "modified externally".
       getActiveWatcher()?.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS);
+      recordBoardWrite(relativePath, serializeBoardPayload(data));
       // The new file's stat seeds the renderer's drift baseline, so the first
       // save has an anchor without waiting for a load. Best-effort: without
       // it the first save simply runs unchecked, as before.

@@ -19,7 +19,9 @@
     if (!vaultPath) return;
     const name = vaultPath.split(/[\\/]/).pop() || 'Vault';
     const ok = await vaultStore.newVault(vaultPath, name);
-    if (ok) uiStore.toast('Vault created', 'success');
+    if (!ok) return;
+    await rememberOpenVault();
+    uiStore.toast('Vault created', 'success');
   }
 
   async function handleOpenVault() {

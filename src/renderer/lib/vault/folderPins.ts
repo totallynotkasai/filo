@@ -8,9 +8,10 @@
  */
 
 import { boardStore } from '../../stores/board.svelte';
+import { boardCacheStore } from '../../stores/boardCache.svelte';
 import type { FileTreeNode } from '../../../shared/types';
 import { normalizePath, samePath, stripLeadingSlash } from '../utils/path';
-import { directoryExistsInTree } from './vaultTreeSort';
+import { directoryExistsInTree, flattenTreePaths } from './vaultTreeSort';
 import { folderMoveOfFileRename, pinIsUnder, rebasePin } from './folderPinPaths';
 
 interface GeneralWithRoot {
@@ -54,6 +55,52 @@ export function followRenameInPins(
   return { rootMoved, boardIds };
 }
 
+/**
+ * A pin a delete cleared: a board's folder pin, or the Root Directory when
+ * `boardId` is null. The field is named `defaultFolder` so a command holding
+ * it follows renames (`PATH_FIELDS`).
+ */
+export interface ClearedPin {
+  boardId: string | null;
+  defaultFolder: string;
+}
+
+/** The pins at or under `folder` (vault-relative), before a delete clears them. */
+export function pinsUnder(general: GeneralWithRoot | undefined, folder: string): ClearedPin[] {
+  const out: ClearedPin[] = [];
+  if (general?.activeRootFolder && pinIsUnder(general.activeRootFolder, folder)) {
+    out.push({ boardId: null, defaultFolder: general.activeRootFolder });
+  }
+  for (const [boardId, data] of Object.entries(boardStore.cache)) {
+    const pin = (data.board as { settings?: { defaultFolder?: string } }).settings?.defaultFolder;
+    if (pin && pinIsUnder(pin, folder)) out.push({ boardId, defaultFolder: pin });
+  }
+  return out;
+}
+
+/**
+ * Puts back pins a delete cleared (its move failed, or it was undone). A pin
+ * the user set to something else meanwhile is left alone.
+ */
+export function restoreClearedPins(
+  pins: readonly ClearedPin[],
+  general: GeneralWithRoot | undefined,
+  markMetaDirty: () => void,
+): void {
+  for (const { boardId, defaultFolder } of pins) {
+    if (boardId === null) {
+      if (general && !general.activeRootFolder) {
+        general.activeRootFolder = defaultFolder;
+        markMetaDirty();
+      }
+      continue;
+    }
+    const settings = (boardCacheStore.cache[boardId]?.board as { settings?: { defaultFolder?: string } } | undefined)?.settings;
+    if (!boardCacheStore.cache[boardId] || settings?.defaultFolder) continue;
+    boardCacheStore.updateBoardSettings(boardId, { ...settings, defaultFolder });
+  }
+}
+
 /** No pin moved. */
 export const NO_PIN_MOVES: { rootMoved: boolean; boardIds: string[] } = { rootMoved: false, boardIds: [] };
 
@@ -89,6 +136,12 @@ export async function confirmedFolderMove(
  * Clears every pin whose folder is no longer in `tree` (deleted by another
  * program, or moved where no rename could be matched), so the next file
  * created through it doesn't recreate the folder via `mkdir -p`.
+ *
+ * A board whose own `.board.json` is missing from the tree as well keeps its
+ * pin: it is only provisionally missing while Filo looks for a rename (a board
+ * folder renamed in Explorer). The rename carries the pin along; a board that
+ * really went is evicted with it. Clearing it here would give the board an
+ * unsaved change, and a false "unsaved changes" prompt.
  */
 export function clearPinsOfMissingFolders(
   tree: FileTreeNode[],
@@ -100,8 +153,14 @@ export function clearPinsOfMissingFolders(
   const exists = (pin: string): boolean => directoryExistsInTree(tree, `${root}/${stripLeadingSlash(pin)}`);
   const rootPin = general?.activeRootFolder ?? '';
   if (rootPin && !exists(rootPin)) clearRoot(rootPin);
-  for (const data of Object.values(boardStore.cache)) {
-    const pin = (data.board as { settings?: { defaultFolder?: string } }).settings?.defaultFolder ?? '';
-    if (pin && !exists(pin)) boardStore.clearBoardDefaultFolderIfMatches(pin);
+  let files: Set<string> | null = null;
+  for (const [boardId, data] of Object.entries(boardStore.cache)) {
+    const settings = (data.board as { settings?: { defaultFolder?: string } }).settings;
+    const pin = settings?.defaultFolder ?? '';
+    if (!pin || exists(pin)) continue;
+    files ??= new Set([...flattenTreePaths(tree, vaultRoot)].map((p) => p.toLowerCase()));
+    const boardPath = boardStore.paths[boardId];
+    if (!boardPath || !files.has(boardPath.toLowerCase())) continue;
+    boardCacheStore.updateBoardSettings(boardId, { ...settings, defaultFolder: '' });
   }
 }

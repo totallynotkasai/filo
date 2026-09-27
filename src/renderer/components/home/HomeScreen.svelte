@@ -4,6 +4,7 @@
   import { pickAndOpenVault, rememberOpenVault, type RecentVault } from '../../stores/vaultOpen';
   import FiloLogo from '../shared/FiloLogo.svelte';
   import { safeVaultColor } from '../../../shared/vaultColor';
+  import type { OpenVaultReport } from '../../lib/vault/vaultOpenFailure';
   interface Props {
     onReturnToVault?: () => void;
   }
@@ -63,21 +64,38 @@
     // Pick the most-recently-opened vault. Pinned-ness is irrelevant for
     // auto-open — last-use wins so the user lands where they left off.
     const candidate = [...recentVaults].sort((a, b) => b.lastOpened - a.lastOpened)[0];
-    if (!candidate) return;
+    if (candidate) await openRecent(candidate, 'Last vault');
+  }
+
+  /**
+   * Opens a recent vault. The entry is dropped only when its folder is
+   * confirmed gone, and never when it is pinned: staying in the current vault,
+   * a drive that is unplugged for now, or any other failure leaves it listed.
+   */
+  async function openRecent(recent: RecentVault, label: string): Promise<void> {
+    const report: OpenVaultReport = {};
+    let loaded = false;
     try {
-      const loaded = await vaultStore.openVault(candidate.path);
-      if (loaded) {
-        await saveRecentVault();
-        onReturnToVault?.();
-      } else {
-        uiStore.toast(
-          `Last vault "${candidate.name}" could not be opened — it may have been moved or deleted.`,
-          'warning',
-        );
-        await removeRecent(candidate.path);
-      }
+      loaded = await vaultStore.openVault(recent.path, report);
     } catch {
-      await removeRecent(candidate.path);
+      uiStore.toast('Failed to open vault', 'error');
+      return;
+    }
+    if (loaded) {
+      await saveRecentVault();
+      onReturnToVault?.();
+      return;
+    }
+    if (report.failure === 'missing') {
+      uiStore.toast(
+        recent.pinned
+          ? `${label} "${recent.name}" wasn't found. It may have been moved or deleted; it stays pinned until you remove it.`
+          : `${label} "${recent.name}" wasn't found. It may have been moved or deleted, so it was removed from the list.`,
+        'warning',
+      );
+      if (!recent.pinned) await removeRecent(recent.path);
+    } else if (report.failure === 'unavailable') {
+      uiStore.toast(`${label} "${recent.name}" isn't available right now. Check that its drive or network share is connected.`, 'warning');
     }
   }
 
@@ -140,19 +158,7 @@
   }
 
   async function handleOpenRecent(recent: RecentVault) {
-    try {
-      const loaded = await vaultStore.openVault(recent.path);
-      if (loaded) {
-        await saveRecentVault();
-        onReturnToVault?.();
-      } else {
-        uiStore.toast('Could not open vault. It may have been moved or deleted.', 'warning');
-        await removeRecent(recent.path);
-      }
-    } catch {
-      uiStore.toast('Failed to open vault', 'error');
-      await removeRecent(recent.path);
-    }
+    await openRecent(recent, 'Vault');
   }
 
   // Records the vault just opened under its own name and colour (it may have

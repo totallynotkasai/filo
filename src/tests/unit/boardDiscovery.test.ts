@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { adoptBoardAtRuntime, adoptUntrackedTreeBoards } from '@renderer/stores/boardDiscovery';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -95,5 +95,42 @@ describe('runtime board discovery (Audit-19 EXT-1)', () => {
     await adoptUntrackedTreeBoards(tree, captureVaultIdentity());
     expect(loads).toBe(1); // tried once, known board skipped
     expect(uiStore.toasts).toHaveLength(0); // quiet: already reported at open
+  });
+
+  it('loaded board file gone: followed as a rename, with no duplicate-id warning', async () => {
+    const renames: Array<[string, string]> = [];
+    const spy = vi.spyOn(vaultStore, 'handleExternalRename').mockImplementation(async (from: string, to: string) => {
+      renames.push([from, to]);
+    });
+    installFiloMock({
+      'vault:stat': () => ({ success: true, mtimeMs: 1, size: 1 }),
+      'vault:file-exists': (_root: unknown, rel: unknown) => rel !== 'Existing.board.json',
+      'board:load': () => ({ success: true, data: envelope('b1', 'Existing') }),
+    });
+    try {
+      const outcome = await adoptBoardAtRuntime('Renamed.board.json', captureVaultIdentity());
+      expect(outcome).toBe('renamed');
+      await vaultStore.enqueueRenameQueueWork(async () => undefined);
+      expect(renames).toEqual([['Existing.board.json', 'Renamed.board.json']]);
+      expect(uiStore.toasts.some((t) => t.dedupeKey?.startsWith('dup-board:'))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('loaded board file still there: a real copy, so no rename', async () => {
+    const spy = vi.spyOn(vaultStore, 'handleExternalRename').mockResolvedValue(undefined);
+    installFiloMock({
+      'vault:stat': () => ({ success: true, mtimeMs: 1, size: 1 }),
+      'vault:file-exists': () => true,
+      'board:load': () => ({ success: true, data: envelope('b1', 'Existing copy') }),
+    });
+    try {
+      const outcome = await adoptBoardAtRuntime('Existing - Copy.board.json', captureVaultIdentity());
+      expect(outcome).toBe('duplicate');
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

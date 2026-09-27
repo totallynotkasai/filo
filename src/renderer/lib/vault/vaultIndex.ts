@@ -58,7 +58,8 @@ interface IndexableDoc {
 
 /**
  * A path is considered ignored if it sits under a directory we never index.
- * Paths use forward slashes and are vault-relative.
+ * Paths use forward slashes and are vault-relative. A note in any user folder
+ * (`attachments/` included) is indexed: it is the user's text.
  */
 function isIgnoredPath(relativePath: string): boolean {
   const p = toPosix(relativePath);
@@ -66,8 +67,7 @@ function isIgnoredPath(relativePath: string): boolean {
     p.startsWith('.filo/') ||
     p.startsWith('node_modules/') ||
     p.startsWith('.git/') ||
-    p.endsWith('.board.json') ||
-    p.startsWith('attachments/')
+    p.endsWith('.board.json')
   );
 }
 

@@ -98,7 +98,7 @@
   {/if}
 
   <p class="recovery-hint">
-    Open each file and check it. Dismiss once you're done; until then Filo asks again next time.
+    Open each file and check it, then Dismiss. Closing this list another way keeps it for the next time the vault opens, but only until Filo saves a change.
   </p>
 
   {#if foreign.length > 0}

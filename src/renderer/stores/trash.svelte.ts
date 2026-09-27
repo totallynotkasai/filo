@@ -159,18 +159,22 @@ export function toastMovedToTrash(label: string, undo: () => Promise<void>): voi
   });
 }
 
-/** Moves one trashed item back and brings the app up to date (the toast's Undo for a board file). */
-export async function restoreTrashedItem(label: string, rel: string, trashId: string): Promise<void> {
+/**
+ * Moves one trashed item back and brings the app up to date (the toast's Undo
+ * for a board file). True once it is back, in the same vault.
+ */
+export async function restoreTrashedItem(label: string, rel: string, trashId: string): Promise<boolean> {
   const vaultRoot = vaultStore.path;
-  if (!vaultRoot) return;
+  if (!vaultRoot) return false;
   const identity = captureVaultIdentity();
   const result = await restoreTrashed(vaultRoot, trashId, rel);
-  if (!isStillSameVault(identity)) return;
+  if (!isStillSameVault(identity)) return false;
   if (!result.success) {
     uiStore.toast(`Couldn't restore "${label}"${result.error ? `: ${result.error}` : ''}.`, 'error', 6000);
-    return;
+    return false;
   }
   await syncAfterRestore([result.restoredPath], identity);
+  return isStillSameVault(identity);
 }
 
 export const trashStore = {

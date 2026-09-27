@@ -89,23 +89,24 @@ export function normalizeRootFolder(activeRootFolder: string | undefined | null)
 
 /**
  * The folder new files go in. With board folders on it is the board's own
- * pin (`settings.defaultFolder`, which a new board sets to its folder); with
- * them off it is the vault-wide Root Directory. The other pin is ignored, so
- * the sidebar's one tree button always shows where files go. Empty ⇒ the
- * vault root. Vault-relative, POSIX, no leading or trailing '/'.
+ * pin (`settings.defaultFolder`, which a new board sets to its folder); a
+ * board without one (made before board folders were on, or its pin toggled
+ * off) falls back to the vault-wide Root Directory, as every board does with
+ * board folders off. Empty ⇒ the vault root. Vault-relative, POSIX, no
+ * leading or trailing '/'.
  */
 export function resolveContentFolder(opts: {
   boardFolders: boolean;
   rootFolder: string | undefined | null;
   boardFolder: unknown;
 }): string {
-  if (!opts.boardFolders) return normalizeRootFolder(opts.rootFolder);
-  return typeof opts.boardFolder === 'string' ? normalizeRootFolder(opts.boardFolder) : '';
+  const boardPin = opts.boardFolders && typeof opts.boardFolder === 'string' ? normalizeRootFolder(opts.boardFolder) : '';
+  return boardPin || normalizeRootFolder(opts.rootFolder);
 }
 
 /**
  * `resolveContentFolder` for the open vault and `board` (`null` when no
- * board is active: with board folders on, files then go to the vault root).
+ * board is active: files then go to the Root Directory).
  * Reads `vaultStore` reactively, so callers in templates / $derived stay live.
  * Every board variant's settings carry `defaultFolder`.
  */

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { pinIsUnder, rebasePin, folderMoveOfFileRename } from '@renderer/lib/vault/folderPinPaths';
 import { folderMovesBetween } from '@renderer/lib/vault/treeFolderMoves';
+import { noteFolderMoves, takeFolderMoves } from '@renderer/lib/vault/unreconciledFolderMoves';
+import { markRecentSelfWrite } from '@renderer/lib/boards/writeStateTracking';
 import { repairRenameCascade } from '@renderer/lib/vault/renameCascadeRepair';
 import { __resetRenameCascadeSentinelForTests, type RenameCascadeEntry } from '@renderer/lib/vault/renameCascadeSentinel';
 import { captureVaultIdentity } from '@renderer/lib/vault/vaultIdentity';
@@ -98,6 +100,18 @@ describe('folderMovesBetween (a folder renamed by another program, seen as two t
     expect(folderMovesBetween([dir('Old', [file('Old/a.md', 1)])], [dir('New', [file('New/a.md', 2)])], ROOT)).toEqual([]);
     const two = [dir('A', [file('A/x.md')]), dir('B', [file('B/x.md')])];
     expect(folderMovesBetween(two, [dir('C', [file('C/x.md')])], ROOT)).toEqual([]);
+  });
+});
+
+describe('folder moves noted by any tree read', () => {
+  it('keeps a move until the reconcile takes it, and skips a move Filo made itself', () => {
+    takeFolderMoves();
+    noteFolderMoves([dir('Old', [file('Old/a.md')])], [dir('New', [file('New/a.md')])], ROOT);
+    markRecentSelfWrite('Mine');
+    markRecentSelfWrite('Renamed');
+    noteFolderMoves([dir('Mine', [file('Mine/b.md')])], [dir('Renamed', [file('Renamed/b.md')])], ROOT);
+    expect(takeFolderMoves()).toEqual([{ oldFolder: 'Old', newFolder: 'New' }]);
+    expect(takeFolderMoves()).toEqual([]);
   });
 });
 

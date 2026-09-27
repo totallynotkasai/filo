@@ -45,7 +45,7 @@ describe('recovery snapshots: kept copies and repeated load failures', () => {
     const all = await allSnapshots(vaultRoot);
     // The global cap still bounds the prunable copies.
     expect(all.filter((p) => !p.includes('-keep/')).length).toBeLessThanOrEqual(100);
-  }, 60_000);
+  }, 120_000); // 150 snapshot writes; under the full suite's disk load they took over 60 s
 
   it('a Keep-mine copy is not pruned by the per-file cap either', async () => {
     await fs.writeFile(join(vaultRoot, 'Note.md'), 'first other version', 'utf-8');

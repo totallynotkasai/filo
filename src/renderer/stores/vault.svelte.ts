@@ -28,7 +28,7 @@ import {
 } from '../lib/vault/tagRewriteSentinel';
 import { readPendingRenameCascades } from '../lib/vault/renameCascadeSentinel';
 import { discardRenameCascade, repairRenameCascade } from '../lib/vault/renameCascadeRepair';
-import { folderMovesBetween } from '../lib/vault/treeFolderMoves';
+import { noteFolderMoves, takeFolderMoves } from '../lib/vault/unreconciledFolderMoves';
 import { clearPinsOfMissingFolders } from '../lib/vault/folderPins';
 import { assertBaselinesSeeded } from '../lib/vault/fileBaselineRegistry';
 import {
@@ -390,7 +390,7 @@ function commitVaultCandidate(
   // workspaceStore are all populated, so the BoardRouter effect that
   // fires for the restored active tab sees a fully-formed project on
   // its first run.
-  tabStore.hydrateFromWorkspace(candidate.project.workspace, candidate.project.boards);
+  tabStore.hydrateFromWorkspace(candidate.project.workspace, candidate.project.boards, { tree: candidate.tree, root: candidate.path });
 
   // Tags + theme — both pre-loaded, both synchronous.
   fileTagsStore.commitFromCandidate(candidate.path, candidate.tagsFile, candidate.tagsReadOnly);
@@ -1243,6 +1243,7 @@ export const vaultStore = {
       // when nothing changed keeps `treeView` (and every VaultFileItem
       // sub-tree it feeds) referentially stable.
       if (treesEqual(fileTree, tree)) return true;
+      noteFolderMoves(fileTree, tree, vaultPath);
       fileTree = tree;
       const knownPaths = new SvelteSet<VaultPath>();
       const walk = (nodes: FileTreeNode[]) => {
@@ -1291,16 +1292,15 @@ export const vaultStore = {
    * `git mv` could evict the renamed board before its rebind applied).
    */
   async refreshTreeAndCleanup(): Promise<void> {
-    const before = fileTree;
     const refreshed = await this.refreshTree();
     // Every walk below treats `fileTree` as the truth about disk. After a
     // FAILED read the tree is stale: a board created since the last good read
     // would be evicted (pending writes cancelled, tabs closed — recent edits
     // lost). Skip; the next successful refresh re-runs the cleanup.
     if (!refreshed) return;
-    // A folder another program renamed is followed first (pins, tile refs,
-    // boards inside it), so nothing below finds it missing.
-    for (const move of vaultPath ? folderMovesBetween(before, fileTree, vaultPath) : []) {
+    // A folder another program renamed (seen by any tree read since the last
+    // reconcile) is followed first, so nothing below finds it missing.
+    for (const move of vaultPath ? takeFolderMoves() : []) {
       await this.handleExternalRename(move.oldFolder, move.newFolder);
     }
     // A pinned folder deleted by another program: clear the pin.

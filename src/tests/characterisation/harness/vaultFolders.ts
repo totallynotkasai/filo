@@ -114,6 +114,17 @@ function pressedFolders(app: CharApp, sel: string): string[] {
   return out;
 }
 
+/**
+ * Something in Filo reads the vault tree at once (a create, delete or rename
+ * does, when it finishes), ahead of the watcher's own reconcile.
+ *
+ * Adapter knowledge: that read is `vaultStore.refreshTree()`.
+ */
+export async function filoReadsTreeNow(): Promise<void> {
+  const { vaultStore } = await import('@renderer/stores/vault.svelte');
+  await vaultStore.refreshTree();
+}
+
 /** The folder the sidebar marks as the Root Directory, or null when none is. */
 export function rootDirectoryFolder(app: CharApp): string | null {
   return pressedFolders(app, 'button.root-dir-btn')[0] ?? null;

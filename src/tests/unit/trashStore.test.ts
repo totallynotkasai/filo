@@ -131,7 +131,7 @@ describe('board delete toast', () => {
   it('Undo moves the board file back', async () => {
     vault.writeExternally('Plan.board.json', '{"version":8}');
     const id = await trash('Plan.board.json');
-    toastMovedToTrash('Plan', () => restoreTrashedItem('Plan', 'Plan.board.json', id));
+    toastMovedToTrash('Plan', async () => { await restoreTrashedItem('Plan', 'Plan.board.json', id); });
     const toast = uiStore.toasts.find((t) => t.text.includes("moved to Filo's trash"));
     expect(toast?.actions?.map((a) => a.label)).toEqual(['Undo']);
     uiStore.invokeToastAction(toast!.id, 0);

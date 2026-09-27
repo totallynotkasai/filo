@@ -230,6 +230,30 @@ describe('Tab in lists and code', () => {
     reloads(ed);
   });
 
+  it('a tab typed in inline code stays in one code span after a reload', () => {
+    const ed = makeEditor('Run `ab` now\n');
+    caretAt(ed, 'ab', 1);
+    expect(press(ed, 'Tab')).toBe(true);
+    const disk = editorMarkdown(ed);
+    expect(disk).toBe('Run `a\tb` now');
+    const ed2 = makeEditor(disk);
+    const codes = ed2.view.dom.querySelectorAll('code');
+    expect(codes.length).toBe(1);
+    expect(codes[0]?.textContent).toBe('a\tb');
+    expect(editorMarkdown(ed2)).toBe(disk);
+  });
+
+  it('code applied over text holding a tab is saved as one code span', () => {
+    const ed = makeEditor('x a\tb y\n');
+    const from = caretAt(ed, 'a');
+    ed.commands.setTextSelection({ from, to: from + 3 });
+    ed.commands.toggleCode();
+    const disk = editorMarkdown(ed);
+    expect(disk).toBe('x `a\tb` y');
+    const ed2 = makeEditor(disk);
+    expect(ed2.view.dom.querySelectorAll('code').length).toBe(1);
+  });
+
   it('inserts a tab character in a code block, and Shift+Tab takes it out', () => {
     const ed = makeEditor('```\ncode\n```');
     caretAt(ed, 'code', 1);

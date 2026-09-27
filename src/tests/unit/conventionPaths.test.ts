@@ -155,16 +155,17 @@ describe('conventionPaths', () => {
     });
   });
 
-  // One pin: board folders on → the board's own folder; off → the vault-wide
-  // Root Directory. The other pin never applies.
+  // Board folders on → the board's own folder, else the Root Directory;
+  // off → the vault-wide Root Directory, never the board pin.
   describe('resolveContentFolder', () => {
     it('board folders on: the board pin, whatever the Root Directory', () => {
       expect(resolveContentFolder({ boardFolders: true, rootFolder: 'Root', boardFolder: 'Plan' })).toBe('Plan');
     });
 
-    it('board folders on, pin toggled off (or no board): the vault root, not the Root Directory', () => {
-      expect(resolveContentFolder({ boardFolders: true, rootFolder: 'Root', boardFolder: '' })).toBe('');
-      expect(resolveContentFolder({ boardFolders: true, rootFolder: 'Root', boardFolder: undefined })).toBe('');
+    it('board folders on, a board with no folder of its own (or no board): the Root Directory', () => {
+      expect(resolveContentFolder({ boardFolders: true, rootFolder: 'Root', boardFolder: '' })).toBe('Root');
+      expect(resolveContentFolder({ boardFolders: true, rootFolder: 'Root', boardFolder: undefined })).toBe('Root');
+      expect(resolveContentFolder({ boardFolders: true, rootFolder: '', boardFolder: undefined })).toBe('');
     });
 
     it('board folders off: the Root Directory, never the board pin', () => {

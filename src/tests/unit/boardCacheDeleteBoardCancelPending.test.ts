@@ -105,7 +105,7 @@ describe('boardCacheStore.deleteBoard cancels pending write', () => {
     // Now resolve the move and let removeBoardFromCache run.
     resolveDelete();
     const deleted = await deletePromise;
-    expect(deleted).toEqual({ boardPath: 'tasks.board.json', trashId: 'tid' });
+    expect(deleted).toMatchObject({ boardPath: 'tasks.board.json', trashId: 'tid' });
 
     // Final flush — also covers any stray write scheduled after the cancel.
     await vi.advanceTimersByTimeAsync(500);

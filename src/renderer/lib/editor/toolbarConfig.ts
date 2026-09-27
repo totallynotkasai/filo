@@ -125,6 +125,23 @@ export const tiptapToolbar = {
   },
 
   /**
+   * Drops `editor` at once when its view is torn down, unlike the blur's
+   * delayed clear. The view's note callback reads the view's own state,
+   * which is gone once it is destroyed, and a destroyed editor must not keep
+   * driving the toolbar. No-op when another editor is active.
+   */
+  releaseEditor(editor: Editor) {
+    if (activeEditor !== editor) return;
+    if (blurTimeout) {
+      clearTimeout(blurTimeout);
+      blurTimeout = null;
+    }
+    activeEditor = null;
+    activeNote = null;
+    toolbarStore.reset();
+  },
+
+  /**
    * Cancels any pending blur clear (call when a toolbar control receives focus).
    * Prevents the 150ms timeout from nulling activeEditor before onchange fires —
    * needed for <select> dropdowns where the user may take longer than 150ms to pick an option.

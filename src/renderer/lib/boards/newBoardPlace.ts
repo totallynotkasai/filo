@@ -6,9 +6,9 @@
  */
 import { vaultStore } from '../../stores/vault.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
-import { flattenTreePaths } from '../vault/vaultTreeSort';
+import { directoryExistsInTree, flattenTreePaths } from '../vault/vaultTreeSort';
 import { normalizeVaultRelative } from '../utils/path';
-import { boardNameProblem, freeBoardName, plannedBoardPlace, type BoardPlace } from './boardNaming';
+import { boardNameFromPath, boardNameProblem, freeBoardName, plannedBoardPlace, type BoardPlace } from './boardNaming';
 
 /** The open vault's place for a new board named `name`. */
 export function newBoardPlace(name: string): BoardPlace {
@@ -36,17 +36,41 @@ export function isVaultFileKnown(relPath: string): boolean {
   return false;
 }
 
+/**
+ * True when a new board's own folder would be one that already exists. A
+ * board delete leaves its folder (and the notes in it) behind, so a new board
+ * of the same name would otherwise move in and pin the old board's files.
+ */
+function folderAlreadyThere(place: BoardPlace): boolean {
+  const root = vaultStore.path;
+  if (!place.folder || !root) return false;
+  return directoryExistsInTree(vaultStore.rawTree ?? [], `${root.replace(/[\\/]+$/, '')}/${place.folder}`);
+}
+
 /** Why a new board can't be named `name`, or `null` when it can. */
 export function newBoardNameProblem(name: string): string | null {
   const problem = boardNameProblem(name);
   if (problem) return problem;
   const place = newBoardPlace(name);
-  if (!isVaultFileKnown(place.path)) return null;
   const where = place.folder ? ` in "${place.folder}"` : '';
-  return `A board named "${name.trim()}" already exists${where}.`;
+  if (isVaultFileKnown(place.path)) return `A board named "${name.trim()}" already exists${where}.`;
+  if (folderAlreadyThere(place)) return `A folder named "${place.folder}" already exists. Pick another name for the board.`;
+  return null;
+}
+
+/**
+ * True when Filo shouldn't pick `name` for a new board itself: its file or
+ * its own folder is taken, or another board anywhere in the vault already
+ * has that name (two tabs with one name can't be told apart).
+ */
+export function isNewBoardNameTaken(name: string): boolean {
+  const place = newBoardPlace(name);
+  if (isVaultFileKnown(place.path) || folderAlreadyThere(place)) return true;
+  const key = normalizeVaultRelative(name.trim());
+  return Object.values(boardCacheStore.paths).some((p) => normalizeVaultRelative(boardNameFromPath(p)) === key);
 }
 
 /** `base`, or `base 2`, `base 3`, … whichever is free first. */
 export function freeNewBoardName(base: string): string {
-  return freeBoardName(base, (name) => isVaultFileKnown(newBoardPlace(name).path));
+  return freeBoardName(base, isNewBoardNameTaken);
 }

@@ -15,6 +15,7 @@
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import TaskListToc from './TaskListToc.svelte';
+  import { TOC_DEFAULTS, tocDefaultBounds } from '../../lib/tasklist/tocPlacement';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateBoardSettingsCommand } from '../../commands/index';
 
@@ -31,19 +32,12 @@
     onAddSection: () => void;
   } = $props();
 
-  // Defaults sit just below the top-right corner. Width is wide enough for
-  // typical section titles to stay on one line; height is roughly five rows
-  // before scroll kicks in. The 80px right margin clears the TaskList side
-  // toolbar (~48px wide at right: 16px) with a 16px gap.
-  const DEFAULTS = { width: 220, height: 320, margin: 80, top: 100 };
+  // Defaults sit just below the top-right corner, beside the list column
+  // when it leaves room (`tocDefaultBounds`).
 
   function defaultBounds() {
-    return {
-      x: Math.max(8, window.innerWidth - DEFAULTS.width - DEFAULTS.margin),
-      y: DEFAULTS.top,
-      width: DEFAULTS.width,
-      height: DEFAULTS.height,
-    };
+    const list = scrollContainerEl?.querySelector('.tasklist-content');
+    return tocDefaultBounds(window.innerWidth, list ? list.getBoundingClientRect().right : null);
   }
 
   // Read persisted bounds from the active board's settings. Computed
@@ -64,16 +58,18 @@
   // Geometry state. Seeded with neutral defaults; the $effect below
   // hydrates from persisted bounds (or computed defaults) once the board
   // identity is known and reseeds on every board switch.
-  let bx = $state(DEFAULTS.margin);
-  let by = $state(DEFAULTS.top);
-  let bw = $state(DEFAULTS.width);
-  let bh = $state(DEFAULTS.height);
+  let bx = $state<number>(TOC_DEFAULTS.rightMargin);
+  let by = $state<number>(TOC_DEFAULTS.top);
+  let bw = $state<number>(TOC_DEFAULTS.width);
+  let bh = $state<number>(TOC_DEFAULTS.height);
 
   // Reseed when the active board changes. Only when the *identity* flips so
   // an in-place settings write (from our own persist call) doesn't echo back
   // and jump the panel mid-drag.
   $effect(() => {
     if (boardId === activeBoardId) return;
+    // The default place is read off the list column, so wait for it.
+    if (!persisted && !scrollContainerEl) return;
     activeBoardId = boardId;
     const next = persisted ?? defaultBounds();
     bx = next.x;

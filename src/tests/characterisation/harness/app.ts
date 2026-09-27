@@ -223,6 +223,22 @@ export async function reopenVault(app: CharApp): Promise<void> {
 }
 
 /**
+ * Close the vault, run `whileClosed` (another program changing files), then
+ * open it again: the next launch after the change.
+ */
+export async function reopenVaultAfter(app: CharApp, whileClosed: () => void): Promise<void> {
+  app.bridge.attach();
+  const { vaultStore } = await import('@renderer/stores/vault.svelte');
+  await quiesce(100);
+  if (!(await vaultStore.closeVault())) throw new Error('closeVault refused');
+  await settle(100);
+  whileClosed();
+  if (!(await vaultStore.openVault(app.root))) throw new Error('reopen failed');
+  await quiesce(600);
+  app.bridge.resetLog();
+}
+
+/**
  * Quit the way a user does, straight after their last keystroke: close the
  * vault, saving. Resolves with how long the close took (ms). The app stays
  * mounted; `stopApp` then only removes the vault.

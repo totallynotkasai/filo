@@ -1,8 +1,10 @@
-import { app, BrowserWindow, ipcMain, Menu, MenuItem, protocol, session } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, MenuItem, protocol, session, shell } from 'electron';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { isAppNavigation } from './utils/navigationGuard';
+import { embedPopupTarget } from './utils/embedPopup';
+import { isPrivateUrl } from './utils/pathSecurity';
 import { registerAllHandlers } from './ipc/index';
 import { registerFiloProtocol } from './protocol/filoMedia';
 import {
@@ -348,7 +350,9 @@ async function createWindow(): Promise<void> {
   // `setWindowOpenHandler` denies every `window.open` / `target=_blank`
   // attempt: the renderer opens external links through the `media:open-external`
   // IPC (which validates the URL + blocks private addresses), never via a new
-  // BrowserWindow. `will-navigate` blocks any top-level navigation that would
+  // BrowserWindow. A link inside an iframe tile's page that asks for a new
+  // window goes to the default browser instead (`embedPopupTarget`: public
+  // https only, one a second). `will-navigate` blocks any top-level navigation that would
   // leave the app's own document — the SPA never legitimately navigates the
   // top frame, so a navigation to another origin is an accident or an attack
   // (injected meta-refresh, a script setting `location.href`, a stray link).
@@ -357,7 +361,15 @@ async function createWindow(): Promise<void> {
       ? process.env.ELECTRON_RENDERER_URL
       : pathToFileURL(join(__dirname, '../renderer/index.html')).toString();
 
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  let lastEmbedPopupAt = 0;
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const target = embedPopupTarget(url, Date.now(), lastEmbedPopupAt, isPrivateUrl);
+    if (target) {
+      lastEmbedPopupAt = Date.now();
+      void shell.openExternal(target).catch((err: unknown) => logMainError('embed-popup', err));
+    }
+    return { action: 'deny' };
+  });
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!isAppNavigation(url, appNavigationUrl)) {
       event.preventDefault();

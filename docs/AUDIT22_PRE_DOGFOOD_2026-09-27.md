@@ -404,6 +404,45 @@ The drag, lock, frame, Kanban and Task List fixes are covered by the unit specs 
 ### Phase 5 — workspace polish
 Restore Document tabs, board-folder name and reuse rules, the recovery-modal wording, the Root Directory with board folders on, and the remaining UX lows.
 
+#### Phase 5 status: done (2026-09-28)
+
+All items are fixed. Each fix except the recovery wording has a regression test. For M24, boards-5, recent-4, lifecycle-5, lifecycle-6, boards-6, live-6 and editor-10 I put the old code back and confirmed the test fails, then passes with the fix. live-8 and legacy-3 are new modules with their own unit tests. The lists-8 and legacy-2 tests assert the opposite of the old behaviour.
+
+| Item | Fix | Tests |
+|---|---|---|
+| M24 | `tabStore.serialize()` stores a Document tab's `notePath` in `workspace.json`. On open, a Document tab comes back only while its note is in the vault tree, under the tree's spelling, so a hand-edited path can't name anything outside the vault. A rename saves the new path at once. | `workspaceRestore.test.ts` (characterisation: order and active tab, a rename, a note deleted while the vault was closed) |
+| boards-5 / recent-3 | With board folders on, a board with no folder of its own (made before the switch, or its pin toggled off) uses the Root Directory, then the vault root. The sidebar's green tree button marks where files actually go. | `conventionPaths.test.ts`, `boardFolders.test.ts` |
+| recent-4 / live-7 | A new board's name is refused when its own folder already exists (a deleted board's folder is left behind with its notes). Names Filo picks itself ("Kanban 2", a template's board) also skip any name another board in the vault has (`isNewBoardNameTaken`). | `boardFolders.test.ts` (two cases) |
+| lifecycle-8 | The recovery list no longer promises to "ask again next time". It says closing the list another way keeps it only until Filo saves a change, which is what happens. | (wording only) |
+| lifecycle-6 | An in-app folder rename that moves the Root Directory saves `app.json` before it clears the rename-recovery marker, as the external-rename path already did. | `folderPinsAndVaultName.test.ts` |
+| lifecycle-5 | Every tree read notes the folder moves it sees (`lib/vault/unreconciledFolderMoves.ts`), and the watcher's reconcile follows them. An in-app read that sees another program's folder rename first no longer hides it. Filo's own renames are left out: both paths are marked as its own writes again just before the rename reads the tree. | `folderPinsAndVaultName.test.ts`, `folderPins.test.ts` |
+| boards-6 | A board delete keeps the board's camera and side-toolbar place, and the toast's Undo puts them back. | `boardDeleteUndo.test.ts` (characterisation) |
+| live-6 | `tiptapToolbar.releaseEditor(editor)` drops an unmounted editor at once. The blur's clear waits 300 ms, and in that time the toolbar kept calling the destroyed view's note callback. This affected Document tabs, text tiles, tile and frame titles, and connection labels. | `leavingDocumentTab.test.ts` (component) |
+| live-8 | The Task List's Table of Contents first opens beside the list column when there is room, narrowed to 180 px at least, instead of over the list's right edge. It waits for the list to be laid out before it places itself (`lib/tasklist/tocPlacement.ts`). | `tocPlacement.test.ts` |
+| lists-8 | The due-date chip uses the OS regional format (`16 May` on en-GB) and shows the year when the date isn't in this year. | `dueDateFormat.test.ts` |
+| editor-10 | Tab inside inline code types a tab character into the code. When a code mark is put over an existing tab, the tab is saved as code text. Either way the note keeps one code span. | `editorTabKeys.test.ts` (two cases) |
+| legacy-2 | The vault index no longer skips notes under a top-level `attachments/` folder. | `vaultIndex.test.ts` |
+| legacy-3 | A link inside an iframe tile's page that asks for a new window opens in the default browser: public `https://` only, at most one a second (`src/main/utils/embedPopup.ts`). KNOWN_LIMITATIONS #10 describes this. | `embedPopup.test.ts` |
+
+**Verification.** `npm run ci:verify` is green: 655 test files, 6299 tests passed, 5 skipped, 68/68 gates, and the test type-check ratchet. A real-app check (built app, Playwright `_electron`, a fresh scratch vault, two launches) confirmed:
+- **M24:** Kanban, Task List, Mind Map and two Document tabs (one on `attachments/Caption.md`) came back after a relaunch in the same order, with the same tab active. `workspace.json` names both notes.
+- **legacy-2:** Find for a word only in `attachments/Caption.md` finds it (1 / 1).
+- **live-8:** the screenshots show the Kanban and Mind Map panels at their default places don't cover content. The Task List's Table of Contents did cover the progress count and the list's right edge; after the fix it sits beside the list.
+- **live-6:** no console warnings when leaving a Document tab. The build is a production build, where Svelte's `derived_inert` warning is off, so the component test is the real check for this.
+- No renderer or console errors.
+
+**Deviations from the plan**
+
+- **Root Directory with board folders on.** The UI Feedback 4 table said a board whose pin is toggled off saves files at the vault root. It now falls back to the Root Directory, and only then to the vault root. Without a Root Directory nothing changes. With one, clicking a green Root Directory folder pins the board to it, and clicking it again leaves it green, since files still go there. Settings' hint says so.
+- **Board names elsewhere in the vault.** Only names Filo picks itself skip another board's name vault-wide. A name the user types is still refused only in the same folder, as decided in UI Feedback 4. A leftover folder is refused for both.
+- **lifecycle-8** is fixed with wording, as planned, not by keeping the unclean-shutdown marker until the list is dismissed.
+- **boards-6.** Only the toast's Undo brings the camera and toolbar back. They are kept in memory for this session, so a restore from Settings → Trash later doesn't. `restoreTrashedItem` now returns whether the item came back.
+- **live-8** covered only the Task List's Table of Contents; the Kanban and Mind Map defaults were clear in the live run. On a window too narrow for the panel beside the list, it still opens in the corner over the list (it has no close button).
+- **Items taken from other groups:** lifecycle-5, lifecycle-6, editor-10, legacy-2 and legacy-3 weren't named for this phase. They are user-visible lows that fit no other phase, so I did them here. `legacy-8` (8.3 short names) and `notes-2` (an older copy restored within ~10 s) are left: they aren't UX and need their own look.
+- **Tests changed:** `conventionPaths.test.ts` pinned "pin toggled off → the vault root", now the Root Directory. `vaultIndex.test.ts` pinned "attachments/ is ignored". `dueDateFormat.test.ts` now passes a fixed locale and date. `boardCacheDeleteBoardCancelPending.test.ts` matches the delete result instead of equalling it (it now carries `view`). `trashStore.test.ts` wraps the restore in a void callback. The characterisation harness gained `openTabs`, `reopenVaultAfter`, `deleteBoardInBrowser` and `filoReadsTreeNow`.
+- **Flaky tests (pulled one fix forward from Phase 6).** `recoverySnapshotKeep.test.ts` ("survives 150 later load-failure snapshots") timed out at 60 s in 2 of 4 full runs. It takes about 6 s alone. The four new characterisation specs add enough disk load to tip it, so its timeout is now 120 s; what it checks is unchanged. `undoAcrossRenames.test.ts` ("undo on a note that is gone") timed out once waiting for its toast under load and passed 3/3 alone and in every other full run. It is left for Phase 6 with ci-1 to ci-3.
+- **Housekeeping:** `vault.svelte.ts` stayed at its 1573-line ceiling. CLAUDE.md lists `unreconciledFolderMoves.ts` and `embedPopup.ts`.
+
 ### Phase 6 — hygiene
 Docs and comment nits, dead code, duplicated validators, flaky tests, and CI (run the coverage ratchet on `main`; consider a scheduled E2E run).
 

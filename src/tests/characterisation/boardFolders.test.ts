@@ -107,6 +107,36 @@ describe('with board-specific folders on', () => {
     expect(inRoot.startsWith('Notes/')).toBe(true);
     expect(errorToasts()).toEqual([]);
   });
+
+  it('a board made before they were switched on keeps using the Root Directory', async () => {
+    const app = await startApp({ 'Notes/n.md': 'N\n' });
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    await toggleRootDirectory(app, 'Notes');
+    await setBoardFolders(app, true);
+    // The sidebar marks where its files go.
+    expect(boardFolder(app)).toBe('Notes');
+    const card = await addKanbanCard(app);
+    expect(card.startsWith('Notes/')).toBe(true);
+    expect(errorToasts()).toEqual([]);
+  });
+
+  it("a new board doesn't move into a folder left behind with its name", async () => {
+    const app = await kanbanWithFolders({ 'Kanban 1/Old card.md': 'Old\n' });
+    expect(activeTabName(app)).toBe('Kanban 2');
+    expect(boardFolder(app)).toBe('Kanban 2');
+    expect(app.exists('Kanban 2/Kanban 2.board.json')).toBe(true);
+    expect(app.exists('Kanban 1/Kanban 1.board.json')).toBe(false);
+  });
+
+  it("a new board doesn't take the name of a board elsewhere in the vault", async () => {
+    const app = await startApp({ 'Keep.md': 'K\n' });
+    await createBoard(app, 'kanban');
+    await setBoardFolders(app, true);
+    await createBoard(app, 'kanban');
+    expect(activeTabName(app)).toBe('Kanban 2');
+    expect(app.exists('Kanban 2/Kanban 2.board.json')).toBe(true);
+  });
 });
 
 describe("a board's name is its file name", () => {

@@ -1,23 +1,39 @@
 /**
  * Due-date formatting helpers shared by TaskItem.svelte and KanbanCard.svelte.
  *
- * Pure — no DOM, no Svelte. The date chip is a compact `MMM D` form
- * (e.g. `May 16`). The time-chip helper formats `HH:MM` 24-hour input to a
- * compact 12-hour string (`9am` / `4:30pm`).
+ * No DOM, no Svelte. The date chip is a compact month-and-day form in the
+ * OS regional format (`May 16`, `16 May`), with the year when it isn't this
+ * year. The time-chip helper formats `HH:MM` 24-hour input to a compact
+ * 12-hour string (`9am` / `4:30pm`).
  */
 
+/** The OS regional-format locale the preload exposes, else the runtime default. */
+function chipLocale(): string | undefined {
+  const locale = typeof window !== 'undefined' ? window.filo?.systemLocale : undefined;
+  if (!locale) return undefined;
+  try {
+    return Intl.DateTimeFormat.supportedLocalesOf([locale]).length > 0 ? locale : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Compact absolute date — `Aug 12` or `May 16`. Returns `''` for empty input.
- * Parses YYYY-MM-DD as a local date (avoids the toISOString UTC drift trap).
+ * Compact absolute date — `Aug 12`, `12 Aug`, or `Aug 12, 2027` outside
+ * the current year. Returns `''` for empty input. Parses YYYY-MM-DD as a
+ * local date (avoids the toISOString UTC drift trap).
  */
-export function formatDueDateAbsolute(iso: string): string {
+export function formatDueDateAbsolute(iso: string, opts: { locale?: string; now?: Date } = {}): string {
   if (!iso) return '';
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   const d = m
     ? new Date(parseInt(m[1] ?? '', 10), parseInt(m[2] ?? '', 10) - 1, parseInt(m[3] ?? '', 10))
     : new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const thisYear = d.getFullYear() === (opts.now ?? new Date()).getFullYear();
+  return d.toLocaleDateString(opts.locale ?? chipLocale(), thisYear
+    ? { month: 'short', day: 'numeric' }
+    : { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /**

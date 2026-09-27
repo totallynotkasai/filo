@@ -375,6 +375,13 @@ notifications, clipboard, …). Only the app document itself may request
 microphone audio, for the Audio tile
 ([src/main/utils/permissionPolicy.ts](src/main/utils/permissionPolicy.ts)).
 
+An embedded page can ask to open a link in a new window (`target=_blank`,
+`window.open`). Filo never opens a window; such a link goes to the default
+browser if it is a public `https://` address, at most one a second
+([src/main/utils/embedPopup.ts](src/main/utils/embedPopup.ts)). So an embedded
+page can open a public https page in the browser once per click, as the link
+in a note can.
+
 ## 11. Partial-read guard can briefly refuse a save for a body that legitimately starts with `---`
 
 **What:** The note writer's torn-read guard (`looksTorn` in

@@ -13,6 +13,7 @@
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { boardStore } from '../../stores/board.svelte';
   import { normalizePath, samePath, toPosix, toVaultRelative } from '../../lib/utils/path';
+  import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
   import { reportError } from '../../lib/utils/errorBus';
@@ -84,19 +85,19 @@
   }
 
   // ── The one folder pin: where new files go ──
-  // With board folders on, the tree button shows and sets the active board's
-  // own folder (`settings.defaultFolder`); with them off, the vault-wide Root
-  // Directory. `getActiveContentFolder` resolves the same rule, so the green
-  // button is always where files go. `boardStore.settingsVersion` is read so
+  // With board folders on, the tree button sets the active board's own folder
+  // (`settings.defaultFolder`); with them off, the vault-wide Root Directory.
+  // It is green on `getActiveContentFolder`, so the green button is always
+  // where files go (a board with no folder of its own uses the Root
+  // Directory). `boardStore.settingsVersion` is read so
   // the board pin re-evaluates on every settings mutation (Svelte 5's proxy
   // tracker doesn't always notify when `settings.defaultFolder` is first
   // stamped onto a board).
   const activeBoard = $derived(boardStore.current);
   const boardFolders = $derived(vaultStore.project?.settings?.general?.boardFolders === true);
   const pinnedFolderAbs = $derived.by(() => {
-    if (!boardFolders) return vaultStore.activeRootFolderAbs;
     void boardStore.settingsVersion;
-    const rel = (activeBoard?.settings as { defaultFolder?: string } | undefined)?.defaultFolder ?? '';
+    const rel = getActiveContentFolder(activeBoard);
     return rel && vaultStore.path ? `${vaultStore.path.replace(/[\\/]+$/, '')}/${rel}` : '';
   });
   const isPinnedHere = $derived(node.isDirectory && samePath(pinnedFolderAbs, node.path));

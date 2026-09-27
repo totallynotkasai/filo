@@ -4,7 +4,7 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { boardStore } from '../../stores/board.svelte';
   import { createId } from '../../lib/utils/ids';
-  import { isVaultFileKnown, newBoardPlace } from '../../lib/boards/newBoardPlace';
+  import { isNewBoardNameTaken } from '../../lib/boards/newBoardPlace';
   import type { BoardType } from '../../../shared/types';
   import Tab from './Tab.svelte';
   import { boardRegistry } from '../../core/boardRegistry';
@@ -59,11 +59,11 @@
       tasklist: 'Task List',
       document: 'Document',
     };
-    // The lowest number whose file is free where the board would go: a taken
+    // The lowest number free for a new board (`isNewBoardNameTaken`): a taken
     // name is refused at create, never bumped to ` (2)`.
     const base = labels[type];
     let n = 1;
-    while (isVaultFileKnown(newBoardPlace(`${base} ${n}`).path)) n++;
+    while (isNewBoardNameTaken(`${base} ${n}`)) n++;
     return `${base} ${n}`;
   }
 

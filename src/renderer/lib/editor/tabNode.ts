@@ -42,12 +42,22 @@ const DELIMITER_MARKS = new Set(['bold', 'italic', 'strike']);
  * delimiter would sit next to whitespace (`**bold\t**`), which Markdown
  * doesn't read as emphasis, so the run broke on reopen; outside it the file
  * reads `**bold**\t`, and the tab looks the same. A tab inside a run keeps its
- * marks. Returns `block` itself when nothing changes.
+ * marks. A tab in inline code is written as a plain tab character in the code
+ * text: as a node it would close the code span around it, and the span came
+ * back as two (a tab in code is read back as text, see `tabsToElements`).
+ * Returns `block` itself when nothing changes.
  */
 export function withEdgeTabsOutsideRuns(block: ProseMirrorNode): ProseMirrorNode {
   const children: ProseMirrorNode[] = [];
-  block.forEach((child) => children.push(child));
   let changed = false;
+  block.forEach((child) => {
+    if (child.type.name === 'tab' && child.marks.some((m) => m.type.name === 'code')) {
+      children.push(block.type.schema.text('\t', child.marks));
+      changed = true;
+    } else {
+      children.push(child);
+    }
+  });
   // Repeat until stable: unmarking the last of several tabs puts the one
   // before it at the run's edge.
   for (let moved = true; moved; ) {

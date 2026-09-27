@@ -202,7 +202,7 @@
     <div class="setting-label-stack">
       <span class="setting-label">Root Directory</span>
       <span class="setting-hint">{boardFolders
-        ? 'New boards get their folder here.'
+        ? 'New boards get their folder here, and a board without a folder of its own puts its files here.'
         : 'New files go here.'} Set it with a folder's "Use as root directory" button in the sidebar while board-specific folders are off.</span>
     </div>
     <div class="root-directory">

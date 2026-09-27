@@ -175,9 +175,7 @@
 
   function destroyLabelEditor() {
     if (labelEditor) {
-      if (tiptapToolbar.activeEditor === labelEditor) {
-        tiptapToolbar.clearActiveEditor();
-      }
+      tiptapToolbar.releaseEditor(labelEditor);
       labelEditor.destroy();
       labelEditor = null;
     }

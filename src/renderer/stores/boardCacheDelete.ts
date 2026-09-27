@@ -1,14 +1,17 @@
 import { vaultStore } from './vault.svelte';
 import {
   type BoardFileData,
+  type ViewportEntry,
   cancelBoardWrite,
   flushBoardWrite,
+  getViewportFromCache,
   removeViewport,
+  setViewport,
 } from '../lib/boards/boardSaver';
 import { markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
 import { trashVaultPath } from '../lib/vault/vaultOperations';
 import { reportError } from '../lib/utils/errorBus';
-import { workspaceStore } from './workspace.svelte';
+import { workspaceStore, type BoardToolbarState } from './workspace.svelte';
 
 /** The board cache's own state, handed to this slice. */
 export interface BoardDeleteContext {
@@ -22,10 +25,18 @@ export interface BoardDeleteContext {
   markDirty(boardId: string): void;
 }
 
+/** How a board was last shown: its camera and its side toolbar. */
+export interface BoardView {
+  viewport: ViewportEntry | null;
+  toolbar: BoardToolbarState;
+}
+
 /** A board file the delete moved into Filo's trash. */
 export interface TrashedBoard {
   boardPath: string;
   trashId: string;
+  /** Put back by the delete's Undo; kept only for this session. */
+  view: BoardView;
 }
 
 /**
@@ -79,6 +90,7 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
       const boardPath = ctx.getPaths()[boardId];
       if (!boardPath) return null;
 
+      const view: BoardView = { viewport: getViewportFromCache(boardId), toolbar: workspaceStore.boardToolbar(boardId) };
       // The trashed copy is what Undo and Settings → Trash bring back, so the
       // last edits (up to 300 ms old) are written first. A failed write has
       // already said so; the delete still goes ahead.
@@ -103,7 +115,7 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
         // Drain the in-flight write (neutralised by the mark above), then
         // clear — fire-and-forget so the delete returns promptly.
         void flushBoardWrite(boardId, () => null).finally(() => clearBoardPathDeleting(boardPath));
-        return { boardPath, trashId: result.trashId };
+        return { boardPath, trashId: result.trashId, view };
       } catch (err) {
         clearBoardPathDeleting(boardPath); // the move failed — re-enable writes
         // The board stays, so its changes stay tracked for the next save.
@@ -111,6 +123,19 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
         reportError('boardCache.delete', err, `Couldn't move the board file ${boardPath} to Filo's trash; it was not deleted.`);
         return null;
       }
+    },
+
+    /**
+     * Puts back how a board was shown once its file is restored (the
+     * delete's Undo), unless it has a camera or toolbar place again. The
+     * board file keeps its id, so it picks them up whenever it is loaded.
+     */
+    putBackBoardView(boardId: string, view: BoardView): void {
+      if (view.viewport && !getViewportFromCache(boardId)) setViewport(boardId, view.viewport);
+      const now = workspaceStore.boardToolbar(boardId);
+      if (now.position || now.pinned) return;
+      if (view.toolbar.position) workspaceStore.setBoardToolbarPosition(boardId, view.toolbar.position);
+      if (view.toolbar.pinned) workspaceStore.setBoardToolbarPinned(boardId, true);
     },
   };
 }

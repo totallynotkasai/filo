@@ -10,8 +10,8 @@ import { uniqueBy } from './schemaUtils';
  * which tab is currently active. Restored when the project is reopened so the
  * user returns to the same set of boards/tab they left.
  *
- * Only the minimum is stored (tab id + board id); display data like name,
- * emoji, and boardType is derived from the referenced board on load.
+ * Only the minimum is stored (tab id + board id, and a Document tab's note
+ * path); display data like name, emoji, and boardType is derived on load.
  */
 export const WorkspaceStateSchema = z.object({
   openTabs: z
@@ -19,6 +19,8 @@ export const WorkspaceStateSchema = z.object({
       z.object({
         id: z.string().min(1),
         boardId: z.string().min(1),
+        /** A Document tab's note (vault-relative); the tab's boardId is then an opaque id. */
+        notePath: z.string().optional().catch(undefined),
       }).passthrough(),
     )
     .default(() => []),

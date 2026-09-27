@@ -448,7 +448,7 @@ describe('collectMarkdownPaths — .markdown extension acceptance', () => {
     expect(paths.sort()).toEqual(['root.markdown', 'sub/also.md', 'sub/inner.markdown']);
   });
 
-  it('still ignores .filo/, attachments/, and .board.json files', () => {
+  it('ignores .filo/ and .board.json files, but indexes a note under attachments/', () => {
     const tree: FileTreeNode[] = [
       {
         name: '.filo',
@@ -466,6 +466,6 @@ describe('collectMarkdownPaths — .markdown extension acceptance', () => {
       makeFile('keep.markdown', '/v'),
     ];
     const paths = collectMarkdownPaths(tree, '/v');
-    expect(paths).toEqual(['keep.markdown']);
+    expect(paths.sort()).toEqual(['attachments/caption.md', 'keep.markdown']);
   });
 });

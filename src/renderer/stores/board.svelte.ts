@@ -581,7 +581,9 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       const trashed = await boardCacheStore.deleteBoard(boardId);
       if (!trashed) return false;
       await cleanupAfterBoardRemoved(boardId);
-      toastMovedToTrash(name, () => restoreTrashedItem(name, trashed.boardPath, trashed.trashId));
+      toastMovedToTrash(name, async () => {
+        if (await restoreTrashedItem(name, trashed.boardPath, trashed.trashId)) boardCacheStore.putBackBoardView(boardId, trashed.view);
+      });
       return true;
     },
 

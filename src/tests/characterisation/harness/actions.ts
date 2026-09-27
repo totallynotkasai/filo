@@ -249,6 +249,11 @@ export function activeTabName(app: CharApp): string {
   return (active.getAttribute('title') ?? '').replace(/ \([a-z]+\) — .*$/, '');
 }
 
+/** Every open tab as `Name (kind)`, left to right. */
+export function openTabs(app: CharApp): string[] {
+  return $$(app.el, '.tab[title]').map((t) => (t.getAttribute('title') ?? '').replace(/ — .*$/, ''));
+}
+
 /** Right-click the active tab → Split Right. */
 export async function splitActiveTabRight(app: CharApp): Promise<void> {
   contextMenu($(app.el, '.tab.active, .tab[aria-selected="true"]'));
@@ -586,6 +591,20 @@ export async function answerConfirm(app: CharApp, opts: { tickExtra?: boolean; c
     await settle();
   }
   click(opts.confirm ? $(dialog, '.confirm-actions .confirm-btn:not(.cancel):not(.secondary)') : $(dialog, '.confirm-btn.cancel'));
+  await quiesce(800);
+}
+
+/**
+ * Board Browser → the board's Delete button → confirm. Adapter knowledge:
+ * the browser opens through `uiStore.openModal('board-browser')`.
+ */
+export async function deleteBoardInBrowser(app: CharApp, name: string): Promise<void> {
+  const { uiStore } = await import('@renderer/stores/ui.svelte');
+  uiStore.openModal('board-browser');
+  await waitFor(() => document.querySelector(`button[aria-label="Delete ${name}"]`) !== null, `Delete ${name} in the Board Browser`);
+  click($(document, `button[aria-label="Delete ${name}"]`));
+  await answerConfirm(app, { confirm: true });
+  if (document.querySelector('.modal')) uiStore.closeModal();
   await quiesce(800);
 }
 

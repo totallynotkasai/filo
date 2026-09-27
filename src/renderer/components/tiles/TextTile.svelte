@@ -125,9 +125,7 @@
     // even though this view is gone.
     view.close();
     if (editor) {
-      if (tiptapToolbar.activeEditor === editor) {
-        tiptapToolbar.clearActiveEditor();
-      }
+      tiptapToolbar.releaseEditor(editor);
       editor.destroy();
       editor = null;
     }

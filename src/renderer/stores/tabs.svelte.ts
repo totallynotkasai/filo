@@ -4,6 +4,9 @@ import { createId } from '../lib/utils/ids';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { registerPathRenamable } from '../lib/vault/renamePathKeys';
 import type { Board, WorkspaceState } from '../schema/index';
+import type { FileTreeNode } from '../../shared/types';
+import { collectMarkdownPaths } from '../lib/vault/vaultIndex';
+import { noteTitle } from './noteMeta';
 import { boardCacheStore } from './boardCache.svelte';
 import { historyStore } from './history.svelte';
 import { uiStore } from './ui.svelte';
@@ -423,22 +426,25 @@ export const tabStore = {
 
   /**
    * Returns the minimal workspace snapshot for persistence.
-   * Only tab id + board id are stored; display data (name, emoji, type) is
-   * re-derived from the project's boards when tabs are restored.
+   * Only tab id + board id are stored, plus a Document tab's note path;
+   * display data (name, emoji, type) is re-derived when tabs are restored.
    */
   serialize(): WorkspaceState {
     return {
-      openTabs: tabs.map((t) => ({ id: t.id, boardId: t.boardId })),
+      openTabs: tabs.map((t) => (t.notePath ? { id: t.id, boardId: t.boardId, notePath: t.notePath } : { id: t.id, boardId: t.boardId })),
       activeTabId,
     };
   },
 
   /**
    * Restores tabs from a saved workspace snapshot. Tab display data is pulled
-   * from the project's boards. Any saved tabs whose board no longer exists
-   * are silently dropped. Does NOT notify the change listener.
+   * from the project's boards. A Document tab comes back only while its note
+   * is in the vault tree (`notes`), under the tree's spelling, so a path in a
+   * hand-edited workspace.json can't name anything outside the vault. Any
+   * other saved tab whose board no longer exists is silently dropped. Does
+   * NOT notify the change listener.
    */
-  hydrateFromWorkspace(workspace: WorkspaceState | undefined, boards: Board[]) {
+  hydrateFromWorkspace(workspace: WorkspaceState | undefined, boards: Board[], notes?: { tree: FileTreeNode[]; root: string }) {
     tabs = [];
     activeTabId = '';
 
@@ -447,9 +453,17 @@ export const tabStore = {
     }
 
     const boardById = new SvelteMap(boards.map((b) => [b.id, b]));
+    const noteByKey = new SvelteMap<VaultPath, string>();
+    if (notes) for (const rel of collectMarkdownPaths(notes.tree, notes.root)) noteByKey.set(vaultPath(rel), rel);
     const restored: TabData[] = [];
 
     for (const saved of workspace.openTabs) {
+      if (typeof saved.notePath === 'string') {
+        const notePath = saved.notePath ? noteByKey.get(vaultPath(saved.notePath)) : undefined;
+        if (!notePath || restored.some((t) => t.notePath === notePath)) continue;
+        restored.push({ id: saved.id || createId(), boardId: saved.boardId || createId(), name: noteTitle(notePath) || 'Document', boardType: 'document', emoji: '', notePath });
+        continue;
+      }
       const board = boardById.get(saved.boardId);
       if (!board) continue;
       restored.push({
@@ -491,7 +505,10 @@ function renameDocumentTabs(oldRel: string, newRel: string): void {
     changed = true;
     return { ...t, notePath };
   });
-  if (changed) tabs = next;
+  if (!changed) return;
+  tabs = next;
+  // workspace.json names the note by path, so the rename is saved too.
+  notifyChange();
 }
 
 registerPathRenamable('tabs.documentTabs', renameDocumentTabs);

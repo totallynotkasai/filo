@@ -170,9 +170,7 @@
       blurCommitTimer = null;
     }
     if (titleEditor) {
-      if (tiptapToolbar.activeEditor === titleEditor) {
-        tiptapToolbar.clearActiveEditor();
-      }
+      tiptapToolbar.releaseEditor(titleEditor);
       titleEditor.destroy();
       titleEditor = null;
     }

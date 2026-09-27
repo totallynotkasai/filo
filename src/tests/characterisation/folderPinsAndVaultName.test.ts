@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, waitFor, quiesce, reopenVault } from './harness/app';
-import { createBoard, addKanbanColumn, addKanbanCard, errorToasts, deleteInSidebar, undo } from './harness/actions';
+import { createBoard, addKanbanColumn, addKanbanCard, errorToasts, deleteInSidebar, renameInSidebar, undo } from './harness/actions';
 import {
   vaultName,
   renameVault,
@@ -17,6 +17,7 @@ import {
   rootDirectoryFolder,
   boardFolder,
   setBoardFolders,
+  filoReadsTreeNow,
 } from './harness/vaultFolders';
 
 afterEach(async () => {
@@ -118,6 +119,38 @@ describe('a pinned folder deleted in the sidebar', () => {
     await waitFor(() => app.exists('Old/a.md'), 'the folder back');
     await waitFor(() => boardFolder(app) === 'Old', "the board's folder back");
     await quiesce(1500);
+    expect(errorToasts()).toEqual([]);
+  });
+});
+
+describe('a pinned folder renamed by another program just as Filo reads the tree', () => {
+  it('the Root Directory still follows the folder', async () => {
+    const app = await startApp({ 'Old/a.md': 'A\n', 'Old/b.md': 'B\n' });
+    await toggleRootDirectory(app, 'Old');
+    await quiesce(800);
+
+    app.renameExternally('Old', 'New');
+    await filoReadsTreeNow();
+    await quiesce(1500);
+    expect(rootDirectoryFolder(app)).toBe('New');
+    expect(errorToasts()).toEqual([]);
+  });
+});
+
+describe('a pinned folder renamed in Filo', () => {
+  it('the moved Root Directory is saved before the rename is marked done', async () => {
+    const app = await startApp({ 'Old/a.md': 'A\n' });
+    await toggleRootDirectory(app, 'Old');
+    await quiesce(800);
+    app.bridge.resetLog();
+    await renameInSidebar(app, 'Old', 'New');
+    expect(rootDirectoryFolder(app)).toBe('New');
+
+    const calls = app.bridge.calls;
+    const saved = calls.findIndex((c) => c.channel === 'config:save' && c.args[1] === 'app.json' && String(c.args[2]).includes('"activeRootFolder": "New"'));
+    const done = calls.findIndex((c) => c.channel === 'vault:delete' && String(c.args[1]).includes('rename-cascade'));
+    expect(saved).toBeGreaterThanOrEqual(0);
+    expect(done).toBeGreaterThan(saved);
     expect(errorToasts()).toEqual([]);
   });
 });

@@ -15,6 +15,7 @@ import {
 } from '../lib/vault/renameCascadeSentinel';
 import { renameAllPathKeys } from '../lib/vault/renamePathKeys';
 import { followRenameInPins } from '../lib/vault/folderPins';
+import { flushScheduledConfig } from '../lib/boards/configWriteScheduler';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { beginRenameInFlight, endRenameInFlight } from '../lib/vault/renameInFlight';
 import {
@@ -437,7 +438,7 @@ async function runRename(
         // new name. Without this, the next file created through a pin
         // resolves the stale path and resurrects the old folder via
         // `fs.mkdir(..., recursive)`.
-        followRenameInPins(ctx.getProject()?.settings.general, () => ctx.markMetaDirty(), oldRel, newRel);
+        const pinMoves = followRenameInPins(ctx.getProject()?.settings.general, () => ctx.markMetaDirty(), oldRel, newRel);
         // Mark any rebound board dirty so the next debounced
         // write lands at the new on-disk path. Without this, the cache
         // entry mapped under the new path never persists and the next
@@ -451,6 +452,9 @@ async function runRename(
         // the entire cascade — the file is renamed on disk but every
         // `.board.json` still points at the old path until next save.
         const renameCascadeFlush = await boardCacheStore.flushAllDirty();
+        // The Root Directory lives in `app.json`: save it now, so the sentinel
+        // is only cleared once the moved pin is on disk.
+        const configFailed = pinMoves.rootMoved ? ((await flushScheduledConfig(() => null))?.failed ?? []) : [];
         if (renameCascadeFlush.failed.length > 0) {
           // Surface failed .board.json writes so the user
           // knows the rename succeeded on disk but the in-memory cascade
@@ -477,7 +481,7 @@ async function runRename(
               reportError('vault.rename.sentinel', err, "Couldn't update rename-cascade sentinel with failed paths");
             });
           }
-        } else if (sentinelId && tagsFlushOk && pathKeysOk) {
+        } else if (sentinelId && tagsFlushOk && pathKeysOk && configFailed.length === 0) {
           // Full success path: drop the sentinel so the recovery prompt
           // doesn't surface on next open. Gated on `tagsFlushOk`: if the
           // board cascade flushed cleanly but the tag-membership flush above
@@ -496,6 +500,11 @@ async function runRename(
       }
       // Viewport state is now keyed by boardId in `.filo/viewports.json` so
       // it survives a rename automatically — no companion file to chase.
+      // Mark both paths as Filo's own again (the cascade above can outlast
+      // the first marks), so the tree read below doesn't note this move as
+      // one another program made.
+      if (oldRel) markRecentSelfWrite(oldRel);
+      if (newRel) markRecentSelfWrite(newRel);
       await ctx.refreshTree();
       ctx.clearSelection();
       return result;

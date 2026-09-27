@@ -82,6 +82,12 @@ export const TabKeys = Extension.create({
           editor.commands.increaseIndent();
           return true;
         }
+        if (editor.isActive('code')) {
+          // In inline code a tab is code text: a tab item would end the code
+          // span there, and the file would hold two.
+          editor.commands.command(({ tr }) => { tr.insertText('\t'); return true; });
+          return true;
+        }
         editor.commands.insertContent({ type: 'tab' });
         return true;
       },

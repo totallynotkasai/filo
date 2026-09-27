@@ -146,6 +146,7 @@ filo/
 │   │       ├── activeVaultCheck.ts    # assertActiveVault (gates IPC handlers)
 │   │       ├── contentSecurityPolicy.ts # The app-origin CSP header
 │   │       ├── navigationGuard.ts     # will-navigate: in-app navigation allowed, external blocked
+│   │       ├── embedPopup.ts          # An iframe tile's new-window link → default browser (public https, one a second)
 │   │       ├── payloadLimits.ts       # Size caps for every write-shaped IPC handler
 │   │       ├── windowCloseDecision.ts # The window close handler's re-entrancy decision
 │   │       ├── mainLogger.ts          # Structured main-process logger
@@ -329,6 +330,7 @@ filo/
 │   │   │   │   ├── folderPins.ts      # Root Directory + board folder pins: follow renames, clear on delete
 │   │   │   │   ├── folderPinPaths.ts  # Case-folded pin path rules (no store imports)
 │   │   │   │   ├── treeFolderMoves.ts # Folder renames read off two tree reads (Windows reports only the folder names)
+│   │   │   │   ├── unreconciledFolderMoves.ts # Folder moves any tree read saw, kept for the next reconcile
 │   │   │   │   ├── unsavedMessages.ts # Close / open / quit wording for unsaved work, by cause
 │   │   │   │   ├── sidebarTagFilter.ts # Files a tag (or child tag) selects; tree cut down to them
 │   │   │   │   ├── sidebarFileMenu.ts # The sidebar file / folder context menu

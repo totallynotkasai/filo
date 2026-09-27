@@ -22,6 +22,7 @@
 import type { ThemeId } from '../../../shared/types';
 import { asSafeThemeValue } from '../../../shared/untrusted';
 import { reportError } from '../utils/errorBus';
+import { themeVersion } from '../../stores/themeVersion.svelte';
 
 /** Every CSS custom property a Filo theme may set. Used to drive cleanup. */
 export type ThemeVariableMap = Record<string, string>;
@@ -254,6 +255,14 @@ export function applyBuiltinTheme(
   theme: ThemeId,
   opts: { systemOnly?: boolean } = {},
 ): void {
+  try {
+    paintBuiltinTheme(theme, opts);
+  } finally {
+    themeVersion.bump();
+  }
+}
+
+function paintBuiltinTheme(theme: ThemeId, opts: { systemOnly?: boolean }): void {
   const root = getRootElement();
   clearAppliedCustomProps();
   if (!root) return;
@@ -291,6 +300,14 @@ export function applyCustomTheme(
   theme: ThemeFile,
   opts: { systemOnly?: boolean } = {},
 ): void {
+  try {
+    paintCustomTheme(theme, opts);
+  } finally {
+    themeVersion.bump();
+  }
+}
+
+function paintCustomTheme(theme: ThemeFile, opts: { systemOnly?: boolean }): void {
   const root = getRootElement();
   if (!root) return;
   const base = theme.base ?? 'dark';

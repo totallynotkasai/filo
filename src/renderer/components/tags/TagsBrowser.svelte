@@ -5,7 +5,7 @@
   import IconButton from '../shared/IconButton.svelte';
   import ColorPicker from '../shared/ColorPicker.svelte';
   import TagsPopupMenu from './TagsPopupMenu.svelte';
-  import { isSafeNewTagName } from '../../lib/vault/tagsStorage';
+  import { cleanTagName, isSafeNewTagName } from '../../lib/vault/tagsStorage';
   import { deleteTagWithConfirm, renameTagWithConfirm } from '../../lib/tags/tagEditConfirm';
   import { filterTagNames, tagBrowserRows } from '../../lib/tags/tagBrowserFilter';
 
@@ -98,14 +98,14 @@
   }
 
   function saveEdit() {
-    const trimmed = editName.trim().replace(/^#/, '');
+    const trimmed = cleanTagName(editName);
     if (editingTagName && trimmed && trimmed !== editingTagName) {
       // Validate the new name at the rename input boundary. The rewriter
       // quotes on disk, but @home / 123 / null make confusing tags; existing
       // tags are never re-validated. Keep the field open so the user can fix it.
       if (!isSafeNewTagName(trimmed)) {
         uiStore.toast(
-          `"${trimmed}" isn't a valid tag name — avoid spaces, plain numbers, and leading symbols like @ * : &`,
+          `"${trimmed}" isn't a valid tag name — avoid commas, plain numbers, and leading symbols like @ * : &`,
           'warning',
           4000,
         );

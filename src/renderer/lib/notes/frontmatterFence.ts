@@ -94,6 +94,21 @@ export function splitFrontmatterFence(raw: string): FrontmatterSplit {
 }
 
 /**
+ * A note body about to be written with no frontmatter block, made safe to read
+ * back. A body that opens with a `---` rule and has another `---` rule further
+ * down would be read as a fenced block (scene breaks in fiction do exactly
+ * this): the text between the rules would vanish into "frontmatter". The
+ * first rule is then written as `***`, the same rule in Markdown. A body that
+ * wouldn't be misread comes back unchanged.
+ */
+export function bodyWithoutFenceLookalike(body: string): string {
+  if (!FENCED_BLOCK.test(body)) return body;
+  const m = OPENING_FENCE.exec(body);
+  if (!m) return body;
+  return `***${body.slice(m[0].length - (m[1] ?? '').length)}`;
+}
+
+/**
  * The line break of an opening fence line at the top of `raw` (BOM allowed),
  * whether or not a closing fence follows; null when the text doesn't start
  * with one. A torn read (the opening fence written, the rest not yet) is

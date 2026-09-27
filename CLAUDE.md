@@ -225,6 +225,7 @@ filo/
 │   │   │   ├── templates.svelte.ts    # Layout-template store
 │   │   │   ├── ui.svelte.ts           # Modals, toasts, context menu state
 │   │   │   ├── theme.svelte.ts
+│   │   │   ├── themeVersion.svelte.ts # Counts theme applications; colours read off :root re-resolve on a switch
 │   │   │   ├── spatial.svelte.ts      # rbush index wrapper
 │   │   │   ├── guides.svelte.ts       # Smart guides
 │   │   │   ├── pendingSettings.svelte.ts  # Settings modal Apply/Cancel scope
@@ -381,7 +382,7 @@ filo/
 │   │   │   │   ├── linkUrl.ts         # normaliseLinkUrl: bare domain → https://, address → mailto:; isOpenable (the one scheme list)
 │   │   │   │   ├── linkClicks.ts      # Link clicks: plain click edits in a focused editor, Ctrl/Cmd+click opens
 │   │   │   │   ├── blockTextStyle.ts  # Heading / Normal text clears the blocks' inline font size, family, colour
-│   │   │   │   └── tagExtension.ts
+│   │   │   │   └── keepSpaces.ts      # Load keeps runs of spaces; soft breaks still join with one space
 │   │   │   ├── tags/                  # Tag editing helpers
 │   │   │   │   ├── noteTagWriter.ts   # Tile/path tag add/remove on a note (fresh-read rewrite)
 │   │   │   │   ├── tagEditConfirm.ts  # Tags-browser delete/rename confirms → tagUndo

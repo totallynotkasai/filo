@@ -24,6 +24,8 @@ import {
   resolveDragBlockIds,
   rebuildPlacementsFromDndItems,
   spliceBlockContiguous,
+  blockInsertOffset,
+  sameTileIds,
   type RowLike,
   type RowDndItem,
 } from './blockMove';
@@ -508,17 +510,27 @@ export class TaskDragController {
     // shuffle (anchor); non-anchor members are still in their source
     // sections' items mirrors.
     if (isMultiDrag) {
-      const anchorIdxInDest = items.findIndex((it) => it.id === draggedId);
       const realTargetSectionId = sectionId === snap.leadingSectionId ? null : sectionId;
       const descendantIds = blockIds.filter((id) => id !== draggedId);
+      // `items` holds only the rows on screen, so its index isn't an offset
+      // into the section's placements when rows are hidden.
+      const insertOffset = blockInsertOffset({
+        placements,
+        sections,
+        targetSectionId: realTargetSectionId,
+        blockIds,
+        destItems: items,
+        anchorId: draggedId,
+      });
       const result = moveTaskBlock({
         placements,
         sections,
         draggedId,
         descendantIds,
         targetSectionId: realTargetSectionId,
-        insertOffset: anchorIdxInDest,
+        insertOffset,
       });
+      if (!this.refuseIfTilesChanged(placements, result.placements)) return;
 
       const description = isSameSection
         ? `Reorder ${blockIds.length} tasks`
@@ -578,6 +590,7 @@ export class TaskDragController {
       this.endDrag();
       return;
     }
+    if (!this.refuseIfTilesChanged(placements, rebuilt.placements)) return;
 
     const description = isSameSection ? 'Reorder task' : 'Move task';
     this.opts.commitReorder({
@@ -605,6 +618,18 @@ export class TaskDragController {
       `Dropped task ${this.tileLabel(draggedId)} at position ${dropIdx + 1} in ${this.sectionLabel(sectionId)}`,
     );
     this.endDrag();
+  }
+
+  /**
+   * A reorder only moves tasks; it must never add or remove one. Returns
+   * true when `next` holds the same tiles as `before`; otherwise ends the
+   * drag without committing and says so.
+   */
+  private refuseIfTilesChanged(before: TaskPlacement[], next: TaskPlacement[]): boolean {
+    if (sameTileIds(before, next)) return true;
+    this.opts.toast("Couldn't move the task: the list changed during the drag", 'warning', 3000);
+    this.endDrag();
+    return false;
   }
 
   /** Force-end the drag transaction (e.g. component unmount, panic path). */

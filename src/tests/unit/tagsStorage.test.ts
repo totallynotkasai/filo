@@ -47,9 +47,15 @@ describe('isSafeNewTagName (1.5a — strict create/rename input guard)', () => {
     expect(isSafeNewTagName('#todo')).toBe(true);
   });
 
-  it('rejects empty / whitespace-bearing names', () => {
-    for (const name of ['', '   ', '#', 'a b', 'two words']) {
+  it('rejects empty names, commas, runs of spaces, tabs and line breaks', () => {
+    for (const name of ['', '   ', '#', 'a, b', 'a  b', 'a\tb', 'a\nb']) {
       expect(isSafeNewTagName(name)).toBe(false);
+    }
+  });
+
+  it('accepts names with single inner spaces', () => {
+    for (const name of ['Book 1', 'Planning Project', 'World building/Magic system']) {
+      expect(isSafeNewTagName(name)).toBe(true);
     }
   });
 
@@ -87,7 +93,8 @@ describe('isSafeNewTagName (1.5a — strict create/rename input guard)', () => {
       } catch {
         independent = false;
       }
-      expect({ name, safe: isSafeNewTagName(name) }).toEqual({ name, safe: independent && !/^[@`*&!%|>:?]/.test(name) });
+      const safe = independent && !/^[@`*&!%|>:?]/.test(name) && !name.includes(',');
+      expect({ name, safe: isSafeNewTagName(name) }).toEqual({ name, safe });
     }
   });
 

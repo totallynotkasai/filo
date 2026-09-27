@@ -104,6 +104,12 @@ export class NoteModel {
   editorOwner = $state<ViewId | null>(null);
   /** The body can't round-trip through the editor, so it isn't written. */
   lossy = $state(false);
+  /**
+   * The `diskRevision` whose body the user chose to edit anyway (Take
+   * ownership), or -1. Another view loading that same body must not freeze
+   * the note again; a new body from disk can.
+   */
+  ownedDiskRevision = -1;
   /** Why the last read failed (status `unreadable`). */
   readError = $state<unknown>(null);
   /** The bytes the local state was built on. */
@@ -568,13 +574,17 @@ export const noteStore = {
   /** The editor found the body can't round-trip; it's shown but not written. */
   setLossy(relPath: string, lossy: boolean): void {
     const m = models.get(vaultPath(relPath));
-    if (m && m.lossy !== lossy) m.lossy = lossy;
+    if (!m) return;
+    if (lossy && m.ownedDiskRevision === m.diskRevision) return;
+    if (m.lossy !== lossy) m.lossy = lossy;
   },
 
   /** The user accepted that saving may rewrite formatting Filo can't keep. */
   takeOwnership(relPath: string): void {
     const m = models.get(vaultPath(relPath));
-    if (m) m.lossy = false;
+    if (!m) return;
+    m.ownedDiskRevision = m.diskRevision;
+    m.lossy = false;
   },
 
   /** Re-reads a note whose read failed. */

@@ -70,7 +70,7 @@
     const parsed = parseTagInput(text, fileTagsStore.allTagNames());
     if (parsed.invalid.length > 0) {
       uiStore.toast(
-        `${parsed.invalid.map((t) => `"${t}"`).join(', ')} ${parsed.invalid.length === 1 ? "isn't a valid tag name" : "aren't valid tag names"} — avoid spaces, plain numbers, and leading symbols like @ * : &`,
+        `${parsed.invalid.map((t) => `"${t}"`).join(', ')} ${parsed.invalid.length === 1 ? "isn't a valid tag name" : "aren't valid tag names"} — avoid commas, plain numbers, and leading symbols like @ * : &`,
         'warning',
         4000,
       );

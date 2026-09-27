@@ -3,7 +3,7 @@
  * separated by commas, and each one is matched against the tags the vault
  * already has.
  */
-import { isSafeNewTagName } from '../vault/tagsStorage';
+import { cleanTagName, isSafeNewTagName } from '../vault/tagsStorage';
 
 export interface ParsedTagInput {
   /** Tags to add, in the casing the vault already uses where it has one. */
@@ -18,8 +18,8 @@ function fold(name: string): string {
 }
 
 /**
- * Splits `text` on commas and resolves each entry. A leading `#` is
- * dropped. An entry that matches a known tag ignoring case takes that tag's
+ * Splits `text` on commas and resolves each entry, so a tag may hold
+ * spaces (`Book 1`). A leading `#` is dropped. An entry that matches a known tag ignoring case takes that tag's
  * casing (so `Project` and `project` never become two tags); a new name must
  * pass the same check as the Tags browser. Duplicates collapse to one.
  */
@@ -30,7 +30,7 @@ export function parseTagInput(text: string, known: readonly string[]): ParsedTag
   const invalid: string[] = [];
   const seen = new Set<string>();
   for (const raw of text.split(',')) {
-    const entry = raw.trim().replace(/^#/, '');
+    const entry = cleanTagName(raw);
     if (!entry) continue;
     const existing = byFold.get(fold(entry));
     const name = existing ?? (isSafeNewTagName(entry) ? entry : null);

@@ -300,8 +300,8 @@ export function parseMarkdown(
   const { rawFrontmatter } = splitFrontmatterSource(rawContent);
 
   // Canonical (deduped + sorted, leading `#` stripped) for search and tag
-  // counts. Body `#tag` runs are decorative and ignored here — see
-  // `lib/editor/tagExtension.ts` for the design note.
+  // counts. A note's tags are its frontmatter `tags:` only; a `#word` in the
+  // body is plain text.
   const tags = normalizeTagsField(frontmatter.tags);
 
   // A note's title is its frontmatter `title:`; without one, its filename stem.

@@ -13,6 +13,19 @@ import type { DrainToken } from '../lib/vault/vaultOperations';
 
 // ── Tile Commands ──
 
+/**
+ * A new text tile's note path is picked while the tile is added (on the
+ * validated copy the board keeps, and bumped to ` (n)` if the name is taken
+ * on disk), so the command's own snapshot never sees it. Undo reads it back
+ * from the board first: a redo then re-adds the tile on the note the user
+ * typed into, instead of allocating a new blank one.
+ */
+function adoptNotePath(snapshot: Tile, boardId: string): void {
+  if (snapshot.type !== 'text') return;
+  const placed = boardCacheStore.getFullTilesForBoard(boardId)[snapshot.id];
+  if (placed?.type === 'text' && placed.filePath) snapshot.filePath = placed.filePath;
+}
+
 export class AddTileCommand extends Command {
   description: string;
   readonly targetBoardId: string;
@@ -32,6 +45,7 @@ export class AddTileCommand extends Command {
   }
 
   undo() {
+    adoptNotePath(this.tile, this.targetBoardId);
     boardStore.removeTile(this.tile.id);
   }
 }
@@ -122,7 +136,9 @@ export class AddTilesCommand extends Command {
   undo() {
     for (let i = this.tiles.length - 1; i >= 0; i--) {
       const t = this.tiles[i];
-      if (t) boardStore.removeTile(t.id);
+      if (!t) continue;
+      adoptNotePath(t, this.targetBoardId);
+      boardStore.removeTile(t.id);
     }
   }
 }

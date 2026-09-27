@@ -14,7 +14,7 @@
 export interface ParsedTagsField {
   /** Raw tag tokens exactly as they appeared (a leading `#` is preserved). */
   tags: string[];
-  /** True when the source value was a comma/whitespace-separated string. */
+  /** True when the source value was a comma-separated string. */
   wasString: boolean;
   /** True when the source value was a recognised tags field shape. */
   recognised: boolean;
@@ -23,7 +23,7 @@ export interface ParsedTagsField {
 /**
  * Parses a YAML `tags:` value into round-trippable parts. Accepts:
  *   - YAML array form:        `tags: [foo, bar]`
- *   - Legacy string form:     `tags: "foo, bar"` or `tags: "foo bar"`
+ *   - String form:            `tags: "foo, bar"` (commas only: `"Book 1"` is one tag)
  * Anything else returns `{ tags: [], wasString: false, recognised: false }`.
  *
  * No trimming / dedupe / sort — callers that need a canonical view should
@@ -42,7 +42,7 @@ export function parseTagsField(value: unknown): ParsedTagsField {
       return { tags: [], wasString: true, recognised: true };
     }
     return {
-      tags: value.split(/[,\s]+/).filter(Boolean),
+      tags: value.split(',').map((t) => t.trim()).filter(Boolean),
       wasString: true,
       recognised: true,
     };

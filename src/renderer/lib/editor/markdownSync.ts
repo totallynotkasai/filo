@@ -14,7 +14,7 @@ import {
   frontmatterSourceHasNonScalarKey,
   frontmatterSourceRootIsMapping,
 } from '../vault/frontmatterCstModel';
-import { splitFrontmatterFence } from '../notes/frontmatterFence';
+import { bodyWithoutFenceLookalike, splitFrontmatterFence } from '../notes/frontmatterFence';
 
 /**
  * Markdown round-trip helpers for TipTap editors backed by `.md` files.
@@ -184,7 +184,8 @@ export function loadMarkdownIntoEditor(
       tr.setMeta('addToHistory', false);
       return true;
     })
-    .setContent(contentToLoad, { emitUpdate: emit })
+    // Keeps runs of spaces the file has (`keepSpaces.ts` tidies the rest).
+    .setContent(contentToLoad, { emitUpdate: emit, parseOptions: { preserveWhitespace: true } })
     .run();
   // Turn the reconstructed sentinel paragraphs into genuinely empty ones. Must
   // run before the selection restore below so positions are clamped against the
@@ -572,9 +573,9 @@ export function assembleMarkdownFile(
       const fmBlock = `---\n${emptied}\n---\n`.replace(/\n/g, eol);
       return `${bomPrefix}${fmBlock}${body}${trailing}`;
     }
-    return `${bomPrefix}${body}${trailing}`;
+    return `${bomPrefix}${bodyWithoutFenceLookalike(body)}${trailing}`;
   }
 
   // Genuinely no frontmatter.
-  return `${bomPrefix}${body}`;
+  return `${bomPrefix}${bodyWithoutFenceLookalike(body)}`;
 }

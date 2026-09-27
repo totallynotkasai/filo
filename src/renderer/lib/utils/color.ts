@@ -7,6 +7,8 @@
  * because the design doc explicitly cites WCAG AA.
  */
 
+import { themeVersion } from '../../stores/themeVersion.svelte';
+
 // ── Hex parsing ──
 
 export interface RGB {
@@ -141,7 +143,8 @@ export function getDynamicContrastText(backgroundHex: string): '#000000' | '#fff
  * to the supplied CSS variable name (e.g. `--tile-header-bg`) when no
  * explicit colour is set, by reading the live CSS custom property from
  * `:root`. Safe in jsdom (returns the fallback hex if `getComputedStyle`
- * yields an empty string).
+ * yields an empty string). Reads `themeVersion`, so a `$derived` built on
+ * the result runs again when the theme changes.
  */
 export function resolveBackgroundColor(
   explicit: string,
@@ -150,6 +153,7 @@ export function resolveBackgroundColor(
 ): string {
   if (isValidHex(explicit)) return explicit;
   if (typeof document === 'undefined') return fallbackHex;
+  void themeVersion.value;
   const value = getComputedStyle(document.documentElement)
     .getPropertyValue(cssVariableName)
     .trim();

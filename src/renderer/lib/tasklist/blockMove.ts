@@ -192,9 +192,18 @@ export function rebuildPlacementsFromDndItems(args: {
     fallbackSlice.set(s.id, placements.slice(start, end));
   }
 
+  // The mirrors hold only the rows on screen. Rows hidden by a collapsed
+  // parent, "Show completed" off, a smart list or a filter are in no mirror,
+  // and rebuilding from the mirrors alone would drop them from the board.
+  const onScreen = new Set<string>();
+  for (const sid of displaySectionIds) {
+    for (const it of itemsBySection[sid] ?? []) onScreen.add(it.id);
+  }
+
   const nextPlacements: TaskPlacement[] = [];
   const nextSections: TaskListSection[] = [];
   const realSectionById = new Map(sections.map((s) => [s.id, s]));
+  const emitted = new Set<string>();
   let cursor = 0;
 
   for (const sid of displaySectionIds) {
@@ -202,12 +211,18 @@ export function rebuildPlacementsFromDndItems(args: {
     let slice: TaskPlacement[];
     if (items) {
       // Map items back to placements; drop any unknown ids defensively.
-      slice = items
+      const visible = items
         .map((it) => placementByTileId.get(it.id))
         .filter((p): p is TaskPlacement => p !== undefined);
+      slice = withHiddenRows(visible, fallbackSlice.get(sid) ?? [], onScreen);
     } else {
       slice = fallbackSlice.get(sid) ?? [];
     }
+    slice = slice.filter((p) => {
+      if (emitted.has(p.tileId)) return false;
+      emitted.add(p.tileId);
+      return true;
+    });
 
     if (sid !== leadingSectionId) {
       const real = realSectionById.get(sid);
@@ -223,7 +238,8 @@ export function rebuildPlacementsFromDndItems(args: {
   for (const s of sections) {
     if (nextSections.find((ns) => ns.id === s.id)) continue;
     nextSections.push({ ...s, position: cursor });
-    const slice = fallbackSlice.get(s.id) ?? [];
+    const slice = (fallbackSlice.get(s.id) ?? []).filter((p) => !emitted.has(p.tileId));
+    for (const p of slice) emitted.add(p.tileId);
     nextPlacements.push(...slice);
     cursor += slice.length;
   }
@@ -237,6 +253,84 @@ export function rebuildPlacementsFromDndItems(args: {
   nextSections.sort((a, b) => (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0));
 
   return { placements: renumbered, sections: nextSections };
+}
+
+/**
+ * Put a section's hidden rows back among its visible rows after a drop. Each
+ * hidden row follows the visible row it followed before (the nearest earlier
+ * row of `before` still on screen in this section), so a collapsed parent
+ * keeps its subtasks and a hidden completed task keeps its place. A hidden
+ * row with no such row goes to the top of the section.
+ */
+function withHiddenRows(
+  visible: TaskPlacement[],
+  before: TaskPlacement[],
+  onScreen: ReadonlySet<string>,
+): TaskPlacement[] {
+  const visibleHere = new Set(visible.map((p) => p.tileId));
+  const head: TaskPlacement[] = [];
+  const after = new Map<string, TaskPlacement[]>();
+  let anchor: string | null = null;
+  for (const p of before) {
+    if (visibleHere.has(p.tileId)) {
+      anchor = p.tileId;
+      continue;
+    }
+    if (onScreen.has(p.tileId)) continue; // moved to another section
+    if (anchor === null) head.push(p);
+    else after.set(anchor, [...(after.get(anchor) ?? []), p]);
+  }
+  if (head.length === 0 && after.size === 0) return visible;
+  const out = [...head];
+  for (const p of visible) {
+    out.push(p, ...(after.get(p.tileId) ?? []));
+  }
+  return out;
+}
+
+/**
+ * Where a dragged block lands inside its destination section, counted in the
+ * section's full slice with the block taken out (the `insertOffset` of
+ * `moveTaskBlock`). The block goes just before the first visible row that
+ * follows it on screen, so hidden rows stay with the visible row they belong
+ * to; with no such row it goes to the end of the section.
+ */
+export function blockInsertOffset(args: {
+  placements: TaskPlacement[];
+  sections: TaskListSection[];
+  /** `null` ⇒ the leading bucket. */
+  targetSectionId: string | null;
+  blockIds: string[];
+  /** The destination zone's items, in their dropped order. */
+  destItems: RowDndItem[];
+  anchorId: string;
+}): number {
+  const { placements, sections, targetSectionId, blockIds, destItems, anchorId } = args;
+  const blockSet = new Set(blockIds);
+  const sorted = [...sections].sort((a, b) => a.position - b.position);
+  let start = 0;
+  let end = sorted[0]?.position ?? placements.length;
+  if (targetSectionId !== null) {
+    const i = sorted.findIndex((s) => s.id === targetSectionId);
+    if (i < 0) return placements.length;
+    start = sorted[i]?.position ?? 0;
+    end = sorted[i + 1]?.position ?? placements.length;
+  }
+  const remaining = placements.slice(start, end).filter((p) => !blockSet.has(p.tileId));
+  const anchorIdx = destItems.findIndex((it) => it.id === anchorId);
+  const next = destItems.slice(anchorIdx + 1).find((it) => !blockSet.has(it.id));
+  if (!next) return remaining.length;
+  const idx = remaining.findIndex((p) => p.tileId === next.id);
+  return idx < 0 ? remaining.length : idx;
+}
+
+/** True when both arrays name exactly the same set of tiles. */
+export function sameTileIds(a: TaskPlacement[], b: TaskPlacement[]): boolean {
+  const ids = new Set(a.map((p) => p.tileId));
+  const other = new Set(b.map((p) => p.tileId));
+  if (ids.size !== other.size) return false;
+  for (const id of other) if (!ids.has(id)) return false;
+  return true;
 }
 
 /**

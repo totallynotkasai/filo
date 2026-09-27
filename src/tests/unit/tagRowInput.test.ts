@@ -19,8 +19,19 @@ describe('parseTagInput', () => {
     expect(parseTagInput('PROJECT, work', ['Project'])).toEqual({ tags: ['Project', 'work'], invalid: [] });
   });
 
-  it('rejects names with spaces, plain numbers and leading indicator symbols', () => {
-    expect(parseTagInput('two words, 123, @home, ok', [])).toEqual({ tags: ['ok'], invalid: ['two words', '123', '@home'] });
+  it('rejects plain numbers and leading indicator symbols', () => {
+    expect(parseTagInput('123, @home, ok', [])).toEqual({ tags: ['ok'], invalid: ['123', '@home'] });
+  });
+
+  it('takes tags with spaces, split on commas only, with inner spacing made one space', () => {
+    expect(parseTagInput('Book 1, Planning  Project', [])).toEqual({
+      tags: ['Book 1', 'Planning Project'],
+      invalid: [],
+    });
+  });
+
+  it('matches a known spaced tag ignoring case', () => {
+    expect(parseTagInput('book 1', ['Book 1'])).toEqual({ tags: ['Book 1'], invalid: [] });
   });
 
   it('accepts a known tag even if it would fail the new-name check', () => {

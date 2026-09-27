@@ -573,8 +573,8 @@
     aria-label={`Completed: ${tile.title}`}
     onclick={(e) => { e.stopPropagation(); onToggleComplete(); }}
     title={completed ? 'Mark incomplete' : 'Mark complete'}
-    style:border-color={completed ? accentColor : 'var(--ui-border)'}
-    style:background-color={completed ? accentColor : 'transparent'}
+    style:border-color={completed ? accentColor || 'var(--accent-primary)' : 'var(--ui-border)'}
+    style:background-color={completed ? accentColor || 'var(--accent-primary)' : 'transparent'}
   >
     {#if completed}
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

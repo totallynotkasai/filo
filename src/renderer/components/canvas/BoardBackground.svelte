@@ -11,7 +11,7 @@
    * because they are standalone documents. We resolve them via
    * getComputedStyle at runtime.
    */
-  import { themeStore } from '../../stores/theme.svelte';
+  import { themeVersion } from '../../stores/themeVersion.svelte';
 
   interface Props {
     pattern?: 'grid' | 'dots' | 'lines' | 'none';
@@ -52,12 +52,12 @@
   let resolvedPatternColor = $state('#888');
   let resolvedBgColor = $state('transparent');
 
-  // `void themeStore.active` registers the reactive dependency so this
-  // re-runs when the user switches themes. We read it for its tracking
-  // side-effect — the value itself isn't needed because the resolved
-  // colours come from the freshly-applied CSS variables on :root.
+  // `void themeVersion.value` registers the reactive dependency so this
+  // re-runs on every theme change (a custom theme on the same base included).
+  // The value itself isn't needed: the resolved colours come from the
+  // freshly-applied CSS variables on :root.
   $effect(() => {
-    void themeStore.active;
+    void themeVersion.value;
     const style = getComputedStyle(document.documentElement);
     resolvedPatternColor = color || style.getPropertyValue('--canvas-pattern').trim() || '#888';
     if (bgColor) {

@@ -15,8 +15,9 @@ describe('normalizeTagsField', () => {
     expect(normalizeTagsField('alpha, beta, gamma')).toEqual(['alpha', 'beta', 'gamma']);
   });
 
-  it('parses whitespace-separated string form', () => {
-    expect(normalizeTagsField('alpha beta gamma')).toEqual(['alpha', 'beta', 'gamma']);
+  it('splits the string form on commas only, so a tag keeps its spaces', () => {
+    expect(normalizeTagsField('Book 1, Planning Project')).toEqual(['Book 1', 'Planning Project']);
+    expect(normalizeTagsField('alpha beta gamma')).toEqual(['alpha beta gamma']);
   });
 
   it('strips a single leading # from each tag', () => {

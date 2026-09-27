@@ -60,6 +60,9 @@ const EXEMPT_MODULES = new Set([
   // disposed on unmount; its $state is function-local (per createAriaAnnouncer
   // call), never module-level, so nothing survives a vault swap.
   'src/renderer/lib/utils/ariaAnnouncer.svelte.ts',
+  // A count of theme applications, not vault data: a vault open applies (and
+  // counts) its own theme.
+  'src/renderer/stores/themeVersion.svelte.ts',
 ]);
 
 function toPosix(p: string): string {

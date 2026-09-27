@@ -483,6 +483,16 @@ export async function toggleTask(row: HTMLElement): Promise<void> {
   await quiesce(600);
 }
 
+/** The fill colour a ticked task's checkbox is painted with ('' when none). */
+export function taskCheckboxFill(row: HTMLElement): string {
+  return $(row, '.task-checkbox').style.backgroundColor;
+}
+
+/** The fill colour of the Task List progress bar ('' when none). */
+export function taskProgressFill(app: CharApp): string {
+  return $(app.el, '.tasklist-progress-bar .progress-fill').style.backgroundColor;
+}
+
 /** The notes box of a Task List row, once its note button has opened it. */
 function taskNotesBox(row: HTMLElement): HTMLTextAreaElement {
   const wrap = row.closest('.tasklist-row-wrap') ?? row;
@@ -648,6 +658,13 @@ export async function closeModal(): Promise<void> {
 export async function undo(_app: CharApp): Promise<void> {
   (document.activeElement as HTMLElement | null)?.blur?.();
   pressShortcut('z', { ctrlKey: true });
+  await quiesce(1000);
+}
+
+/** Ctrl+Y with nothing focused (board redo). */
+export async function redo(_app: CharApp): Promise<void> {
+  (document.activeElement as HTMLElement | null)?.blur?.();
+  pressShortcut('y', { ctrlKey: true });
   await quiesce(1000);
 }
 

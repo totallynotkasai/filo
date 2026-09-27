@@ -399,13 +399,13 @@ describe('markdownSync — loadMarkdownIntoEditor caret preservation', () => {
   it('passes setContent a TipTap 3 options object with emitUpdate:false by default', () => {
     const stub = makeStubEditor({ initialFrom: 0, initialTo: 0, newDocSize: 5 });
     loadMarkdownIntoEditor(stub as unknown as Editor, 'body');
-    expect(stub.calls[0]).toEqual(['setContent', { body: 'body', options: { emitUpdate: false } }]);
+    expect(stub.calls[0]).toEqual(['setContent', { body: 'body', options: { emitUpdate: false, parseOptions: { preserveWhitespace: true } } }]);
   });
 
   it('forwards an explicit emitUpdate:true in the options object', () => {
     const stub = makeStubEditor({ initialFrom: 0, initialTo: 0, newDocSize: 5 });
     loadMarkdownIntoEditor(stub as unknown as Editor, 'body', { emitUpdate: true });
-    expect(stub.calls[0]).toEqual(['setContent', { body: 'body', options: { emitUpdate: true } }]);
+    expect(stub.calls[0]).toEqual(['setContent', { body: 'body', options: { emitUpdate: true, parseOptions: { preserveWhitespace: true } } }]);
   });
 
   it('restores selection in place when both ends still fit the new doc', () => {

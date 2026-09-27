@@ -26,23 +26,9 @@ export function hasBlockLayout(node: ProseMirrorNode): boolean {
   return (typeof align === 'string' && align !== 'left') || (typeof indent === 'number' && indent > 0);
 }
 
-/**
- * Body `#tag` marks are decorative and saved as bare text (see
- * `tagExtension.ts`); dropping them here keeps `<span class="filo-tag">` out of
- * the file.
- */
-function withoutTagMarks(content: Fragment): Fragment {
-  const nodes: ProseMirrorNode[] = [];
-  content.forEach((child) => {
-    nodes.push(child.isText ? child.mark(child.marks.filter((m) => m.type.name !== 'tag')) : child);
-  });
-  return Fragment.from(nodes);
-}
-
 /** `node` as one line of HTML, with its alignment and indent as inline styles. */
 export function blockLayoutHtml(node: ProseMirrorNode): string {
-  const bare = node.type.create(node.attrs, withoutTagMarks(node.content), node.marks);
-  const html = getHTMLFromFragment(Fragment.from(bare), node.type.schema);
+  const html = getHTMLFromFragment(Fragment.from(node), node.type.schema);
   const body = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html').body;
   // Link's rendering attributes are for the live editor, not the file.
   for (const a of Array.from(body.querySelectorAll('a'))) {

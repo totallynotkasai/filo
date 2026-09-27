@@ -221,22 +221,32 @@ export function getTagDefinition(file: TagsFile, tagName: string): TagDefinition
 }
 
 /**
- * Validates a candidate tag name. Reject names that would create surprising
- * state downstream: empty after trim/`#` strip, or internal whitespace
- * (frontmatter YAML splits on whitespace, so a tag with a space round-trips
- * as two separate tags). Hierarchy separators (`/`) and hyphens / underscores
- * are fine.
+ * A typed tag name as Filo stores it: trimmed, a single leading `#` dropped,
+ * and each run of internal whitespace made one space, so `Book  1` and
+ * `Book 1` can't become two tags.
+ */
+export function cleanTagName(name: string): string {
+  return name.trim().replace(/^#/, '').replace(/\s+/g, ' ');
+}
+
+/**
+ * Validates a candidate tag name: not empty after trim/`#` strip, and no
+ * line break or tab. Spaces inside a name are fine (`Book 1`): tags are
+ * separated by commas only, and a YAML list item keeps its spaces.
+ * Hierarchy separators (`/`) and hyphens / underscores are fine too.
  */
 export function isValidTagName(name: string): boolean {
   const stripped = name.trim().replace(/^#/, '');
   if (!stripped) return false;
-  if (/\s/.test(stripped)) return false;
+  if (/[\t\n\r\f\v]/.test(stripped)) return false;
   return true;
 }
 
 /**
  * Stricter validation for a tag name the USER is creating or renaming TO
- * Beyond {@link isValidTagName} (empty / internal whitespace), rejects:
+ * Beyond {@link isValidTagName} (empty / line break / tab), rejects:
+ *  - a comma, which separates tags in the tag row and in a `tags: a, b` string;
+ *  - a run of spaces (`cleanTagName` collapses one before this is asked);
  *  - any name YAML reads as a NON-string scalar — numbers (`123`, `2024`),
  *    booleans (`true`/`false`), `null`;
  *  - any name starting with a YAML indicator char (`@ \` * & ! % | > : ?`); and
@@ -251,6 +261,7 @@ export function isValidTagName(name: string): boolean {
 export function isSafeNewTagName(name: string): boolean {
   if (!isValidTagName(name)) return false;
   const stripped = name.trim().replace(/^#/, '');
+  if (stripped.includes(',') || /\s\s/.test(stripped)) return false;
   // A YAML parser throws on most leading indicators, but `:` / `?` load as
   // plain strings — reject the whole set explicitly. (`#` is
   // already stripped above as the tag-syntax convenience.)
@@ -279,14 +290,15 @@ export function isSafeNewTagName(name: string): boolean {
  * `project` as two separate tags. Matches the case-insensitive lookup
  * semantics in `vaultIndex.filesByTag` / `frontmatterSync.valuesEqual`.
  *
- * Also normalises the input: trim, strip a single leading `#`. Returns
- * `''` for invalid input (empty after strip, or containing internal
- * whitespace) so callers can rely on a single truthy check before
- * mutating state.
+ * Also normalises the input: trim, strip a single leading `#`. Inner spacing
+ * is left as it is, so a tag another program wrote with two spaces can still
+ * be found and removed. Returns `''` for invalid input (empty after the
+ * strip, or a line break or tab) so callers can rely on a single truthy check
+ * before mutating state.
  */
 export function canonicaliseTagName(file: TagsFile, name: string): string {
   const stripped = name.trim().replace(/^#/, '');
-  if (!stripped || /\s/.test(stripped)) return '';
+  if (!isValidTagName(stripped)) return '';
   // Pin to en-US locale for tag-identity case-folding: the HOST locale would
   // split `Important` and `important` on a Turkish system (`I` → `ı`).
   const folded = stripped.toLocaleLowerCase('en-US');

@@ -19,7 +19,6 @@
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { ACCENT_COLOR } from '../../constants/defaults';
   import type {
     TaskListBoard as TaskListBoardType,
     TaskListSection,
@@ -132,11 +131,12 @@
       backgroundColor: '',
       // Default to 'none' for non-canvas boards.
       backgroundPattern: 'none' as const,
-      accentColor: ACCENT_COLOR,
+      accentColor: '',
       groupBy: 'status' as GroupBy,
       sortBy: 'priority' as SortBy,
     },
   );
+  let accent = $derived(settings.accentColor || 'var(--accent-primary)'); // '' ⇒ the theme's accent
   // Whitelist known groupBys defensively — a hand-edited or future-version
   // .board.json could store a value we don't render; fall back to 'status'
   // instead of letting downstream `GROUP_ORDER[groupBy]` undefined-crash.
@@ -1218,7 +1218,7 @@
     defaultSectionId={DEFAULT_SECTION_ID}
     leadingSectionId={LEADING_SECTION_ID}
     {collapsedSubtasks}
-    accentColor={settings.accentColor ?? ACCENT_COLOR}
+    accentColor={accent}
     {resolveTaskStyle}
     sectionStyle={styleForSection(section.id)}
     titleFontSize={board?.settings?.titleFontSize}
@@ -1267,7 +1267,7 @@
     {depth}
     {sectionId}
     {collapsedSubtasks}
-    accentColor={settings.accentColor ?? ACCENT_COLOR}
+    accentColor={accent}
     {resolveTaskStyle}
     viewModel={viewModel}
     controllers={{
@@ -1308,7 +1308,7 @@
   <div class="tasklist-content">
     <div class="tasklist-quick-add-wrap">
       <TaskQuickAddInput
-        accentColor={settings.accentColor ?? ACCENT_COLOR}
+        accentColor={accent}
         onSubmit={addTaskFromQuickAdd}
         bind:inputRef={quickAddInputEl}
       />
@@ -1318,7 +1318,7 @@
       <SmartListTabs
         active={filters.activeSmartList}
         counts={viewModel.smartListCounts}
-        accentColor={settings.accentColor ?? ACCENT_COLOR}
+        accentColor={accent}
         onSelect={(id) => (filters.activeSmartList = id)}
       />
     </div>
@@ -1332,7 +1332,7 @@
         <div
           class="progress-fill"
           style:transform="scaleX({progressPercent / 100})"
-          style:background-color={settings.accentColor}
+          style:background-color={accent}
         ></div>
       </div>
     </div>

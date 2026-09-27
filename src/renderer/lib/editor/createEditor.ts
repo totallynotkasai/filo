@@ -35,10 +35,10 @@ import { TaskItem } from '@tiptap/extension-task-item';
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
 import { Markdown } from 'tiptap-markdown';
 import { common, createLowlight } from 'lowlight';
-import { Tag } from './tagExtension';
 import { FiloListTight, FiloTaskListTight } from './taskListTight';
 import { TabKeys } from './tabKeys';
 import { TabChar } from './tabNode';
+import { KeepSpaces } from './keepSpaces';
 import { isFiloLink } from '../../schema/link';
 import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
 
@@ -312,7 +312,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       }),
       // After Markdown: replaces its list `tight` parse rule (see taskListTight.ts).
       FiloListTight,
-      Tag,
+      KeepSpaces,
       TabChar,
       TabKeys,
     ],
@@ -383,7 +383,6 @@ export function createLabelEditor(
       Color,
       Highlight.configure({ multicolor: true }),
       FontFamily,
-      Tag,
     ],
     onUpdate: ({ editor: e }) => options.onUpdate?.(e.getHTML()),
     onFocus: () => options.onFocus?.(),

@@ -142,12 +142,10 @@ describe('addTagToMarkdown', () => {
     expect(out).toBe(input);
   });
 
-  it('handles legacy string-form tags by upgrading to array', () => {
+  it('keeps a string-form tag with a space as one tag when adding another', () => {
     const input = ['---', 'tags: foo bar', '---', 'body'].join('\n');
     const out = addTagToMarkdown(input, 'baz');
-    expect(out).toMatch(/- foo/);
-    expect(out).toMatch(/- bar/);
-    expect(out).toMatch(/- baz/);
+    expect(out).toContain('tags:\n  - foo bar\n  - baz\n');
   });
 
   it('strips a leading # from the input tag name', () => {
@@ -231,8 +229,8 @@ describe('addTagToMarkdown', () => {
     expect(out.match(/^---$/gm)?.length).toBe(2);
   });
 
-  it('still upgrades a legacy string-form field via the dump path (unchanged)', () => {
-    const input = ['---', 'tags: foo bar', '---', 'body'].join('\n');
+  it('still upgrades a comma string-form field via the dump path (unchanged)', () => {
+    const input = ['---', 'tags: foo, bar', '---', 'body'].join('\n');
     const out = addTagToMarkdown(input, 'baz');
     expect(out).toMatch(/- foo/);
     expect(out).toMatch(/- bar/);

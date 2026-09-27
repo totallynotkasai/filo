@@ -1088,16 +1088,6 @@ select:focus:not(:focus-visible) {
   text-decoration: underline;
   cursor: pointer;
 }
-.tiptap .filo-tag,
-.filo-tag {
-  display: inline-block;
-  padding: 0 4px;
-  border-radius: 3px;
-  background: var(--accent-primary-alpha, rgba(84, 176, 248, 0.15));
-  color: var(--accent-primary);
-  font-weight: 500;
-  font-size: 0.95em;
-}
 .tiptap table {
   border-collapse: collapse;
   margin-bottom: 1em;

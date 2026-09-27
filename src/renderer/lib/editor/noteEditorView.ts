@@ -138,7 +138,10 @@ export class NoteEditorView {
     this.loading = true;
     try {
       const result = loadMarkdownIntoEditor(editor, m.body, { preserveSelection: !firstLoad });
-      noteStore.setLossy(m.relPath, result.lossy);
+      // Only a body that came from disk says anything about the file. A body
+      // another view typed is that editor's own output, so it can't make the
+      // note read-only under the view the user is typing in.
+      if (m.bodySource === 'disk') noteStore.setLossy(m.relPath, result.lossy);
     } finally {
       this.loading = false;
     }

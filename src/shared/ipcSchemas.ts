@@ -86,7 +86,11 @@ export const IPC_PAYLOAD_SCHEMAS = {
     nonEmptyString,
     nonEmptyString,
     z.string(),
-    z.object({ mtimeMs: z.number().finite(), size: z.number().int().nonnegative() }).strict().optional(),
+    z.object({
+      mtimeMs: z.number().finite(),
+      size: z.number().int().nonnegative(),
+      hash: z.string().regex(/^[0-9a-f]{8}$/).optional(),
+    }).strict().optional(),
   ]),
   // Create-exclusive seed; same shape as write-file-text.
   'vault:create-file-text': z.tuple([nonEmptyString, nonEmptyString, z.string()]),

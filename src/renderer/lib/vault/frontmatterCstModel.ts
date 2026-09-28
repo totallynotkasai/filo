@@ -447,3 +447,17 @@ export function frontmatterSourceHasNonScalarKey(source: string): boolean {
   }
   return false;
 }
+
+/**
+ * Why a metadata edit of a note with this frontmatter source can't land, or
+ * null when it can (no block, an empty one, or YAML that parses to a mapping
+ * with plain keys). The assembler keeps any other block verbatim and refuses
+ * the edit for the same reasons, so a view can say so before it queues an
+ * edit (and an undo step) that would do nothing.
+ */
+export function frontmatterSourceProblem(source: string): 'unparseable' | 'not-properties' | null {
+  if (!source.trim()) return null;
+  if (!frontmatterSourceParses(source)) return 'unparseable';
+  if (!frontmatterSourceRootIsMapping(source)) return 'not-properties';
+  return frontmatterSourceHasNonScalarKey(source) ? 'unparseable' : null;
+}

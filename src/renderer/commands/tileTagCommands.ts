@@ -77,11 +77,11 @@ export class AddTileTagCommand extends Command {
   }
 
   execute() {
-    fileTagsStore._applyAddTagToTile(this.tileId, this.tagName);
+    return fileTagsStore._applyAddTagToTile(this.tileId, this.tagName);
   }
 
   undo() {
-    fileTagsStore._applyRemoveTagFromTile(this.tileId, this.tagName);
+    return fileTagsStore._applyRemoveTagFromTile(this.tileId, this.tagName);
   }
 }
 
@@ -105,7 +105,7 @@ export class RemoveTileTagCommand extends Command {
   }
 
   execute() {
-    fileTagsStore._applyRemoveTagFromTile(this.tileId, this.tagName);
+    return fileTagsStore._applyRemoveTagFromTile(this.tileId, this.tagName);
   }
 
   undo() {
@@ -119,7 +119,7 @@ export class RemoveTileTagCommand extends Command {
     // concurrent action added to the tile between execute and undo (a whole-array
     // restore would clobber it).
     if (this.snapshotColor) fileTagsStore.ensureTag(this.tagName, this.snapshotColor);
-    fileTagsStore._applyAddTagToTile(this.tileId, this.tagName);
+    return fileTagsStore._applyAddTagToTile(this.tileId, this.tagName);
   }
 }
 
@@ -145,11 +145,11 @@ export class AddPathTagCommand extends Command {
   }
 
   execute() {
-    fileTagsStore._applyAddTagToPath(this.path, this.tagName);
+    return fileTagsStore._applyAddTagToPath(this.path, this.tagName);
   }
 
   undo() {
-    fileTagsStore._applyRemoveTagFromPath(this.path, this.tagName);
+    return fileTagsStore._applyRemoveTagFromPath(this.path, this.tagName);
   }
 }
 
@@ -173,13 +173,13 @@ export class RemovePathTagCommand extends Command {
   }
 
   execute() {
-    fileTagsStore._applyRemoveTagFromPath(this.path, this.tagName);
+    return fileTagsStore._applyRemoveTagFromPath(this.path, this.tagName);
   }
 
   undo() {
     // Preserve the original tag colour across the round-trip (see
     // RemoveTileTagCommand.undo). `ensureTag` is idempotent.
     if (this.snapshotColor) fileTagsStore.ensureTag(this.tagName, this.snapshotColor);
-    fileTagsStore._applyAddTagToPath(this.path, this.tagName);
+    return fileTagsStore._applyAddTagToPath(this.path, this.tagName);
   }
 }

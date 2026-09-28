@@ -263,7 +263,7 @@ export class FileWatcher {
     const sha1 = sha1Hex(bytes);
     if (bytes.length <= WATCHER_HASH_MAX_BYTES) this.lastKnownHashes.set(key, sha1);
     else this.lastKnownHashes.delete(key);
-    this.suppression.recordOwnBytes(relativePath, { size: bytes.length, sha1 });
+    this.suppression.recordLandedBytes(relativePath, { size: bytes.length, sha1 });
     this.advanceReconcileSnapshot(key, bytes);
   }
 

@@ -680,6 +680,12 @@ export async function undo(_app: CharApp): Promise<void> {
   await quiesce(1000);
 }
 
+/** True while the toolbar's Undo button is enabled (the active board or tab has a step to undo). */
+export function undoAvailable(app: CharApp): boolean {
+  const button = $$(app.el, 'button[aria-label="Undo"]')[0] as HTMLButtonElement | undefined;
+  return button !== undefined && !button.disabled;
+}
+
 /** Ctrl+Y with nothing focused (board redo). */
 export async function redo(_app: CharApp): Promise<void> {
   (document.activeElement as HTMLElement | null)?.blur?.();

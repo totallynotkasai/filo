@@ -9,7 +9,8 @@
    * from the vault's tags. Backspace in the empty field removes the last one.
    * Clicking a tag opens its menu (files and tiles with that tag).
    */
-  import { noteTags } from '../../stores/noteMeta';
+  import { noteFrontmatterProblem, noteTags } from '../../stores/noteMeta';
+  import { frontmatterRefusalText } from '../../lib/notes/frontmatterRefusal';
   import { fileTagsStore } from '../../stores/fileTags.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { uiStore } from '../../stores/ui.svelte';
@@ -51,6 +52,13 @@
   function setTags(next: string[]): void {
     const before = [...tags];
     if (next.length === before.length && next.every((t, i) => t === before[i])) return;
+    // The writer would keep such a block as it is: say so now, rather than
+    // leave an undo step that did nothing.
+    const problem = noteFrontmatterProblem(path);
+    if (problem) {
+      uiStore.toast(frontmatterRefusalText(path, problem), 'error', 8000);
+      return;
+    }
     for (const name of next) if (!before.includes(name)) fileTagsStore.ensureTag(name);
     // An empty list removes the key rather than writing `tags: []`.
     historyStore.execute(

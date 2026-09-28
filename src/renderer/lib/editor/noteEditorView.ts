@@ -29,6 +29,7 @@ import type { Editor } from '@tiptap/core';
 import { editorMarkdown, loadMarkdownIntoEditor } from './markdownSync';
 import { vaultPath } from '@shared/vaultPath';
 import { noteStore, type NoteModel } from '../../stores/notes.svelte';
+import { reportError } from '../utils/errorBus';
 
 /** Idle time before an editor's keystrokes are serialised into the note model. */
 export const SERIALIZE_IDLE_MS = 150;
@@ -99,13 +100,21 @@ export class NoteEditorView {
     const editor = this.getEditor();
     const m = this.model;
     if (!this.unserialised || !editor || editor.isDestroyed || !m) return;
+    try {
+      const markdown = editorMarkdown(editor);
+      // The body changed underneath (disk, reload, rewrite) since the editor
+      // last showed the model: the text was built on the old one.
+      const superseded = m === this.shownModel && this.shownRevision >= 0 && m.diskRevision > this.shownRevision;
+      if (superseded) noteStore.setBodyBuiltOn(m.relPath, markdown, this.viewId, this.shownBody);
+      else noteStore.setBody(m.relPath, markdown, this.viewId);
+    } catch (err) {
+      // The keystrokes are still only in the editor: they stay counted as
+      // unsaved (close and quit ask, and keep a rescue copy), and the user
+      // is told which note.
+      reportError('noteEditor.serialize', err, `Couldn't take your latest edits to "${m.relPath}" from the editor, so they aren't saved yet.`, m.relPath);
+      return;
+    }
     this.unserialised = false;
-    const markdown = editorMarkdown(editor);
-    // The body changed underneath (disk, reload, rewrite) since the editor
-    // last showed the model: the text was built on the old one.
-    const superseded = m === this.shownModel && this.shownRevision >= 0 && m.diskRevision > this.shownRevision;
-    if (superseded) noteStore.setBodyBuiltOn(m.relPath, markdown, this.viewId, this.shownBody);
-    else noteStore.setBody(m.relPath, markdown, this.viewId);
     if (m.bodySource === this.viewId) this.markShown(m);
   }
 

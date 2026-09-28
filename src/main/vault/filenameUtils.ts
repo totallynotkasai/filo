@@ -6,6 +6,7 @@ import {
   recordPreservedEmergencyFile,
   clearPreservedEmergencyFilesForTarget,
 } from '../services/emergencyFileRegistry';
+import { fnv1a32 } from '../services/fileWatcherHash';
 
 /**
  * Characters that are illegal in Windows filenames.
@@ -226,6 +227,12 @@ export async function withOnDiskSpelling(fullPath: string): Promise<string> {
  * write fail with {@link StaleWriteError} instead of overwriting that
  * version unseen. The caller re-reads and applies its change again.
  *
+ * With `expectStat.hash` (the FNV-1a of the bytes the caller read), a file up
+ * to {@link STALE_HASH_MAX_BYTES} is also read and compared: on a file system
+ * with a coarse timestamp (FAT / exFAT: 2 s, some SMB shares: 1 s), a
+ * same-size save by another program inside one tick leaves the stat as it
+ * was. A larger file is checked by its stat alone (KNOWN_LIMITATIONS #36).
+ *
  * `opts.refuseLink` fails the write with {@link LinkedFileError} when the
  * destination is a symbolic link, checked before every rename attempt: the
  * rename would replace the link with a regular file, cutting the note off
@@ -234,7 +241,7 @@ export async function withOnDiskSpelling(fullPath: string): Promise<string> {
 export async function atomicWriteFile(
   filePath: string,
   content: string | Buffer,
-  opts?: { expectExisting?: boolean; expectStat?: { mtimeMs: number; size: number }; refuseLink?: boolean },
+  opts?: { expectExisting?: boolean; expectStat?: ExpectedStat; refuseLink?: boolean },
 ): Promise<void> {
   const nonce = randomBytes(6).toString('hex');
   const tmpPath = tmpSiblingPath(filePath, nonce);
@@ -308,6 +315,9 @@ export async function atomicWriteFile(
         if (opts?.expectStat) {
           const now = await fs.stat(filePath).catch(() => null);
           if (now && (now.mtimeMs !== opts.expectStat.mtimeMs || now.size !== opts.expectStat.size)) {
+            throw new StaleWriteError(filePath);
+          }
+          if (now && !(await stillHoldsHash(filePath, now.size, opts.expectStat.hash))) {
             throw new StaleWriteError(filePath);
           }
         }
@@ -431,6 +441,28 @@ export function lockRetryBudgetMs(): number {
  * The destination no longer holds the version the caller read, so the write
  * was not made. Code `STALE` crosses IPC in the error envelope.
  */
+/** The destination as the caller read it; see {@link atomicWriteFile}. */
+export interface ExpectedStat {
+  mtimeMs: number;
+  size: number;
+  /** FNV-1a (32-bit) of the bytes read, as 8 hex digits. */
+  hash?: string;
+}
+
+/** Files up to this size have their content compared too before a write over them. */
+export const STALE_HASH_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * False when `filePath` no longer holds the bytes whose hash is `hash`. True
+ * without a hash, above the size limit, or when the file can't be read now
+ * (the stat check stands alone then, as it did before).
+ */
+async function stillHoldsHash(filePath: string, size: number, hash: string | undefined): Promise<boolean> {
+  if (hash === undefined || size > STALE_HASH_MAX_BYTES) return true;
+  const bytes = await fs.readFile(filePath).catch(() => null);
+  return bytes === null || fnv1a32(bytes).toString(16).padStart(8, '0') === hash;
+}
+
 export class StaleWriteError extends Error {
   readonly code = 'STALE';
   constructor(filePath: string) {

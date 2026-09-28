@@ -1,4 +1,5 @@
-import { parseDocument, Document } from 'yaml';
+import { Document } from 'yaml';
+import { parseFrontmatterObject } from '../vault/frontmatterRead';
 import type { Editor } from '@tiptap/core';
 import { resetEditorHistory } from './editorHistory';
 import {
@@ -69,9 +70,11 @@ export interface ParsedMarkdownDocument {
 }
 
 /**
- * Splits a `.md` file's text into structured frontmatter + body. Fails safe to
- * an empty frontmatter object on any parse error (the raw block is still threaded
- * out via `rawFrontmatter` so an unparseable fence round-trips without data loss).
+ * Splits a `.md` file's text into structured frontmatter + body. The object
+ * comes from `parseFrontmatterObject`: a recoverable YAML error still reads,
+ * and a block that can't be read at all gives `{}` (the raw block is still
+ * threaded out via `rawFrontmatter` so an unparseable fence round-trips
+ * without data loss).
  *
  * Where the block starts and ends is decided by `splitFrontmatterFence`
  * (`lib/notes/frontmatterFence.ts`), the one fence parser every reader and
@@ -86,27 +89,11 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
     return { frontmatter: {}, rawFrontmatter: '', body: split.body, hasFrontmatter: false, hadBom };
   }
 
-  let frontmatter: Record<string, unknown> = {};
-  try {
-    // Parse with the `yaml` package so the read produces the SAME object the
-    // source-preserving write engine (`frontmatterCstModel`) diffs against — an
-    // untouched key can never look "changed" through a cross-parser type
-    // mismatch (e.g. `1_000`). The core schema resolves no timestamp or merge
-    // tag, so `2026-06-01` stays a string and `<<: *a` a literal `<<`. On ANY
-    // error (or a non-object root) fail safe to `{}`; the raw block is still
-    // threaded out below so the fence is kept.
-    // logLevel 'error': a collection key (`[a, b]: x`) is stringified by
-    // toJS() on purpose; the package's warning about it is noise.
-    const doc = parseDocument(block.source, { logLevel: 'error' });
-    if (doc.errors.length === 0) {
-      const loaded = doc.toJS();
-      if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
-        frontmatter = loaded as Record<string, unknown>;
-      }
-    }
-  } catch {
-    frontmatter = {};
-  }
+  // The one frontmatter object reader, shared with the vault index, so a note
+  // shows the same title and tags open as closed. A block with a recoverable
+  // error (a duplicate key, a tab indent) still reads; writing to it is
+  // refused by the assembler, which keeps such a block verbatim.
+  const frontmatter = parseFrontmatterObject(block.source);
 
   // Keep the raw YAML source even when it didn't parse into an object,
   // so the write path can preserve a fence it couldn't turn into keys.
@@ -515,7 +502,8 @@ export function assembleMarkdownFile(
     //
     // A NON-SCALAR mapping key (`[a, b]: x`) is the third: it parses, but
     // `toJS()` stringifies the key, so a dump would change the key's meaning.
-    const original = options.originalFrontmatter;
+    // Without a baseline, the verbatim block is what a dump would replace.
+    const original = options.originalFrontmatter ?? options.rawFrontmatter;
     if (
       patched === null &&
       original &&

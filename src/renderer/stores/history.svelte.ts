@@ -6,6 +6,7 @@ import { Command } from '../commands/Command';
 import { reportError } from '../lib/utils/errorBus';
 import { registerPathRenamable } from '../lib/vault/renamePathKeys';
 import { NoteGoneError } from '../commands/noteGoneError';
+import { ChangeRefusedError } from '../commands/changeRefusedError';
 
 // `Command` lives in `commands/Command.ts`; re-exported here for callers that
 // import it from the history store.
@@ -418,6 +419,11 @@ function toastNoteGone(command: Command, err: NoteGoneError, verb: 'undo' | 'red
   });
 }
 
+/** A step whose note couldn't take the change: nothing changed, and the message says why. */
+function toastRefused(err: ChangeRefusedError): void {
+  uiStore.toast(err.message, 'error', 8000);
+}
+
 /** A queued undo / redo whose board was closed before its turn came. */
 class TargetBoardClosedError extends Error {}
 
@@ -538,6 +544,10 @@ export const historyStore = {
     const { preRedoStack, redoStackRef } = commitExecute(command);
     return runChained(() => command.execute()).catch((err) => {
       rollbackExecute(command, preRedoStack, redoStackRef, originBoardId);
+      if (err instanceof ChangeRefusedError) {
+        toastRefused(err);
+        return;
+      }
       // Almost every caller fires execute() fire-and-forget, so the rethrow
       // below surfaces only as a silent unhandled rejection. Report it first
       // so a failing command body is never invisible.
@@ -606,6 +616,10 @@ export const historyStore = {
       }
       if (err instanceof NoteGoneError) {
         toastNoteGone(command, err, 'undo');
+        return;
+      }
+      if (err instanceof ChangeRefusedError) {
+        toastRefused(err);
         return;
       }
       // See execute(): report before the (mostly unobserved) rethrow.
@@ -677,6 +691,10 @@ export const historyStore = {
       }
       if (err instanceof NoteGoneError) {
         toastNoteGone(command, err, 'redo');
+        return;
+      }
+      if (err instanceof ChangeRefusedError) {
+        toastRefused(err);
         return;
       }
       // See execute(): report before the (mostly unobserved) rethrow.

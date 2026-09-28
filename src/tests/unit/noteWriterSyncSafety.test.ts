@@ -85,7 +85,7 @@ describe('a write over a file that changed after the read (STALE)', () => {
     const invoke = window.filo.invoke as unknown as { mock: { calls: unknown[][] } };
     const sends = invoke.mock.calls.filter((c) => c[0] === 'vault:write-existing-file-text');
     expect(sends).toHaveLength(1);
-    expect(sends[0][4]).toEqual({ mtimeMs: expect.any(Number), size: expect.any(Number) });
+    expect(sends[0][4]).toEqual({ mtimeMs: expect.any(Number), size: expect.any(Number), hash: expect.stringMatching(/^[0-9a-f]{8}$/) });
   });
 
   it('is read again and the change applied to the new version', async () => {

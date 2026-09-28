@@ -1099,3 +1099,24 @@ between, the attachment's tags are lost. Syncthing usually applies a rename at
 once (it rebuilds the new file from the old one's blocks), so the gap is short.
 If the "Pruned … stale tag entries" toast appears for a file that is still
 there, add its tags again.
+
+---
+
+## 36. A note over 2 MB is checked for outside changes by its stat alone
+
+**What:** Before Filo writes over a note, the main process checks that the
+file is still the version Filo read: same modification time and size, and,
+for a file up to 2 MB, the same bytes (a content hash). A note larger than
+that is checked by its modification time and size only.
+
+**Where:** `stillHoldsHash` / `STALE_HASH_MAX_BYTES` in
+[src/main/vault/filenameUtils.ts](src/main/vault/filenameUtils.ts).
+
+**Why accepted:** Reading a large file again before every save costs time on
+each write, and notes that size are rare.
+
+**Impact:** On a file system with a coarse timestamp (FAT / exFAT keep 2 s,
+some SMB shares 1 s), another program's save of a note over 2 MB that keeps its
+size and lands within one timestamp tick of Filo's read could be overwritten.
+Keep large notes on NTFS / APFS / ext4, or close them in other editors while
+Filo has them open.

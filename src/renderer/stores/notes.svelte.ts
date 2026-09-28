@@ -152,10 +152,11 @@ const overlays = new SvelteMap<VaultPath, FrontmatterDelta>();
  * - `read-only`: the note isn't UTF-8, or can't round-trip, so it is never written;
  * - `unreadable`: the note couldn't be read, so there is nothing to build on;
  * - `loading`: the note hasn't been read yet;
+ * - `missing`: the file isn't there, so there is no version to build on;
  * - `not-open`: the view doesn't hold this note (left over from a closed vault);
  * - `vault-changed`: another vault opened while the note loaded.
  */
-export type SetBodyStatus = 'queued' | 'read-only' | 'unreadable' | 'loading' | 'not-open' | 'vault-changed';
+export type SetBodyStatus = 'queued' | 'read-only' | 'unreadable' | 'loading' | 'missing' | 'not-open' | 'vault-changed';
 
 /** Conflict and deletion prompts, installed by `notePrompts.ts`. */
 export interface NotePromptHandlers {
@@ -456,8 +457,8 @@ export const noteStore = {
     // over from a closed vault must not reach a same-named note in the next.
     if (!m || !m.views.has(viewId)) return 'not-open';
     if (m.readOnly) return 'read-only';
-    if (m.status === 'loading') return 'loading';
-    if (m.status === 'unreadable') return 'unreadable';
+    // A missing note has no version to build on: a body taken now would be written blind over whatever appears there.
+    if (m.status === 'loading' || m.status === 'unreadable' || m.status === 'missing') return m.status;
     if (m.body === markdown && !m.hasUnsavedBody) return 'queued';
     m.editorOwner = viewId;
     setModelBody(m, markdown, viewId);
@@ -476,7 +477,7 @@ export const noteStore = {
    */
   setBodyBuiltOn(relPath: string, markdown: string, viewId: ViewId, builtOn: string): SetBodyStatus {
     const m = models.get(vaultPath(relPath));
-    if (!m || !m.views.has(viewId) || m.readOnly || m.status === 'loading' || m.status === 'unreadable') {
+    if (!m || !m.views.has(viewId) || m.readOnly || m.status === 'loading' || m.status === 'unreadable' || m.status === 'missing') {
       return noteStore.setBody(relPath, markdown, viewId);
     }
     // Nothing of the other change is lost when the editor's text already

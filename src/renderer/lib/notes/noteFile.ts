@@ -18,6 +18,7 @@
  */
 import { assembleMarkdownFile, parseMarkdownFile, type FrontmatterRefusal } from '../editor/markdownSync';
 import { frontmatterSourceParses } from '../vault/frontmatterCstModel';
+import { bodyWithoutFenceLookalike } from './frontmatterFence';
 import { fileLineEnding, frontmatterLineEnding } from '../utils/lineEnding';
 import {
   applyFrontmatterDelta,
@@ -165,6 +166,12 @@ export function assembleNoteText(
       : change.body === undefined
         ? frontmatterLineEnding(fresh.raw)
         : fresh.eol;
+  // A body save under an unchanged block keeps the block's bytes as they are:
+  // an empty block, a fence with trailing spaces, and a block in another line
+  // ending than the body all survive.
+  if (change.body !== undefined && !fmChanged && fresh.hasFrontmatter) {
+    return withDiskFrontmatter(fresh, change.body, eol);
+  }
   let text = assembleMarkdownFile(nextFm, body, {
     bom: fresh.hadBom,
     rawFrontmatter: fresh.rawFrontmatter,
@@ -185,11 +192,29 @@ export function assembleNoteText(
   return text;
 }
 
-/** `text` with whatever follows its frontmatter block replaced by `fresh`'s body, verbatim. */
+/**
+ * `text` with whatever follows its frontmatter block replaced by `fresh`'s
+ * body, verbatim. When the change removed the block, a body that opens with a
+ * `---` rule gets the same `***` the assembler gives it, or the next read would
+ * take its first section for frontmatter.
+ */
 function withDiskBody(text: string, fresh: NoteText): string {
   const out = parseMarkdownFile(text);
-  if (!out.hasFrontmatter) return (out.hadBom ? text.charAt(0) : '') + fresh.body;
+  if (!out.hasFrontmatter) return (out.hadBom ? text.charAt(0) : '') + bodyWithoutFenceLookalike(fresh.body);
   return text.slice(0, text.length - out.body.length) + fresh.body;
+}
+
+/**
+ * `fresh`'s BOM and frontmatter block, byte for byte, over the new `body` in
+ * the file's line ending (with a final newline, as the assembler writes it).
+ */
+function withDiskFrontmatter(fresh: NoteText, body: string, eol: Eol): string {
+  const head = fresh.raw.slice(0, fresh.raw.length - fresh.body.length);
+  const next = eol === '\r\n' ? body.replace(/\r?\n/g, '\r\n') : body;
+  // A file that ends on its closing fence has no line break before the body.
+  const gap = next.length === 0 || head.endsWith('\n') ? '' : eol;
+  const trailing = next.length === 0 || next.endsWith('\n') ? '' : eol;
+  return `${head}${gap}${next}${trailing}`;
 }
 
 /**

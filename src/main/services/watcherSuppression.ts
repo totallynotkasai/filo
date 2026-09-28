@@ -82,13 +82,24 @@ export class SuppressionWindows {
     if (content !== undefined) this.recordOwnBytes(relativePath, ownBytesOf(content));
   }
 
-  /** Remembers `own` as bytes Filo wrote to the path. */
+  /** Remembers `own` as bytes Filo wrote (or is about to write) to the path. */
   recordOwnBytes(relativePath: string, own: OwnBytes): void {
     const key = vaultPath(relativePath);
     if (!key) return;
     const list = (this.ownBytes.get(key) ?? []).filter((o) => o.size !== own.size || o.sha1 !== own.sha1);
     list.push(own);
     this.ownBytes.set(key, list.slice(-OWN_BYTES_KEPT));
+  }
+
+  /**
+   * `own` has landed at the path. Filo's writes to one path run one at a
+   * time, so its earlier bytes there are no echo any more: the file holding
+   * them again is another program's doing (a restore, a sync) and must be
+   * reported.
+   */
+  recordLandedBytes(relativePath: string, own: OwnBytes): void {
+    const key = vaultPath(relativePath);
+    if (key) this.ownBytes.set(key, [own]);
   }
 
   /** Drops every event for the folder itself and everything under it. */

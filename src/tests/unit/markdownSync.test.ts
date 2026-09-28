@@ -120,10 +120,10 @@ describe('markdownSync — frontmatter preservation (Audit2 1.1/1.2)', () => {
   it('1.1 — preserves an unparseable (tab-indented) frontmatter block on body re-assembly', () => {
     const src = ['---', 'title: Keep me', '\tbad: indentation', '---', 'old body'].join('\n');
     const parsed = parseMarkdownFile(src);
-    // The parser can't build an object from this YAML…
+    // The keys still read (the recoverable error is the index's reading too)…
     expect(parsed.hasFrontmatter).toBe(true);
-    expect(Object.keys(parsed.frontmatter)).toHaveLength(0);
-    // …but the raw block must survive a body-only save, fence and all.
+    expect(parsed.frontmatter).toEqual({ title: 'Keep me', bad: 'indentation' });
+    // …but the block can't be patched, so the raw block must survive a save, fence and all.
     const out = assembleMarkdownFile(parsed.frontmatter, 'new body', {
       rawFrontmatter: parsed.rawFrontmatter,
     });

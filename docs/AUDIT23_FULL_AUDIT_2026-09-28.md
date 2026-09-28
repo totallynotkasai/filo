@@ -480,6 +480,46 @@ D2, D11, D15 and D16 are timing- or crash-dependent and are covered by the specs
 8. **D14.** Carried over from Audit-22 `notes-2`. Match only the latest own-write hash (and `base`) as an echo, or require the echo within the main-side suppression window. Test the V1 → V2 → V1-restore case.
 9. **D26.** Document the coarse-mtime limit in KNOWN_LIMITATIONS. Optionally also compare a content hash in `beforeAttempt` for small files.
 
+#### Phase 5 status: done (2026-09-28)
+
+All nine items are fixed. Each has a regression test, and each test was proved to bite: a script put every old behaviour back in turn (17 mutations: one per item, a second for D14, D22, D24 and D25, and one each for the two follow-ons below) and the matching test failed every time. Decision 4 was taken as recommended: a block with a recoverable error reads its keys, and the writer keeps refusing to patch it.
+
+| Item | Fix | Tests |
+|---|---|---|
+| CH1 | `parseMarkdownFile` takes its object from `parseFrontmatterObject`, the index's reader, so a duplicate key or a tab indent reads the same open as closed. The assembler's keep-raw check also falls back to `rawFrontmatter` when a caller passes no baseline, so a block that now reads keys can never be dumped over. | `noteWritePathEdges.test.ts`: both readers agree on a duplicate key and a tab indent; a delta is refused with the block kept; a body save keeps it. `frontmatterSafety.test.ts` (characterisation): the open note shows the duplicate-key note's tags |
+| D20 | `withDiskBody`'s no-frontmatter branch passes the disk body through `bodyWithoutFenceLookalike`. | `noteWritePathEdges.test.ts`: removing a scene-break note's last key writes `***` and reads back with no frontmatter |
+| D21 | A body save under an unchanged block (`withDiskFrontmatter` in `noteFile.ts`) keeps the BOM and the block's bytes as read (fences, trailing spaces, the block's own line ending, an empty block) and writes only the body, in the file's ending. | `noteWritePathEdges.test.ts`: empty block, `---  ` fences, CRLF block over an LF body, a file ending on its fence, a BOM, a CRLF body |
+| D22 | `vault:convert-to-utf8` refuses a link, reads stat then bytes (a mismatch is `STALE`), backs up exactly those bytes (`snapshotForRecovery` takes them), and writes with `expectExisting`, `expectStat` (with the bytes' hash), `refuseLink` and `withOnDiskSpelling`. The renderer names `STALE` and `NOTE_IS_LINK` in its toast. | `staleWriteContentCheck.test.ts`: another program's same-size save between the read and the backup is left on disk, and the backup holds the converted bytes |
+| D24 | `writeTagChangeToMarkdownPath` rejects with the new `ChangeRefusedError` when the rewriter refused the frontmatter, the note isn't UTF-8 or is a link, or an edit of it is unsaved. The tag commands return the write, and the history store shows the message and takes the step off the stack (execute) or leaves it in place (undo / redo). The Document tab's tag row, which sends a frontmatter delta, checks first (`noteFrontmatterProblem`) and queues nothing. The writer and the views share one wording (`lib/notes/frontmatterRefusal.ts`). | `noteWritePathEdges.test.ts`: malformed, non-UTF-8 and link notes reject; a note that already says so doesn't; the command leaves the stack with a toast. `frontmatterSafety.test.ts`: the tag row's refusal leaves the file and no undo step |
+| D25 | `setBody` returns `missing` for a missing note (the Task List notes box keeps its draft and says so). The writer treats a body with no base as drifted unless the disk body already matches it, so it becomes the conflict prompt. | `noteWritePathEdges.test.ts`: a missing note takes no body; a body with no base meets a downloaded file as a conflict, and the file is untouched |
+| D35 | `NoteEditorView.serialize` clears `unserialised` only after the body reached the store; a throw keeps it and reports it with the note's name. | `noteWritePathEdges.test.ts`: a failing serialiser leaves the keystrokes counted as unsaved |
+| D14 | Both halves. The note writer remembers only its latest write per note, so an older write of ours that shows up again is someone else's restore and is taken. The main-process watcher kept the last four writes' bytes as echoes for 7 s, which hid that restore until the next 30 s scan; a write that has landed (`recordOwnWrite` → `recordLandedBytes`) now replaces the list, so only it (and a write still out) counts. | `noteWritePathEdges.test.ts`: V1 → V2 → another program puts V1 back → the note shows V1. `watcherOwnWriteBytes.test.ts`: the landed rule, and a watcher that reports the restore |
+| D26 | `expectStat` carries the read's FNV-1a hash; before every rename attempt `atomicWriteFile` also compares the bytes of a file up to 2 MB (`stillHoldsHash`). A larger file keeps the stat check alone: KNOWN_LIMITATIONS #36. | `staleWriteContentCheck.test.ts`: a same-size save that kept the stat is refused (directly and through `vault:write-existing-file-text`) |
+
+**Follow-on found by the full run.** With D25 in place, `honestSaveState.test.ts` (a note renamed by another program while its save is reading) failed: the rename moves the note's model to the new path, so the flush still running for the old path found no base and held the body as a conflict. It used to fall through to a write that failed `ENOENT` and was forgiven. The flush now stops as soon as it sees its queue entry moved or dropped while the read was out; the change is already armed at the new path.
+
+**Verification.** Lint, `svelte-check`, `typecheck:main`, `ci:test-typecheck`, the build and all 69 gates pass. The last `npm run ci:verify` ran 679 test files: 6436 passed, 5 skipped, and 2 failed on timing (a 100 ms window in `fileWatcherReconcile.test.ts`, a 5 s timeout in `recoverySnapshotKeep.test.ts`). The machine was under heavy load from other applications (the runs took 270–390 s against 177 s earlier), and three earlier runs each failed a different 2–5 watcher or snapshot timing tests. Every file that failed passes when run alone, and none of those tests exercises the changed code. Two tests had to change because they pinned the old behaviour: `markdownSync.test.ts` (a tab-indented block now reads its keys) and `noteWriterSyncSafety.test.ts` (the expected stat now carries `hash`).
+
+A real-app check (built app, Playwright `_electron`, a scratch vault) confirmed:
+- **CH1 / D24:** `Dup.md` (duplicate `title:`) showed its tag `alpha` in the Document tab. Adding `beta` showed the malformed-frontmatter toast; the file was byte-identical and Undo stayed disabled.
+- **D21:** typing in `Empty.md` (`---\n---\nold text`) saved `---\n---\nold text plus more\n`.
+- **D14:** after saves "Start one" then "Start one two", another program put the first version back. Within 3 s the editor showed "Start one", with no prompt and nothing written back.
+- **D22:** Convert to UTF-8 on a Windows-1252 note wrote `Réunion — café`; the `-keep` backup held the original bytes.
+- No renderer or console errors.
+
+D20, D25, D26 and D35 are covered by the specs above; they were not driven by hand.
+
+**Deviations from the plan**
+
+- **CH1:** as well as sharing the reader, the assembler's keep-raw check now also uses `rawFrontmatter` when no baseline is passed. No production caller omits the baseline, but the change means a block that now reads keys can't reach the full-dump fallback.
+- **D21:** the plan named `emitWithRawFrontmatter`. The block is kept in `assembleNoteText` instead (`withDiskFrontmatter`), which has the fresh read's bytes; `emitWithRawFrontmatter` only sees the YAML between the fences.
+- **D22:** also refuses a symbolic link up front, and a read whose byte count differs from the stat taken before it.
+- **D24:** the plan named the tag writer; the Document tab's tag row sends a frontmatter delta instead (`UpdatePropertiesCommand`) and had the same leftover undo step, so it checks the note first. That needed a harness reader for the toolbar's Undo button (`undoAvailable`). Other frontmatter commands (Kanban / Task List fields) still rely on the writer's toast, which leaves their step on the stack: not in this finding.
+- **D25:** a body with no base whose text already matches the disk body is not a conflict. The follow-on above was needed.
+- **D14:** the plan offered "latest hash only" or "within the suppression window"; latest only, and the list of recent hashes became one entry per note. The real-app check showed the main-process watcher also hid the restore (it kept four recent writes as echoes), so the watcher now forgets a write's bytes once a later one lands. The plan named only the renderer side.
+- **D26:** did the optional hash check, not only the documentation. The limit is 2 MB; KNOWN_LIMITATIONS #36 covers larger notes.
+- **Line budget:** `notes.svelte.ts` is at 1000 lines, the gate's limit, after folding the D25 check into the existing status checks. Phase 8's split (CH12) is now needed before anything else is added there.
+
 ### Phase 6: vault lifecycle and queue edges (D12, D13, D23, D32, D33, D36, D38, D42, D43)
 
 1. **D33.** Quit uses the same checks as `saveBeforeLeaving`:
@@ -542,6 +582,7 @@ D2, D11, D15 and D16 are timing- or crash-dependent and are covered by the specs
 - **Phase 2:** done 2026-09-28 (status block under Phase 2).
 - **Phase 3:** done 2026-09-28 (status block under Phase 3).
 - **Phase 4:** done 2026-09-28 (status block under Phase 4).
-- Phases 5–8: not started.
+- **Phase 5:** done 2026-09-28 (status block under Phase 5).
+- Phases 6–8: not started.
 
 When a phase lands, add a "Phase N status" block (fix, tests, verification, deviations) as in Audit-22. When every phase is done, move this file to `docs/archive/`.

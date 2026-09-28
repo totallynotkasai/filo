@@ -140,21 +140,23 @@ export async function snapshotForRecovery(
   vaultRoot: string,
   relativePath: string,
   purpose?: SnapshotPurpose,
+  /** The bytes the caller already read, so the copy is exactly what it is about to replace. */
+  readBytes?: Buffer,
 ): Promise<string> {
   const sourceAbs = join(vaultRoot, relativePath);
   assertWithinVault(vaultRoot, sourceAbs);
 
   // Size check BEFORE the read so a multi-GB file isn't pulled into memory
   // just to be rejected.
-  const sourceStat = await fs.stat(sourceAbs);
-  if (sourceStat.size > MAX_SNAPSHOT_BYTES) {
+  const size = readBytes ? readBytes.length : (await fs.stat(sourceAbs)).size;
+  if (size > MAX_SNAPSHOT_BYTES) {
     const err = new Error(
-      `Refusing to snapshot ${relativePath}: ${sourceStat.size} bytes exceeds ${MAX_SNAPSHOT_BYTES}-byte cap`,
+      `Refusing to snapshot ${relativePath}: ${size} bytes exceeds ${MAX_SNAPSHOT_BYTES}-byte cap`,
     );
     (err as NodeJS.ErrnoException).code = 'RECOVERY_SNAPSHOT_TOO_LARGE';
     throw err;
   }
-  const bytes = await fs.readFile(sourceAbs);
+  const bytes = readBytes ?? await fs.readFile(sourceAbs);
   // Flattened rel path, not the bare basename (see flattenSnapshotName).
   const flatName = flattenSnapshotName(relativePath);
 

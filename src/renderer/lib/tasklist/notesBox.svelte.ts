@@ -47,6 +47,7 @@ const REFUSED: Record<Exclude<SetBodyStatus, 'queued'>, string> = {
   'read-only': "isn't UTF-8 (or its formatting can't be kept), so Filo won't save it. Convert it from its Document tab.",
   unreadable: "couldn't be read, so your note wasn't saved. It's still in the box.",
   loading: "hasn't finished loading, so your note wasn't saved. It's still in the box.",
+  missing: "isn't in the vault any more, so your note wasn't saved. It's still in the box.",
   'not-open': "isn't open in this vault any more, so your note wasn't saved.",
   'vault-changed': 'belongs to the vault you left, so your note wasn\'t saved.',
 };

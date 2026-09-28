@@ -11,8 +11,9 @@ import { splitFrontmatterFence } from '../notes/frontmatterFence';
  *
  * The editor read/write path uses the richer `parseMarkdownFile`
  * (`lib/editor/markdownSync.ts`: BOM flag + `hasFrontmatter` surface,
- * TipTap-adjacent). These helpers are the minimal twin the index/template code
- * needs and deliberately stay free of that module.
+ * TipTap-adjacent), which reads its object through `parseFrontmatterObject`
+ * too, so an open note and the index never disagree about its keys. These
+ * helpers stay free of that module.
  */
 
 /**

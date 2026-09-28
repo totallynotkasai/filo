@@ -7,7 +7,8 @@ import { tmpdir } from 'os';
  * A note write hides only its own echo: while its window is open, an event
  * is dropped only when the file holds the bytes Filo wrote. A sync client or
  * editor saving the note inside the window (the window lasts seconds, to
- * outlast a Windows lock) is still reported.
+ * outlast a Windows lock) is still reported, and so is one putting back an
+ * earlier version of ours once a later write has landed.
  */
 
 const sentEvents: Array<{ channel: string; payload: unknown[] }> = [];
@@ -55,6 +56,18 @@ describe('SuppressionWindows: a write window covers only the bytes written', () 
     w.recordOwnBytes('Note.md', ownBytesOf('second'));
     expect(w.isSuppressed('Note.md', true, probeOf('first'))).toBe(true);
     expect(w.isSuppressed('Note.md', true, probeOf('second'))).toBe(true);
+  });
+
+  it('once a later write has landed, an earlier write\'s bytes are someone else\'s restore', () => {
+    const w = new SuppressionWindows();
+    w.suppressWrite('Note.md', 7000, 'first');
+    w.recordLandedBytes('Note.md', ownBytesOf('first'));
+    w.suppressWrite('Note.md', 7000, 'second');
+    // While the second write is out, the first is still what an echo finds.
+    expect(w.isSuppressed('Note.md', true, probeOf('first'))).toBe(true);
+    w.recordLandedBytes('Note.md', ownBytesOf('second'));
+    expect(w.isSuppressed('Note.md', true, probeOf('second'))).toBe(true);
+    expect(w.isSuppressed('Note.md', true, probeOf('first'))).toBe(false);
   });
 
   it('a window whose bytes aren\'t known, or a file that can\'t be read, keeps the old rule', () => {
@@ -115,5 +128,21 @@ describe('FileWatcher: another program saving a note just after Filo wrote it', 
     await watcher.reconcileNow();
     await new Promise((r) => setTimeout(r, 400));
     expect(changedNames()).not.toContain('Note.md');
+  });
+
+  it('is reported when another program puts back an earlier version of ours', async () => {
+    await fs.writeFile(join(dir, 'Note.md'), 'before', 'utf-8');
+    await watcher.reconcileNow({ seedOnly: true });
+    const first = '---\ntitle: Note\n---\nfirst\n';
+    const second = '---\ntitle: Note\n---\nsecond, longer\n';
+    for (const text of [first, second]) {
+      watcher.suppressWrite('Note.md', 7000, text);
+      await fs.writeFile(join(dir, 'Note.md'), text, 'utf-8');
+      watcher.recordOwnWrite('Note.md', Buffer.from(text, 'utf-8'));
+    }
+    await fs.writeFile(join(dir, 'Note.md'), first, 'utf-8');
+    await watcher.reconcileNow();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(changedNames()).toContain('Note.md');
   });
 });

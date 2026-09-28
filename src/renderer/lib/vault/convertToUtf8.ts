@@ -43,13 +43,18 @@ export function confirmConvertToUtf8(vaultRoot: string, relPath: string, onConve
           uiStore.pushToast({ text: `Converted "${relPath}" to UTF-8. The original is in .filo/recovery/.`, type: 'success', duration: 6000 });
           onConverted?.();
         } catch (err) {
-          const utf16 = err instanceof IpcEnvelopeError && err.code === 'UTF16';
+          const code = err instanceof IpcEnvelopeError ? err.code : undefined;
           reportError(
             'convertToUtf8',
             err,
-            utf16
+            code === 'UTF16'
               ? `"${relPath}" is UTF-16 text, which Filo can't convert automatically. Re-save it as UTF-8 in another editor.`
-              : `Couldn't convert "${relPath}" to UTF-8. The file was not changed.`,
+              : code === 'STALE'
+                ? `"${relPath}" changed while Filo was converting it, so it was left as it is. Try again.`
+                : code === 'NOTE_IS_LINK'
+                  ? `"${relPath}" is a link to another file. Convert the original.`
+                  : `Couldn't convert "${relPath}" to UTF-8. The file was not changed.`,
+            relPath,
           );
         }
       })();

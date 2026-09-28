@@ -16,6 +16,9 @@ import { noteStore } from './notes.svelte';
 import { vaultStore } from './vault.svelte';
 import { GENERAL_SETTINGS_DEFAULTS } from '../../shared/generalSettingsDefaults';
 import { orderPreservingTagsField } from '../lib/utils/normalizeTagsField';
+import { splitFrontmatterSource } from '../lib/vault/frontmatterRead';
+import { frontmatterSourceProblem } from '../lib/vault/frontmatterCstModel';
+import { vaultIndexStore } from './vaultIndex.svelte';
 
 const EMPTY: Readonly<Record<string, unknown>> = Object.freeze({});
 
@@ -41,6 +44,20 @@ export function titleFromFrontmatter(fm: Readonly<Record<string, unknown>>): str
 export function noteTitle(path: string): string {
   if (!path) return '';
   return titleFromFrontmatter(noteFrontmatter(path)) ?? noteStem(path);
+}
+
+/**
+ * Why a metadata edit of the note can't land, or null when it can (see
+ * `frontmatterSourceProblem`): judged on the bytes its model was built on
+ * when open, else the vault index's copy of its frontmatter.
+ */
+export function noteFrontmatterProblem(path: string): 'unparseable' | 'not-properties' | null {
+  if (!path) return null;
+  const base = noteStore.get(path)?.base;
+  const source = base
+    ? splitFrontmatterSource(base.rawText).rawFrontmatter
+    : (vaultIndexStore.getMetadata(path)?.rawFrontmatter ?? '');
+  return frontmatterSourceProblem(source);
 }
 
 /** The note's tags from frontmatter `tags:`, in the order the file lists them. */

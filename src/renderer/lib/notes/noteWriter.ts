@@ -66,6 +66,7 @@ import {
   type NoteText,
 } from './noteFile';
 import { openingFenceEol } from './frontmatterFence';
+import { frontmatterRefusalText } from './frontmatterRefusal';
 
 export const NOTE_WRITE_DEBOUNCE_MS = 300;
 
@@ -311,7 +312,7 @@ export interface NoteWriter {
   hold<T>(paths: string[], op: () => Promise<T>): Promise<T>;
   /** Moves queued work from one path to another (rename sweep). */
   renamePath(oldRel: string, newRel: string): void;
-  /** True when `hash` is a write we made to `path` in the last few seconds. */
+  /** True when `hash` is the last write we made to `path`, in the last few seconds. */
   isOwnWrite(path: string, hash: string): boolean;
   /** Drops every queue and timer (vault swap). */
   reset(): void;
@@ -320,13 +321,11 @@ export interface NoteWriter {
 export function createNoteWriter(host: NoteWriterHost): NoteWriter {
   const pending = new Map<VaultPath, Pending>();
   const chains = new Map<VaultPath, Promise<void>>();
-  const ownWrites = new Map<VaultPath, Array<{ hash: string; until: number }>>();
+  /** The last write we made to each note (only the latest is an echo; see isOwnWrite). */
+  const ownWrites = new Map<VaultPath, { hash: string; until: number }>();
 
   function rememberOwnWrite(path: VaultPath, hash: string): void {
-    const now = Date.now();
-    const list = (ownWrites.get(path) ?? []).filter((e) => e.until > now);
-    list.push({ hash, until: now + OWN_WRITE_TTL_MS });
-    ownWrites.set(path, list.slice(-8));
+    ownWrites.set(path, { hash, until: Date.now() + OWN_WRITE_TTL_MS });
   }
 
   /** Runs `op` after every earlier operation on `path` has settled. */
@@ -431,6 +430,9 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         throw err;
       }
       if (!isStillSameVault(identity)) return;
+      // Renamed (or dropped) while the read was out: the change moved with
+      // the note and is armed at its new path, where its base is.
+      if (pending.get(path) !== entry) return;
       lastFresh = fresh;
       stale = false;
       if (fresh.nonUtf8) {
@@ -469,7 +471,13 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         continue;
       }
       let heldBody = false;
-      if (body && base && !sameBody(fresh.text.body, snapshotBody(base))) {
+      // Without a base the body was built on no known version of the file (it
+      // was missing, and is back: a sync download, a restore), so any other
+      // body there is someone else's.
+      const drifted = body !== undefined && (base
+        ? !sameBody(fresh.text.body, snapshotBody(base))
+        : !sameBody(fresh.text.body, body.markdown));
+      if (body && drifted) {
         // Someone else changed the body since this one was built on it.
         host.onBodyConflict(path, relPath, fresh);
         body = undefined;
@@ -480,14 +488,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         }
       }
       const text = assembleNoteText(fresh.text, { body: body?.markdown, delta }, (reason) => {
-        reportError(
-          'frontmatter.unparseable',
-          null,
-          reason === 'not-properties'
-            ? `"${relPath}" starts with a --- block Filo can't read as properties, so this change wasn't saved.`
-            : `Couldn't update metadata for "${relPath}": its YAML frontmatter is malformed, so the change wasn't saved. Fix the frontmatter in that file to re-enable metadata edits.`,
-          relPath,
-        );
+        reportError('frontmatter.unparseable', null, frontmatterRefusalText(relPath, reason), relPath);
       });
       if (breaksFrontmatter(fresh.text, text)) refuseFrontmatterBreak(vaultRoot, relPath);
       if (text !== fresh.text.raw) {
@@ -840,8 +841,11 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
     },
 
     isOwnWrite(path, hash) {
-      const now = Date.now();
-      return (ownWrites.get(vaultPath(path)) ?? []).some((e) => e.hash === hash && e.until > now);
+      // Only the latest write counts: a flush reads the disk as it is now,
+      // so an older version of ours showing up again was put back by someone
+      // else (a restore, a sync), not an echo.
+      const latest = ownWrites.get(vaultPath(path));
+      return latest !== undefined && latest.hash === hash && latest.until > Date.now();
     },
 
     reset() {
@@ -872,7 +876,9 @@ async function writeOver(vaultRoot: string, relPath: string, text: string, fresh
   if (fresh.mtimeMs === undefined || fresh.size === undefined) {
     throw new Error('noteWriter: a write needs the stat of the read it builds on');
   }
-  const expect = { mtimeMs: fresh.mtimeMs, size: fresh.size };
+  // The hash lets the main process tell a same-size save inside one coarse
+  // timestamp tick (FAT, SMB) from the version this read saw.
+  const expect = { mtimeMs: fresh.mtimeMs, size: fresh.size, hash: noteTextHash(fresh.text.raw) };
   try {
     await invokeOk('vault:write-existing-file-text', vaultRoot, relPath, text, expect);
     return 'written';

@@ -18,6 +18,7 @@ import {
   uniqueFolderPath,
   withOnDiskSpelling,
   LOCK_AWARE_SUPPRESS_MS,
+  type ExpectedStat,
 } from '../vault/filenameUtils';
 import { createExclusiveFile } from '../vault/exclusiveCreate';
 import { FileWatcher } from '../services/fileWatcher';
@@ -714,7 +715,7 @@ export function registerVaultHandlers(): void {
       vaultRoot: string,
       relativePath: string,
       content: string,
-      expect?: { mtimeMs: number; size: number },
+      expect?: ExpectedStat,
     ) => {
       try {
         assertActiveVault(vaultRoot);

@@ -169,9 +169,10 @@ export interface IpcChannelMap {
   };
   'vault:write-existing-file-text': {
     // `expect`: the file's stat when the renderer read it. The write fails
-    // with code 'STALE' (nothing written) when the file changed since, and
+    // with code 'STALE' (nothing written) when the file changed since (its
+    // stat, or for a small file its bytes when `hash` is given), and
     // with 'NOT_UTF8' / 'NOTE_IS_LINK' over a non-UTF-8 file or a symbolic link.
-    args: [vaultRoot: string, relPath: string, content: string, expect?: { mtimeMs: number; size: number }];
+    args: [vaultRoot: string, relPath: string, content: string, expect?: { mtimeMs: number; size: number; hash?: string }];
     result: IpcSuccess<{ path: string }>;
   };
   /** Create-exclusive; fails with code 'EEXIST' instead of overwriting. */

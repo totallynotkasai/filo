@@ -662,27 +662,21 @@ export const fileTagsStore = {
    * Internal impl of `addTagToTile` — no history push. Called by
    * `AddTileTagCommand.execute()` and `RemoveTileTagCommand.undo()`.
    */
-  _applyAddTagToTile(tileId: string, tagName: string): void {
+  _applyAddTagToTile(tileId: string, tagName: string): void | Promise<void> {
     const tile = findTile(tileId);
     if (!tile || tile.tags.includes(tagName)) return;
     const path = tagFileOfTile(tile);
-    if (path) {
-      this._applyAddTagToPath(path, tagName);
-      return;
-    }
+    if (path) return this._applyAddTagToPath(path, tagName);
     this.ensureTag(tagName);
     boardCacheStore.persistUpdateTile(tileId, { tags: [...tile.tags, tagName] }, tile.boardId);
   },
 
   /** Internal impl of `removeTagFromTile` — no history push. */
-  _applyRemoveTagFromTile(tileId: string, tagName: string): void {
+  _applyRemoveTagFromTile(tileId: string, tagName: string): void | Promise<void> {
     const tile = findTile(tileId);
     if (!tile || !tile.tags.includes(tagName)) return;
     const path = tagFileOfTile(tile);
-    if (path) {
-      this._applyRemoveTagFromPath(path, tagName);
-      return;
-    }
+    if (path) return this._applyRemoveTagFromPath(path, tagName);
     boardCacheStore.persistUpdateTile(tileId, { tags: tile.tags.filter((t) => t !== tagName) }, tile.boardId);
   },
 
@@ -708,24 +702,26 @@ export const fileTagsStore = {
 
   /**
    * Internal impl of `addTagToPath` — no history push. A note gets the tag
-   * in its frontmatter; any other file gets it in tags.json.
+   * in its frontmatter; any other file gets it in tags.json. For a note it
+   * returns the write, which rejects with `ChangeRefusedError` when the note
+   * can't take the tag, so the command that asked comes off the undo stack.
    */
-  _applyAddTagToPath(path: string, tagName: string): void {
+  _applyAddTagToPath(path: string, tagName: string): void | Promise<void> {
     if (!path) return;
     const trimmed = canonicaliseTagName(file, tagName ?? '');
     if (!trimmed) return;
     if (this.tagsForFile(path).includes(trimmed)) return;
     this.ensureTag(trimmed);
-    if (isNotePath(path)) void writeTagChangeToMarkdownPath(path, trimmed, 'add');
-    else this.addTagToFile(path, trimmed);
+    if (isNotePath(path)) return writeTagChangeToMarkdownPath(path, trimmed, 'add');
+    this.addTagToFile(path, trimmed);
   },
 
-  /** Internal impl of `removeTagFromPath` — no history push. */
-  _applyRemoveTagFromPath(path: string, tagName: string): void {
+  /** Internal impl of `removeTagFromPath` — no history push. See `_applyAddTagToPath`. */
+  _applyRemoveTagFromPath(path: string, tagName: string): void | Promise<void> {
     if (!path || !tagName) return;
     if (!this.tagsForFile(path).includes(tagName)) return;
-    if (isNotePath(path)) void writeTagChangeToMarkdownPath(path, tagName, 'remove');
-    else this.removeTagFromFile(path, tagName);
+    if (isNotePath(path)) return writeTagChangeToMarkdownPath(path, tagName, 'remove');
+    this.removeTagFromFile(path, tagName);
   },
 
   /**

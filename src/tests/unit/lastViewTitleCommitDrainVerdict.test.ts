@@ -178,8 +178,8 @@ describe('Audit-18 5.1 — lastView persist debounce restored', () => {
     const idx = KANBAN_SRC.indexOf('function flushLastView(): void {');
     expect(idx).toBeGreaterThan(-1);
     const region = KANBAN_SRC.slice(idx, idx + 400);
-    expect(region).toContain('if (!hydratedForBoardId) return;');
-    expect(region).toContain('flushLastViewForBoard(hydratedForBoardId');
+    expect(region).toContain('if (!hydration.boardId) return;');
+    expect(region).toContain('flushLastViewForBoard(hydration.boardId');
   });
 });
 

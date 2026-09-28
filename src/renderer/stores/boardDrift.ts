@@ -14,6 +14,7 @@
 import { uiStore } from './ui.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { boardStore } from './board.svelte';
+import { historyStore } from './history.svelte';
 import { vaultStore } from './vault.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
@@ -160,7 +161,27 @@ export async function reloadBoardFromDisk(
   const storedPath = boardStore.paths[boardId];
   if (storedPath) boardCacheStore.renameBoardPath(storedPath, rel);
   boardCacheStore.replaceCache({ ...boardStore.cache, [boardId]: result.data });
+  // The board's undo steps were built on the version just replaced: undoing
+  // one would write its old snapshot over the other change, with no drift
+  // prompt (the load re-stamped the baseline). Tell the user only when there
+  // was something to undo.
+  if (historyStore.clearBoard(boardId) > 0) {
+    uiStore.pushToast({
+      text: `Undo history for "${boardNameOf(result.data, rel)}" was cleared because the board changed outside Filo.`,
+      type: 'info',
+      duration: 6000,
+      dedupeKey: `board-reload-history:${boardId}`,
+    });
+  }
   return 'reloaded';
+}
+
+/** The board's name for a message: its name, else its file stem. */
+function boardNameOf(data: { board?: { name?: string } }, rel: string): string {
+  const name = data.board?.name;
+  if (name) return name;
+  const base = rel.slice(rel.lastIndexOf('/') + 1);
+  return base.replace(/\.board\.json$/i, '');
 }
 
 /**

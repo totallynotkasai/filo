@@ -35,6 +35,7 @@ import { makeFrontmatterSlice } from './boardCacheFrontmatter';
 import { makeBoardDeleteSlice } from './boardCacheDelete';
 import { CURRENT_BOARD_FILE_VERSION } from '../schema/boardFile';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { boardDefaults } from '../core/boardDefaults';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 
@@ -406,7 +407,12 @@ export const boardCacheStore = {
    * any debounced writes that captured the renamed snapshot.
    */
   replaceCache(snapshot: Record<string, BoardFileData>): void {
+    const previous = boardCache;
     boardCache = snapshot;
+    // A mounted view of a replaced board hydrates its filters from the new data.
+    for (const [id, data] of Object.entries(snapshot)) {
+      if (previous[id] !== undefined && previous[id] !== data) bumpBoardViewRevision(id);
+    }
   },
 
   /**

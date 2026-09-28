@@ -53,6 +53,39 @@ export function snapshotTaskListSlice(boardId: string): {
   };
 }
 
+/**
+ * Each section's start index, by section id: the only section field adding or
+ * removing a task changes.
+ */
+type SectionPositions = Record<string, number>;
+
+/** The board's section starts now, or null when it isn't a loaded Task List. */
+function captureSectionPositions(boardId: string): SectionPositions | null {
+  const cached = boardCacheStore.cache[boardId];
+  if (!cached || cached.board.type !== 'tasklist') return null;
+  const out: SectionPositions = {};
+  for (const s of ((cached.board as TaskListBoard).sections ?? []) as TaskListSection[]) out[s.id] = s.position;
+  return out;
+}
+
+/**
+ * Puts back the section starts `positions` recorded, for the sections that
+ * still exist. Everything else about the sections as they are now (a rename,
+ * a collapse, a style, a section added or deleted since) is kept: replaying a
+ * whole `sections` snapshot would undo those too.
+ */
+function restoreSectionPositions(boardId: string, positions: SectionPositions | null): void {
+  if (!positions) return;
+  const cached = boardCacheStore.cache[boardId];
+  if (!cached || cached.board.type !== 'tasklist') return;
+  const sections = ((cached.board as TaskListBoard).sections ?? []) as TaskListSection[];
+  if (sections.length === 0) return;
+  boardCacheStore.persistTaskListStructure(
+    boardId,
+    sections.map((s) => ({ ...s, position: positions[s.id] ?? s.position })),
+  );
+}
+
 /** What a create-exclusive seed actually created. */
 export interface SeededFile {
   relPath: string;
@@ -67,7 +100,7 @@ export class AddTaskCommand extends Command {
   private position: number;
   private style?: PartialTaskStyle;
   private targetSectionId?: string;
-  private sectionsBefore: TaskListSection[] | null;
+  private sectionsBefore: SectionPositions | null;
   // Optional backing-`.md` seed folded INTO the command so it runs on the
   // history chain. Awaited on the first execute only; absent for callers (e.g.
   // file-drop) whose `.md` already exists. May resolve the FINAL path it created
@@ -94,8 +127,7 @@ export class AddTaskCommand extends Command {
     this.targetSectionId = targetSectionId;
     this.seedBackingFile = seedBackingFile;
     this.description = `Add task "${defTitle(def)}"`;
-    const snap = snapshotTaskListSlice(boardId);
-    this.sectionsBefore = snap ? snap.sections : null;
+    this.sectionsBefore = captureSectionPositions(boardId);
   }
 
   async execute(): Promise<void> {
@@ -147,11 +179,9 @@ export class AddTaskCommand extends Command {
   private removePlacement(): void {
     boardCacheStore.removeTaskPlacement(this.boardId, this.def.id);
     // The remove/add section-position shifts aren't symmetric at boundary
-    // indices, so restoring the pre-add sections snapshot guarantees an
-    // exact round-trip.
-    if (this.sectionsBefore) {
-      boardCacheStore.persistTaskListStructure(this.boardId, this.sectionsBefore.map((s) => ({ ...s })));
-    }
+    // indices, so the pre-add section starts are put back for an exact
+    // round-trip (and nothing else about the sections).
+    restoreSectionPositions(this.boardId, this.sectionsBefore);
   }
 }
 
@@ -188,7 +218,7 @@ export class DeleteTaskCommand extends Command {
   private tileId: string;
   private snapshotDef: TileDefinition | null;
   private snapshotPlacement: TaskPlacement | null;
-  private sectionsBefore: TaskListSection[] | null;
+  private sectionsBefore: SectionPositions | null;
   // When set, execute() also moves the note into Filo's trash and undo()
   // moves it back BEFORE restoring the placement, as DeleteTilesCommand does.
   // Null on the default placement-only path.
@@ -225,7 +255,7 @@ export class DeleteTaskCommand extends Command {
       // Deep-clone so a later tag edit or external rewrite can't mutate the
       // snapshot's nested fields (e.g. the `tags` array) through the cache.
       if (def) this.snapshotDef = this.snapshot(def);
-      this.sectionsBefore = ((tl.sections ?? []) as TaskListSection[]).map((s) => this.snapshot(s));
+      this.sectionsBefore = captureSectionPositions(boardId);
     }
   }
 
@@ -294,12 +324,7 @@ export class DeleteTaskCommand extends Command {
       undefined,
       this.snapshotPlacement,
     );
-    if (this.sectionsBefore) {
-      boardCacheStore.persistTaskListStructure(
-        this.boardId,
-        this.sectionsBefore.map((s) => ({ ...s })),
-      );
-    }
+    restoreSectionPositions(this.boardId, this.sectionsBefore);
   }
 }
 

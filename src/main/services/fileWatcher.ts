@@ -45,6 +45,17 @@ interface ReconcileEntry {
   hash?: number;
 }
 
+/** Whether the reconcile walk hashes this path's content (notes and boards). */
+function isReconcileHashed(rel: string): boolean {
+  const lower = rel.toLowerCase();
+  return lower.endsWith('.md') || lower.endsWith('.board.json');
+}
+
+/** The reconcile hash of `bytes`: the whole file under the ceiling, a 4 KB prefix above it. */
+function reconcileHash(bytes: Buffer): number {
+  return bytes.length <= WATCHER_HASH_MAX_BYTES ? fnv1a32(bytes) : fnv1a32(bytes.subarray(0, 4096));
+}
+
 /**
  * How long between reconciliation passes. The walker has to stat every file
  * under the vault, so we can't run it too aggressively. 30s strikes a balance
@@ -256,6 +267,43 @@ export class FileWatcher {
     if (bytes.length <= WATCHER_HASH_MAX_BYTES) this.lastKnownHashes.set(key, sha1);
     else this.lastKnownHashes.delete(key);
     this.suppression.recordOwnBytes(relativePath, { size: bytes.length, sha1 });
+    this.advanceReconcileSnapshot(key, bytes);
+  }
+
+  /**
+   * Moves the reconcile snapshot's entry for a file Filo just wrote to the
+   * bytes it wrote. Otherwise the next 30 s scan diffs against the stat from
+   * before the write and reports Filo's own save as a change by another
+   * program (for a board: a false drift prompt, or a silent reload).
+   *
+   * Only an entry the snapshot already holds moves (a new file is reported by
+   * the scan as before), and only when the file's size is still the size
+   * written: a different size means another program wrote in the gap, and the
+   * scan must still see it.
+   */
+  private advanceReconcileSnapshot(key: VaultPath, bytes: Buffer): void {
+    const snapshot = this.reconcileSnapshot;
+    if (snapshot === null) return;
+    let onDisk: string | undefined;
+    for (const path of snapshot.keys()) {
+      if (vaultPath(path) === key) {
+        onDisk = path;
+        break;
+      }
+    }
+    if (onDisk === undefined) return;
+    let stat: import('fs').Stats;
+    try {
+      stat = statSync(join(this.vaultPath, onDisk));
+    } catch {
+      return;
+    }
+    if (!stat.isFile() || stat.size !== bytes.length) return;
+    snapshot.set(onDisk, {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      hash: isReconcileHashed(onDisk) ? reconcileHash(bytes) : undefined,
+    });
   }
 
   /**
@@ -668,15 +716,14 @@ export class FileWatcher {
           // past 4 KB is caught and the SHA-1 seed matches the on-demand
           // rename probe's digest. Above the ceiling use a 4 KB-prefix FNV
           // only; the rename gate refuses such pairs, so no SHA-1 is seeded.
-          const lower = rel.toLowerCase();
-          if (lower.endsWith('.md') || lower.endsWith('.board.json')) {
+          if (isReconcileHashed(rel)) {
             try {
               if (stat.size <= WATCHER_HASH_MAX_BYTES) {
                 const buf = await fsPromises.readFile(full);
                 // The size too: the cross-basename pass answers a now-missing
                 // file's size from this cache.
                 this.lastKnownSizes.set(vaultPath(rel), buf.length);
-                hash = fnv1a32(buf);
+                hash = reconcileHash(buf);
                 this.lastKnownHashes.set(vaultPath(rel), sha1Hex(buf));
               } else {
                 const fd = await fsPromises.open(full, 'r');

@@ -1,8 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadBoard } from '@renderer/lib/boards/boardLoader';
 import { historyStore } from '@renderer/stores/history.svelte';
 import type { Command } from '@renderer/stores/history.svelte';
-import { uiStore } from '@renderer/stores/ui.svelte';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { FrameSchema, ConnectionSchema, TileDefinitionSchema } from '@renderer/schema/index';
 import { uniqueBy } from '@renderer/schema/schemaUtils';
@@ -250,63 +249,6 @@ describe('Phase 24 — schema polish & history', () => {
       let n = 0;
       while (historyStore.canUndo) { historyStore.undo(); n++; }
       expect(n).toBe(10);
-    });
-  });
-
-  // ── M25 ────────────────────────────────────────────────────────────────
-
-  describe('M25 — notePossiblyStale surfaces one toast per session', () => {
-    it('does nothing when history is empty', () => {
-      const calls: string[] = [];
-      const spy = vi
-        .spyOn(uiStore, 'pushToast')
-        .mockImplementation((t) => { calls.push(typeof t.text === 'string' ? t.text : ''); });
-      try {
-        historyStore.notePossiblyStale('a.md');
-        expect(calls.length).toBe(0);
-      } finally {
-        spy.mockRestore();
-      }
-    });
-
-    it('emits exactly one toast per session even on repeated calls', () => {
-      historyStore.setActiveBoard('b1');
-      historyStore.execute(new NoopCommand());
-      const calls: string[] = [];
-      const spy = vi
-        .spyOn(uiStore, 'pushToast')
-        .mockImplementation((t) => { calls.push(typeof t.text === 'string' ? t.text : ''); });
-      try {
-        historyStore.notePossiblyStale('a.md');
-        historyStore.notePossiblyStale('b.md');
-        historyStore.notePossiblyStale('c.md');
-        const matching = calls.filter((s) => s.includes('External edit replaced'));
-        expect(matching.length).toBe(1);
-        // Includes the labelled file in the toast text.
-        expect(matching[0]).toContain('a.md');
-      } finally {
-        spy.mockRestore();
-      }
-    });
-
-    it('clear() re-arms the toast for a fresh vault open', () => {
-      historyStore.setActiveBoard('b1');
-      historyStore.execute(new NoopCommand());
-      const calls: string[] = [];
-      const spy = vi
-        .spyOn(uiStore, 'pushToast')
-        .mockImplementation((t) => { calls.push(typeof t.text === 'string' ? t.text : ''); });
-      try {
-        historyStore.notePossiblyStale('a.md');
-        historyStore.clear();
-        historyStore.setActiveBoard('b1');
-        historyStore.execute(new NoopCommand());
-        historyStore.notePossiblyStale('b.md');
-        const matching = calls.filter((s) => s.includes('External edit replaced'));
-        expect(matching.length).toBe(2);
-      } finally {
-        spy.mockRestore();
-      }
     });
   });
 });

@@ -30,11 +30,8 @@ import type {
 } from '../../schema/index';
 import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
-import {
-  ReorderTaskWithinSectionCommand,
-  BatchCommand,
-  UpdateBoardSettingsCommand,
-} from '../../commands/index';
+import { ReorderTaskWithinSectionCommand } from '../../commands/index';
+import { executeReorderSwitchingToManual } from './manualSortSwitch';
 import { isEditableTextTarget } from '../utils/editableTarget';
 import { collectDescendantIds } from './blockMove';
 import { sectionIdForPlacementIndex } from './sectionMath';
@@ -221,28 +218,7 @@ export class TaskListKeyboardNav {
       direction,
     );
     if (sortBy !== 'manual') {
-      const sortCmd = new UpdateBoardSettingsCommand(
-        { sortBy: 'manual' },
-        { sortBy },
-        [],
-        'Switch to Manual sort',
-      );
-      historyStore.execute(
-        new BatchCommand('Reorder task (Manual sort)', [sortCmd, reorderCmd]),
-      );
-      uiStore.pushToast({
-        text: 'Switched to Manual sort to reorder tasks',
-        type: 'info',
-        duration: 4000,
-        actions: [
-          {
-            label: 'Undo',
-            handler: () => {
-              historyStore.undo();
-            },
-          },
-        ],
-      });
+      executeReorderSwitchingToManual(reorderCmd, sortBy);
     } else {
       historyStore.execute(reorderCmd);
     }

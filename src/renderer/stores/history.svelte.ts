@@ -44,14 +44,6 @@ let activeBoardId = $state<string | null>(null);
 const truncationNotified: Record<string, true> = {};
 
 /**
- * A "history may be stale" toast has already been shown this session.
- * The toast offers a Clear-undo action; we only surface it once per cluster
- * of external reconciliations so a folder-wide sync (Dropbox catch-up) doesn't
- * spam the user. Resets on `clear()` (new vault) and on Clear-undo accept.
- */
-let staleToastShown = false;
-
-/**
  * Optional "bring the originating board into focus" hook. Given a
  * boardId, returns true if that board is open and was activated, false if it
  * isn't open anywhere. Registered by App.svelte, which can reach
@@ -426,6 +418,33 @@ function toastNoteGone(command: Command, err: NoteGoneError, verb: 'undo' | 'red
   });
 }
 
+/** A queued undo / redo whose board was closed before its turn came. */
+class TargetBoardClosedError extends Error {}
+
+/**
+ * The body of an undo or redo, run on the command's board. A body queued
+ * behind a running command (`runChained`) runs later, when another board may
+ * be active: it switches back to the command's board and waits for the scope
+ * to settle first, as an auto-switch does, and throws
+ * `TargetBoardClosedError` (the caller rolls back and says so) when that board
+ * is no longer open. A body run at once on its own board stays synchronous.
+ */
+function onTargetBoard(
+  command: Command,
+  body: () => Promise<void> | void,
+  didAutoSwitch: boolean,
+): () => Promise<void> | void {
+  const target = command.targetBoardId;
+  return () => {
+    if (!didAutoSwitch && (!target || activeBoardId === target)) return body();
+    return (async () => {
+      if (!didAutoSwitch && !(boardActivator?.(target) ?? false)) throw new TargetBoardClosedError();
+      await settleActiveScope(target);
+      await body();
+    })();
+  };
+}
+
 /** Removes `command` from every stack (the user skipped a step that can't run). */
 function dropCommand(command: Command): void {
   for (const stack of Object.values(stacks)) {
@@ -575,17 +594,16 @@ export const historyStore = {
     // possibly-just-switched active board.
     const dirtyId = command.targetBoardId || activeBoardId;
     if (dirtyId) boardStore.markDirty(dirtyId);
-    // Only the cross-board auto-switch path needs the async
-    // scope-settle; the common same-board case keeps its synchronous body so
-    // callers/tests still see immediate effects.
-    const op = didAutoSwitch
-      ? async () => {
-          await settleActiveScope(command.targetBoardId);
-          await command.undo();
-        }
-      : () => command.undo();
+    // Only a cross-board switch (now, or when a queued body gets its turn)
+    // needs the async scope-settle; the common same-board case keeps its
+    // synchronous body so callers/tests still see immediate effects.
+    const op = onTargetBoard(command, () => command.undo(), didAutoSwitch);
     return runChained(op).catch((err) => {
       rollbackUndo(command, preUndoStack, undoStackRef, originBoardId);
+      if (err instanceof TargetBoardClosedError) {
+        uiStore.toast(`Switch to the originating board to undo this action.`, 'info', 3500);
+        return;
+      }
       if (err instanceof NoteGoneError) {
         toastNoteGone(command, err, 'undo');
         return;
@@ -594,6 +612,20 @@ export const historyStore = {
       reportError('historyStore', err, `Undo of "${command.description}" failed and was rolled back.`);
       throw err;
     });
+  },
+
+  /**
+   * Undoes `command` only while it is still the last step on `boardId`'s stack
+   * and that board is active: for an Undo offered on a toast, which must never
+   * undo whatever else happened to land on top since. False (nothing undone)
+   * otherwise.
+   */
+  undoIfLatest(command: Command, boardId: string | null): boolean {
+    const stack = getStackFor(boardId);
+    if (!stack || activeBoardId !== boardId) return false;
+    if (stack.undoStack[stack.undoStack.length - 1] !== command) return false;
+    void this.undo();
+    return true;
   },
 
   /**
@@ -636,14 +668,13 @@ export const historyStore = {
     if (dirtyId) boardStore.markDirty(dirtyId);
     // See undo(): settle the scope onto targetBoardId before
     // re-running a facade body on a cross-board redo; same-board keeps sync.
-    const op = didAutoSwitch
-      ? async () => {
-          await settleActiveScope(command.targetBoardId);
-          await command.execute();
-        }
-      : () => command.execute();
+    const op = onTargetBoard(command, () => command.execute(), didAutoSwitch);
     return runChained(op).catch((err) => {
       rollbackRedo(command, preRedoStack, redoStackRef, originBoardId);
+      if (err instanceof TargetBoardClosedError) {
+        uiStore.toast(`Switch to the originating board to redo this action.`, 'info', 3500);
+        return;
+      }
       if (err instanceof NoteGoneError) {
         toastNoteGone(command, err, 'redo');
         return;
@@ -697,44 +728,6 @@ export const historyStore = {
   clear() {
     stacks = {};
     for (const k of Object.keys(truncationNotified)) delete truncationNotified[k];
-    staleToastShown = false;
-  },
-
-  /**
-   * An external edit replaced in-memory state for a file, so the
-   * inverse on undo stacks may no longer be valid. Offers the user a
-   * Clear-undo action via a persistent toast. Idempotent across a cluster
-   * of reconciliations: the toast appears at most once per session per
-   * `clear()` (which fires on vault open).
-   *
-   * Accepts a label to identify the touched file in the toast text; falls
-   * back to a generic message when omitted (e.g. a folder-wide sync where
-   * naming one file would be misleading).
-   */
-  notePossiblyStale(label?: string) {
-    if (staleToastShown) return;
-    let anyHistory = false;
-    for (const id of Object.keys(stacks)) {
-      const s = stacks[id];
-      if (!s) continue;
-      if (s.undoStack.length > 0 || s.redoStack.length > 0) { anyHistory = true; break; }
-    }
-    if (!anyHistory) return;
-    staleToastShown = true;
-    const subject = label ? `"${label}"` : 'a file';
-    uiStore.pushToast({
-      text: `External edit replaced ${subject}. Earlier undo steps may no longer match disk — clear undo history to be safe?`,
-      type: 'warning',
-      duration: 0,
-      actions: [
-        {
-          label: 'Clear undo history',
-          handler: () => {
-            this.clear();
-          },
-        },
-      ],
-    });
   },
 
   /**
@@ -747,18 +740,27 @@ export const historyStore = {
    * Left there after B is gone, it would wedge A's undo behind a switch-back
    * toast forever — so every surviving stack is swept of commands targeting
    * the removed board.
+   *
+   * Also called when the board is read again from disk (another program or
+   * machine changed it): its undo steps hold snapshots of the version before,
+   * and undoing one would write them over the other change.
+   *
+   * Returns how many undo / redo steps were dropped.
    */
-  clearBoard(boardId: string) {
+  clearBoard(boardId: string): number {
+    const own = stacks[boardId];
+    let dropped = own ? own.undoStack.length + own.redoStack.length : 0;
     delete stacks[boardId];
     delete truncationNotified[boardId];
     for (const id of Object.keys(stacks)) {
       const stack = stacks[id];
       if (!stack) continue;
-      mutateStack(stack, (s) => {
+      dropped += mutateStack(stack, (s) => {
         s.undoStack = s.undoStack.filter((c) => c.targetBoardId !== boardId);
         s.redoStack = s.redoStack.filter((c) => c.targetBoardId !== boardId);
-      });
+      }).droppedCount;
     }
+    return dropped;
   },
 
   /**

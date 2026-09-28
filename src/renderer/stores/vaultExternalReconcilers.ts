@@ -50,8 +50,30 @@ import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdenti
 import { adoptBoardAtRuntime } from './boardDiscovery';
 import { findBoardIdForPath, reloadBoardFromDisk, resolveBoardDrift } from './boardDrift';
 import { selfWriteDivergedFromBaseline } from './vaultExternalChanges';
+import { getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
 
 // ── Board JSON reconciler ─────────────────────────────────────────────
+
+/**
+ * True only when the board file's stat equals its drift baseline. No baseline,
+ * a failed stat or a vault swap during the stat answer false, so the change is
+ * handled as before.
+ */
+async function boardMatchesBaseline(rel: string): Promise<boolean> {
+  const baseline = getBaseline(rel);
+  if (!baseline) return false;
+  const captured = captureVaultIdentity();
+  const root = vaultStore.path;
+  if (!root) return false;
+  try {
+    const stat = await window.filo.invoke('vault:stat', root, rel);
+    if (!isStillSameVault(captured)) return false;
+    if (!stat || stat.success !== true) return false;
+    return !hasBaselineDrifted(baseline, { mtimeMs: stat.mtimeMs, size: stat.size });
+  } catch {
+    return false;
+  }
+}
 
 /**
  * External `.board.json` edit. The board write scheduler's drift detector
@@ -107,6 +129,13 @@ async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<voi
     await adoptBoardAtRuntime(rel, captured);
     return;
   }
+
+  // The file still holds what Filo last wrote or read (its stat equals the
+  // drift baseline): nothing to reload and nothing to ask about, however old
+  // the write. The watcher's scan can report a save of Filo's own long after
+  // the self-write window, and a false prompt's Reload drops the edits armed
+  // in the debounce. The writer's own drift check compares the same baseline.
+  if (await boardMatchesBaseline(rel)) return;
 
   // `isPathPending` is the single pending-write authority shared with
   // the `.md` classifier in `vaultExternalChanges`. A pending/in-flight

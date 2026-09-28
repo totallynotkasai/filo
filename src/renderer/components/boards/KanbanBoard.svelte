@@ -10,6 +10,7 @@
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, isActiveScope, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
+  import { ViewHydration } from '../../stores/boardViewRevision.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { reportError } from '../../lib/utils/errorBus';
@@ -156,10 +157,8 @@
   // ── Filter & sort UI state (non-persistent) ──
   //
   // Owned by `KanbanFiltersAndSort`. Instantiated below after `findQuery` /
-  // `cacheVersion` are declared so the accessor closures see valid
-  // references. Hydration timing stays in the host since it depends on
-  // `hydratedForBoardId` (board-switch tracking) and a debounced
-  // persistence $effect.
+  // `cacheVersion` are declared so the accessor closures see valid references.
+  // Hydration timing stays in the host (`hydration`, a debounced $effect).
 
   // ── Find bar state ──
   let findBarOpen = $state(false);
@@ -818,10 +817,10 @@
   // which run before the unmount. Keyed by the hydrated id through the cache
   // (teardown-safe; a no-change flush is a no-op).
   function flushLastView(): void {
-    if (!hydratedForBoardId) return;
+    if (!hydration.boardId) return;
     const prop = filtersAndSort.activeFilterProp;
     const view = { sortBy: filtersAndSort.activeSortBy, filterTags: [...filtersAndSort.activeFilterTags], filterProp: prop ? { ...prop } : null };
-    flushLastViewForBoard(hydratedForBoardId, view);
+    flushLastViewForBoard(hydration.boardId, view);
   }
   $effect(() => registerComponentFlush('kanban view', flushLastView));
 
@@ -836,20 +835,20 @@
   // ── lastView persistence ──
   // Hydrate transient filter/sort state from `settings.lastView` on board
   // open; debounced effect persists changes back. Pattern mirrors
-  // per-board viewport persistence. Host keeps the effects because they
-  // depend on `hydratedForBoardId` (per-board hydration tracking).
+  // per-board viewport persistence. Hydrates again when the board's view
+  // revision moves (a reload from disk, a tag rename rewrote `lastView`).
 
-  let hydratedForBoardId = $state<string | null>(null);
+  const hydration = new ViewHydration();
 
   $effect(() => {
     const id = board?.id;
-    if (!id || id === hydratedForBoardId) return;
+    if (!id || !hydration.needs(id)) return;
     untrack(() => {
       const lv = ((settings as Record<string, unknown>).lastView ?? null) as
         | KanbanLastView
         | null;
       filtersAndSort.hydrateFromLastView(lv);
-      hydratedForBoardId = id;
+      hydration.mark(id);
     });
   });
 
@@ -860,7 +859,7 @@
     const tags = filtersAndSort.activeFilterTags;
     const prop = filtersAndSort.activeFilterProp;
     const id = board?.id;
-    if (!id || id !== hydratedForBoardId) return;
+    if (!id || id !== hydration.boardId) return;
     // Snapshot at ARM time (a teardown can run after the next board's hydrate
     // re-seeded the filters) and write keyed by the CAPTURED id via
     // flushLastViewForBoard — never the live board, which may have changed.
@@ -874,7 +873,7 @@
     // Tear the debounce down with the effect (a board close / vault swap
     // mid-window must not fire a stale write), but flush on a board switch: a
     // change within 300 ms of a switch would otherwise never be written
-    // (hydratedForBoardId blocks any re-fire after). The cleanup runs before
+    // (`hydration` blocks any re-fire after). The cleanup runs before
     // EVERY re-execution, so flush ONLY when the live id moved off the armed
     // id — flushing unconditionally would defeat the debounce. A same-board
     // re-run just re-arms the timer. Unmount is flushed in onDestroy below.

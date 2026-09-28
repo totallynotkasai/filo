@@ -86,9 +86,9 @@
     BatchCommand,
     ToggleSubtaskCollapsedCommand,
     TogglePlacementLockCommand,
-    UpdateBoardSettingsCommand,
     UpdateTitleCommand,
   } from '../../commands/index';
+  import { executeReorderSwitchingToManual } from '../../lib/tasklist/manualSortSwitch';
   import { makeTaskCreator } from '../../lib/tasklist/taskCreation';
   import { makeTaskDeleter } from '../../lib/tasklist/taskDeletion';
   import { makeFrontmatterWriter } from '../../lib/tasklist/frontmatterWriter';
@@ -835,28 +835,7 @@
         description,
       );
       if (!isCrossSection && sortBy !== 'manual') {
-        const sortCmd = new UpdateBoardSettingsCommand(
-          { sortBy: 'manual' },
-          { sortBy },
-          [],
-          'Switch to Manual sort',
-        );
-        historyStore.execute(
-          new BatchCommand('Reorder task (Manual sort)', [sortCmd, reorderCmd]),
-        );
-        uiStore.pushToast({
-          text: 'Switched to Manual sort to reorder tasks',
-          type: 'info',
-          duration: 4000,
-          actions: [
-            {
-              label: 'Undo',
-              handler: () => {
-                historyStore.undo();
-              },
-            },
-          ],
-        });
+        executeReorderSwitchingToManual(reorderCmd, sortBy);
       } else {
         historyStore.execute(reorderCmd);
       }
@@ -989,7 +968,7 @@
   // teardown.
   $effect(() => {
     const id = board?.id;
-    if (!id || id === filters.hydratedForBoardId) return;
+    if (!id || !filters.needsHydrate(id)) return;
     untrack(() => {
       const lv = ((settings as Record<string, unknown>).lastView ?? null) as
         | LastViewSlice

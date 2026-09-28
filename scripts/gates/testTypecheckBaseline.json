@@ -32,7 +32,7 @@
   "src/tests/unit/layout.test.ts": 4,
   "src/tests/unit/phase16UndoSweep.test.ts": 1,
   "src/tests/unit/phase17SchemaTypeSafety.test.ts": 1,
-  "src/tests/unit/phase24SchemaPolish.test.ts": 12,
+  "src/tests/unit/phase24SchemaPolish.test.ts": 6,
   "src/tests/unit/preloadSendValidation.test.ts": 1,
   "src/tests/unit/pruneOrphanSnapshotFailAbort.test.ts": 2,
   "src/tests/unit/reconcilerVaultSwapGuard.test.ts": 1,

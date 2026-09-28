@@ -20,6 +20,7 @@ import { historyStore } from '../../stores/history.svelte';
 import { UpdateSavedViewsCommand } from '../../commands/index';
 import { flushLastViewForBoard } from '../boards/lastViewFlush';
 import { registerComponentFlush } from '../boards/componentFlush';
+import { boardViewRevision } from '../../stores/boardViewRevision.svelte';
 import type { Priority } from '../tasks/frontmatterReaders';
 import type { GroupBy, SortBy, SmartListId } from '../tasks/taskListModel';
 
@@ -103,6 +104,19 @@ export class TaskListFiltersAndViews {
    * re-fire when the board.id changes.
    */
   hydratedForBoardId = $state<string | null>(null);
+
+  /** The board's view revision when it was hydrated (see `needsHydrate`). */
+  private hydratedRevision = -1;
+
+  /**
+   * True when the host should hydrate for `boardId`: a different board, or the
+   * same board after its view revision moved (a reload from disk, a tag rename
+   * rewrote `lastView`). Otherwise the filters held before the change would be
+   * written back over the new `lastView` on the next save.
+   */
+  needsHydrate(boardId: string): boolean {
+    return boardId !== this.hydratedForBoardId || boardViewRevision(boardId) !== this.hydratedRevision;
+  }
 
   /** Debounce handle for the persistence write — owned by the host. */
   lastViewPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -204,7 +218,7 @@ export class TaskListFiltersAndViews {
 
   /**
    * Restores transient filter state from the persisted `lastView` slice.
-   * Called by the host once per board change (gated by hydratedForBoardId).
+   * Called by the host once per board change (gated by `needsHydrate`).
    * `null` / missing input resets to the default "all" view.
    */
   hydrateFromLastView(boardId: string, lv: LastViewSlice | null): void {
@@ -222,6 +236,7 @@ export class TaskListFiltersAndViews {
       this.activeSmartList = 'all';
     }
     this.hydratedForBoardId = boardId;
+    this.hydratedRevision = boardViewRevision(boardId);
   }
 
   /**

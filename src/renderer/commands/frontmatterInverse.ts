@@ -5,6 +5,8 @@ import type { FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { NoteGoneError } from './noteGoneError';
+import { rebasePath, registerPathRenamable } from '../lib/vault/renamePathKeys';
+import { NOTE_RENAME_GRACE_MS } from '../lib/vault/externalChangeWindows';
 
 /**
  * Board undo of a note's frontmatter (a title, tags, a task or card field,
@@ -161,6 +163,41 @@ export interface ApplyDeltaArgs {
   whenUnreadable?: 'apply' | 'throw';
 }
 
+/** Whether the note's file exists: true / false, or null when the probe had no answer. */
+async function noteExists(relPath: string): Promise<boolean | null> {
+  const vaultRoot = getActiveVaultPath();
+  if (!vaultRoot) return null;
+  try {
+    const exists = await window.filo.invoke('vault:file-exists', vaultRoot, relPath);
+    return typeof exists === 'boolean' ? exists : null;
+  } catch {
+    return null;
+  }
+}
+
+// allow-module-state: a counter that only makes each wait's sweep name unique
+let renameWaits = 0;
+
+/**
+ * Waits up to `NOTE_RENAME_GRACE_MS` for a rename that moves `relPath`
+ * (the note, or a folder above it): its new path, or null when none came.
+ */
+function waitForRename(relPath: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const name = `applyDeltaChecked.waitForRename:${++renameWaits}`;
+    const finish = (moved: string | null): void => {
+      clearTimeout(timer);
+      unregister();
+      resolve(moved);
+    };
+    const unregister = registerPathRenamable(name, (oldRel, newRel) => {
+      const moved = rebasePath(relPath, oldRel, newRel);
+      if (moved !== null) finish(moved);
+    });
+    const timer = setTimeout(() => finish(null), NOTE_RENAME_GRACE_MS);
+  });
+}
+
 /**
  * Applies `delta` to the note, except any key another program changed since
  * the opposite leg left it (that one keeps the external value, with an "Apply
@@ -170,7 +207,7 @@ export interface ApplyDeltaArgs {
  * The compare base is the note as it stands (its model, or a fresh read of the
  * file), never a cache that could lag the disk.
  */
-export async function applyDeltaChecked(args: ApplyDeltaArgs): Promise<void> {
+export async function applyDeltaChecked(args: ApplyDeltaArgs, mayWaitForRename = true): Promise<void> {
   const { relPath, targetBoardId, delta, expected, label, atomic } = args;
 
   // Captured ONCE and consulted by the "Apply anyway" handlers: a click after
@@ -190,14 +227,25 @@ export async function applyDeltaChecked(args: ApplyDeltaArgs): Promise<void> {
   // another program deletes the file (the watcher's missing-file hold, then
   // the model's own check), the model still holds its last frontmatter, and a
   // delta queued then can only fail as a write to a file that's gone.
-  const vaultRoot = getActiveVaultPath();
-  const exists = vaultRoot
-    ? await window.filo.invoke('vault:file-exists', vaultRoot, relPath).catch(() => true)
-    : true;
-  if (!isStillSameVault(identity)) return;
   // Only a definite "not there" counts as gone; an unanswered probe is
   // treated as present, the side that never drops the change.
-  if (exists === false) throw new NoteGoneError(relPath);
+  if ((await noteExists(relPath)) === false) {
+    if (!mayWaitForRename) {
+      if (!isStillSameVault(identity)) return;
+      throw new NoteGoneError(relPath);
+    }
+    // Missing may mean mid-rename by another program: the rename arrives as
+    // its own event a moment later. Wait it out; a rename re-points the step
+    // (the history sweep moves the command's paths) and it applies there. A
+    // note still missing after the grace is gone: nothing is queued for it.
+    const moved = await waitForRename(relPath);
+    if (!isStillSameVault(identity)) return;
+    // Once more, at the new path or (a sync client's replace) the old one;
+    // missing again there, it is gone.
+    await applyDeltaChecked(moved !== null ? { ...args, relPath: moved } : args, false);
+    return;
+  }
+  if (!isStillSameVault(identity)) return;
   if (current === null) {
     if (args.whenUnreadable === 'throw') {
       throw new Error(`Could not read ${relPath} to apply the change.`);

@@ -14,10 +14,10 @@ const LOC_LIMIT = 1000;
 // Files over LOC_LIMIT, each pinned at its current LOC. They may shrink, not
 // grow; the remedy for an over-limit file is to split it, not to raise its row.
 const FILE_SIZE_ALLOWLIST = {
-  'src/renderer/components/boards/TaskListBoard.svelte': 1961,
+  'src/renderer/components/boards/TaskListBoard.svelte': 1940,
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1439,
   'src/renderer/components/boards/TaskItem.svelte': 1481,
-  'src/renderer/components/boards/KanbanBoard.svelte': 1437,
+  'src/renderer/components/boards/KanbanBoard.svelte': 1436,
   'src/renderer/components/boards/KanbanColumn.svelte': 1170,
   'src/renderer/stores/vault.svelte.ts': 1572,
 };

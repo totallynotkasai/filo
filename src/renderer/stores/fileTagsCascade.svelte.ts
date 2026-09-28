@@ -13,6 +13,7 @@
 
 import { SvelteSet } from 'svelte/reactivity';
 import { boardCacheStore } from './boardCache.svelte';
+import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { isInlineTileType } from '../lib/boards/tileDefBuilder';
 import { uiStore } from './ui.svelte';
@@ -73,10 +74,9 @@ interface FilterTagsCarrier {
  * Pass `null` for `newName` to delete; otherwise the old name is replaced.
  *
  * Mutates settings in place and schedules a debounced write per board so the
- * change reaches `.board.json`. Active-board runtime filter state
- * (`KanbanFiltersAndSort.activeFilterTags`, the TaskList equivalent) is not
- * touched — a board switch / reopen re-hydrates from the now-updated
- * `lastView`, which is the only path that pins the filter long-term.
+ * change reaches `.board.json`. A mounted board's runtime filter state
+ * (`KanbanFiltersAndSort.activeFilterTags`, the Task List equivalent) is
+ * re-hydrated from the updated `lastView` through the board's view revision.
  */
 export function cascadeTagToBoardSettings(oldName: string, newName: string | null): void {
   for (const [boardId, data] of Object.entries(boardCacheStore.cache)) {
@@ -108,7 +108,12 @@ export function cascadeTagToBoardSettings(oldName: string, newName: string | nul
       if (rewriteCarrier(settings.lastView)) changed = true;
     }
 
-    if (changed) boardCacheStore.markDirty(boardId);
+    if (changed) {
+      boardCacheStore.markDirty(boardId);
+      // A mounted board takes the rewritten `lastView` into its filters; left
+      // alone, it would write the old tag back on its next save.
+      bumpBoardViewRevision(boardId);
+    }
   }
 }
 

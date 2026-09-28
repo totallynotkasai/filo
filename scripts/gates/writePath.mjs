@@ -634,7 +634,7 @@ export const checks = [
       if (vaultRaw === null) return [fail(VAULT, undefined, 'file missing')];
       const vault = stripComments(vaultRaw);
       if (/Don't Save/.test(vault)) out.push(fail(VAULT, undefined, `a "Don't Save" choice drops queued edits`));
-      for (const name of ['openVault', 'closeVault']) {
+      for (const name of ['openVaultExclusive', 'closeVaultExclusive']) {
         const body = functionBody(vault, name)?.text ?? '';
         const guard = body.search(/\bsaveBeforeLeaving\s*\(/);
         const swap = body.search(/\bfireVaultSwap\s*\(/);
@@ -736,6 +736,35 @@ export const checks = [
         }
       }
       if (sites < 4) out.push(fail(RENDERER, undefined, `tripwire: only ${sites} Keep-local action sites found (expected >= 4)`));
+      return out;
+    },
+  },
+  {
+    id: 'board-baseline-after-adopt',
+    title: "a board's drift baseline is stamped only once its loaded data is in the cache, never by a failed or set-aside load",
+    hint:
+      'loadBoard / loadAllBoards return the stat (result.baseline / loadedBaselines) and never stamp it. The caller calls ' +
+      'adoptLoadedBoardBaseline(path, baseline) after it puts the data in the cache. A stamp from a load that then fails ' +
+      '(newer format, schema error) names the outside file, so the next save overwrites it without a prompt.',
+    run(ctx) {
+      const out = [];
+      const LOADER = 'src/renderer/lib/boards/boardLoader.ts';
+      const loaderRaw = ctx.read(LOADER);
+      if (loaderRaw === null) return [fail(LOADER, undefined, 'file missing')];
+      const loader = stripCommentsKeepLines(loaderRaw);
+      for (const m of loader.matchAll(/\b(?:noteBaseline|refreshBaselineAfterWrite)\s*\(/g)) {
+        out.push(fail(LOADER, lineAt(loader, m.index), 'the board loader stamps a baseline; hand the stat back for the caller to adopt'));
+      }
+      for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
+        if (rel === LOADER) continue;
+        const raw = ctx.read(rel);
+        if (!/\bload(?:All)?Boards?\s*\(/.test(raw)) continue;
+        const code = stripCommentsKeepLines(raw);
+        const call = code.match(/\b(?:loadBoard|loadAllBoards)\s*\(/);
+        if (call && !/\badoptLoadedBoardBaseline\s*\(/.test(code)) {
+          out.push(fail(rel, lineAt(code, call.index), 'loads a board but never adopts its baseline (adoptLoadedBoardBaseline)'));
+        }
+      }
       return out;
     },
   },

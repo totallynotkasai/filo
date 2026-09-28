@@ -92,6 +92,8 @@ import { makeRootFolderSlice } from './vaultRootFolder';
 import { makeFolderOpsSlice } from './vaultFolderOps';
 import { makeExternalChangesSlice } from './vaultExternalChanges';
 import { saveBeforeLeaving, type LeaveOutcome } from './vaultLeaveGuard';
+import { awaitConfirm } from './awaitConfirm';
+import { exclusiveVaultLifecycle, vaultLifecycleBusy } from './vaultLifecycleGuard.svelte';
 import { enqueueRenameQueueWork, resetRenameQueue } from './vaultRenameQueue';
 
 /**
@@ -165,46 +167,6 @@ function awaitRecoveryDismiss(): Promise<void> {
   const capturedVaultPath = vaultPath ?? '';
   return new Promise((resolve) => {
     recoveryDismissedResolver = { resolve, vaultPath: capturedVaultPath };
-  });
-}
-
-/**
- * Promisifies `uiStore.openConfirm` (true on Confirm, false on Cancel); the
- * original callbacks still fire. Async `onConfirm` / `onCancel` are AWAITED
- * before resolving, so the sequencer's next step can't start mid-flight (two
- * recoveries mutating the board cache concurrently).
- */
-function awaitConfirm(config: {
-  title: string;
-  body: string;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  danger?: boolean;
-  onConfirm?: () => void | Promise<void>;
-  onCancel?: () => void | Promise<void>;
-}): Promise<boolean> {
-  return new Promise((resolve) => {
-    uiStore.openConfirm({
-      title: config.title,
-      body: config.body,
-      confirmLabel: config.confirmLabel,
-      cancelLabel: config.cancelLabel,
-      danger: config.danger,
-      onConfirm: async () => {
-        try {
-          await config.onConfirm?.();
-        } finally {
-          resolve(true);
-        }
-      },
-      onCancel: async () => {
-        try {
-          await config.onCancel?.();
-        } finally {
-          resolve(false);
-        }
-      },
-    });
   });
 }
 
@@ -495,9 +457,9 @@ function runPostCommitTasks(
  * candidate reads can throw; left armed, every OTHER vault fails the
  * "different vault already active" guard until restart.
  */
-async function releaseRegistryBestEffort(): Promise<void> {
+async function releaseRegistryBestEffort(failedPath: string): Promise<void> {
   try {
-    await window.filo.invoke('vault:close');
+    await window.filo.invoke('vault:close', failedPath);
   } catch {
     // Best-effort — the home screen is the safe fallback either way.
   }
@@ -523,6 +485,7 @@ async function releaseRegistryBestEffort(): Promise<void> {
  */
 async function revertToOutgoingVault(
   outgoingPath: string,
+  failedPath: string,
   store: { wireTabChangeListener: () => void; handleExternalMarkdownChanges?: unknown },
 ): Promise<void> {
   try {
@@ -531,7 +494,7 @@ async function revertToOutgoingVault(
     // loadVaultCandidate below re-anchors the outgoing vault either way
     // (init-config is idempotent for the same path).
     try {
-      await window.filo.invoke('vault:close');
+      await window.filo.invoke('vault:close', failedPath);
     } catch {
       // Ignore — re-anchor proceeds regardless.
     }
@@ -550,7 +513,7 @@ async function revertToOutgoingVault(
     // otherwise block opening ANY vault next (main refuses to re-anchor while one
     // is active). Best-effort.
     try {
-      await window.filo.invoke('vault:close');
+      await window.filo.invoke('vault:close', outgoingPath);
     } catch {
       // Ignore — nothing more we can do; the home screen is the safe fallback.
     }
@@ -943,6 +906,14 @@ export const vaultStore = {
    * `report.failure` says why (the user stayed, the folder is gone…).
    */
   async openVault(newVaultPath: string, report?: OpenVaultReport): Promise<boolean> {
+    return exclusiveVaultLifecycle(() => this.openVaultExclusive(newVaultPath, report), () => openFailed(report, 'busy'));
+  },
+
+  /** True while a vault open or close runs (Home disables its vault cards). */
+  get lifecycleBusy(): boolean { return vaultLifecycleBusy(); },
+
+  /** `openVault`'s body; runs only while it holds the one-at-a-time guard. */
+  async openVaultExclusive(newVaultPath: string, report?: OpenVaultReport): Promise<boolean> {
     // Capture the outgoing vault path so a failed candidate load can revert to
     // it. See `revertToOutgoingVault`.
     const outgoingVaultPath: string | null = currentProject ? vaultPath || null : null;
@@ -1000,7 +971,7 @@ export const vaultStore = {
         // Release the main-side registry before init-config;
         // board.ipc.ts refuses to re-anchor while a different vault is active.
         try {
-          await window.filo.invoke('vault:close');
+          await window.filo.invoke('vault:close', outgoingVaultPath ?? vaultPath);
         } catch (err) {
           reportError('vault.close', err, 'Failed to release the previous vault');
         }
@@ -1020,11 +991,11 @@ export const vaultStore = {
         // (close-before-load is mandatory — see `revertToOutgoingVault`). Revert to
         // it rather than strand the user on a stale, empty half-open vault.
         if (outgoingVaultPath) {
-          await revertToOutgoingVault(outgoingVaultPath, this);
+          await revertToOutgoingVault(outgoingVaultPath, newVaultPath, this);
         } else {
           // First open: init-config may have left the registry armed at the
           // failed path, locking out every OTHER vault.
-          await releaseRegistryBestEffort();
+          await releaseRegistryBestEffort(newVaultPath);
         }
         return openFailed(report, openVaultFailureOf(err));
       }
@@ -1055,9 +1026,15 @@ export const vaultStore = {
    * the user chose to stay.
    */
   async closeVault(): Promise<boolean> {
+    return exclusiveVaultLifecycle(() => this.closeVaultExclusive(), () => false);
+  },
+
+  /** `closeVault`'s body; runs only while it holds the one-at-a-time guard. */
+  async closeVaultExclusive(): Promise<boolean> {
     if (!currentProject) return true;
     const leave = await saveBeforeLeaving(() => this.save(), 'close');
     if (leave === 'cancelled') return false;
+    const closingPath = vaultPath;
     // Same swap-window guard as `openVault`: defer a concurrent quit's drain
     // until the close has settled so it doesn't write against the released
     // registry. Owner-checked clear as in openVault.
@@ -1074,7 +1051,7 @@ export const vaultStore = {
       });
       resetRenameQueue();
       try {
-        await window.filo.invoke('vault:close');
+        await window.filo.invoke('vault:close', closingPath);
       } catch (err) {
         reportError('vault.close', err, 'Failed to release vault watcher');
         // Continue anyway — the renderer is already torn down.

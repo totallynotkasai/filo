@@ -152,7 +152,7 @@ describe("files a board creates go in the board's folder", () => {
       value: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
 
-    const tile = { id: 'a1', type: 'audio', src: '', isRecording: false } as unknown as AudioTile;
+    const tile = { id: 'a1', type: 'audio', src: '' } as unknown as AudioTile;
     const root = mountIn(AudioTileView, { tile });
     button(root, 'Record Audio').click();
     await vi.waitFor(() => expect(recorder).not.toBeNull());

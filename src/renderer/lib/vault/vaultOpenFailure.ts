@@ -8,6 +8,8 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 export type OpenVaultFailure =
   /** The user chose to stay in the current vault. */
   | 'cancelled'
+  /** Another open or close was still running; this one didn't start. */
+  | 'busy'
   /** The folder isn't there (the drive or share holding it is). */
   | 'missing'
   /** The drive or network share holding the folder can't be reached. */

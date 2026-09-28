@@ -15,7 +15,7 @@ import type { BoardFileData } from './boardSaver';
 import { reportError } from '../utils/errorBus';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
-import { baselineSeq, noteBaseline } from '../vault/fileBaselineRegistry';
+import { baselineSeq, type BaselineSeq } from '../vault/fileBaselineRegistry';
 import { loadVersionedFile } from '../vault/loadVersionedFile';
 import { detectConflictCopyPath } from '@shared/conflictCopy';
 import { safeFileName } from '@shared/fileNames';
@@ -335,6 +335,22 @@ export interface LoadBoardResult {
    * failed.
    */
   mtimeMs?: number;
+  /**
+   * The stat of the bytes loaded, when the stats bracketing the read agreed,
+   * plus the baseline ticket taken before the read. The loader never stamps
+   * it: only a caller that adopts `data` into the cache may
+   * (`adoptLoadedBoardBaseline`). A load that fails, or whose data is set
+   * aside, must leave the old baseline in place, or the next save would take
+   * the outside version as Filo's own and overwrite it without asking.
+   */
+  baseline?: LoadedBoardBaseline;
+}
+
+/** The stat a successful load read, and the ticket to stamp it with. */
+export interface LoadedBoardBaseline {
+  mtimeMs: number;
+  size: number;
+  seq: BaselineSeq;
 }
 
 export interface LoadBoardError {
@@ -452,18 +468,19 @@ export async function loadBoard(
     return { ok: false, error: 'not-found', message: `No board at ${relPath}` };
   }
 
-  // Capture the file's mtime as the drift baseline, used by `writeBoardFile`'s
-  // pre-write stat check to detect external edits between load and the next
-  // write. Best-effort: a failed stat leaves the baseline empty.
+  // The file's stat, for the caller to stamp as the drift baseline once it
+  // adopts the data (`writeBoardFile`'s pre-write check compares against it).
+  // Best-effort: a failed stat means no baseline.
   //
-  // Stat-read-stat: stamp ONLY when the bracketing stats match
+  // Stat-read-stat: offered ONLY when the bracketing stats match
   // (mtime + size). A mismatch means a write landed around the content read, so
-  // this stat reflects bytes we didn't load — leave the baseline unstamped so the
-  // next save's drift check re-detects + prompts rather than adopting foreign bytes.
+  // this stat reflects bytes we didn't load; with no baseline offered, the next
+  // save's drift check re-detects and prompts rather than adopting foreign bytes.
+  let baseline: LoadedBoardBaseline | undefined;
   try {
     const stat = await invokeOk('vault:stat', vaultRoot, relPath);
     if (preStat && preStat.mtimeMs === stat.mtimeMs && preStat.size === stat.size) {
-      noteBaseline(relPath, stat.mtimeMs, stat.size, { ifUnchangedSince: seq });
+      baseline = { mtimeMs: stat.mtimeMs, size: stat.size, seq };
     }
   } catch {
     // Non-fatal — no baseline, no pre-write drift check for this board.
@@ -652,6 +669,7 @@ export async function loadBoard(
     boardIdsNormalized: orphanReport.normalizedBoardIdRefs.length > 0,
     mtimeMs: preStat?.mtimeMs,
     declaredName: data.board.name,
+    ...(baseline ? { baseline } : {}),
   };
 }
 
@@ -771,6 +789,11 @@ export async function loadAllBoards(
    * involved).
    */
   normalizedBoardIds: string[];
+  /**
+   * Each loaded board's path and the stat its load read. The caller stamps
+   * them once it adopts the cache (`adoptLoadedBoardBaseline`).
+   */
+  loadedBaselines: Array<{ path: string; baseline: LoadedBoardBaseline | undefined }>;
 }> {
   const relList = (await window.filo.invoke('board:list', vaultRoot)) as string[];
 
@@ -782,6 +805,7 @@ export async function loadAllBoards(
   const failedBoards: FailedBoardEntry[] = [];
   const prunedBoardIds: string[] = [];
   const normalizedBoardIds: string[] = [];
+  const loadedBaselines: Array<{ path: string; baseline: LoadedBoardBaseline | undefined }> = [];
   const loaded: LoadedBoardEntry[] = [];
 
   for (const relPath of relList) {
@@ -842,6 +866,7 @@ export async function loadAllBoards(
     frames.push(...data.frames);
     if (result.orphansPruned) prunedBoardIds.push(data.board.id);
     if (result.boardIdsNormalized) normalizedBoardIds.push(data.board.id);
+    loadedBaselines.push({ path: relPath, baseline: result.baseline });
   }
 
   return {
@@ -853,5 +878,6 @@ export async function loadAllBoards(
     failedBoards,
     prunedBoardIds,
     normalizedBoardIds,
+    loadedBaselines,
   };
 }

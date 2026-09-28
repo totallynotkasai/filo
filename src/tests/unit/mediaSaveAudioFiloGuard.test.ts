@@ -95,4 +95,20 @@ describe('media:save-audio — .filo/ write guard (1.4)', () => {
     const bytes = await fs.readFile(join(vaultDir, 'audio', 'rec.wav'));
     expect(bytes.equals(Buffer.from([0x01, 0x02, 0x03, 0x04]))).toBe(true);
   });
+
+  it('two takes saved under the same name make two files, never one over the other', async () => {
+    const other = Buffer.from([0x09, 0x08]).toString('base64');
+    const first = (await saveHandler({}, vaultDir, audioB64, 'Recording.webm', 'audio')) as { success: boolean; path?: string };
+    const second = (await saveHandler({}, vaultDir, other, 'Recording.webm', 'audio')) as { success: boolean; path?: string };
+    expect(first).toMatchObject({ success: true, path: 'audio/Recording.webm' });
+    expect(second).toMatchObject({ success: true, path: 'audio/Recording (2).webm' });
+    expect((await fs.readFile(join(vaultDir, 'audio', 'Recording.webm'))).equals(Buffer.from([0x01, 0x02, 0x03, 0x04]))).toBe(true);
+    expect((await fs.readFile(join(vaultDir, 'audio', 'Recording (2).webm'))).equals(Buffer.from([0x09, 0x08]))).toBe(true);
+  });
+
+  it('a failure carries a code', async () => {
+    const result = (await saveHandler({}, vaultDir, audioB64, 'app.json', '.filo')) as { success: boolean; code?: string };
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('FORBIDDEN');
+  });
 });

@@ -80,7 +80,7 @@ function mediaTileDef(
     case 'image':
       return { ...base, type: 'image', src: path };
     case 'audio':
-      return { ...base, type: 'audio', src: path, isPlaying: false, isRecording: false };
+      return { ...base, type: 'audio', src: path, isPlaying: false };
     case 'file':
       return { ...base, type: 'file', filePath: path };
   }

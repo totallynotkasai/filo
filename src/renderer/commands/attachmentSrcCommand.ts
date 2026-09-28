@@ -28,7 +28,7 @@ import type { Tile } from '../schema/index';
  */
 export type AttachmentSrcSnapshot =
   | { kind: 'src'; src: string }
-  | { kind: 'src-with-playback'; src: string; isPlaying?: boolean; isRecording?: boolean }
+  | { kind: 'src-with-playback'; src: string; isPlaying?: boolean }
   | { kind: 'file'; filePath: string; fileName: string; fileExtension: string }
   | { kind: 'url'; url: string };
 
@@ -74,7 +74,6 @@ function apply(tileId: string, snap: AttachmentSrcSnapshot): void {
   if (snap.kind === 'src-with-playback') {
     const patch: Record<string, unknown> = { src: snap.src };
     if (snap.isPlaying !== undefined) patch.isPlaying = snap.isPlaying;
-    if (snap.isRecording !== undefined) patch.isRecording = snap.isRecording;
     boardStore.updateTile(tileId, patch as Partial<Tile>);
     return;
   }

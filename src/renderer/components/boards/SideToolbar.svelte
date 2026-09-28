@@ -99,7 +99,7 @@
         tile = { ...baseTile, type: 'file', filePath: '', fileName: '', fileExtension: '' } as Tile;
         break;
       case 'audio':
-        tile = { ...baseTile, type: 'audio', src: '', isRecording: false, isPlaying: false } as Tile;
+        tile = { ...baseTile, type: 'audio', src: '', isPlaying: false } as Tile;
         break;
       case 'link':
         tile = { ...baseTile, type: 'link', url: '' } as Tile;

@@ -29,7 +29,7 @@ import {
   assertNotInFiloDir,
   assertSentinelWriteTarget,
 } from '../utils/pathSecurity';
-import { assertActiveVault } from '../utils/activeVaultCheck';
+import { assertActiveVault, isActiveVault } from '../utils/activeVaultCheck';
 import { clearApprovedSources } from '../services/approvedSources';
 import { logMainError } from '../utils/mainLogger';
 import {
@@ -455,11 +455,20 @@ export function registerVaultHandlers(): void {
    * renderer opens a new vault via `vault:watch`. Idempotent — calling
    * with no active vault is a no-op success.
    *
+   * The caller names the vault it means to release, and only that vault is
+   * released (compared as `assertActiveVault` does, case-folded on Windows).
+   * A close meant for a vault that is no longer the active one (a failed open
+   * cleaning up after itself while another open armed the registry) is a
+   * no-op, so it can't lock every gated write out of the vault that is open.
+   *
    * The renderer's `vault:close` command (Ctrl+Shift+W) calls it, so the
    * user can swap to a different vault without restarting the app.
    */
-  ipcMain.handle('vault:close', async () => {
+  ipcMain.handle('vault:close', async (_event, vaultRoot: string) => {
     try {
+      if (vaultRegistry.currentVaultPath !== null && !isActiveVault(vaultRoot)) {
+        return { success: true, released: false };
+      }
       if (activeWatcher) {
         await activeWatcher.stop();
         activeWatcher = null;

@@ -38,7 +38,7 @@ export async function writeTagChangeToMarkdownPath(
       // Unchanged although the note doesn't already say what was asked: the
       // rewriter refused its frontmatter.
       if (next === fresh.raw && tagChangeNeeded(fresh.frontmatter, tagName, operation)) {
-        refused = frontmatterSourceProblem(fresh.rawFrontmatter) ?? 'unparseable';
+        refused = frontmatterSourceProblem(fresh.rawFrontmatter) ?? 'lossy';
       }
       return next;
     });

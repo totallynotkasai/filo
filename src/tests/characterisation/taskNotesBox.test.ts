@@ -9,7 +9,7 @@
  * read-only box.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { startApp, stopApp, waitFor, quiesce, recoveryCopies } from './harness/app';
+import { startApp, stopApp, waitFor, quiesce, recoveryCopies, closeVault } from './harness/app';
 import {
   createBoard,
   taskRows,
@@ -103,5 +103,28 @@ describe('task notes box', () => {
     const row = taskRows(app)[0]!.el;
     await openTaskNotes(row);
     await waitFor(() => taskNotesReadOnly(row), 'a read-only notes box');
+  });
+
+  it('a draft waiting on a conflict: closing the vault names the note, and Close anyway keeps the draft', async () => {
+    const { app, rel } = await taskWithBody('First version\n');
+    const row = rowOf(app, 'Water plants');
+    await openTaskNotes(row);
+
+    const theirs = app.read(rel).replace('First version', 'Edited elsewhere');
+    app.writeExternally(rel, theirs);
+    await quiesce(1200);
+
+    await typeTaskNotes(row, 'My unsaved notes');
+    await leaveTaskNotes(row);
+    await waitFor(() => toastTexts().some((t) => t.includes('while its task notes were open')), 'the notes conflict prompt');
+
+    const result = await closeVault(app, 'Close anyway');
+    expect(result.done).toBe(true);
+    expect(result.dialogs).toHaveLength(1);
+    const [dialog] = result.dialogs;
+    expect(`${dialog!.message}\n${dialog!.detail ?? ''}`).toContain(rel);
+    expect(app.read(rel)).toBe(theirs);
+    const copies = [...recoveryCopies(app)].filter(([p]) => p.endsWith(rel));
+    expect(copies.some(([, text]) => text.includes('title: Water plants') && text.includes('My unsaved notes'))).toBe(true);
   });
 });

@@ -85,7 +85,6 @@ export function buildTileDefinition(tile: Tile): TileDefinition {
         title: tile.title,
         src: tile.src,
         isPlaying: tile.isPlaying,
-        isRecording: tile.isRecording,
       };
     case 'file':
       return { ...base, type: 'file', title: tile.title, filePath: tile.filePath };
@@ -162,7 +161,7 @@ const DEF_FIELDS: Record<TileDefinition['type'], ReadonlySet<string>> = {
   text: new Set(['titleHtml', 'style', 'filePath']),
   image: new Set(['title', 'titleHtml', 'style', 'src', 'alt']),
   video: new Set(['title', 'titleHtml', 'style', 'src', 'isPlaying']),
-  audio: new Set(['title', 'titleHtml', 'style', 'src', 'isPlaying', 'isRecording']),
+  audio: new Set(['title', 'titleHtml', 'style', 'src', 'isPlaying']),
   file: new Set(['title', 'titleHtml', 'style', 'filePath']),
   link: new Set(['title', 'titleHtml', 'style', 'tags', 'url']),
   iframe: new Set(['title', 'titleHtml', 'style', 'tags', 'url']),

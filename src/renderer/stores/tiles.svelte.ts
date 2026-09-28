@@ -4,6 +4,16 @@ import { createId } from '../lib/utils/ids';
 import { TILE_DEFAULTS, defaultTileStyleSnapshot } from '../constants/defaults';
 import { boardStore } from './board.svelte';
 import { getTileDefaults } from '../core/tileRegistry';
+import { SvelteSet } from 'svelte/reactivity';
+
+/**
+ * The Audio tiles recording right now (runtime only, never saved). The Mind
+ * Map keeps them mounted when they leave the viewport, so a pan doesn't stop
+ * the take, and the minimap marks them. A tile leaves the set when its take
+ * stops (components/tiles/AudioTile.svelte).
+ */
+// allow-module-state: runtime only; each entry is removed when its take stops, and a vault swap unmounts every tile
+export const recordingTiles = new SvelteSet<string>();
 
 /**
  * Tile factory — centralised tile creation with correct defaults per type.

@@ -20,6 +20,7 @@ import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { cancelBoardWrite } from '../lib/boards/boardSaver';
 import { loadBoard } from '../lib/boards/boardLoader';
+import { adoptLoadedBoardBaseline } from '../lib/boards/boardBaseline';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { baselineSeq, noteBaseline } from '../lib/vault/fileBaselineRegistry';
@@ -150,6 +151,8 @@ export async function reloadBoardFromDisk(
     );
     return 'failed';
   }
+  // Set aside: the old baseline stays, so the armed write's drift check still
+  // finds the outside version and routes to the one prompt.
   if (opts.guardPending?.()) return 'pending';
   // The user chose the disk version (or had no unsaved changes): a queued
   // write of Filo's copy must not land on top of it.
@@ -161,9 +164,10 @@ export async function reloadBoardFromDisk(
   const storedPath = boardStore.paths[boardId];
   if (storedPath) boardCacheStore.renameBoardPath(storedPath, rel);
   boardCacheStore.replaceCache({ ...boardStore.cache, [boardId]: result.data });
+  adoptLoadedBoardBaseline(rel, result.baseline);
   // The board's undo steps were built on the version just replaced: undoing
   // one would write its old snapshot over the other change, with no drift
-  // prompt (the load re-stamped the baseline). Tell the user only when there
+  // prompt (the baseline now names the version just read). Tell the user only when there
   // was something to undo.
   if (historyStore.clearBoard(boardId) > 0) {
     uiStore.pushToast({

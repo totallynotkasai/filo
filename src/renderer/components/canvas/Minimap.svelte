@@ -18,6 +18,7 @@
   import { computeTilesAABB, computeMinimapWindow, isFiniteTile } from '../../lib/canvas/minimapBounds';
   import { contrastShade, getDynamicContrastText, resolveBackgroundColor } from '../../lib/utils/color';
   import { themeStore } from '../../stores/theme.svelte';
+  import { recordingTiles } from '../../stores/tiles.svelte';
 
   interface Props {
     /** The board's resolved background colour; empty means the theme's `--canvas-bg`. */
@@ -68,7 +69,7 @@
       Object.values(allTiles)
         .filter((t) =>
           (t.type === 'video' && t.isPlaying) ||
-          (t.type === 'audio' && (t.isPlaying || t.isRecording)) ||
+          (t.type === 'audio' && (t.isPlaying || recordingTiles.has(t.id))) ||
           (t.type === 'timer' && t.isRunning)
         )
         .map((t) => t.id)

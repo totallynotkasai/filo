@@ -120,7 +120,6 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
         type: 'audio',
         title: tileTitle,
         src: '',
-        isRecording: false,
         isPlaying: false,
       };
     } else {

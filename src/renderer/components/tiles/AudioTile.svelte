@@ -4,13 +4,15 @@
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { toMediaUrl } from '../../lib/utils/mediaUrl';
-  import { reportError } from '../../lib/utils/errorBus';
   import IconButton from '../shared/IconButton.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateAttachmentSrcCommand } from '../../commands/index';
   import { boardRefIntegrityStore } from '../../stores/boardRefIntegrity.svelte';
   import { mediaErrorText } from '../../lib/utils/mediaErrorText';
-  import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
+  import { captureRecordingTarget, saveRecording } from '../../lib/media/audioRecording';
+  import { recordingTiles } from '../../stores/tiles.svelte';
+  import { registerComponentFlush } from '../../lib/boards/componentFlush';
+  import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -18,8 +20,12 @@
   let { tile }: { tile: AudioTile } = $props();
 
   let mediaRecorder: MediaRecorder | null = null;
-  let audioChunks: Blob[] = [];
-  let isRecording = $derived(tile.isRecording);
+  // Runtime only: a take can't outlive the app, so a board file never says
+  // a tile is recording (a reopened board would show "Recording…" for good).
+  let isRecording = $state(false);
+  // The running take's save, from Stop until the file is linked.
+  let pendingSave: Promise<unknown> | null = null;
+  let destroyed = false;
   let audioEl = $state<HTMLAudioElement | null>(null);
   let recordingError = $state<string | null>(null);
   let playbackError = $state<string | null>(null);
@@ -79,56 +85,47 @@
     recordingError = null;
     playbackError = null;
     loadError = null;
+    // The take belongs to the board and vault it started on, whatever is
+    // active when it stops.
+    const target = captureRecordingTarget(tile.id, boardStore.current);
+    if (!target) {
+      recordingError = 'Could not start recording.';
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = pickRecorderMimeType();
-      mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      audioChunks = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        const actualType = mediaRecorder?.mimeType || mimeType || 'audio/webm';
-        const audioBlob = new Blob(audioChunks, { type: actualType });
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-          const base64data = (reader.result as string).split(',')[1] ?? '';
-          const fileName = buildRecordingFilename(extensionFor(actualType));
-
-          try {
-            const vaultPath = vaultStore.path;
-            const res = await window.filo.invoke('media:save-audio', vaultPath, base64data, fileName, getActiveContentFolder(boardStore.current));
-            if (res.success) {
-              boardStore.updateTile(tile.id, {
-                src: res.path,
-                isRecording: false,
-              });
-            } else {
-              reportError(
-                'AudioTile.save',
-                res.error ?? null,
-                `Failed to save recording "${fileName}"`,
-              );
-              boardStore.updateTile(tile.id, { isRecording: false });
-            }
-          } catch (err) {
-            reportError(
-              'AudioTile.save',
-              err,
-              `Failed to save recording "${fileName}"`,
-            );
-            boardStore.updateTile(tile.id, { isRecording: false });
-          }
-        };
-
+      // Unmounted while the microphone prompt was open: never start a take
+      // nothing could stop.
+      if (destroyed) {
         stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      const mimeType = pickRecorderMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorder = recorder;
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
       };
 
-      mediaRecorder.start();
-      boardStore.updateTile(tile.id, { isRecording: true });
+      let settle: () => void = () => {};
+      const saved = new Promise<void>((resolve) => { settle = resolve; });
+      recorder.onstop = () => {
+        stream.getTracks().forEach(track => track.stop());
+        isRecording = false;
+        recordingTiles.delete(tile.id);
+        const actualType = recorder.mimeType || mimeType || 'audio/webm';
+        const fileName = buildRecordingFilename(extensionFor(actualType));
+        void saveRecording(target, new Blob(chunks, { type: actualType }), fileName).finally(settle);
+      };
+      recorder.start();
+      pendingSave = saved;
+      void saved.finally(() => {
+        if (pendingSave === saved) pendingSave = null;
+      });
+      recordingTiles.add(tile.id);
+      isRecording = true;
     } catch (err) {
       // `recordingError` is rendered inline by the tile UI — that's the
       // primary user surface for mic permission / device failures, so we
@@ -269,9 +266,8 @@
           kind: 'src-with-playback',
           src: tile.src ?? '',
           isPlaying: tile.isPlaying ?? false,
-          isRecording: tile.isRecording ?? false,
         },
-        { kind: 'src-with-playback', src: '', isPlaying: false, isRecording: false },
+        { kind: 'src-with-playback', src: '', isPlaying: false },
         'Clear audio',
       ),
     );
@@ -286,11 +282,22 @@
   // base64 IPC round-trip required.
   let audioSrc = $derived(toMediaUrl(tile.src, vaultStore.path));
 
+  // Closing the vault, opening another and quitting stop a running take and
+  // wait for it to be saved and linked, so the save before leaving writes the
+  // board with it. Ctrl+S (no freeze) leaves the take running.
+  $effect(() =>
+    registerComponentFlush('audio recording', async () => {
+      if (!closeDrainGate.draining) return;
+      stopRecording();
+      await pendingSave;
+    }),
+  );
+
+  // An unmount (tab switch, board closed) ends the take; its save still runs
+  // and links the file to the board it was recorded on.
   onDestroy(() => {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.stop();
-      mediaRecorder.stream.getTracks().forEach(t => t.stop());
-    }
+    destroyed = true;
+    stopRecording();
   });
 
   let progressPercent = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);

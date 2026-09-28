@@ -1,6 +1,6 @@
 import { Document, parseDocument, isSeq } from 'yaml';
 import { parseTagsField } from '../utils/normalizeTagsField';
-import { patchFrontmatterSourceCst, frontmatterSourceHasNonScalarKey } from './frontmatterCstModel';
+import { patchFrontmatterSourceCst, frontmatterSourceHasNonScalarKey, dumpPreservesUntouched } from './frontmatterCstModel';
 import { frontmatterLineEnding } from '../utils/lineEnding';
 import { splitFrontmatterFence } from '../notes/frontmatterFence';
 
@@ -117,11 +117,16 @@ function loadYamlObject(yamlSource: string): Record<string, unknown> | null {
   return loaded as Record<string, unknown>;
 }
 
-function dumpYaml(fm: Record<string, unknown>): string {
-  // Last resort, matching `assembleMarkdownFile`'s full-dump fallback. Only
-  // reached when `patchFrontmatterSourceCst` can't patch the block.
-  // `lineWidth: 0` disables folding.
-  return new Document(fm).toString({ lineWidth: 0 }).trimEnd();
+/**
+ * Last resort, matching `assembleMarkdownFile`'s full-dump fallback: only
+ * reached when `patchFrontmatterSourceCst` can't patch the block. Null when
+ * the dump would change a value the tag change didn't touch (`02134` →
+ * `2134`, a dropped YAML tag); the caller then leaves the note alone.
+ * `lineWidth: 0` disables folding.
+ */
+function dumpYaml(yamlSource: string, fm: Record<string, unknown>): string | null {
+  const dumped = new Document(fm).toString({ lineWidth: 0 }).trimEnd();
+  return dumpPreservesUntouched(yamlSource, dumped, fm) ? dumped : null;
 }
 
 /**
@@ -509,7 +514,8 @@ export function rewriteTagInMarkdown(
   // The engine refuses a non-scalar mapping key (`[a, b]: x`); the dump would
   // rewrite that key as its stringified twin. Skip instead.
   if (patchedRename === null && frontmatterSourceHasNonScalarKey(yamlSource)) return rawContent;
-  return reassemble(patchedRename ?? dumpYaml(fm), note);
+  const renamedYaml = patchedRename ?? dumpYaml(yamlSource, fm);
+  return renamedYaml === null ? rawContent : reassemble(renamedYaml, note);
 }
 
 /**
@@ -551,7 +557,8 @@ export function removeTagFromMarkdown(rawContent: string, tag: string): string {
   const patchedRemove = patchFrontmatterSourceCst(yamlSource, fm);
   // Non-scalar mapping key: refuse rather than dump (see rename).
   if (patchedRemove === null && frontmatterSourceHasNonScalarKey(yamlSource)) return rawContent;
-  return reassemble(patchedRemove ?? dumpYaml(fm), note);
+  const removed = patchedRemove ?? dumpYaml(yamlSource, fm);
+  return removed === null ? rawContent : reassemble(removed, note);
 }
 
 /**
@@ -611,5 +618,6 @@ export function addTagToMarkdown(rawContent: string, tag: string): string {
   const patchedAdd = patchFrontmatterSourceCst(yamlSource, fm);
   // Non-scalar mapping key: refuse rather than dump (see rename).
   if (patchedAdd === null && frontmatterSourceHasNonScalarKey(yamlSource)) return rawContent;
-  return reassemble(patchedAdd ?? dumpYaml(fm), note);
+  const added = patchedAdd ?? dumpYaml(yamlSource, fm);
+  return added === null ? rawContent : reassemble(added, note);
 }

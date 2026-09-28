@@ -19,6 +19,7 @@ import {
 import { flushAllScheduledBoards } from '../lib/boards/boardWriteScheduler';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { baselineSeq, noteBaseline } from '../lib/vault/fileBaselineRegistry';
+import { adoptLoadedBoardBaseline } from '../lib/boards/boardBaseline';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
@@ -498,6 +499,7 @@ export const boardCacheStore = {
         continue;
       }
       boardCache = { ...boardCache, [board.id]: result.data };
+      adoptLoadedBoardBaseline(relPath, result.baseline);
     }
   },
 

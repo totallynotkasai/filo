@@ -14,6 +14,7 @@ import {
   frontmatterSourceKeys,
   frontmatterSourceHasNonScalarKey,
   frontmatterSourceRootIsMapping,
+  dumpPreservesUntouched,
 } from '../vault/frontmatterCstModel';
 import { bodyWithoutFenceLookalike, splitFrontmatterFence } from '../notes/frontmatterFence';
 
@@ -316,8 +317,12 @@ export function editorMarkdown(editor: Editor): string {
   return '';
 }
 
-/** Why the assembler kept a frontmatter block verbatim instead of applying an edit. */
-export type FrontmatterRefusal = 'unparseable' | 'not-properties';
+/**
+ * Why the assembler kept a frontmatter block verbatim instead of applying an
+ * edit. `lossy`: the block parses, but the only way to apply the edit (a full
+ * rewrite) would change values the edit didn't touch.
+ */
+export type FrontmatterRefusal = 'unparseable' | 'not-properties' | 'lossy';
 
 export interface AssembleMarkdownOptions {
   /**
@@ -526,6 +531,15 @@ export function assembleMarkdownFile(
     // The full-dump fallback also uses the `yaml` package (single parser).
     // `lineWidth: 0` disables folding.
     const yamlText = patched ?? new Document(fm).toString({ lineWidth: 0 }).trimEnd();
+    // The dump writes `fm`, the core-schema JS value, so a key the change never
+    // touched can come out saying something else (`02134` → `2134`, `1.10` →
+    // `1.1`, an explicit tag dropped). Then the edit is refused and the block
+    // kept verbatim, as for a block that doesn't parse.
+    if (patched === null && original && original.trim().length > 0 && !dumpPreservesUntouched(original, yamlText, fm)) {
+      console.warn('[markdownSync] Refusing a frontmatter rewrite that would change untouched values; metadata edit not applied.');
+      options.onFrontmatterRefused?.('lossy');
+      return emitWithRawFrontmatter(bomPrefix, original, body, detectFrontmatterEol(options, body));
+    }
     // Re-apply the file's line ending to the FM block + fences. The CST engine
     // and the dump both emit LF; hard-coding `\n` would flip a CRLF file's
     // frontmatter to LF on every metadata edit. The body keeps its own endings;

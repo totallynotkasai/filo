@@ -8,6 +8,7 @@ import {
 } from '@renderer/lib/boards/writeStateTracking';
 import { onError, __resetErrorBusForTests, type ReportedError } from '@renderer/lib/utils/errorBus';
 import { __runRecoverySequencerForTests, vaultStore } from '@renderer/stores/vault.svelte';
+import type { OpenVaultReport } from '@renderer/lib/vault/vaultOpenFailure';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -269,12 +270,9 @@ describe('Audit-16 3.4 — a parked fire neutralised by reset() neither fires no
 });
 
 /**
- * 3.5 — `swapInProgress` is a single module slot, and openVault's finally
- * cleared it unconditionally. With two concurrent openVault calls the first
- * swap's finally nulled the SECOND swap's window mid-swap, so a quit's
- * `save()` saw `swapInProgress === null` and drained inside the second
- * swap's registry-null window — the exact fail-closed hole Audit-14 1.8
- * closed, reintroduced under concurrency. The clear is now owner-checked.
+ * 3.5 — a quit's `save()` during a swap waits out the swap's registry-null
+ * window instead of draining inside it. Opens run one at a time, so a second
+ * open during the swap is refused rather than opening a window of its own.
  */
 describe('Audit-16 3.5 — a concurrent swap window survives the first swap\'s finally', () => {
   const VALID_TAGS_JSON = JSON.stringify({ version: 1, tags: {}, fileTags: {} });
@@ -332,7 +330,7 @@ describe('Audit-16 3.5 — a concurrent swap window survives the first swap\'s f
     vaultStore.setPath('');
   });
 
-  it("save() keeps deferring to the second swap's window after the first swap settles", async () => {
+  it("a second open during a swap is refused, and save() waits out the running swap's window", async () => {
     await vaultStore.openVault('/vault/A'); // fast first open (no window)
 
     gatePath('/vault/B');
@@ -340,28 +338,22 @@ describe('Audit-16 3.5 — a concurrent swap window survives the first swap\'s f
 
     const p1 = vaultStore.openVault('/vault/B');
     await entered.get('/vault/B'); // p1 parked inside loadVaultCandidate(B)
-    // p2 saves before leaving, and that save waits out p1's window, so p2's
-    // own window opens only once p1 has settled.
-    let cEntered = false;
-    void entered.get('/vault/C')!.then(() => { cEntered = true; });
-    const p2 = vaultStore.openVault('/vault/C');
-    await new Promise((r) => setTimeout(r, 30));
-    expect(cEntered).toBe(false);
-
-    releases.get('/vault/B')!();
-    await p1; // first swap settles; its finally must NOT null p2's window
-    await entered.get('/vault/C'); // p2 parked inside loadVaultCandidate(C): its window owns the slot
+    // Opens run one at a time: a second open doesn't start a swap of its own.
+    const report: OpenVaultReport = {};
+    expect(await vaultStore.openVault('/vault/C', report)).toBe(false);
+    expect(report.failure).toBe('busy');
 
     let saveSettled = false;
     const savePromise = vaultStore.save().then(() => { saveSettled = true; });
     await new Promise((r) => setTimeout(r, 30));
-    // Pre-fix: p1's finally nulled the slot, save() never deferred → true.
+    // The quit's save must not drain inside the registry-null window.
     expect(saveSettled).toBe(false);
 
-    releases.get('/vault/C')!();
-    await p2;
+    releases.get('/vault/B')!();
+    await p1;
     await savePromise;
     expect(saveSettled).toBe(true);
+    expect(vaultStore.path).toBe('/vault/B');
   });
 });
 

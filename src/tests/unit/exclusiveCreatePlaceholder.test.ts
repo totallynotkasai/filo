@@ -130,7 +130,7 @@ describe('exclusive create: the 0-byte placeholder', () => {
   afterEach(async () => {
     setMode('real');
     errSpy.mockRestore();
-    await handler('vault:close')();
+    await handler('vault:close')(vaultDir);
     await fs.rm(vaultDir, { recursive: true, force: true });
   });
 

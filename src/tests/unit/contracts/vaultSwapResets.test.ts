@@ -64,7 +64,8 @@ function extractBodyOf(text: string, signature: string): string {
 }
 
 const VAULT_STORE_TEXT = fs.readFileSync(VAULT_STORE_PATH, 'utf-8');
-const OPEN_VAULT_BODY = extractBodyOf(VAULT_STORE_TEXT, 'async openVault(');
+// `openVault` runs its body (`openVaultExclusive`) one open at a time.
+const OPEN_VAULT_BODY = extractBodyOf(VAULT_STORE_TEXT, 'async openVaultExclusive(');
 // Phase R4 — `openVault` now delegates the hydration sequence to
 // `commitVaultCandidate` / `runPostCommitTasks` defined alongside it in
 // the same file. The post-swap-hydration assertions below scan the

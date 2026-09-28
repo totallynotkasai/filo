@@ -6,7 +6,7 @@
  * another program while the board has unsaved changes still asks.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { startApp, stopApp, waitFor, quiesce, type CharApp } from './harness/app';
+import { startApp, stopApp, waitFor, quiesce, recoveryCopies, type CharApp } from './harness/app';
 import {
   createBoard,
   addKanbanColumn,
@@ -105,5 +105,31 @@ describe('an edit to the board file by another program', () => {
       await quiesce(800);
     }
     await waitFor(() => (theBoard(app).board.columns ?? []).length === 2, 'both columns in the board file');
+  });
+
+  it('replaced by a board from a newer Filo: the next save asks, and Keep local backs that file up first', async () => {
+    const app = await startApp();
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    // Past Filo's own-echo windows for that save, so the next change on disk
+    // can only be the other program's.
+    await quiesce(8000);
+
+    const rel = app.userFiles().find((f) => f.endsWith('.board.json'));
+    if (!rel) throw new Error('no board file');
+    // A newer Filo on another machine saved the board: this build can't load it.
+    const newer = JSON.stringify({ ...JSON.parse(app.read(rel)), version: 9, fromNewer: true }, null, 2);
+    app.writeExternally(rel, newer);
+    await waitFor(() => errorToasts().some((t) => t.includes("couldn't be applied")), 'the failed-reload notice');
+
+    // The user keeps working on Filo's copy: its save must not overwrite the newer file unasked.
+    await addKanbanColumn(app);
+    await waitFor(driftPromptShown, 'a "modified externally" prompt');
+    expect(app.read(rel)).toBe(newer);
+
+    await chooseToastAction('Keep local');
+    await quiesce(1500);
+    const copies = [...recoveryCopies(app).values()];
+    expect(copies.some((text) => text.includes('"fromNewer": true'))).toBe(true);
   });
 });

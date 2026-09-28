@@ -19,7 +19,7 @@ const FILE_SIZE_ALLOWLIST = {
   'src/renderer/components/boards/TaskItem.svelte': 1481,
   'src/renderer/components/boards/KanbanBoard.svelte': 1436,
   'src/renderer/components/boards/KanbanColumn.svelte': 1170,
-  'src/renderer/stores/vault.svelte.ts': 1523,
+  'src/renderer/stores/vault.svelte.ts': 1500,
 };
 
 // The refactor characterisation suite: user-visible behaviour the file-model

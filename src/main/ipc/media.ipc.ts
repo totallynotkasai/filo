@@ -11,7 +11,9 @@ import { relativePosix } from '../utils/pathHelpers';
 import { toPosix } from '../../shared/pathUtils';
 import { getVaultRoot, getActiveWatcher } from './vault.ipc';
 import { assertPayloadByteSize, PAYLOAD_LIMITS } from '../utils/payloadLimits';
-import { atomicWriteFile, LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
+import { LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
+import { createExclusiveFile } from '../vault/exclusiveCreate';
+import { errorResult } from './ipcErrorCode';
 import { isOpenPathAllowed, launcherExtension } from '../../shared/untrusted';
 
 /**
@@ -119,6 +121,9 @@ export function sanitizeReturnedResourceUrl(raw: string, baseUrl: string): strin
  * - Reading media files from vault
  * - Opening files/URLs externally
  */
+/** How many ` (n)` names a recording tries before giving up. */
+const MAX_RECORDING_NAME_TRIES = 100;
+
 export function registerMediaHandlers(): void {
   /**
    * Saves audio data (base64) to the vault. `destFolder` is a vault-relative
@@ -155,26 +160,39 @@ export function registerMediaHandlers(): void {
         : vaultPath;
       await fs.promises.mkdir(mediaDir, { recursive: true });
 
-      const filePath = path.join(mediaDir, fileName);
-      assertWithinVault(vaultPath, filePath);
-      const relPath = relativePosix(vaultPath, filePath);
-      // Bracket the write with watcher suppression so the create event
-      // doesn't force a full sidebar refresh while the renderer is still
-      // wiring up the new audio tile.
+      // The name is unique only to the second, so two takes saved in the same
+      // second (or a file already there) would share it. The recording is
+      // created exclusively, never over an existing file, and a taken name
+      // moves on to ` (2)`, ` (3)`… The bytes land atomically over the
+      // reserved name, so a power loss never leaves a half-written recording.
+      const dot = fileName.lastIndexOf('.');
+      const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
+      const ext = dot > 0 ? fileName.slice(dot) : '';
       const watcher = getActiveWatcher();
-      watcher?.suppress(relPath, LOCK_AWARE_SUPPRESS_MS);
-      // Atomic write: a power loss mid-write never leaves a half-written
-      // recording.
-      await atomicWriteFile(filePath, buffer);
-      watcher?.suppress(relPath, 1000);
-
-      return {
-        success: true,
-        path: relPath,
-      };
+      for (let n = 1; n <= MAX_RECORDING_NAME_TRIES; n++) {
+        const candidate = n === 1 ? fileName : `${stem} (${n})${ext}`;
+        const filePath = path.join(mediaDir, candidate);
+        assertWithinVault(vaultPath, filePath);
+        const relPath = relativePosix(vaultPath, filePath);
+        // Bracket the write with watcher suppression so the create event
+        // doesn't force a full sidebar refresh while the renderer is still
+        // wiring up the new audio tile.
+        watcher?.suppress(relPath, LOCK_AWARE_SUPPRESS_MS);
+        try {
+          await createExclusiveFile(filePath, buffer);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException | null)?.code === 'EEXIST') continue;
+          throw err;
+        }
+        watcher?.suppress(relPath, 1000);
+        return { success: true, path: relPath };
+      }
+      const taken: NodeJS.ErrnoException = new Error(`Every name for "${fileName}" is taken`);
+      taken.code = 'EEXIST';
+      throw taken;
     } catch (err) {
       logMainError('media:save-audio', err);
-      return { success: false, error: String(err) };
+      return errorResult(err);
     }
   });
 

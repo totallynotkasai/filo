@@ -22,6 +22,7 @@ vi.mock('@renderer/stores/frames.svelte', () => ({
 }));
 
 import { VisibleTilesViewModel } from '@renderer/lib/mindmap/visibleTilesViewModel.svelte';
+import { recordingTiles } from '@renderer/stores/tiles.svelte';
 import type { Tile } from '@renderer/schema/index';
 
 function tile(id: string): Tile {
@@ -73,5 +74,16 @@ describe('VisibleTilesViewModel.visibleTiles (Audit-10 M6)', () => {
     const tiles = { a: tile('a') };
     const vm = makeViewModel(tiles, ['a', 'ghost']);
     expect(vm.visibleTiles.map((t) => t.id)).toEqual(['a']);
+  });
+
+  it('keeps a recording tile mounted when it leaves the viewport, so a pan never ends the take', () => {
+    const tiles = { a: tile('a'), b: tile('b'), c: tile('c') };
+    recordingTiles.add('b');
+    try {
+      const vm = makeViewModel(tiles, ['a']);
+      expect(vm.visibleTiles.map((t) => t.id)).toEqual(['a', 'b']);
+    } finally {
+      recordingTiles.delete('b');
+    }
   });
 });

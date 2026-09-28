@@ -39,7 +39,7 @@ async function removePlaceholderIfUntouched(filePath: string, placeholder: Place
  * The placeholder is stat'd through its own handle, so the stamp is of the
  * file Filo created even if another program swaps the name right after.
  */
-export async function createExclusiveFile(filePath: string, content: string): Promise<void> {
+export async function createExclusiveFile(filePath: string, content: string | Buffer): Promise<void> {
   let placeholder: Placeholder;
   const handle = await fs.open(filePath, 'wx');
   try {

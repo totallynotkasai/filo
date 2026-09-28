@@ -94,6 +94,24 @@ describe('boardLoader', () => {
       }
     });
 
+    it('an audio tile saved as recording loads without the flag, so it is not stuck on "Recording…"', async () => {
+      const file = validBoardFile();
+      file.tileDefs.rec = {
+        id: 'rec', type: 'audio', title: 'Take', src: '', isPlaying: false, isRecording: true,
+        style: { headerColor: '#fff', bodyColor: '#fff' }, createdAt: 1, updatedAt: 1,
+      } as unknown as BoardFileData['tileDefs'][string];
+      (file.board as unknown as { placements: Record<string, unknown> }).placements.rec =
+        { x: 0, y: 0, width: 200, height: 100, locked: false, faded: false };
+      installFiloStub({ 'board:load': () => structuredClone(file) });
+
+      const result = await loadBoard('/vault', 'alpha.board.json');
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.tileDefs.rec).toMatchObject({ type: 'audio' });
+        expect(result.data.tileDefs.rec).not.toHaveProperty('isRecording');
+      }
+    });
+
     // Main hands the renderer the parsed board object. A JSON string payload
     // (a double-encoded file) is not a board envelope, so the version gate
     // refuses it rather than the renderer parsing it a second time.

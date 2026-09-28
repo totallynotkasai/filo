@@ -9,6 +9,8 @@
   import { onDestroy, getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { connectionsStore } from '../../stores/connections.svelte';
+  import { boardCacheStore } from '../../stores/boardCache.svelte';
+  import { registerComponentFlush } from '../../lib/boards/componentFlush';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -142,16 +144,30 @@
     // Editor is created in $effect once labelEditorElement is bound
   }
 
+  /** The editor's text and HTML, as a commit would save them. */
+  function editorLabel(editor: Editor): { text: string; content: string } {
+    const rawText = editor.getText();
+    // When the user clears the label, TipTap's getHTML() still returns
+    // `<p></p>` — truthy, so the {#if connection.label.content} branch
+    // wins and renders an empty paragraph instead of the faded "Label"
+    // placeholder. Normalise empty text → empty content so the schema
+    // state matches "label never set" and the placeholder branch fires.
+    const text = rawText.trim() === '' ? '' : rawText;
+    return { text, content: text === '' ? '' : editor.getHTML() };
+  }
+
+  /** The label being edited, when it differs from the saved one; else null. */
+  function uncommittedLabel(): { text: string; content: string } | null {
+    if (!isEditing || !labelEditor) return null;
+    const next = editorLabel(labelEditor);
+    const saved = connection.label;
+    if (next.text === saved.text && next.content === (saved.content ?? '')) return null;
+    return next;
+  }
+
   function commitEdit() {
     if (labelEditor) {
-      const rawText = labelEditor.getText();
-      // When the user clears the label, TipTap's getHTML() still returns
-      // `<p></p>` — truthy, so the {#if connection.label.content} branch
-      // wins and renders an empty paragraph instead of the faded "Label"
-      // placeholder. Normalise empty text → empty content so the schema
-      // state matches "label never set" and the placeholder branch fires.
-      const text = rawText.trim() === '' ? '' : rawText;
-      const content = text === '' ? '' : labelEditor.getHTML();
+      const { text, content } = editorLabel(labelEditor);
       destroyLabelEditor();
       isEditing = false;
       const before = { label: { ...connection.label } };
@@ -239,8 +255,24 @@
     return () => document.removeEventListener('pointerdown', onDocPointerDown, true);
   });
 
+  // Leaving the vault, quitting and Ctrl+S save a label being edited: the
+  // views unmount only in the swap, after the save before leaving.
+  $effect(() => registerComponentFlush('connection label', () => {
+    if (uncommittedLabel()) commitEdit();
+  }));
+
+  // A label still being edited when the view closes (Ctrl+W, a board switch)
+  // is saved, not dropped. By then the pane may show another board, so it is
+  // written through the cache to the connection's own board (its `boardId`),
+  // with no undo step: the active history stack may be another board's.
   onDestroy(() => {
+    const pending = uncommittedLabel();
     destroyLabelEditor();
+    if (!pending) return;
+    boardCacheStore.persistUpdateConnection(connection.id, {
+      ...connection,
+      label: { ...connection.label, ...pending },
+    });
   });
 
   function handleLabelDragStart(e: PointerEvent) {

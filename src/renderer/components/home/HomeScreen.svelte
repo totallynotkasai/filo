@@ -30,6 +30,10 @@
 
   let recentVaults = $state<RecentVault[]>([]);
   let autoOpenAttempted = $state(false);
+  // One open at a time: while one runs (the launch auto-open included), the
+  // cards are disabled and the vault being opened shows a spinner.
+  let openingPath = $state<string | null>(null);
+  const busy = $derived(vaultStore.lifecycleBusy);
 
   // Load recent vaults from the main-process userData store, then attempt
   // auto-open if the user has the "Open last vault on launch" preference
@@ -75,11 +79,14 @@
   async function openRecent(recent: RecentVault, label: string): Promise<void> {
     const report: OpenVaultReport = {};
     let loaded = false;
+    openingPath = recent.path;
     try {
       loaded = await vaultStore.openVault(recent.path, report);
     } catch {
       uiStore.toast('Failed to open vault', 'error');
       return;
+    } finally {
+      openingPath = null;
     }
     if (loaded) {
       await saveRecentVault();
@@ -209,7 +216,7 @@
 
     <!-- Actions -->
     <div class="home-actions home-actions-vault">
-      <button class="action-card" onclick={handleNewVault}>
+      <button class="action-card" onclick={handleNewVault} disabled={busy}>
         <div class="action-icon">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -221,7 +228,7 @@
         <span class="action-desc">Create a new vault folder</span>
       </button>
 
-      <button class="action-card" onclick={handleOpenVault}>
+      <button class="action-card" onclick={handleOpenVault} disabled={busy}>
         <div class="action-icon">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -255,7 +262,7 @@
                  pin/remove controls would be invalid HTML (interactive
                  descendants) and break AT. -->
             <div class="recent-item" class:pinned={recent.pinned} style="animation-delay: {i * 0.04}s">
-              <button class="recent-open" onclick={() => handleOpenRecent(recent)} aria-label="Open {recent.name}">
+              <button class="recent-open" onclick={() => handleOpenRecent(recent)} aria-label="Open {recent.name}" disabled={busy}>
                 <span
                   class="recent-icon"
                   class:tinted={safeVaultColor(recent.color) !== ''}
@@ -270,7 +277,16 @@
                   <span class="recent-name">{recent.name}</span>
                   <span class="recent-path" title={recent.path}>{recent.path}</span>
                 </span>
-                <span class="recent-date">{formatDate(recent.lastOpened)}</span>
+                {#if openingPath === recent.path}
+                  <span class="recent-opening" role="status">
+                    <svg class="recent-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                      <path d="M21 12a9 9 0 1 1-6.22-8.56"/>
+                    </svg>
+                    Opening…
+                  </span>
+                {:else}
+                  <span class="recent-date">{formatDate(recent.lastOpened)}</span>
+                {/if}
               </button>
               <button
                 class="recent-pin"
@@ -442,7 +458,7 @@
     height: 36px;
   }
 
-  .action-card:hover {
+  .action-card:hover:not(:disabled) {
     background: var(--ui-surface-hover);
     border-color: var(--accent-primary);
     transform: translateY(-2px);
@@ -583,6 +599,29 @@
     font-family: var(--font-system);
   }
 
+  .recent-open:disabled,
+  .action-card:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  .recent-opening {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+
+  .recent-spinner {
+    animation: recent-spin 0.9s linear infinite;
+  }
+
+  @keyframes recent-spin {
+    to { transform: rotate(360deg); }
+  }
+
   .recent-icon {
     display: flex;
     align-items: center;
@@ -711,7 +750,8 @@
   @media (prefers-reduced-motion: reduce) {
     .home-logo,
     .action-card,
-    .recent-item {
+    .recent-item,
+    .recent-spinner {
       animation: none;
     }
   }

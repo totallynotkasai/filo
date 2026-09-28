@@ -134,7 +134,6 @@ const FileTileSchema = BaseTileSchema.extend({
 const AudioTileSchema = BaseTileSchema.extend({
   type: z.literal('audio'),
   src: z.string().default(''), // relative vault path to MP3
-  isRecording: z.boolean().default(false),
   isPlaying: z.boolean().default(false),
 }).passthrough();
 
@@ -292,10 +291,11 @@ export const VideoTileDefSchema = MediaTileDefinitionBase.extend({
   isPlaying: z.boolean().default(false),
 });
 
+// No `isRecording`: a take is runtime state. A board file that still carries
+// one loads without it, so its tile is never stuck on "Recording…".
 export const AudioTileDefSchema = MediaTileDefinitionBase.extend({
   type: z.literal('audio'),
   src: z.string(),
-  isRecording: z.boolean().default(false),
   isPlaying: z.boolean().default(false),
 });
 

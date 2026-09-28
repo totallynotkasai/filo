@@ -7,7 +7,10 @@ import { noteStore, type SetBodyStatus } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { NotesBox, notesBoxDecision } from '@renderer/lib/tasklist/notesBox.svelte';
-import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { __resetDirtyTrackingForTests, unsavedWork } from '@renderer/lib/boards/writeStateTracking';
+import { flushAllComponents, __resetComponentFlushesForTests } from '@renderer/lib/boards/componentFlush';
+import { heldDecisions } from '@renderer/stores/heldDecisions';
+import { takeNotesBoxRescueItems } from '@renderer/lib/tasklist/notesBox.svelte';
 import { beginVaultGeneration } from '@renderer/lib/vault/vaultIdentity';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -113,5 +116,58 @@ describe('NotesBox keeps its draft when the body is refused', () => {
     body = 'typed';
     expect(box.expanded).toBe(false);
     expect(writes).toEqual(['typed', 'typed']);
+  });
+});
+
+describe('NotesBox: a draft the note does not have is unsaved work', () => {
+  afterEach(() => {
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+    __resetComponentFlushesForTests();
+  });
+
+  function conflictedBox(): { box: NotesBox; untrack: () => void; writes: string[] } {
+    let body = 'opened\n';
+    const writes: string[] = [];
+    const box = new NotesBox({ path: () => 'Task.md', body: () => body, write: async (b) => { writes.push(b); return 'queued'; } });
+    const untrack = box.track();
+    box.open();
+    // The note changed elsewhere, then the user typed.
+    body = 'theirs\n';
+    box.draft = 'mine';
+    box.typed();
+    return { box, untrack, writes };
+  }
+
+  it('a conflicted draft counts as unsaved, holds a decision, and is kept as a rescue item', async () => {
+    const { box, untrack, writes } = conflictedBox();
+    await box.save(false);
+    expect(writes).toEqual([]);
+    expect(unsavedWork().pending).toContain('task.md');
+    expect(heldDecisions().map((d) => d.key)).toContain('notes-box:Task.md');
+    const [item] = takeNotesBoxRescueItems();
+    expect(item?.relPath).toBe('Task.md');
+    expect(item?.text).toContain('mine');
+
+    // Unmounted with the question open: still counted until it is answered.
+    untrack();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(unsavedWork().pending).toContain('task.md');
+    const useTheirs = uiStore.toasts.find((t) => t.dedupeKey === 'notes-box:Task.md')?.actions?.find((a) => a.label === 'Use theirs');
+    useTheirs?.handler();
+    expect(unsavedWork().pending).not.toContain('task.md');
+    expect(heldDecisions()).toEqual([]);
+  });
+
+  it('the save before leaving hands a typed draft to the note', async () => {
+    const writes: string[] = [];
+    const box = new NotesBox({ path: () => 'Task.md', body: () => 'opened\n', write: async (b) => { writes.push(b); return 'queued'; } });
+    const untrack = box.track();
+    box.open();
+    box.draft = 'typed, not blurred';
+    box.typed();
+    expect(unsavedWork().pending).toContain('task.md');
+    await flushAllComponents();
+    expect(writes).toEqual(['typed, not blurred']);
+    untrack();
   });
 });

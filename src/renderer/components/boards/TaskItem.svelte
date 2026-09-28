@@ -169,8 +169,8 @@
   });
 
   let notesPreview = $derived(getBodyPreview(rawBody, 120));
-
   const notes = new NotesBox({ path: () => backingPath, body: () => rawBody, write: (b) => onSetNotes ? onSetNotes(b) : Promise.resolve('not-open') });
+  $effect(() => notes.track());
   let isExpanded = $derived(notes.expanded);
   let notesEl: HTMLTextAreaElement | undefined = $state();
 

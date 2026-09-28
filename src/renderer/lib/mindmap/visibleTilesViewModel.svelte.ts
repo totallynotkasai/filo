@@ -6,6 +6,7 @@ import type { Tile } from '../../schema/index';
 import { vaultStore } from '../../stores/vault.svelte';
 import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
 import { framesStore } from '../../stores/frames.svelte';
+import { recordingTiles } from '../../stores/tiles.svelte';
 
 const VIEWPORT_CULL_BUFFER = 200;
 
@@ -45,7 +46,13 @@ export class VisibleTilesViewModel {
       right: vp.right + VIEWPORT_CULL_BUFFER,
       bottom: vp.bottom + VIEWPORT_CULL_BUFFER,
     });
-    return new SvelteSet(ids);
+    const visible = new SvelteSet(ids);
+    // A recording tile stays mounted off screen: unmounting it would stop the
+    // take in the middle of a pan.
+    for (const id of recordingTiles) {
+      if (this.deps.board.tiles[id]) visible.add(id);
+    }
+    return visible;
   });
 
   hiddenByFrame = $derived(framesStore.hiddenTileIds);

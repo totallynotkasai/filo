@@ -34,16 +34,25 @@ engine, so the class is **structurally gone, not guarded**. The
 `no-jsyaml` gate keeps js-yaml out of the app entirely (tests keep it only as an
 independent oracle).
 
-**Residual full re-dump (lossless by nature):** When the engine has no on-disk
-source to preserve, or can't safely patch the source, it emits a full dump
+**Residual full re-dump:** When the engine has no on-disk source to preserve,
+or can't safely patch the source, it emits a full dump
 (`new Document(fm).toString()` — the `yaml` package, no js-yaml). This fires for:
 a brand-new file, or the first keys added to a file with no frontmatter (there
 are no comments to lose); a FLOW mapping root (`{title: X}`), which the engine
 can't patch as a block mapping; or a CHANGED / DELETED key carrying a YAML
-anchor/alias (the engine refuses the splice rather than dangle an alias — L27,
-and the dump expands the anchor to a concrete value). In each case there is
-either nothing to preserve, or the structure is expanded while the DATA stays
-exact.
+anchor/alias or an explicit tag (the engine refuses the splice rather than
+dangle an alias — L27, and the dump expands the anchor to a concrete value).
+
+The dump is written from the parsed core-schema values, so it is NOT lossless
+by nature: `02134` would come back as `2134`, `1.10` as `1.1`, `0xFF00FF` as
+`16711935`, and an explicit `!tag` would be dropped. So every dump of an
+existing block is checked first (`dumpPreservesUntouched` in
+`frontmatterCstModel.ts`): each key the edit didn't touch must say exactly what
+it said before (a string may change its quoting, a null its spelling). If one
+doesn't, the edit is refused and the block kept byte-for-byte, with the "saving
+it would also change other values" toast. The same check guards the tag
+rewriter's dump. What a dump that passes can still lose is formatting only:
+comments, key order, flow style, anchors expanded to their values.
 
 **Refused instead of dumped:** a block that doesn't parse, one with a
 non-scalar key, and one that parses but isn't a mapping (a paragraph between
@@ -77,9 +86,11 @@ loss):**
   (relocating mis-documents the survivor); option (b) — relocate to a trailing
   block instead of dropping — is tracked if dogfooding shows users rely on
   frontmatter comments.
-- **Touched anchored key.** Changing or deleting a key carrying `&a`/`*a`
-  full-dumps (structure expanded, data exact); an anchor/alias confined to
-  UNTOUCHED keys is spliced verbatim and survives (DI-05's `<<: *base`).
+- **Touched anchored or tagged key.** Changing or deleting a key carrying
+  `&a`/`*a` or a `!tag` full-dumps (structure expanded), provided the dump
+  keeps every untouched value exact; otherwise the edit is refused. An
+  anchor/alias confined to UNTOUCHED keys is spliced verbatim and survives
+  (DI-05's `<<: *base`).
 - **New file.** Emitted in the `yaml` package's default style
   (nothing prior to preserve).
 
@@ -96,8 +107,9 @@ reads the file fresh at each flush and passes its frontmatter source through
 untouched folded scalars) survive a metadata edit on any note. Only a new
 file's first keys, a changed nested block's inner
 comment, or a touched anchored key is emitted in the package's default style, and
-deleting a key also drops the comment line that documented it. File *content* is
-never lost.
+deleting a key also drops the comment line that documented it. A metadata edit
+that could only land by changing another value is refused, never applied.
+File *content* is never lost.
 
 ---
 

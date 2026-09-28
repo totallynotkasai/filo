@@ -19,6 +19,7 @@
  * `gates:reconciler-vault-guard` Part 3.
  */
 import { loadBoard, isTransientBoardLoadError } from '../lib/boards/boardLoader';
+import { adoptLoadedBoardBaseline } from '../lib/boards/boardBaseline';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 import { promptBoardLoadRetry } from '../lib/boards/boardLoadRetryPrompt';
 import type { Board } from '../schema/index';
@@ -132,6 +133,7 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
 
   boardCacheStore.replaceCache({ ...boardCacheStore.cache, [id]: data });
   boardCacheStore.replacePaths({ ...boardCacheStore.paths, [id]: relPath });
+  adoptLoadedBoardBaseline(relPath, result.baseline);
   const project = vaultStore.getProject();
   if (project) {
     project.boards = [...project.boards.filter((b) => b.id !== id), data.board];

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { saveBoardFile, loadBoardFile, createBoardFile } from '../../main/vault/boardFileOps';
 import { writtenByteLength } from '@renderer/lib/boards/boardWriteDebounce';
 import { loadBoard } from '@renderer/lib/boards/boardLoader';
+import { adoptLoadedBoardBaseline } from '@renderer/lib/boards/boardBaseline';
 import { writeBoardFile, setBoardExternalEditHandler } from '@renderer/lib/boards/boardWriteScheduler';
 import { getBaseline, __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -130,6 +131,8 @@ describe('board file encoding (real fs)', () => {
     const loaded = await loadBoard(root, rel);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
+    adoptLoadedBoardBaseline(rel, loaded.baseline);
+    expect(getBaseline(rel)?.size).toBe((await fs.stat(abs)).size);
     const data = loaded.data;
 
     // Save #1 — reformats the file. mtime resolution can be coarse; nudge time.

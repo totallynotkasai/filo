@@ -1,4 +1,4 @@
-import { parseDocument, isMap, Parser, CST } from 'yaml';
+import { parseDocument, isAlias, isMap, isScalar, isSeq, Parser, CST, type YAMLMap } from 'yaml';
 import { valuesEqual, serializeScalar, serializeKeyValue } from './frontmatterEngine';
 
 /**
@@ -460,4 +460,106 @@ export function frontmatterSourceProblem(source: string): 'unparseable' | 'not-p
   if (!frontmatterSourceParses(source)) return 'unparseable';
   if (!frontmatterSourceRootIsMapping(source)) return 'not-properties';
   return frontmatterSourceHasNonScalarKey(source) ? 'unparseable' : null;
+}
+
+type YamlDoc = ReturnType<typeof parseDocument>;
+
+/** `node` with an alias followed to the node it names (null when it names none). */
+function resolved(node: unknown, doc: YamlDoc): unknown {
+  if (!isAlias(node)) return node;
+  try {
+    return node.resolve(doc) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The value node of `key` in `map`, following `<<` merges as `toJS()` does. */
+function valueNodeOf(map: YAMLMap, key: string, doc: YamlDoc, depth = 0): unknown {
+  let merged: unknown;
+  for (const pair of map.items) {
+    const k = isScalar(pair.key) ? String(pair.key.value) : null;
+    if (k === key) return pair.value;
+    if (k === '<<' && merged === undefined && depth < 8) {
+      const sources = resolved(pair.value, doc);
+      const list = isSeq(sources) ? sources.items.map((i) => resolved(i, doc)) : [sources];
+      for (const source of list) {
+        if (!isMap(source)) continue;
+        const found = valueNodeOf(source, key, doc, depth + 1);
+        if (found !== undefined) {
+          merged = found;
+          break;
+        }
+      }
+    }
+  }
+  return merged;
+}
+
+/**
+ * True when the dump's node says what the source's node said. A scalar keeps
+ * its value's text (`02134`, `1.10` and `0xFF00FF` read as numbers, and a dump
+ * would write `2134`, `1.1` and `16711935`); a string may change its quoting,
+ * a null its spelling (`~`). An explicit tag must survive. Collections compare
+ * item by item.
+ */
+function sameNode(src: unknown, srcDoc: YamlDoc, out: unknown, outDoc: YamlDoc, depth = 0): boolean {
+  if (depth > 32) return false;
+  const a = resolved(src, srcDoc);
+  const b = resolved(out, outDoc);
+  if (a === null || a === undefined || b === null || b === undefined) return (a ?? null) === (b ?? null);
+  if (isScalar(a) && isScalar(b)) {
+    if (a.tag !== undefined && a.tag !== b.tag) return false;
+    if (a.value === null && b.value === null) return true;
+    if (typeof a.value === 'string') return typeof b.value === 'string' && a.value === b.value;
+    const text = (n: typeof a): string => (typeof n.source === 'string' ? n.source : String(n.value));
+    return text(a) === text(b);
+  }
+  if (isSeq(a) && isSeq(b)) {
+    if (a.tag !== undefined && a.tag !== b.tag) return false;
+    return a.items.length === b.items.length && a.items.every((item, i) => sameNode(item, srcDoc, b.items[i], outDoc, depth + 1));
+  }
+  if (isMap(a) && isMap(b)) {
+    if (a.tag !== undefined && a.tag !== b.tag) return false;
+    const keys = (m: YAMLMap): string[] => m.items.map((p) => (isScalar(p.key) ? String(p.key.value) : '')).filter((k) => k !== '' && k !== '<<');
+    const srcKeys = new Set(keys(a));
+    for (const key of srcKeys) {
+      if (!sameNode(valueNodeOf(a, key, srcDoc), srcDoc, valueNodeOf(b, key, outDoc), outDoc, depth + 1)) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * True when a full dump of `nextObj` (the fallback for a block the patch
+ * engine refuses) still says, for every key the change didn't touch, what the
+ * source said. `nextObj` is the core-schema JS value, so a dump rewrites values
+ * whose text isn't their canonical form (`02134` → `2134`, `1.10` → `1.1`,
+ * `0xFF00FF` → `16711935`) and drops explicit tags. A false answer means the
+ * edit must be refused and the block kept as it is.
+ */
+export function dumpPreservesUntouched(sourceFm: string, dumped: string, nextObj: Record<string, unknown>): boolean {
+  let srcDoc: YamlDoc;
+  let outDoc: YamlDoc;
+  let current: unknown;
+  try {
+    srcDoc = parseDocument(sourceFm.replace(/\r\n/g, '\n'), { uniqueKeys: true, logLevel: 'error' });
+    outDoc = parseDocument(dumped, { uniqueKeys: true, logLevel: 'error' });
+    if (srcDoc.errors.length > 0 || outDoc.errors.length > 0) return false;
+    current = srcDoc.toJS();
+  } catch {
+    return false;
+  }
+  const srcRoot = srcDoc.contents;
+  const outRoot = outDoc.contents;
+  if (srcRoot === null) return true;
+  if (!isMap(srcRoot) || !isMap(outRoot)) return false;
+  if (current === null || typeof current !== 'object' || Array.isArray(current)) return false;
+  for (const [key, value] of Object.entries(current as Record<string, unknown>)) {
+    // A key the change set or removed is the change itself.
+    if (!(key in nextObj) || !valuesEqual(value, nextObj[key])) continue;
+    if (!sameNode(valueNodeOf(srcRoot, key, srcDoc), srcDoc, valueNodeOf(outRoot, key, outDoc), outDoc)) return false;
+  }
+  return true;
 }

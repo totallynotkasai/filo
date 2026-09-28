@@ -21,7 +21,7 @@ import {
   rewriteTagInAllMarkdown,
   type MarkdownRewriteResult,
 } from '../lib/vault/tagRewriteSweep';
-import { isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
+import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 
 /**
  * Minimal structural type for the methods the cascade reaches into on the
@@ -126,13 +126,21 @@ export function cascadeTagToBoardSettings(oldName: string, newName: string | nul
  * target the captured (outgoing) root, which main-side `assertActiveVault`
  * rejects — fail-closed instead of applying the tag op to the new vault's
  * same-named files.
+ *
+ * The sweep finds its notes through the note index, so it waits for a build
+ * in progress (the one a vault open starts): sampled mid-build, the index
+ * would hold only some of the notes that carry the tag.
  */
-export function runTagRewriteSweep(
+export async function runTagRewriteSweep(
   oldName: string,
   newName: string | null,
   vaultRoot: string,
   pathFilter?: ReadonlySet<string>,
 ): Promise<MarkdownRewriteResult> {
+  const captured = captureVaultIdentity();
+  await vaultIndexStore.whenBuildComplete();
+  // Another vault opened meanwhile: its index isn't this vault's notes.
+  if (!isStillSameVault(captured)) return { attempted: 0, succeeded: [], failed: [] };
   return rewriteTagInAllMarkdown({
     vaultRoot,
     metadata: vaultIndexStore.allMetadata(),

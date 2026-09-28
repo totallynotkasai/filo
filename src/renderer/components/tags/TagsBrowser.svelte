@@ -1,6 +1,7 @@
 <script lang="ts">
   import { uiStore } from '../../stores/ui.svelte';
   import { fileTagsStore } from '../../stores/fileTags.svelte';
+  import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
   import Modal from '../shared/Modal.svelte';
   import IconButton from '../shared/IconButton.svelte';
   import ColorPicker from '../shared/ColorPicker.svelte';
@@ -15,6 +16,12 @@
   let activeTagMenu = $state<{ tagName: string; x: number; y: number } | null>(null);
   let scope = $state<'all' | 'files' | 'tiles'>('all');
   let query = $state('');
+
+  // A rename or delete rewrites every note that has the tag, found through
+  // the note index; until the index is built it would miss some, so the
+  // actions wait for it.
+  const indexing = $derived(vaultIndexStore.isBuilding);
+  const INDEXING = 'Indexing notes…';
 
   // One walk of the vault and boards per change, not one per row.
   const counts = $derived(fileTagsStore.tagUsageCounts());
@@ -255,9 +262,9 @@
 
           <div class="col-actions">
             {#if editingTagName !== t.name}
-              <IconButton title="Rename" onclick={() => startEditByName(t.name)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg></IconButton>
+              <IconButton title={indexing ? INDEXING : 'Rename'} ariaLabel="Rename" disabled={indexing} onclick={() => startEditByName(t.name)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg></IconButton>
             {/if}
-            <IconButton title="Delete tag" danger onclick={() => void deleteTagByName(t.name)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></IconButton>
+            <IconButton title={indexing ? INDEXING : 'Delete tag'} ariaLabel="Delete tag" danger disabled={indexing} onclick={() => void deleteTagByName(t.name)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></IconButton>
           </div>
         </div>
       {/each}

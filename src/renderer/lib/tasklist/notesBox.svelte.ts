@@ -13,12 +13,23 @@
  * another vault opened) keeps the box open with the draft in it and says why.
  * The body passed in is the note's body, never a whole file: the note store
  * and the vault index both hold it without the frontmatter.
+ *
+ * The draft lives only in the box (the row saves it on blur), so a mounted box
+ * holding typed text that isn't in the note (a conflict waiting for its
+ * answer, a refused write) counts as unsaved work: close, open-another-vault
+ * and quit name it and keep a rescue copy of it, and their save hands it to
+ * the note first. A box that unmounts with a conflict still open stays counted
+ * until the conflict is answered.
  */
-import { sameBody } from '../notes/noteFile';
+import { vaultPath } from '@shared/vaultPath';
+import { localNoteText, newNoteText, sameBody } from '../notes/noteFile';
 import { noteStore, type SetBodyStatus } from '../../stores/notes.svelte';
+import { noteFrontmatter } from '../../stores/noteMeta';
 import { promptNotesBoxConflict } from '../../stores/notePrompts';
 import { uiStore } from '../../stores/ui.svelte';
 import { isLinkedNote, isNonUtf8 } from '../vault/nonUtf8Paths.svelte';
+import { registerUnsavedSource } from '../boards/writeStateTracking';
+import { registerComponentFlush } from '../boards/componentFlush';
 
 export interface NotesBoxState {
   /** The user typed in the box since it opened (or since its last write). */
@@ -61,17 +72,114 @@ export interface NotesBoxDeps {
   write: ((body: string) => Promise<SetBodyStatus>) | undefined;
 }
 
+// Not reactive: read only when the leave, quit and rescue paths ask.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const boxes = new Set<NotesBox>(); // allow-module-state: holds mounted boxes (and unmounted ones with a conflict still open); a vault swap unmounts every box and clears the conflict prompts
+
+/** Boxes holding typed text that isn't in their note. */
+function unsavedBoxes(): NotesBox[] {
+  return [...boxes].filter((b) => b.unsaved);
+}
+
+/** True when a notes box of `path` holds a draft waiting for a conflict answer. */
+export function notesBoxInConflict(path: string): boolean {
+  const key = vaultPath(path);
+  return unsavedBoxes().some((b) => b.inConflict && vaultPath(b.path) === key);
+}
+
+/** The spelling of an unsaved draft's note path, for the leave dialog. */
+export function notesBoxDraftPath(key: string): string | undefined {
+  return unsavedBoxes().find((b) => vaultPath(b.path) === key)?.path;
+}
+
+/**
+ * Each unsaved draft as a rescue item: the note's frontmatter over the draft,
+ * so the copy is the note as the user meant it.
+ */
+export function takeNotesBoxRescueItems(): Array<{ relPath: string; text: string }> {
+  return unsavedBoxes().map((b) => ({ relPath: b.path, text: b.rescueText() }));
+}
+
 export class NotesBox {
   expanded = $state(false);
   draft = $state('');
   private touched = false;
   private openedBody = '';
+  private conflictOpen = false;
+  private mounted = false;
+  // The row's props can't be read once it has unmounted (its task gone), and
+  // a box with a conflict still open outlives it: the last values read stand in.
+  private lastPath = '';
+  private lastBody = '';
 
   constructor(private readonly deps: NotesBoxDeps) {}
 
+  /** The task note's path. */
+  get path(): string {
+    try {
+      this.lastPath = this.deps.path();
+    } catch {
+      // The row is gone: keep the last path read.
+    }
+    return this.lastPath;
+  }
+
+  /** The note's body now (the last one read, once the row is gone). */
+  private body(): string {
+    try {
+      this.lastBody = this.deps.body();
+    } catch {
+      // The row is gone: keep the last body read.
+    }
+    return this.lastBody;
+  }
+
+  /** The user typed text that isn't in the note. */
+  get unsaved(): boolean {
+    return this.touched && this.path !== '' && !sameBody(this.draft, this.body());
+  }
+
+  /** The draft waits for the conflict question's answer. */
+  get inConflict(): boolean {
+    return this.conflictOpen;
+  }
+
+  /** The whole note as the draft would make it. */
+  rescueText(): string {
+    const model = noteStore.get(this.path);
+    if (model?.base) return localNoteText(model.base, model.frontmatter, this.draft);
+    return newNoteText({ ...noteFrontmatter(this.path) }, this.draft);
+  }
+
+  /**
+   * Called from the row's `$effect`: counts the box's draft as unsaved work
+   * and lets the save hand it to the note. The returned teardown saves the
+   * draft; a box whose conflict is still open stays counted until it is answered.
+   */
+  track(): () => void {
+    boxes.add(this);
+    this.mounted = true;
+    const offFlush = registerComponentFlush('task notes', () => this.save(false));
+    return () => {
+      offFlush();
+      this.mounted = false;
+      if (!this.touched) {
+        this.forgetIfDone();
+        return;
+      }
+      void this.save(false)
+        .catch((err: unknown) => console.warn('[notesBox] saving the draft on unmount failed:', err))
+        .finally(() => this.forgetIfDone());
+    };
+  }
+
+  private forgetIfDone(): void {
+    if (!this.mounted && !this.conflictOpen) boxes.delete(this);
+  }
+
   /** Why the note can't be written from here (the box is then read-only), or null. */
   get readOnlyReason(): string | null {
-    const path = this.deps.path();
+    const path = this.path;
     if (!path) return null;
     if (isNonUtf8(path)) return "This note isn't UTF-8, so Filo won't save it. Convert it from its Document tab.";
     if (isLinkedNote(path)) return 'This note is a link; edit the original.';
@@ -80,7 +188,7 @@ export class NotesBox {
   }
 
   open(): void {
-    const body = this.deps.body();
+    const body = this.body();
     this.draft = body;
     this.openedBody = body;
     this.touched = false;
@@ -94,14 +202,14 @@ export class NotesBox {
 
   /** The box got focus: a note that couldn't be read is tried again. */
   focused(): void {
-    const path = this.deps.path();
+    const path = this.path;
     if (path && noteStore.get(path)?.status === 'unreadable') void noteStore.reload(path);
   }
 
   /** Esc: drop the draft. */
   cancel(): void {
     this.expanded = false;
-    this.draft = this.deps.body();
+    this.draft = this.body();
     this.touched = false;
   }
 
@@ -110,16 +218,26 @@ export class NotesBox {
     if (close) this.expanded = false;
     const write = this.deps.write;
     if (!write) return;
-    const currentBody = this.deps.body();
+    const currentBody = this.body();
     const sent = this.draft;
     const decision = notesBoxDecision({ touched: this.touched, openedBody: this.openedBody, currentBody, draft: sent });
     if (decision === 'skip') return;
-    const path = this.deps.path();
+    const path = this.path;
     if (decision === 'conflict') {
       this.expanded = true;
-      promptNotesBoxConflict(path, sent, {
-        onKept: (status) => this.written(status, sent),
-        onUseTheirs: () => this.open(),
+      this.conflictOpen = true;
+      promptNotesBoxConflict(path, () => this.draft, {
+        onKept: (status) => {
+          this.conflictOpen = false;
+          this.written(status, this.draft);
+          this.forgetIfDone();
+        },
+        onUseTheirs: () => {
+          this.conflictOpen = false;
+          this.open();
+          this.forgetIfDone();
+        },
+        stillHeld: () => this.conflictOpen && this.unsaved,
       });
       return;
     }
@@ -134,6 +252,8 @@ export class NotesBox {
     }
     // The draft is the only copy: keep it in front of the user.
     this.expanded = true;
-    uiStore.toast(`"${this.deps.path()}" ${REFUSED[status]}`, 'error', 10000);
+    uiStore.toast(`"${this.path}" ${REFUSED[status]}`, 'error', 10000);
   }
 }
+
+registerUnsavedSource(() => unsavedBoxes().map((b) => b.path));

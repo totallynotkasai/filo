@@ -108,6 +108,7 @@ const LIFECYCLE_EXEMPT = new Map([
   ['src/renderer/lib/tasklist/notesBox.svelte.ts', 'per-row notes box, dies with the row'],
   ['src/renderer/lib/utils/ariaAnnouncer.svelte.ts', 'per-instance announcer, disposed on unmount'],
   ['src/renderer/stores/themeVersion.svelte.ts', 'a count of theme applications, no vault data; a vault open applies its theme'],
+  ['src/renderer/stores/vaultLifecycleGuard.svelte.ts', 'true only while an open or close runs; that call clears it in its finally'],
   ['src/renderer/stores/noteModel.svelte.ts', 'the NoteModel class: per-instance fields; notes.svelte.ts drops every model on a vault swap'],
 ]);
 // Subscribing proves a reset is wired, not that it resets: pin the behavioural reset tests.
@@ -521,6 +522,46 @@ export const checks = [
       const tags = ctx.read(TAGS);
       if (tags !== null && /\bfunction\s+normalisePath\b/.test(tags)) {
         out.push(fail(TAGS, undefined, 'a local normalisePath wrapper is back; key fileTags by vaultPath()'));
+      }
+      return out;
+    },
+  },
+  {
+    id: 'vault-open-one-at-a-time',
+    title: 'one vault open or close runs at a time, and every vault:close names the vault it releases',
+    hint:
+      'openVault / closeVault run their body through exclusiveVaultLifecycle (stores/vaultLifecycleGuard.svelte.ts), ' +
+      "so a second open during a load returns 'busy' instead of interleaving. Pass the vault's root to every " +
+      "invoke('vault:close', root): main releases only that vault, so a failed open can't release the registry another open armed.",
+    run(ctx) {
+      const out = [];
+      const VAULT = 'src/renderer/stores/vault.svelte.ts';
+      const raw = ctx.read(VAULT);
+      if (raw === null) return [fail(VAULT, undefined, 'file missing')];
+      const code = stripComments(raw);
+      for (const name of ['openVault', 'closeVault']) {
+        const body = functionBody(code, name)?.text ?? '';
+        if (!/\bexclusiveVaultLifecycle\s*\(/.test(body)) {
+          out.push(fail(VAULT, undefined, name + '() must run through exclusiveVaultLifecycle(...)'));
+        }
+      }
+      for (const rel of ctx.files('src/renderer', { ext: ['.ts', '.svelte'] })) {
+        const src = ctx.read(rel);
+        if (!src.includes('vault:close')) continue;
+        const stripped = stripCommentsKeepLines(src);
+        for (const m of stripped.matchAll(/\binvoke(?:Ok)?\s*\(\s*['"`]vault:close['"`]\s*\)/g)) {
+          out.push(fail(rel, lineAt(stripped, m.index), "invoke('vault:close') without the vault it means to release"));
+        }
+      }
+      const IPC = 'src/main/ipc/vault.ipc.ts';
+      const ipcRaw = ctx.read(IPC);
+      if (ipcRaw === null) return [...out, fail(IPC, undefined, 'file missing')];
+      const ipc = stripComments(ipcRaw);
+      const start = ipc.indexOf("'vault:close'");
+      const end = start < 0 ? -1 : ipc.indexOf('ipcMain.handle(', start);
+      const handler = start < 0 ? '' : ipc.slice(start, end < 0 ? ipc.length : end);
+      if (!/\bisActiveVault\s*\(\s*vaultRoot\s*\)/.test(handler)) {
+        out.push(fail(IPC, undefined, "the 'vault:close' handler must release only the vault it is given (isActiveVault(vaultRoot))"));
       }
       return out;
     },

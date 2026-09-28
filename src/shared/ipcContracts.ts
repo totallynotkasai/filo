@@ -132,8 +132,8 @@ export interface IpcChannelMap {
    * stores reset.
    */
   'vault:close': {
-    args: [];
-    result: IpcSuccess;
+    args: [vaultRoot: string];
+    result: IpcSuccess<{ released?: boolean }>;
   };
   'vault:reconcile': {
     args: [];

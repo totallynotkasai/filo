@@ -57,9 +57,9 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'vault:rename': z.tuple([nonEmptyString, nonEmptyString, nonEmptyString]),
   'vault:delete': z.tuple([nonEmptyString, nonEmptyString]),
   'vault:watch': z.tuple([nonEmptyString]),
-  // No payload; the handler closes the active vault unconditionally
-  // (idempotent on already-closed state).
-  'vault:close': z.tuple([]),
+  // The vault to release; the handler releases it only while it is the
+  // active one (idempotent on already-closed state).
+  'vault:close': z.tuple([nonEmptyString]),
   // Explicit positional shape (sourcePath, vaultRoot, destFolder?): the
   // union models the two real call shapes — 2 args (drop at vault root) and
   // 3 args (explicit subfolder) — without permitting unbounded trailing

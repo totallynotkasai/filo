@@ -66,6 +66,9 @@ const EXEMPT_MODULES = new Set([
   // The NoteModel class: its $state fields are per instance, and the note
   // store (notes.svelte.ts) drops every model on a vault swap.
   'src/renderer/stores/noteModel.svelte.ts',
+  // True only while a vault open or close runs; that call clears it in its
+  // finally, whatever happens.
+  'src/renderer/stores/vaultLifecycleGuard.svelte.ts',
 ]);
 
 function toPosix(p: string): string {

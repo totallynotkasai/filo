@@ -701,7 +701,9 @@ export async function renameTagEverywhere(app: CharApp, from: string, to: string
   await waitFor(() => $$(document, '.tag-row').length > 0, 'tags browser rows');
   const row = $$(document, '.tag-row').find((r) => (r.querySelector('.tag-name')?.textContent ?? '').trim().replace(/^#/, '') === from);
   if (!row) throw new Error(`tags browser has no row for ${from}`);
-  click($(row, 'button[aria-label="Rename"], button[title="Rename"]'));
+  // Rename and Delete wait for the note index a vault open builds.
+  await waitFor(() => !($(row, 'button[aria-label="Rename"]') as HTMLButtonElement).disabled, 'the Rename action (index built)');
+  click($(row, 'button[aria-label="Rename"]'));
   await waitFor(() => row.querySelector('.col-name input') !== null, 'tag rename input');
   const input = $(row, '.col-name input') as HTMLInputElement;
   typeInto(input, to);
@@ -715,7 +717,8 @@ export async function deleteTagEverywhere(app: CharApp, tag: string): Promise<vo
   await waitFor(() => $$(document, '.tag-row').length > 0, 'tags browser rows');
   const row = $$(document, '.tag-row').find((r) => (r.querySelector('.tag-name')?.textContent ?? '').trim().replace(/^#/, '') === tag);
   if (!row) throw new Error(`tags browser has no row for ${tag}`);
-  click($(row, 'button[aria-label="Delete tag"], button[title="Delete tag"]'));
+  await waitFor(() => !($(row, 'button[aria-label="Delete tag"]') as HTMLButtonElement).disabled, 'the Delete action (index built)');
+  click($(row, 'button[aria-label="Delete tag"]'));
   await answerConfirm(app, { confirm: true });
   await quiesce(1500);
   await closeModal();

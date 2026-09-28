@@ -87,18 +87,29 @@ function promptConflict(m: NoteModel): void {
  * (a Document tab, another program). Its draft is not written until the user
  * picks. "Keep mine" writes the pending other version to disk first, backs it
  * up to `.filo/recovery/`, then writes the draft; "Use theirs" drops the draft.
+ *
+ * The question is a held decision, so the save indicator's popover can show it
+ * again once the toast is gone, until `stillHeld` says it was answered.
  */
 export function promptNotesBoxConflict(
   rel: string,
-  draft: string,
-  handlers: { onKept(status: SetBodyStatus): void; onUseTheirs(): void },
+  draft: () => string,
+  handlers: { onKept(status: SetBodyStatus): void; onUseTheirs(): void; stillHeld(): boolean },
 ): void {
+  const key = `notes-box:${rel}`;
+  holdDecision({
+    key,
+    relPath: () => rel,
+    text: 'Task notes changed elsewhere while they were open: Keep mine or Use theirs',
+    stillHeld: () => handlers.stillHeld(),
+    reopen: () => promptNotesBoxConflict(rel, draft, handlers),
+  });
   uiStore.pushToast({
     text: `"${noteTitle(rel)}" changed somewhere else while its task notes were open. Keep your notes, or use the other version?`,
     type: 'warning',
     duration: 0,
     sticky: true,
-    dedupeKey: `notes-box:${rel}`,
+    dedupeKey: key,
     actions: [
       {
         label: 'Keep mine',
@@ -109,13 +120,21 @@ export function promptNotesBoxConflict(
           try {
             await noteStore.flush(rel);
             if (!(await backupExternalVersion(vaultRoot, rel)) || !isStillSameVault(identity)) return;
-            handlers.onKept(await noteStore.writeBody(rel, draft));
+            handlers.onKept(await noteStore.writeBody(rel, draft()));
           } catch (err) {
             reportError('notePrompts.notesBox', err, `Couldn't keep your notes for "${rel}"`);
+          } finally {
+            if (!handlers.stillHeld()) releaseDecision(key);
           }
         },
       },
-      { label: 'Use theirs', handler: () => handlers.onUseTheirs() },
+      {
+        label: 'Use theirs',
+        handler: () => {
+          handlers.onUseTheirs();
+          releaseDecision(key);
+        },
+      },
     ],
   });
 }

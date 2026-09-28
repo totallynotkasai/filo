@@ -43,6 +43,7 @@ import {
 import { ProjectSchema } from '../../schema/project';
 import { salvageSlice } from '../settings/settingsSalvage';
 import { loadAllBoards, isTransientBoardLoadError } from '../boards/boardLoader';
+import { adoptLoadedBoardBaseline } from '../boards/boardBaseline';
 import { boardLoadRetryToast } from '../boards/boardLoadRetryPrompt';
 import { boardLoadFailedToast } from '../boards/boardLoadFailedNotice';
 import { syncConflictToast, groupByCanonical } from './syncConflictNotices';
@@ -289,7 +290,11 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     failedBoards,
     prunedBoardIds,
     normalizedBoardIds,
+    loadedBaselines,
   } = await loadAllBoards(newVaultPath);
+  // These boards become the cache when the candidate commits, and no write to
+  // the new vault's boards can run before then. Failed boards stamp nothing.
+  for (const { path: boardPath, baseline } of loadedBaselines) adoptLoadedBoardBaseline(boardPath, baseline);
 
   // Snapshot every failed board's bytes into `.filo/recovery/<ts>/` so
   // the originals survive any subsequent write Filo might do in this

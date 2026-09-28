@@ -132,19 +132,18 @@ describe('UpdateAttachmentSrcCommand', () => {
     expect(restored.isPlaying).toBe(true);
   });
 
-  it('audio tile: src-with-playback + recording flag', () => {
+  it('audio tile: src-with-playback', () => {
     const tile = {
       ...baseFields('aud', 'audio'),
       src: 'attachments/song.webm',
       isPlaying: false,
-      isRecording: false,
     } as unknown as Tile;
     activate(tile);
 
     const cmd = new UpdateAttachmentSrcCommand(
       'aud',
-      { kind: 'src-with-playback', src: 'attachments/song.webm', isPlaying: false, isRecording: false },
-      { kind: 'src-with-playback', src: '', isPlaying: false, isRecording: false },
+      { kind: 'src-with-playback', src: 'attachments/song.webm', isPlaying: false },
+      { kind: 'src-with-playback', src: '', isPlaying: false },
     );
     cmd.execute();
     expect((boardStore.getTile('aud') as unknown as { src: string }).src).toBe('');

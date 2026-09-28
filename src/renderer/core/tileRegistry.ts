@@ -54,7 +54,7 @@ export const tileRegistry: Record<TileType, TileRegistryEntry> = {
     type: 'audio',
     name: 'Audio',
     selectable: true,
-    defaultOverrides: { src: '', isRecording: false, isPlaying: false },
+    defaultOverrides: { src: '', isPlaying: false },
   },
   link: {
     type: 'link',

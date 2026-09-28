@@ -23,6 +23,7 @@ import { invokeOk } from '../lib/utils/invokeOk';
 import { unsavedWork, type UnsavedWork } from '../lib/boards/writeStateTracking';
 import type { RescueResult, UnsavedCause, UnsavedItem } from '../lib/vault/unsavedMessages';
 import { rawViewInConflict, takeRawRescueItems } from '../lib/notes/rawViews';
+import { notesBoxDraftPath, notesBoxInConflict, takeNotesBoxRescueItems } from '../lib/tasklist/notesBox.svelte';
 import { unsavedConfigPayloads } from '../lib/boards/configWriteScheduler';
 import { unsavedMiscPayloads } from '../lib/boards/miscWriteScheduler';
 import { unsavedComponentPayloads } from '../lib/boards/componentWriteRetry';
@@ -67,7 +68,7 @@ function boardPathsByKey(): Map<VaultPath, { boardId: string; relPath: string }>
 
 /** The path as the user knows it: a note's or board's on-disk spelling, else the key. */
 function displayPath(key: VaultPath, boards: Map<VaultPath, { relPath: string }>): string {
-  return noteStore.get(key)?.relPath ?? boards.get(key)?.relPath ?? key;
+  return noteStore.get(key)?.relPath ?? boards.get(key)?.relPath ?? notesBoxDraftPath(key) ?? key;
 }
 
 async function fileExists(vaultRoot: string, relPath: string): Promise<boolean> {
@@ -98,7 +99,7 @@ export async function describeUnsaved(work: UnsavedWork = unsavedWork()): Promis
   for (const key of work.pending) {
     const path = displayPath(key, boards);
     // A held body shows as pending to the ledger; say what holds it.
-    const conflict = noteStore.get(key)?.status === 'conflict' || rawViewInConflict(path);
+    const conflict = noteStore.get(key)?.status === 'conflict' || rawViewInConflict(path) || notesBoxInConflict(path);
     items.push({ path, cause: conflict ? 'conflict' : 'pending' });
   }
   return items;
@@ -128,6 +129,11 @@ export async function keepRescueCopies(work: UnsavedWork = unsavedWork()): Promi
   for (const raw of takeRawRescueItems()) {
     items.push(raw);
     covered.add(vaultPath(raw.relPath));
+  }
+  // A Task List notes box's draft: typed text the note doesn't have yet.
+  for (const draft of takeNotesBoxRescueItems()) {
+    items.push(draft);
+    covered.add(vaultPath(draft.relPath));
   }
   const filo = filoRescueItems(new Set([...work.failed, ...work.pending]));
   items.push(...filo.items);

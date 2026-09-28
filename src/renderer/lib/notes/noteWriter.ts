@@ -308,7 +308,10 @@ export interface NoteWriter {
     firstCandidate: string,
     buildText: (finalStem: string) => string,
   ): Promise<{ relPath: string; stem: string; text: string }>;
-  /** Runs `op` while no write for any of `paths` can start. Queued writes land first. */
+  /**
+   * Runs `op` while no write for any of `paths`, or any note under one of them
+   * (a folder), can start. Queued writes land first.
+   */
   hold<T>(paths: string[], op: () => Promise<T>): Promise<T>;
   /** Moves queued work from one path to another (rename sweep). */
   renamePath(oldRel: string, newRel: string): void;
@@ -328,11 +331,24 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
     ownWrites.set(path, { hash, until: Date.now() + OWN_WRITE_TTL_MS });
   }
 
-  /** Runs `op` after every earlier operation on `path` has settled. */
+  /** Paths held by `hold`, each covering the notes under it too (a folder). */
+  const heldRoots = new Set<{ roots: VaultPath[]; gate: Promise<void> }>();
+
+  function covers(roots: readonly VaultPath[], path: VaultPath): boolean {
+    return roots.some((r) => path === r || path.startsWith(`${r}/`));
+  }
+
+  /**
+   * Runs `op` after every earlier operation on `path` has settled, and while
+   * no `hold` covers it. The hold is checked right before `op` starts, so a
+   * note under a folder being moved can't start a write mid-move even when it
+   * had nothing queued when the hold began.
+   */
   function onPath<T>(path: VaultPath, op: () => Promise<T>): Promise<T> {
     const prior = chains.get(path);
     const run = (async () => {
       if (prior) await prior.catch(() => undefined);
+      for (let held = heldOver(path); held; held = heldOver(path)) await held;
       return op();
     })();
     const settled = run.then(() => undefined, () => undefined);
@@ -341,6 +357,11 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       if (chains.get(path) === settled) chains.delete(path);
     });
     return run;
+  }
+
+  function heldOver(path: VaultPath): Promise<void> | undefined {
+    for (const h of heldRoots) if (covers(h.roots, path)) return h.gate;
+    return undefined;
   }
 
   const scheduler = createScheduler<FlushArgs>({
@@ -684,8 +705,14 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       for (const key of pending.keys()) {
         if (!scheduler.hasWork(key)) arm(key);
       }
-      const result = await scheduler.flushAll();
-      return { failed: result.failed };
+      const failed = new Set((await scheduler.flushAll()).failed);
+      // A change queued while that drain was out (an editor serialising, a
+      // command's write) armed a new timer the drain never saw: drain again.
+      // Bounded, so a view that keeps queueing can't hold a quit forever.
+      for (let pass = 0; pass < 5 && scheduler.hasPendingTimer(() => true); pass++) {
+        for (const f of (await scheduler.flushAll()).failed) failed.add(f);
+      }
+      return { failed: [...failed] };
     },
 
     schedule(path) {
@@ -788,7 +815,13 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
     },
 
     async hold(paths, op) {
-      const keys = [...new Set(paths.map((p) => vaultPath(p)))];
+      const roots = [...new Set(paths.map((p) => vaultPath(p)))];
+      // A folder's notes are held with it: every one with a change queued or
+      // an operation running is flushed and entered below.
+      const keys = [...new Set<VaultPath>([
+        ...roots,
+        ...[...pending.keys(), ...chains.keys()].filter((k) => covers(roots, k)),
+      ])];
       await Promise.all(keys.map((k) => (pending.has(k) || scheduler.hasWork(k) ? this.flush(k) : null)));
       // Enter every path's queue (after whatever is running there) and keep it
       // occupied until `op` settles, so no write for them can start meanwhile.
@@ -802,9 +835,13 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
           });
         })),
       );
+      // Any other note under the held paths waits too (see `onPath`).
+      const held = { roots, gate };
+      heldRoots.add(held);
       try {
         return await op();
       } finally {
+        heldRoots.delete(held);
         release();
       }
     },

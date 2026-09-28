@@ -407,26 +407,23 @@ export async function renameVaultPath(
   within?: DrainToken,
 ): Promise<ChannelResult<'vault:rename'>> {
   return withDrainedWrites(async () => {
-    // A note's write queue stays idle while its file moves: a write that
-    // started now would land on the old path (or recreate it).
-    return noteStore.hold(notePathsOf(vaultRoot, [oldPath, newPath]), async () => {
+    // The write queue of the note, or of every note in the folder, stays idle
+    // while it moves: a write that started now would land on the old path (or
+    // recreate it).
+    return noteStore.hold(relPathsOf(vaultRoot, [oldPath, newPath]), async () => {
       return window.filo.invoke('vault:rename', vaultRoot, oldPath, newPath);
     });
   }, { paths: [oldPath, newPath], within });
 }
 
-/** The vault-relative paths of `absPaths` that name notes (`.md`). */
-function notePathsOf(vaultRoot: string, absPaths: string[]): string[] {
+/** The vault-relative paths of `absPaths` (files or folders). */
+function relPathsOf(vaultRoot: string, absPaths: string[]): string[] {
   const rels: string[] = [];
   for (const abs of absPaths) {
     const rel = toVaultRelative(abs, vaultRoot);
     if (rel) rels.push(rel);
   }
-  return notePathsOfRel(rels);
-}
-
-function notePathsOfRel(rels: string[]): string[] {
-  return rels.filter((rel) => /\.(md|markdown)$/i.test(rel));
+  return rels;
 }
 
 /**
@@ -434,7 +431,8 @@ function notePathsOfRel(rels: string[]): string[] {
  * `.filo/trash/<trashId>/`. Every user-facing delete removes things this way;
  * undo and Settings → Trash move them back with `restoreTrashed`. Drains
  * pending writers first so a debounced write can't recreate the path after it
- * moved, and holds the note's write queue while it goes.
+ * moved, and holds the write queue of the note (or of every note in the
+ * folder) while it goes.
  */
 export async function trashVaultPath(
   vaultRoot: string,
@@ -442,7 +440,7 @@ export async function trashVaultPath(
   within?: DrainToken,
 ): Promise<ChannelResult<'vault:trash-move'>> {
   return withDrainedWrites(async () => {
-    return noteStore.hold(notePathsOfRel([relPath]), async () => {
+    return noteStore.hold([relPath], async () => {
       return window.filo.invoke('vault:trash-move', vaultRoot, relPath);
     });
   }, { paths: [relPath], within });
@@ -450,8 +448,8 @@ export async function trashVaultPath(
 
 /**
  * Moves a trashed item back to where it was, or beside it when that path is
- * taken again (`alongside`). `originalPath` names the note whose write queue
- * is held while it comes back.
+ * taken again (`alongside`). `originalPath` names the note (or folder) whose
+ * write queues are held while it comes back.
  */
 export async function restoreTrashed(
   vaultRoot: string,
@@ -460,7 +458,7 @@ export async function restoreTrashed(
   within?: DrainToken,
 ): Promise<ChannelResult<'vault:trash-restore'>> {
   return withDrainedWrites(async () => {
-    return noteStore.hold(notePathsOfRel([originalPath]), async () => {
+    return noteStore.hold([originalPath], async () => {
       return window.filo.invoke('vault:trash-restore', vaultRoot, trashId);
     });
   }, { paths: [originalPath], within });

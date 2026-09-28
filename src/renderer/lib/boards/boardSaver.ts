@@ -27,7 +27,7 @@ import {
   type ConfigWriteArgs,
 } from './configWriteScheduler';
 import { cancelAllPendingMiscWrites } from './miscWriteScheduler';
-import { syncSentinelIfIdle, resetWriteTracking } from './writeStateTracking';
+import { syncSentinelIfIdle, resetWriteTracking, isUnsavedWorkEmpty, unsavedWork } from './writeStateTracking';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 
 // ── Re-exports of the public write-pipeline surface ──
@@ -137,15 +137,20 @@ export async function flushAll(
 //
 // Scheduler cancellation runs before tracking reset so the in-flight
 // counter on the tracking side reflects only writes that actually fired.
+// Both run after `leftBehind` (vaultLeaveGuard), which copies anything still
+// unsaved before it is cancelled.
 onVaultSwap('pre-swap', 'boardWriteScheduler', () => {
   cancelAllPendingWrites();
-});
+}, { runAfter: ['leftBehind'] });
 
 onVaultSwap(
   'pre-swap',
   'writeStateTracking',
   (event) => {
-    resetWriteTracking(event.saveOutgoing ? (event.previousVault ?? undefined) : undefined);
+    // Work still tracked here arrived after the save before leaving: it was
+    // kept as a rescue copy, and the sentinel stays so a reopen offers it.
+    const clean = event.saveOutgoing && isUnsavedWorkEmpty(unsavedWork());
+    resetWriteTracking(clean ? (event.previousVault ?? undefined) : undefined);
   },
   { runAfter: ['boardWriteScheduler'] },
 );

@@ -4,9 +4,10 @@
  *
  * - Every registered component flush runs, and one that throws doesn't stop
  *   the others.
- * - A note change still queued when a vault is let go as saved is kept in
- *   `.filo/recovery/` and the crash sentinel is set again, instead of being
- *   reset away. Leaving with rescue copies already kept adds no second copy.
+ * - A change still queued when a vault is let go as saved (a note, or a board
+ *   / `.filo/` write the swap would cancel) is kept in `.filo/recovery/` and
+ *   the crash sentinel stays set, instead of being reset away. Leaving with
+ *   rescue copies already kept adds no second copy.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { noteStore } from '@renderer/stores/notes.svelte';
@@ -21,6 +22,9 @@ import {
   __resetComponentFlushesForTests,
 } from '@renderer/lib/boards/componentFlush';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { scheduleMiscWrite } from '@renderer/lib/boards/miscWriteScheduler';
+// Registers the `leftBehind` pre-swap handler.
+import '@renderer/stores/vaultLeaveGuard';
 
 const NOTE = '---\ntitle: Plan\n---\nOriginal\n';
 
@@ -100,5 +104,49 @@ describe('a note change left queued when the vault is let go', () => {
   it('adds no second copy when the user left with rescue copies already kept', async () => {
     await fireVaultSwap({ phase: 'pre-swap', previousVault: '/vault', nextVault: null, saveOutgoing: false });
     expect(calls.some((c) => c.channel === 'recovery:keep-unsaved')).toBe(false);
+  });
+});
+
+describe('a .filo/ or board write left queued when the vault is let go', () => {
+  beforeEach(() => {
+    calls = [];
+    __resetDirtyTrackingForTests();
+    __resetVaultIdentityForTests();
+    beginVaultGeneration('/vault');
+    setActiveVaultPath('/vault');
+    noteStore.__resetForTests();
+    installVault();
+  });
+  afterEach(() => {
+    setActiveVaultPath('');
+    restoreFiloDefault();
+    __resetVaultIdentityForTests();
+    __resetDirtyTrackingForTests();
+  });
+
+  it('is copied before the swap cancels it, and the sentinel stays set', async () => {
+    const tags = JSON.stringify({ version: 1, tags: {}, fileTags: { 'photo.png': ['trip'] } });
+    // A reconcile queued this after the save before leaving: still debounced.
+    scheduleMiscWrite('tags', () => ({
+      vaultRoot: '/vault',
+      path: '.filo/tags.json',
+      json: tags,
+      write: async () => {
+        calls.push({ channel: 'tags-written', args: [] });
+      },
+    }));
+    await fireVaultSwap({ phase: 'pre-swap', previousVault: '/vault', nextVault: null, saveOutgoing: true });
+    await flushDirtyFlagSentinel();
+    await new Promise((r) => setTimeout(r, 400));
+
+    const kept = calls.find((c) => c.channel === 'recovery:keep-unsaved');
+    const items = (kept?.args[1] ?? []) as Array<{ relPath: string; text: string }>;
+    expect(items).toContainEqual({ relPath: '_filo__tags.json', text: `${tags}\n` });
+    // The write itself was cancelled with the swap, not fired into it.
+    expect(calls.some((c) => c.channel === 'tags-written')).toBe(false);
+    // Never cleared: every sentinel call writes it, none deletes it.
+    const sentinel = calls.filter((c) => typeof c.args[1] === 'string' && (c.args[1] as string).includes('.filo/.dirty'));
+    expect(sentinel.length).toBeGreaterThan(0);
+    expect(sentinel.map((c) => c.channel).filter((ch) => ch !== 'vault:write-file-text')).toEqual([]);
   });
 });

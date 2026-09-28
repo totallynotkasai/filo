@@ -55,7 +55,6 @@ import { looksTorn } from '../lib/notes/noteWriter';
 import { flushRawViews } from '../lib/notes/rawViews';
 import { askUnlessMoved, dropGraceChecks, settleGraceChecksNow } from '../lib/notes/renameGrace';
 import { unsavedNoteTexts } from '../lib/notes/unsavedNoteTexts';
-import { keepLeftBehind } from '../lib/notes/leftBehind';
 import { decideDiskChange } from '../lib/notes/noteDiskChange';
 import { backupThenRead } from '../lib/vault/keepLocalBackup';
 import {
@@ -898,9 +897,12 @@ export const noteStore = {
     return written === null ? 'unchanged' : 'written';
   },
 
-  /** Runs a rename or delete of `paths` with their queues held idle. */
+  /** Runs a rename or delete of `paths` (notes or folders) with every note queue under them held idle. */
   hold<T>(paths: string[], op: () => Promise<T>): Promise<T> {
-    for (const p of paths) serializeViews(vaultPath(p));
+    const roots = paths.map((p) => vaultPath(p));
+    for (const key of [...models.keys()]) {
+      if (roots.some((r) => key === r || key.startsWith(`${r}/`))) serializeViews(key);
+    }
     return writer.hold(paths, op);
   },
 
@@ -987,11 +989,9 @@ function unsavedNotePaths(): string[] {
 }
 registerUnsavedSource(unsavedNotePaths);
 
-onVaultSwap('pre-swap', 'noteStore', async (event) => {
-  // Leaving as saved means nothing was left; a change queued since is kept, not reset away.
-  if (event.saveOutgoing && event.previousVault && unsavedNotePaths().length > 0) {
-    await keepLeftBehind(event.previousVault, await noteStore.unsavedTexts());
-  }
+// A change queued after the save before leaving was copied by `leftBehind`
+// (vaultLeaveGuard) before this reset.
+onVaultSwap('pre-swap', 'noteStore', () => {
   writer.reset();
   models.clear();
   overlays.clear();

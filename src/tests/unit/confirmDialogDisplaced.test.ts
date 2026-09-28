@@ -1,75 +1,87 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { uiStore } from '@renderer/stores/ui.svelte';
+import { fireVaultSwap } from '@renderer/core/vaultLifecycle';
 
 /**
- * Audit5 2.4 (#6) — `openConfirm` must not strand a displaced decision.
+ * A second confirm waits for the first instead of answering it.
  *
  * Consumers (`tabStore.close` → confirmCloseAnyway, `handleFlushAndQuit`'s
- * save-failure confirm, `vaultExternalChanges.recreateDeletedFile`) await a
- * Promise that resolves ONLY through the dialog's onConfirm/onCancel. Pre-fix,
- * a second `openConfirm` reassigned `confirmDialog` outright, so the first
- * dialog's callbacks could never fire — its `await` hung forever (a wedged tab
- * close / quit). `openConfirm` now fires the outgoing config's onCancel before
- * installing the replacement, resolving the displaced awaiter to "cancel".
+ * save-failure confirm, the open-time recovery prompts) await a Promise that
+ * resolves ONLY through the dialog's onConfirm/onCancel. Overwriting a dialog
+ * would wedge its awaiter; cancelling it answers for the user, and for the
+ * "Incomplete rename detected" prompt Cancel is Discard. So a confirm asked
+ * for while another shows is queued and shows once that one is answered.
  */
-describe('Audit5 2.4 — openConfirm does not strand a displaced confirm', () => {
-  beforeEach(() => uiStore.closeConfirm());
-  afterEach(() => uiStore.closeConfirm());
+function clearConfirms(): void {
+  for (let i = 0; i < 20 && uiStore.confirmDialog; i++) uiStore.closeConfirm();
+}
 
-  it('fires the displaced dialog onCancel so its awaiter resolves (to cancel), then shows the new dialog', async () => {
-    // First confirm, awaited the way real consumers await it.
-    const first = new Promise<boolean>((resolve) => {
-      uiStore.openConfirm({
-        title: 'First',
-        body: 'first body',
-        onConfirm: () => resolve(true),
-        onCancel: () => resolve(false),
-      });
-    });
-
-    // A second confirm displaces it before the user answered the first.
-    let secondAnswered: boolean | null = null;
+function asked(title: string): { answer: Promise<boolean | 'unanswered'>; answered: () => boolean } {
+  let done = false;
+  const answer = new Promise<boolean>((resolve) => {
     uiStore.openConfirm({
-      title: 'Second',
-      body: 'second body',
-      onConfirm: () => {
-        secondAnswered = true;
-      },
-      onCancel: () => {
-        secondAnswered = false;
-      },
+      title,
+      body: `${title} body`,
+      onConfirm: () => { done = true; resolve(true); },
+      onCancel: () => { done = true; resolve(false); },
     });
+  });
+  return { answer, answered: () => done };
+}
 
-    // The displaced first promise resolved (to cancel) — no hang.
-    await expect(first).resolves.toBe(false);
+describe('openConfirm queues a confirm asked for while another shows', () => {
+  beforeEach(clearConfirms);
+  afterEach(clearConfirms);
 
-    // The live dialog is now the second one, intact and answerable.
+  it('leaves the first dialog unanswered and shows the second only once the first is answered', async () => {
+    const first = asked('First');
+    const second = asked('Second');
+
+    expect(first.answered()).toBe(false);
+    expect(uiStore.confirmDialog?.title).toBe('First');
+
+    // The dialog's Cancel button: close, then the callback.
+    const cfg = uiStore.confirmDialog!;
+    uiStore.closeConfirm();
+    cfg.onCancel?.();
+    await expect(first.answer).resolves.toBe(false);
+
     expect(uiStore.confirmDialog?.title).toBe('Second');
-    expect(secondAnswered).toBeNull();
-    uiStore.confirmDialog!.onConfirm(false);
-    expect(secondAnswered).toBe(true);
+    expect(second.answered()).toBe(false);
+    const next = uiStore.confirmDialog!;
+    uiStore.closeConfirm();
+    next.onConfirm(false);
+    await expect(second.answer).resolves.toBe(true);
+    expect(uiStore.confirmDialog).toBeNull();
   });
 
-  it('resolves a chain of displacements — each prior dialog is cancelled, only the last survives', async () => {
-    const first = new Promise<boolean>((resolve) => {
-      uiStore.openConfirm({ title: '1', body: 'b1', onConfirm: () => resolve(true), onCancel: () => resolve(false) });
-    });
-    const second = new Promise<boolean>((resolve) => {
-      uiStore.openConfirm({ title: '2', body: 'b2', onConfirm: () => resolve(true), onCancel: () => resolve(false) });
-    });
-    uiStore.openConfirm({ title: '3', body: 'b3', onConfirm: () => {}, onCancel: () => {} });
-
-    // Both earlier awaiters resolved (to cancel); neither hung.
-    await expect(first).resolves.toBe(false);
-    await expect(second).resolves.toBe(false);
-    expect(uiStore.confirmDialog?.title).toBe('3');
+  it('shows a chain of queued confirms in the order they were asked for', () => {
+    asked('1');
+    asked('2');
+    asked('3');
+    const seen: string[] = [];
+    while (uiStore.confirmDialog) {
+      seen.push(uiStore.confirmDialog.title);
+      uiStore.closeConfirm();
+    }
+    expect(seen).toEqual(['1', '2', '3']);
   });
 
-  it('a displaced dialog with no onCancel still installs the replacement cleanly', () => {
-    uiStore.openConfirm({ title: 'A', body: 'a', onConfirm: () => {} });
-    expect(() =>
-      uiStore.openConfirm({ title: 'B', body: 'b', onConfirm: () => {} }),
-    ).not.toThrow();
+  it('Esc (cancelTopLayer) cancels only the confirm on screen, and the next one shows', async () => {
+    const first = asked('A');
+    const second = asked('B');
+    expect(uiStore.cancelTopLayer()).toBe('confirm');
+    await expect(first.answer).resolves.toBe(false);
+    expect(second.answered()).toBe(false);
     expect(uiStore.confirmDialog?.title).toBe('B');
+  });
+
+  it('a vault swap cancels the confirm on screen and every queued one, so no awaiter hangs', async () => {
+    const first = asked('X');
+    const second = asked('Y');
+    await fireVaultSwap({ phase: 'pre-swap', previousVault: '/a', nextVault: '/b', saveOutgoing: true });
+    await expect(first.answer).resolves.toBe(false);
+    await expect(second.answer).resolves.toBe(false);
+    expect(uiStore.confirmDialog).toBeNull();
   });
 });

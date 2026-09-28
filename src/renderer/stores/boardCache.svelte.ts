@@ -638,6 +638,7 @@ export const boardCacheStore = {
       frames: [],
     };
 
+    const identity = captureVaultIdentity();
     try {
       const result = await invokeOk(
         'board:create',
@@ -646,6 +647,10 @@ export const boardCacheStore = {
         JSON.stringify(fileData, null, 2),
         place.folder || undefined,
       );
+      // The vault was let go while the file was created: the board belongs to
+      // that vault, where it is on disk and loads next time; registering it
+      // here would put it in the next vault's cache and project.
+      if (!isStillSameVault(identity)) return false;
 
       // The create is Filo's own write: its watcher echo is not an external
       // edit, and its stat is the first save's drift anchor. Unmarked, the echo

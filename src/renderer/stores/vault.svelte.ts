@@ -47,6 +47,7 @@ import {
   beginVaultGeneration,
   captureVaultIdentity,
   isStillSameVault,
+  retireVaultGeneration,
 } from '../lib/vault/vaultIdentity';
 import { isRenameInFlight } from '../lib/vault/renameInFlight';
 import { markBoardProvisionallyMissing } from './boardProvisionalMissing';
@@ -91,6 +92,7 @@ import { makeRootFolderSlice } from './vaultRootFolder';
 import { makeFolderOpsSlice } from './vaultFolderOps';
 import { makeExternalChangesSlice } from './vaultExternalChanges';
 import { saveBeforeLeaving, type LeaveOutcome } from './vaultLeaveGuard';
+import { enqueueRenameQueueWork, resetRenameQueue } from './vaultRenameQueue';
 
 /**
  * Vault store — owns the open vault's lifecycle (open/close/save), the
@@ -125,12 +127,6 @@ let manualOrder = $state<Record<string, string[]>>({});
 // instead of silently dropping a manual drag.
 const SIDEBAR_ORDER_KEY = 'config:.filo/sidebar-order.json';
 const SIDEBAR_ORDER_PATH = '.filo/sidebar-order.json';
-
-// External-rename serialisation queue. Each `vault:file-renamed` event appends
-// to this chain so concurrent OS-level renames (a `git mv` burst, sync batch)
-// propagate in arrival order — otherwise two renames touching the same
-// `.board.json` could interleave and write A's name with B's body.
-let renameQueue: Promise<unknown> = Promise.resolve();
 
 // Non-null while a vault swap is mid-flight (between `vault:close` and
 // `commitVaultCandidate`). `save()` awaits it before draining so a quit in that
@@ -539,7 +535,7 @@ async function revertToOutgoingVault(
     } catch {
       // Ignore — re-anchor proceeds regardless.
     }
-    renameQueue = Promise.resolve();
+    resetRenameQueue();
     const restored = await loadVaultCandidate(outgoingPath);
     commitVaultCandidate(restored, store);
     runPostCommitTasks(restored, store);
@@ -976,6 +972,9 @@ export const vaultStore = {
     }
     try {
       if (currentProject) {
+        // The outgoing vault is let go from here: work suspended before now
+        // reads as stale instead of resuming against half-reset stores.
+        retireVaultGeneration();
         // Fire the pre-swap lifecycle. Every store / scheduler / sentinel that holds vault-scoped state
         // subscribes via `onVaultSwap('pre-swap', ...)` at module load; the
         // event drains them in dependency order:
@@ -997,7 +996,7 @@ export const vaultStore = {
         // so it can't subscribe to it). Otherwise a stale watcher event queued
         // just before the swap keeps resolving against outgoing-vault state;
         // the new vault's first event runs on an empty chain.
-        renameQueue = Promise.resolve();
+        resetRenameQueue();
         // Release the main-side registry before init-config;
         // board.ipc.ts refuses to re-anchor while a different vault is active.
         try {
@@ -1066,13 +1065,14 @@ export const vaultStore = {
     const mySwapWindow = new Promise<void>((res) => { resolveSwapWindow = res; });
     swapInProgress = mySwapWindow;
     try {
+      retireVaultGeneration(); // as in openVault
       await fireVaultSwap({
         phase: 'pre-swap',
         previousVault: vaultPath || null,
         nextVault: null,
         saveOutgoing: leave === 'saved',
       });
-      renameQueue = Promise.resolve();
+      resetRenameQueue();
       try {
         await window.filo.invoke('vault:close');
       } catch (err) {
@@ -1204,6 +1204,8 @@ export const vaultStore = {
         }
         return false;
       }
+      // A read of the vault being (or already) left: not this vault's tree.
+      if (!isStillSameVault(identity) || root !== vaultPath) return false;
       const tree = envelope.tree;
       // The watcher fires `vault:tree-updated` after any vault write that
       // touches a directory entry, including suppressed self-writes that
@@ -1266,10 +1268,13 @@ export const vaultStore = {
     // would be evicted (pending writes cancelled, tabs closed — recent edits
     // lost). Skip; the next successful refresh re-runs the cleanup.
     if (!refreshed) return;
+    const captured = captureVaultIdentity();
     // A folder another program renamed (seen by any tree read since the last
-    // reconcile) is followed first, so nothing below finds it missing.
-    for (const move of vaultPath ? takeFolderMoves() : []) {
+    // reconcile, and still moved in the tree just read) is followed first, so
+    // nothing below finds it missing.
+    for (const move of vaultPath ? takeFolderMoves(fileTree, vaultPath) : []) {
       await this.handleExternalRename(move.oldFolder, move.newFolder);
+      if (!isStillSameVault(captured)) return;
     }
     // A pinned folder deleted by another program: clear the pin.
     if (vaultPath) {
@@ -1290,7 +1295,6 @@ export const vaultStore = {
       // confirm each candidate with a direct stat: the tree read can race a
       // concurrent `board:create` and make a LIVE board look missing. A probe
       // failure can't PROVE the file is gone — keep the board.
-      const captured = captureVaultIdentity();
       for (const [boardId, relPath] of Object.entries(boardStore.paths)) {
         if (!relPath) continue;
         if (!flatLower.has(relPath.toLowerCase())) {
@@ -1320,37 +1324,15 @@ export const vaultStore = {
   },
 
   /**
-   * Enqueues work on the rename queue. The watcher listeners route both
-   * `vault:tree-updated` and `vault:file-renamed` through it so they run in
-   * arrival order; tests use it to interleave the two deterministically.
-   *
-   * With `errorContext`, a rejection is reported via `reportError` so
-   * listener-driven tasks (which can't await) still surface failures. The
-   * returned promise rejects either way. A rejection doesn't break the chain —
-   * each task re-reads authoritative state at start.
+   * Enqueues work on the rename queue (`vaultRenameQueue.ts`). The watcher
+   * listeners route both `vault:tree-updated` and `vault:file-renamed` through
+   * it so they run in arrival order; tests use it to interleave the two.
    */
   enqueueRenameQueueWork<T>(
     task: () => Promise<T>,
     errorContext?: { label: string; message: string },
   ): Promise<T | undefined> {
-    // Capture the vault identity at ENQUEUE time. Resetting `renameQueue` on
-    // swap drops the chain head but doesn't cancel work already chained on the
-    // prior tail, so an outgoing-vault task could resume against the new
-    // vault's cache. Skip it if the vault swapped (resolving `undefined` keeps
-    // the chain alive without a spurious error toast).
-    const captured = captureVaultIdentity();
-    const guardedTask = (): Promise<T | undefined> => {
-      if (!isStillSameVault(captured)) return Promise.resolve(undefined);
-      return task();
-    };
-    const next = renameQueue.then(guardedTask, guardedTask);
-    renameQueue = next.catch(() => undefined);
-    if (errorContext) {
-      next.catch((err) => {
-        reportError(errorContext.label, err, errorContext.message);
-      });
-    }
-    return next;
+    return enqueueRenameQueueWork(task, errorContext);
   },
 
   listenForChanges(): () => void {

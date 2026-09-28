@@ -539,6 +539,42 @@ D20, D25, D26 and D35 are covered by the specs above; they were not driven by ha
 8. **D38.** Make `pendingVaultPaths` a count, or have `endWrite` leave the key when the scheduler still has a pending entry for the path.
 9. **D42.** Before replaying a noted folder move, check that the old path is absent and the new one present; drop it otherwise.
 
+#### Phase 6 status: done (2026-09-28)
+
+All nine items are fixed, each with a regression test. A script put every old behaviour back in turn (15 mutations: D13 ×3, D12 ×3, D33 ×3, one each for D43, D42, D32, D38, D23 and D36) and the matching test failed every time.
+
+| Item | Fix | Tests |
+|---|---|---|
+| D33 | Quit uses the leave's save (`saveUntilSettled` in `vaultLeaveGuard.ts`): it releases the focused field, saves, runs the component flushes, waits for queued reconciles, and saves again while `unsavedWork()` isn't empty. `handleFlushAndQuit` takes `freeze` (wired to `holdCloseDrainUntilSwap`; thawed only when the user stays) and `nothingUnsaved` (`isUnsavedWorkEmpty(unsavedWork())`). The quit goes ahead only when that check passes as well as the save. `noteWriter.flushAll` drains again (up to 5 passes) while a timer armed during its own await is set. | `vaultLifecycleQueueEdges.test.ts`: the quit asks when work is left though the save said ok, and thaws on Stay open; a quit that goes ahead stays frozen. `noteWriter.test.ts`: flushAll drains a change queued while it was out |
+| D12 | The leave waits for the rename queue (`settleRenameQueue`) before its last check. One `leftBehind` pre-swap handler (in `vaultLeaveGuard.ts`, after `tabs`, before the schedulers are cancelled) copies everything still unsaved when a vault is let go as saved (notes, boards, `.filo/` state) to `.filo/recovery/`, posts the rescue notice and sets the sentinel. The tracking reset then leaves the sentinel set when work is left. | `vaultLifecycleQueueEdges.test.ts`: a board write a reconcile queues during the save gets a second save, with no dialog. `leaveLastLine.test.ts`: a queued `tags.json` write is copied as `_filo__tags.json`, not fired into the swap, and the sentinel is never deleted |
+| D13 | `retireVaultGeneration()` (`vaultIdentity.ts`) runs in `openVault` / `closeVault` right before `fireVaultSwap`. Work captured before it reads as stale. The rename queue (now `stores/vaultRenameQueue.ts`) skips every task while the vault is retired or tearing down. | `vaultLifecycleQueueEdges.test.ts`: the retire window; a task queued before or during the leave doesn't run. `vaultSwapResets.test.ts`: retire comes before `fireVaultSwap`, reset after |
+| D43 | `refreshTree` returns false for a read that lands after the vault changed, without applying it. `refreshTreeAndCleanup` also stops after a folder-move replay that saw a swap. | `vaultLifecycleQueueEdges.test.ts`: a tree read that lands after the swap isn't applied |
+| D32 | `persistNewBoard` captures the identity before `board:create`. If the vault was let go meanwhile, it returns false; the file stays on disk for that vault. | `vaultLifecycleQueueEdges.test.ts` |
+| D36 | `openConfirm` queues a confirm asked for while another shows; it shows once the first is answered (`closeConfirm` shows the next). Nothing is answered for the user. Esc cancels only the dialog on screen. A vault swap still cancels the dialog on screen and every queued one, so no awaiter hangs, and D13's retire makes the vault-guarded recovery Cancels do nothing. | `confirmDialogDisplaced.test.ts` (rewritten): the queue, its order, Esc, the swap |
+| D23 | `noteWriter.hold` treats every path as a folder too. It flushes and enters the queue of every note under it that has a change queued or an operation running. Any other note under it waits in `onPath`, which checks the holds right before an operation starts. `noteStore.hold` serialises the views of the notes under it. `renameVaultPath` / `trashVaultPath` / `restoreTrashed` pass every path, not just `.md`. | `noteWriter.test.ts`: a note in the folder with nothing queued waits until the move is done; a note outside doesn't |
+| D38 | Each scheduler registers an armed-path check (`registerArmedPathSource`): a timer set or a fire parked for the path. `endWrite(success)` and `dropPendingPath` leave a path pending while one is armed. The scheduler takes an entry out of its armed set before it releases that entry's path (reschedule, reset, a parked fire). | `vaultLifecycleQueueEdges.test.ts`: a write that lands while a newer one is armed leaves the path pending until the newer one lands |
+| D42 | `takeFolderMoves(tree, root)` keeps only the moves that still hold in the tree just read. | `folderPins.test.ts`: moved back, moved on, still moved |
+
+**Verification.** `npm run ci:verify` passed: lint, `svelte-check`, `typecheck:main`, 680 test files (6453 passed, 5 skipped), the build, and 69/69 gates. `ci:test-typecheck` passes. Two tests were then tightened and re-run: the `leaveLastLine` sentinel assertion (it missed the delete's absolute path, which the mutation run caught) and one new test in `vaultLifecycleQueueEdges`.
+
+A real-app check (built app, Playwright `_electron`, two scratch vaults) confirmed:
+- **Quit right after typing:** the text was on disk, with no `.dirty` sentinel and no `-unsaved` folder. Reopening showed no recovery modal.
+- **Ctrl+O to another vault right after typing:** the text was on disk, and the vault had no sentinel or rescue folder. Switching back showed no recovery modal, no confirm and no toast.
+- **Another program moved `Folder` away and straight back:** nothing was replayed (no `Moved/`, tree unchanged), and an edit to `Folder/In.md` afterwards saved in place.
+- No renderer or console errors.
+
+**Deviations from the plan**
+
+- **D33:** the quit still also requires the save indicator not to be in `error` / `attention`: both checks, not `unsavedWork()` alone, because a reported-only failure isn't in `unsavedWork()`. The flushAll re-drain is capped at 5 passes.
+- **D12:** instead of a rescue in each board / config handler, one `leftBehind` handler copies everything through the existing `keepRescueCopies`. It replaces the note-only `keepLeftBehind`, and `lib/notes/leftBehind.ts` is deleted. The handler order is now `tabs` → `leftBehind` → `boardWriteScheduler` → `writeStateTracking`, so the schedulers are now cancelled after the tabs reset (before, registration order decided). The `writeStateTracking` reset clears the sentinel only when nothing is left.
+- **D13:** chose the generation bump, not the tearing-down flag. The rename queue checks both, plus the retire window, which lasts until the next commit (the flag drops when the pre-swap handlers end). The rename queue moved to `stores/vaultRenameQueue.ts` to make room in `vault.svelte.ts` (1541 lines, its ceiling). Its ceiling is now 1523.
+- **D36:** every confirm is queued, not only the startup prompts. The swap cancelling a recovery prompt is made harmless by D13's retire rather than by skipping it.
+- **D23:** the plan's prefix hold over `pending` and the models also got a check in `onPath`. That covers a note under the folder that had nothing queued when the hold began.
+- **D38:** took the plan's second option (leave the key while armed), applied to `dropPendingPath` too. The Task List notes box (`noteStore.writeBody`) dropped the path while the writer had it armed, which was the same bug.
+- **D42:** checked against the tree just read (the reconcile's source of truth), not a new stat.
+- **D43:** also stops the folder-move replay loop after a swap.
+- **Line budget:** `notes.svelte.ts` is still at 1000 lines (4 removed, 4 added). Phase 8's CH12 split is still needed before anything else goes in.
+
 ### Phase 7: smaller runtime fixes (D18, D19, D28, D41, R1)
 
 1. **D18.** The timer stores a wall-clock `endsAt` while running (schema: optional). The remaining time is computed from it on mount. Drop the 45 s coarse persist, or keep it only for display on another machine.
@@ -583,6 +619,7 @@ D20, D25, D26 and D35 are covered by the specs above; they were not driven by ha
 - **Phase 3:** done 2026-09-28 (status block under Phase 3).
 - **Phase 4:** done 2026-09-28 (status block under Phase 4).
 - **Phase 5:** done 2026-09-28 (status block under Phase 5).
-- Phases 6–8: not started.
+- **Phase 6:** done 2026-09-28 (status block under Phase 6).
+- Phases 7–8: not started.
 
 When a phase lands, add a "Phase N status" block (fix, tests, verification, deviations) as in Audit-22. When every phase is done, move this file to `docs/archive/`.

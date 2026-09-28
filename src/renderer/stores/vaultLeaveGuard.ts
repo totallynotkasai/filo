@@ -10,6 +10,7 @@
  * why; "Close anyway" / "Open anyway" first keeps a rescue copy of each in
  * `.filo/recovery/`, and asks once more for anything it couldn't copy.
  */
+import { tick } from 'svelte';
 import { uiStore } from './ui.svelte';
 import { describeUnsaved, keepRescueCopies } from './unsavedRescue';
 import { isUnsavedWorkEmpty, unsavedWork } from '../lib/boards/writeStateTracking';
@@ -18,6 +19,9 @@ import { reportError } from '../lib/utils/errorBus';
 import { flushAllComponents, releaseFocusedField } from '../lib/boards/componentFlush';
 import { holdCloseDrainUntilSwap } from '../lib/editor/closeDrainGate.svelte';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
+import { settleRenameQueue } from './vaultRenameQueue';
+import { onVaultSwap } from '../core/vaultLifecycle';
+import { markDirty } from '../lib/vault/dirtyFlagRecovery';
 
 /**
  * - `saved`: nothing was left unsaved; the vault can be let go cleanly.
@@ -43,12 +47,33 @@ async function goAhead(title: string, message: string, detail: string, anyway: s
   }
 }
 
-async function saveOnce(save: () => Promise<boolean>): Promise<void> {
+async function saveOnce(save: () => Promise<boolean>): Promise<boolean> {
   try {
-    await save();
+    return await save();
   } catch (err) {
     reportError('vault.leave', err, 'Saving before leaving the vault failed');
+    return false;
   }
+}
+
+/**
+ * The save that leaving and quitting share: take focus off a text field (a
+ * field that saves on blur hands its text over), save, let what views and the
+ * watcher's queued reconciles handed over meanwhile reach the writers, and
+ * save once more if anything is still unsaved. The caller freezes the editors
+ * first and decides from `unsavedWork()` afterwards. True when the last save
+ * reported no failure.
+ */
+export async function saveUntilSettled(save: () => Promise<boolean>): Promise<boolean> {
+  releaseFocusedField();
+  let ok = await saveOnce(save);
+  // Something handed over while the save ran (a view the freeze doesn't
+  // cover), or a reconcile that queued a write (a rebound board path, a tag
+  // move), gets one more save before anything is called unsaved.
+  await flushAllComponents();
+  await settleRenameQueue();
+  if (!isUnsavedWorkEmpty(unsavedWork())) ok = await saveOnce(save);
+  return ok;
 }
 
 export async function saveBeforeLeaving(save: () => Promise<boolean>, kind: 'close' | 'open'): Promise<LeaveOutcome> {
@@ -56,12 +81,7 @@ export async function saveBeforeLeaving(save: () => Promise<boolean>, kind: 'clo
   // no keystroke lands after the check below; staying thaws them.
   const release = holdCloseDrainUntilSwap();
   try {
-    releaseFocusedField();
-    await saveOnce(save);
-    // Something handed over while the save ran (a view the freeze doesn't
-    // cover) gets one more save before anything is called unsaved.
-    await flushAllComponents();
-    if (!isUnsavedWorkEmpty(unsavedWork())) await saveOnce(save);
+    await saveUntilSettled(save);
     const work = unsavedWork();
     if (isUnsavedWorkEmpty(work)) return 'saved';
 
@@ -87,6 +107,32 @@ export async function saveBeforeLeaving(save: () => Promise<boolean>, kind: 'clo
     throw err;
   }
 }
+
+/**
+ * The last line behind the save before leaving. A change still unsaved when a
+ * vault is let go as saved arrived after that save (a reconcile that queued a
+ * write, a view's teardown). The swap is about to cancel the board, config and
+ * misc writes and reset the note writer, so everything unsaved is copied to
+ * `.filo/recovery/` first and the crash sentinel is set again: reopening the
+ * vault offers it. Runs after the tabs reset (whose teardown can queue a
+ * change) and before the schedulers are cancelled; with work left, the
+ * tracking reset then keeps the sentinel instead of clearing it.
+ */
+onVaultSwap('pre-swap', 'leftBehind', async (event) => {
+  if (!event.saveOutgoing || !event.previousVault) return;
+  // Let the views the tabs reset unmounts run their teardown first.
+  await tick();
+  const work = unsavedWork();
+  if (isUnsavedWorkEmpty(work)) return;
+  const paths = [...work.failed, ...work.pending];
+  console.error('[vaultLeaveGuard] changes were queued after the save before leaving:', paths);
+  const rescue = await keepRescueCopies(work);
+  if (rescue.notKept.length > 0) {
+    reportError('vault.leftBehind', null, `Couldn't keep a copy of the unsaved changes to ${rescue.notKept.join(', ')}`);
+  }
+  postRescueNotice(rescue);
+  await markDirty(event.previousVault, paths);
+}, { runAfter: ['tabs'] });
 
 /**
  * Posted to outlive the swap: it says where the copies of the vault just left

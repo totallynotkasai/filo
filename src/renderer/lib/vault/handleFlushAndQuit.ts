@@ -47,6 +47,18 @@ export interface QuitFlushDeps {
   preservedTmpCount?: () => Promise<number>;
   /** Rescue copies before "Quit anyway". Production wires `keepRescueCopies`. */
   keepRescueCopies?: () => Promise<RescueResult>;
+  /**
+   * Freezes the editors for the whole quit, as leaving a vault does, so no
+   * keystroke lands after the check; returns the thaw, called only when the
+   * user stays. Production wires `holdCloseDrainUntilSwap`.
+   */
+  freeze?: () => () => void;
+  /**
+   * The same check leaving a vault makes: nothing pending, failed, in flight,
+   * unserialised or in an open raw view. Production wires
+   * `isUnsavedWorkEmpty(unsavedWork())`.
+   */
+  nothingUnsaved?: () => boolean;
 }
 
 /**
@@ -131,14 +143,21 @@ export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
   // no-ops; the first invocation drives the quit to a terminal signal.
   if (isDrainingForQuit) return;
   isDrainingForQuit = true;
+  const thaw = deps.freeze?.();
   try {
-    await drainAndQuit(deps);
+    // Staying (or anything that stops the quit) thaws the editors; a quit
+    // that goes ahead leaves them frozen until the window closes.
+    if (!(await drainAndQuit(deps))) thaw?.();
+  } catch (err) {
+    thaw?.();
+    throw err;
   } finally {
     isDrainingForQuit = false;
   }
 }
 
-async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
+/** True when the quit went ahead (`app:ready-to-quit` was sent). */
+async function drainAndQuit(deps: QuitFlushDeps): Promise<boolean> {
   // Beat a drain-in-progress signal BEFORE and DURING the flush. Main arms a
   // 5 s auto-destroy timer when it asks us to flush; a legitimately long drain
   // (large vault on OneDrive) would otherwise be destroyed mid-write. Each beat
@@ -152,13 +171,16 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
   for (;;) {
     const failed = await runDrain(deps, retrying);
     const state = deps.saveStateState();
-    if (!failed && state !== 'error' && state !== 'attention') {
+    // The save's own result can't see a change handed over after it ran, so
+    // the quit also asks what close asks: is anything at all left unsaved?
+    const nothingLeft = deps.nothingUnsaved ? deps.nothingUnsaved() : true;
+    if (!failed && nothingLeft && state !== 'error' && state !== 'attention') {
       // Let the queued markClean reach disk (bounded) before
       // main destroys us, or `.filo/.dirty` survives a clean quit → phantom
       // recovery next launch.
       await flushSentinelBounded(deps);
       deps.send('app:ready-to-quit');
-      return;
+      return true;
     }
     // Save failed (or the save-state store still carries an unresolved error
     // from an earlier debounced write). Block the quit until the user
@@ -189,7 +211,7 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
     if (choice === 'quit') {
       if (!(await keepRescueCopiesOrAsk(deps))) {
         deps.send('app:cancel-quit');
-        return;
+        return false;
       }
       // On "Quit anyway" the sentinel is (correctly) DIRTY: failed writes
       // enqueued a markDirty. Flush it (bounded) so the next launch's
@@ -197,10 +219,10 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<void> {
       // renderer's destroy.
       await flushSentinelBounded(deps);
       deps.send('app:ready-to-quit');
-    } else {
-      deps.send('app:cancel-quit');
+      return true;
     }
-    return;
+    deps.send('app:cancel-quit');
+    return false;
   }
 }
 

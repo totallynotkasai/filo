@@ -260,6 +260,50 @@ describe('transform and hold', () => {
     expect(order.slice(0, 2)).toEqual(['rename:start', 'rename:end']);
   });
 
+  it('a folder hold lands the queued writes of the notes inside first and keeps any new one waiting', async () => {
+    vault.writeExternally('Folder/In.md', '---\ntitle: In\n---\nBody\n');
+    vault.writeExternally('Folder/Idle.md', '---\ntitle: Idle\n---\nBody\n');
+    writer.queueDelta('Folder/In.md', { set: { before: 1 }, unset: [] });
+    const order: string[] = [];
+    await writer.hold(['Folder'], async () => {
+      order.push('move:start');
+      expect(vault.read('Folder/In.md')).toContain('before: 1');
+      // A note in the folder with nothing queued when the hold began.
+      writer.queueDelta('Folder/Idle.md', { set: { during: 1 }, unset: [] });
+      const late = writer.flush('Folder/Idle.md').then(() => order.push('late-write'));
+      await new Promise((r) => setTimeout(r, 30));
+      expect(vault.read('Folder/Idle.md')).not.toContain('during');
+      order.push('move:end');
+      void late;
+    });
+    await writer.flush('Folder/Idle.md');
+    expect(order).toEqual(['move:start', 'move:end', 'late-write']);
+    // A note outside the folder is not held.
+    let outsideDone = false;
+    await writer.hold(['Folder'], async () => {
+      writer.queueDelta('B.md', { set: { free: 1 }, unset: [] });
+      await writer.flush('B.md').then(() => { outsideDone = true; });
+      expect(outsideDone).toBe(true);
+    });
+  });
+
+  it('flushAll drains a change queued while it was out', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    vault.beforeWrite = async (rel) => {
+      if (rel === 'A.md') await held;
+    };
+    writer.queueDelta('A.md', { set: { first: 1 }, unset: [] });
+    const drained = writer.flushAll();
+    await new Promise((r) => setTimeout(r, 20));
+    // An editor serialises into B while A's write is out: the timer it arms
+    // is newer than anything the drain collected.
+    writer.queueDelta('B.md', { set: { late: 1 }, unset: [] });
+    release();
+    await drained;
+    expect(vault.read('B.md')).toContain('late: 1');
+  });
+
   it('renamePath moves a queued change to the new name', async () => {
     writer.queueDelta('A.md', { set: { k: 1 }, unset: [] });
     vault.writeExternally('Moved.md', vault.read('A.md') ?? '');

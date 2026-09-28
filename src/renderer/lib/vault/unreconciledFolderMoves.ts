@@ -16,6 +16,7 @@ import type { FileTreeNode } from '../../../shared/types';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 import { isRecentSelfWrite } from '../boards/writeStateTracking';
 import { folderMovesBetween } from './treeFolderMoves';
+import { directoryExistsInTree } from './vaultTreeSort';
 
 interface FolderMove {
   oldFolder: string;
@@ -32,11 +33,17 @@ export function noteFolderMoves(before: FileTreeNode[], after: FileTreeNode[], r
   }
 }
 
-/** Every noted move, oldest first; the list is emptied. */
-export function takeFolderMoves(): FolderMove[] {
+/**
+ * Every noted move that still holds in `tree` (the old folder gone, the new
+ * one there), oldest first; the list is emptied. A move another read noted can
+ * be undone or carried on before the reconcile runs, and replaying it then
+ * would point tiles and pins at a folder that isn't there.
+ */
+export function takeFolderMoves(tree: FileTreeNode[], rootAbs: string): FolderMove[] {
   const moves = unreconciled;
   unreconciled = [];
-  return moves;
+  const inTree = (rel: string): boolean => directoryExistsInTree(tree, `${rootAbs.replace(/[\\/]+$/, '')}/${rel}`);
+  return moves.filter((m) => !inTree(m.oldFolder) && inTree(m.newFolder));
 }
 
 // A move noted in one vault never names folders of the next.

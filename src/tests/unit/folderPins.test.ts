@@ -105,13 +105,24 @@ describe('folderMovesBetween (a folder renamed by another program, seen as two t
 
 describe('folder moves noted by any tree read', () => {
   it('keeps a move until the reconcile takes it, and skips a move Filo made itself', () => {
-    takeFolderMoves();
+    takeFolderMoves([], ROOT);
     noteFolderMoves([dir('Old', [file('Old/a.md')])], [dir('New', [file('New/a.md')])], ROOT);
     markRecentSelfWrite('Mine');
     markRecentSelfWrite('Renamed');
     noteFolderMoves([dir('Mine', [file('Mine/b.md')])], [dir('Renamed', [file('Renamed/b.md')])], ROOT);
-    expect(takeFolderMoves()).toEqual([{ oldFolder: 'Old', newFolder: 'New' }]);
-    expect(takeFolderMoves()).toEqual([]);
+    const now = [dir('New', [file('New/a.md')]), dir('Renamed', [file('Renamed/b.md')])];
+    expect(takeFolderMoves(now, ROOT)).toEqual([{ oldFolder: 'Old', newFolder: 'New' }]);
+    expect(takeFolderMoves(now, ROOT)).toEqual([]);
+  });
+
+  it('drops a noted move that no longer holds when the reconcile takes it', () => {
+    takeFolderMoves([], ROOT);
+    noteFolderMoves([dir('Old', [file('Old/a.md')])], [dir('New', [file('New/a.md')])], ROOT);
+    noteFolderMoves([dir('Left', [file('Left/b.md')])], [dir('Right', [file('Right/b.md')])], ROOT);
+    noteFolderMoves([dir('Gone', [file('Gone/c.md')])], [dir('Went', [file('Went/c.md')])], ROOT);
+    // Old was moved back; Right moved on elsewhere; Gone → Went still holds.
+    const now = [dir('Old', [file('Old/a.md')]), dir('Elsewhere', [file('Elsewhere/b.md')]), dir('Went', [file('Went/c.md')])];
+    expect(takeFolderMoves(now, ROOT)).toEqual([{ oldFolder: 'Gone', newFolder: 'Went' }]);
   });
 });
 

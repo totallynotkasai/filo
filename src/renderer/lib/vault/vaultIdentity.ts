@@ -40,6 +40,7 @@ export interface VaultIdentity {
 
 let currentPath = '';
 let generation = 0;
+let retired = false;
 
 /**
  * Records a new active vault and bumps the generation token. Call this at
@@ -49,6 +50,25 @@ let generation = 0;
 export function beginVaultGeneration(path: string): void {
   currentPath = path;
   generation += 1;
+  retired = false;
+}
+
+/**
+ * Ends the outgoing vault's generation as soon as it is let go, before the
+ * swap's resets run. Work that suspended on an await before this point (a
+ * watcher reconcile, a rename cascade) then reads as stale and stops, instead
+ * of resuming against stores that are half reset. The path is kept: the
+ * resets still act on the outgoing vault. The next `beginVaultGeneration`
+ * (the new vault, or `''` on close) ends the window.
+ */
+export function retireVaultGeneration(): void {
+  generation += 1;
+  retired = true;
+}
+
+/** True from `retireVaultGeneration` until the next vault (or none) is active. */
+export function isVaultRetired(): boolean {
+  return retired;
 }
 
 /**
@@ -81,4 +101,5 @@ export function currentVaultGeneration(): number {
 export function __resetVaultIdentityForTests(): void {
   currentPath = '';
   generation = 0;
+  retired = false;
 }

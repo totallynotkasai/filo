@@ -14,7 +14,9 @@
   import { retryAllFailedWrites } from './lib/boards/writeSchedulerFailures';
   import { listenForSyncConflicts } from './lib/vault/syncConflictNotices';
   import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
-  import { releaseFocusedField } from './lib/boards/componentFlush';
+  import { saveUntilSettled } from './stores/vaultLeaveGuard';
+  import { holdCloseDrainUntilSwap } from './lib/editor/closeDrainGate.svelte';
+  import { isUnsavedWorkEmpty, unsavedWork } from './lib/boards/writeStateTracking';
   import { describeUnsaved, keepRescueCopies, preservedTmpCount } from './stores/unsavedRescue';
   import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
@@ -139,11 +141,12 @@
   window.filo.on('app:flush-and-quit', () => {
     void handleFlushAndQuit({
       saveStateState: () => saveStateStore.state,
-      // A field that saves on blur hands its text over first (see releaseFocusedField).
-      save: () => {
-        releaseFocusedField();
-        return vaultStore.save();
-      },
+      // The same save, freeze and check as closing the vault: a field that
+      // saves on blur hands its text over, and whatever a view or a queued
+      // reconcile hands over meanwhile gets a second save.
+      save: () => saveUntilSettled(() => vaultStore.save()),
+      freeze: () => holdCloseDrainUntilSwap(),
+      nothingUnsaved: () => isUnsavedWorkEmpty(unsavedWork()),
       send: (channel) => window.filo.send(channel),
       reportError,
       // Drain the dirty-flag sentinel mutex so the markClean queued by save()

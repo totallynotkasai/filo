@@ -174,8 +174,17 @@ describe('Vault-swap reset chain — lifecycle contract', () => {
     // ...)` returns. Without this, a stale watcher event enqueued just
     // before the swap continues resolving against the now-decommissioned
     // vaultStore state.
-    it('renameQueue = Promise.resolve() appears in the openVault body', () => {
-      expect(OPEN_VAULT_BODY).toMatch(/renameQueue\s*=\s*Promise\.resolve\(\)/);
+    it('resetRenameQueue() follows fireVaultSwap in the openVault body', () => {
+      const fire = OPEN_VAULT_BODY.indexOf('fireVaultSwap(');
+      const reset = OPEN_VAULT_BODY.indexOf('resetRenameQueue()');
+      expect(fire).toBeGreaterThan(-1);
+      expect(reset).toBeGreaterThan(fire);
+    });
+
+    it('the outgoing generation is retired before fireVaultSwap in the openVault body', () => {
+      const retire = OPEN_VAULT_BODY.indexOf('retireVaultGeneration()');
+      expect(retire).toBeGreaterThan(-1);
+      expect(retire).toBeLessThan(OPEN_VAULT_BODY.indexOf('fireVaultSwap('));
     });
   });
 

@@ -29,6 +29,7 @@ import {
   clearFailedPathAfterLateSuccess,
   isPathPending,
   mintWriteGeneration,
+  registerArmedPathSource,
 } from './writeStateTracking';
 import { reportError } from '../utils/errorBus';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
@@ -101,6 +102,17 @@ export function createScheduler<TArgs>(
     for (const set of parked.values()) if (set.size > 0) return true;
     return false;
   };
+  // A write of the path armed here keeps it pending when an earlier one lands
+  // (see `registerArmedPathSource`).
+  registerArmedPathSource((path) => {
+    for (const entry of pending.values()) {
+      if (entry.schedulePath && vaultPath(entry.schedulePath) === path) return true;
+    }
+    for (const set of parked.values()) {
+      for (const p of set) if (!p.cancelled && p.path && vaultPath(p.path) === path) return true;
+    }
+    return false;
+  });
   // Failure attribution and retention of failed fires' args live in
   // writeSchedulerFailures.ts.
   const ledger = createFailureLedger<TArgs>();
@@ -364,6 +376,9 @@ export function createScheduler<TArgs>(
 
     if (existing) {
       clearTimeout(existing.timer);
+      // Out of the armed set before its old path is released below; the new
+      // entry is set at the end.
+      pending.delete(key);
       const prevSentinel: SchedulerSentinelInfo = {
         vaultRoot: existing.scheduleVaultRoot,
         path: existing.schedulePath,
@@ -456,6 +471,9 @@ export function createScheduler<TArgs>(
             // endWrite(true); firing now would resurrect a write against the
             // deleted target or raise a false "couldn't save".
             if (parkedEntry.cancelled) return;
+            // No longer armed once it fires (the in-flight entry registers
+            // synchronously inside), so its hand-off can release the path.
+            removeParked(key, parkedEntry);
             fireFromTimer();
           } finally {
             removeParked(key, parkedEntry);
@@ -782,7 +800,15 @@ export function createScheduler<TArgs>(
   }
 
   function reset(): void {
-    for (const entry of pending.values()) {
+    const armed = [...pending.values()];
+    // Nothing is armed any more, so the drops below release the paths. Parked
+    // references go too, so new flushes don't see them. The generation bump
+    // below is what neutralises a dangling parked closure: it bails after its
+    // drain instead of firing or marking failed against the new vault (the
+    // missing-source branch never reaches `fireWrite`'s `trackerIsCurrent` guard).
+    pending.clear();
+    parked.clear();
+    for (const entry of armed) {
       clearTimeout(entry.timer);
       // Pending-path mode owns its entries in the shared ledger; drop
       // them so a reset() outside the vault-swap path (e.g. per-test cleanup,
@@ -793,13 +819,7 @@ export function createScheduler<TArgs>(
         dropPendingPath(entry.scheduleVaultRoot, entry.schedulePath);
       }
     }
-    pending.clear();
     inFlight.clear();
-    // Drop parked-fire references so new flushes don't see them. The generation
-    // bump below is what neutralises a dangling parked closure: it bails after
-    // its drain instead of firing or marking failed against the new vault (the
-    // missing-source branch never reaches `fireWrite`'s `trackerIsCurrent` guard).
-    parked.clear();
     schedulerGeneration += 1;
     ledger.clear(); // attribution ids, per-key records AND retained re-fires (outgoing vault)
     // Drop per-path generations so a stale late-success continuation from the

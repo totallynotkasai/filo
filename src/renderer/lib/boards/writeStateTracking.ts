@@ -381,10 +381,12 @@ export function noteAdditionalPendingPath(vaultRoot: string | undefined, path: s
  * or moving it to `failedVaultPaths`. Used when the path of a still-pending
  * write changes mid-debounce (rename) — the old path is no longer the
  * write's target so it must leave `pendingVaultPaths` before the matching
- * `endWrite` fires against the new path.
+ * `endWrite` fires against the new path. A path with another write armed
+ * stays pending.
  */
 export function dropPendingPath(vaultRoot: string | undefined, path: string): void {
-  if (!pendingVaultPaths.delete(vaultPath(path))) return;
+  const key = vaultPath(path);
+  if (isArmed(key) || !pendingVaultPaths.delete(key)) return;
   refreshSentinel(vaultRoot);
   // Keep the save indicator in step as the pending set drains.
   notifyWriteState();
@@ -457,6 +459,29 @@ const unsavedSources: Array<() => string[]> = [];
 /** Registers a source consulted by {@link unsavedWork}. Register once, at module load. */
 export function registerUnsavedSource(source: () => string[]): void {
   unsavedSources.push(source);
+}
+
+/**
+ * Each write scheduler's answer to "is a write of this path armed (its timer
+ * set, or parked behind a write in flight) and not yet fired?". A write that
+ * finishes while a newer one of the same path is armed must leave the path
+ * pending: the newer change isn't on disk, and clearing the mark would let the
+ * crash sentinel be cleared and the external-change check treat the file as
+ * saved.
+ */
+const armedSources: Array<(key: VaultPath) => boolean> = [];
+
+/** Registers a scheduler's armed-path check. Returns the unregister. */
+export function registerArmedPathSource(source: (key: VaultPath) => boolean): () => void {
+  armedSources.push(source);
+  return () => {
+    const i = armedSources.indexOf(source);
+    if (i >= 0) armedSources.splice(i, 1);
+  };
+}
+
+function isArmed(key: VaultPath): boolean {
+  return armedSources.some((source) => source(key));
 }
 
 /** What {@link unsavedWork} reports. Paths are case-folded vault paths. */
@@ -625,7 +650,9 @@ export function endWrite(
   if (pendingPath) {
     const key = track(pendingPath);
     if (success) {
-      pendingVaultPaths.delete(key);
+      // A newer write of the path armed while this one was out keeps it
+      // pending: the file isn't saved yet, and the sentinel must still say so.
+      if (!isArmed(key)) pendingVaultPaths.delete(key);
       // Only clear the failed mark when this write is still the newest for the
       // path (a no-generation caller clears unconditionally), so a stale
       // timed-out write landing late leaves a newer writer's failure intact.

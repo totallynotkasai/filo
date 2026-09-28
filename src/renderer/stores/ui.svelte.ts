@@ -72,6 +72,13 @@ export interface ConfirmDialogConfig {
 }
 
 let confirmDialog = $state<ConfirmDialogConfig | null>(null);
+/** Confirms asked for while another was showing; each shows once the one before is answered. */
+let queuedConfirms: ConfirmDialogConfig[] = [];
+
+/** Shows the next queued confirm, if any (the current one was answered). */
+function showNextConfirm(): void {
+  confirmDialog = queuedConfirms.shift() ?? null;
+}
 
 // ── Sidebar pending-rename signal ──
 //
@@ -288,35 +295,28 @@ export const uiStore = {
   // Confirm dialog
   get confirmDialog() { return confirmDialog; },
   openConfirm(config: ConfirmDialogConfig) {
-    // A second openConfirm must not silently overwrite a pending one: the
-    // displaced dialog's onConfirm/onCancel is the ONLY way its awaiter
-    // resolves (tab close, quit save-failure confirm, a note recreated after an external delete), so
-    // overwriting would wedge that flow forever. Fire the outgoing onCancel
-    // first — the safe, non-destructive resolution.
-    //
-    // (No same-config guard: `$state` proxies `config`, so an `=== config`
-    // check can't re-identify it, and no call site re-opens a pending config.)
+    // A second confirm waits for the first to be answered. Neither may be
+    // answered for the user: each dialog's onConfirm/onCancel is the only way
+    // its awaiter resolves, and a Cancel is not always the harmless answer
+    // (the open-time "Incomplete rename" prompt's Cancel is Discard).
     if (confirmDialog) {
-      const displaced = confirmDialog;
-      confirmDialog = null;
-      try { displaced.onCancel?.(); } catch (err) {
-        console.error('[uiStore] displaced confirm onCancel failed:', err);
-      }
+      queuedConfirms.push(config);
+      return;
     }
     confirmDialog = config;
   },
   /**
    * `openConfirm` as a promise: resolves `true` on Confirm, `false` on Cancel
-   * (including Esc, or being displaced by another confirm). The in-app
-   * replacement for the native `confirm()`, which blocks the renderer event
-   * loop — and every debounced write timer with it.
+   * (including Esc). The in-app replacement for the native `confirm()`, which
+   * blocks the renderer event loop — and every debounced write timer with it.
    */
   confirmAsync(config: Omit<ConfirmDialogConfig, 'onConfirm' | 'onCancel' | 'extraOption' | 'secondaryAction'>): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       this.openConfirm({ ...config, onConfirm: () => resolve(true), onCancel: () => resolve(false) });
     });
   },
-  closeConfirm() { confirmDialog = null; },
+  /** Closes the confirm on screen (its answer was taken); the next queued one shows. */
+  closeConfirm() { showNextConfirm(); },
 
   // Sidebar pending-rename signal.
   get pendingSidebarRenameId() { return pendingSidebarRenameId; },
@@ -357,7 +357,7 @@ export const uiStore = {
   cancelTopLayer(): 'confirm' | 'modal' | 'context-menu' | null {
     if (confirmDialog) {
       const cfg = confirmDialog;
-      confirmDialog = null;
+      showNextConfirm();
       cfg.onCancel?.();
       return 'confirm';
     }
@@ -552,10 +552,11 @@ onVaultSwap('pre-swap', 'ui', () => {
   // onDismiss must not block the rest of the swap.
   for (const toast of toasts) {
     if (toast.survivesSwap) continue;
-    // Skip `acknowledgeOnly` toasts (recovery breadcrumbs). Pre-swap runs
-    // BEFORE the generation bump, so their `isStillSameVault` guard still
-    // passes and the destructive `clearQuitFailureBreadcrumb` / `markClean`
+    // Skip `acknowledgeOnly` toasts (recovery breadcrumbs): dismissing one
+    // runs the destructive `clearQuitFailureBreadcrumb` / `markClean`, which
     // would delete the outgoing vault's pointer to preserved unsaved bytes.
+    // (Their `isStillSameVault` guard also fails by now, since the outgoing
+    // generation is retired before pre-swap; this doesn't rely on it.)
     if (toast.onDismiss && !toast.acknowledgeOnly) {
       try { toast.onDismiss(); } catch (err) {
         console.error('[Toast] onDismiss failed during vault swap:', err);
@@ -566,14 +567,19 @@ onVaultSwap('pre-swap', 'ui', () => {
   contextMenu = { visible: false, x: 0, y: 0, items: [] };
   activeModal = null;
   relinkContext = null;
-  // Fire the confirm dialog's onCancel before clearing it: a pending
-  // `confirmCloseAnyway` (tabStore.close / closeOthers) resolves ONLY via
-  // onConfirm/onCancel, so nulling it directly would suspend the close forever
-  // and strand a phantom tab. Mirrors cancelTopLayer's confirm branch.
-  if (confirmDialog) {
-    const cfg = confirmDialog;
-    confirmDialog = null;
-    cfg.onCancel?.();
+  // Fire each confirm's onCancel (the one showing and every queued one) before
+  // clearing them: a pending `confirmCloseAnyway` (tabStore.close /
+  // closeOthers) resolves ONLY via onConfirm/onCancel, so nulling it directly
+  // would suspend the close forever and strand a phantom tab. The outgoing
+  // vault's generation is already retired, so a vault-guarded Cancel (the
+  // open-time recovery prompts) does nothing to either vault.
+  const confirms = [...(confirmDialog ? [confirmDialog] : []), ...queuedConfirms];
+  confirmDialog = null;
+  queuedConfirms = [];
+  for (const cfg of confirms) {
+    try { cfg.onCancel?.(); } catch (err) {
+      console.error('[uiStore] confirm onCancel failed during vault swap:', err);
+    }
   }
   pendingSidebarRenameId = null;
 });

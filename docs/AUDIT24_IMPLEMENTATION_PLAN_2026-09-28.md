@@ -386,6 +386,42 @@ In `notePrompts.ts` `promptConflict` (L60-79), `finally → releaseDecision` rem
 
 **Test.** Unit: a `.txt` change event with File tiles pointing at it produces no missing prompt.
 
+### Phase 4 outcome
+
+All eight items are fixed. The regression tests are:
+- the characterisation spec in `syncedVault` (A24-18);
+- the new unit file `noteDiskChangeEdges` (A24-19 to A24-24, 8 tests);
+- a new case in `watcherOwnWriteBytes` (the main-process half of A24-20);
+- two new cases in `vaultExternalChanges` (A24-25).
+
+Each new test was run against the pre-fix code and failed there. The test helper `memoryVault` gained `failNextRead` and `duringRead` (a read held open after it has taken the bytes). No gate was added: none of the eight fixes creates a static invariant that a source scan could check.
+
+**Deviations from the plan**
+
+- **Structure.** `onDiskChanged` moved out of `notes.svelte.ts` into the new `stores/noteDiskChanges.ts` (`createDiskChangeHandler`). `notes.svelte.ts` was at 965 lines, and this phase's additions would have taken it past the 1000-line gate. The store keeps `noteStore.onDiskChanged` as a one-line delegate.
+- **A24-18.**
+  - `recovery:keep-unsaved` had no purpose argument, so it gained an optional third one, `'keep'`, which names the folder `<ts>-keep/` instead of `<ts>-unsaved/`. Neither kind is pruned.
+  - The copy's text is taken from the model *before* the adoption, but written just after it. The adoption stays synchronous with the decision, so a second disk change can't slip in between. The text is already in memory, so nothing is lost by writing it a moment later.
+  - The toast has its own dedupe key (`reload-shrank:`). With the conflict key, the next clean reload of the note would have dismissed it.
+  - If the copy can't be written, the toast says so and offers no **Show in folder**.
+- **A24-19.** The retries share the torn-read schedule and attempt counter (`DISK_RETRY_MS`, 500 / 1500 / 3000 ms). After the last one the failure is logged with `console.warn`.
+- **A24-20.**
+  - Main clears the whole write window for the path, not only `ownBytes`. An empty `ownBytes` list means "drop every event while the window is open", so clearing only the list would have hidden *more*.
+  - Main clears it only when a probe shows other bytes. It does not clear it when the file is seen missing, since that is not a version of the file.
+  - The renderer forgets its last write on every `replace`, `take-frontmatter` and `conflict` decision.
+- **A24-21.** The "write generation" is a per-path count of writes started (`writer.writeCount`). The re-read happens at once, with no wait. If a write is still in flight at the second read, its old bytes still match the base, so they are ignored.
+- **A24-22.** `fileGone` is a plain (non-reactive) field. `stillHeld` also accepts `status === 'missing'`, which `holdBodyOfMissing` (Phase 3) uses.
+- **A24-23.**
+  - In the writer, a body on disk that equals the pending one is not drift. The write then skips unchanged bytes, and `onWritten` clears the unsaved flag and moves the base.
+  - In the watcher, a new decision input, `diskHasLocalBody`, maps to `replace`, which also drops the matching pending body.
+- **A24-24.**
+  - The release check reuses the decision's own `stillHeld`.
+  - Keep mine on a vanished file raises the existing write-target-missing prompt (**Save as new file** / **Discard change**). It also returns the note to `ready` and sets `fileGone`, so the note isn't left in `conflict` after a Save as new file.
+- **A24-25.**
+  - The plan's "better" option was taken: non-Markdown `document` events go to the attachment reconciler, which checks the file on disk after its grace window. Rename correlation in main is unchanged.
+  - A note model loaded for such a path still gets `onDiskChanged`.
+  - Not covered: a Markdown note under a hidden folder (`.stversions/`), which the index also skips, still reads as deleted. That only matters if a tile points into a sync client's archive, which the sidebar never shows.
+
 ---
 
 ## Phase 5: Config files, misc writers and board lifecycle
@@ -529,7 +565,7 @@ Wire the `config` reconciler for these files so an outside change re-reads them 
 | 1 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 1"` |
 | 2 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 2"` |
 | 3 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 3"` |
-| 4 | Not started | |
+| 4 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 4"` |
 | 5 | Not started | |
 | 6 | Not started | |
 | 7 | Not started | |

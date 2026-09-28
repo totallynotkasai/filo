@@ -318,6 +318,15 @@ export interface NoteWriter {
   renamePath(oldRel: string, newRel: string): void;
   /** True when `hash` is the last write we made to `path`, in the last few seconds. */
   isOwnWrite(path: string, hash: string): boolean;
+  /**
+   * Forgets our last write to `path`: another program's version was taken
+   * since, so those bytes turning up again are that program's doing.
+   */
+  forgetOwnWrite(path: string): void;
+  /** Counts the writes started to `path`, so a read can tell one began while it was out. */
+  writeCount(path: string): number;
+  /** The body waiting to be written, if any. */
+  pendingBody(path: string): string | undefined;
   /** Drops every queue and timer (vault swap). */
   reset(): void;
 }
@@ -327,9 +336,11 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
   const chains = new Map<VaultPath, Promise<void>>();
   /** The last write we made to each note (only the latest is an echo; see isOwnWrite). */
   const ownWrites = new Map<VaultPath, { hash: string; until: number }>();
+  const writesStarted = new Map<VaultPath, number>();
 
   function rememberOwnWrite(path: VaultPath, hash: string): void {
     ownWrites.set(path, { hash, until: Date.now() + OWN_WRITE_TTL_MS });
+    writesStarted.set(path, (writesStarted.get(path) ?? 0) + 1);
   }
 
   /** Paths held by `hold`, each covering the notes under it too (a folder). */
@@ -495,10 +506,11 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       let heldBody = false;
       // Without a base the body was built on no known version of the file (it
       // was missing, and is back: a sync download, a restore), so any other
-      // body there is someone else's.
-      const drifted = body !== undefined && (base
-        ? !sameBody(fresh.text.body, snapshotBody(base))
-        : !sameBody(fresh.text.body, body.markdown));
+      // body there is someone else's. A body on disk that already says what
+      // ours says (this very edit, synced back) loses nothing: no conflict.
+      const drifted = body !== undefined
+        && !sameBody(fresh.text.body, body.markdown)
+        && (!base || !sameBody(fresh.text.body, snapshotBody(base)));
       if (body && drifted) {
         // Someone else changed the body since this one was built on it.
         host.onBodyConflict(path, relPath, fresh);
@@ -875,6 +887,11 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
           ownWrites.delete(from);
           ownWrites.set(to, own);
         }
+        const started = writesStarted.get(from);
+        if (started !== undefined) {
+          writesStarted.delete(from);
+          writesStarted.set(to, started);
+        }
       }
     },
 
@@ -886,11 +903,24 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
       return latest !== undefined && latest.hash === hash && latest.until > Date.now();
     },
 
+    forgetOwnWrite(path) {
+      ownWrites.delete(vaultPath(path));
+    },
+
+    writeCount(path) {
+      return writesStarted.get(vaultPath(path)) ?? 0;
+    },
+
+    pendingBody(path) {
+      return pending.get(vaultPath(path))?.body?.markdown;
+    },
+
     reset() {
       scheduler.reset();
       pending.clear();
       chains.clear();
       ownWrites.clear();
+      writesStarted.clear();
     },
   };
 }

@@ -263,9 +263,10 @@ export interface IpcChannelMap {
     args: [vaultRoot: string, relPath: string, purpose?: 'keep' | 'load-failure'];
     result: IpcOk<{ path: string }>;
   };
-  // Rescue copies of unsaved work (close / quit anyway). `dir` is vault-relative.
+  // Rescue copies of unsaved work (close / quit anyway), or with `keep` a
+  // version the note just replaced (`<ts>-keep/`). `dir` is vault-relative.
   'recovery:keep-unsaved': {
-    args: [vaultRoot: string, items: Array<{ relPath: string; text: string }>];
+    args: [vaultRoot: string, items: Array<{ relPath: string; text: string }>, purpose?: 'keep'];
     result: IpcOk<{ dir: string; kept: string[]; failed: string[] }>;
   };
   'recovery:preserved-tmp': {

@@ -50,6 +50,11 @@ export class NoteModel {
   diskRevision = 0;
   /** True while an edited body hasn't reached disk. */
   hasUnsavedBody = $state(false);
+  /**
+   * The file was found gone. A note with an unsaved body keeps its status (the
+   * editor stays usable while the user decides), so this says what status can't.
+   */
+  fileGone = false;
   /** The view typing in the note (D7). */
   editorOwner = $state<ViewId | null>(null);
   /** The body can't round-trip through the editor, so it isn't written. */
@@ -112,6 +117,11 @@ export interface NotePromptHandlers {
    * set when a body is among it (it can be saved as a new file).
    */
   writeTargetMissing(relPath: string, model: NoteModel | undefined): void;
-  reloadShrank(model: NoteModel, priorBody: string): void;
+  /**
+   * A clean note took a much shorter version from disk. `priorText` is the
+   * whole note as it was (its frontmatter on disk over `priorBody`), for the
+   * copy kept in `.filo/recovery/`.
+   */
+  reloadShrank(model: NoteModel, priorBody: string, priorText: string): void;
   dismiss(relPath: string): void;
 }

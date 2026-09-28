@@ -5,10 +5,11 @@
  *
  * A moved attachment of any kind keeps its tags; the sync client's
  * `.stversions/` archive never shows up in the vault's tags.
+ * A note another program cuts short keeps a copy of its longer version.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { startApp, stopApp, waitFor, quiesce } from './harness/app';
-import { openTagsBrowser, tagsBrowserRows, errorToasts } from './harness/actions';
+import { startApp, stopApp, waitFor, quiesce, recoveryCopies } from './harness/app';
+import { openTagsBrowser, tagsBrowserRows, errorToasts, openNoteFromSidebar, toastTexts, toastActions } from './harness/actions';
 
 afterEach(async () => {
   await stopApp();
@@ -20,6 +21,22 @@ function fileTagKeys(read: (rel: string) => string): string[] {
   const parsed = JSON.parse(read('.filo/tags.json')) as { fileTags: Record<string, string[]> };
   return Object.keys(parsed.fileTags).map((k) => k.toLowerCase()).sort();
 }
+
+describe('a note truncated by another program', () => {
+  it('keeps a copy of the longer version in .filo/recovery and offers it back', async () => {
+    const long = `---\ntitle: Journal\n---\n${'A long entry that a sync client cuts short. '.repeat(20)}\n`;
+    const app = await startApp({ 'Journal.md': long });
+    await openNoteFromSidebar(app, 'Journal.md');
+    await quiesce();
+
+    app.writeExternally('Journal.md', '---\ntitle: Journal\n---\nA long\n');
+
+    await waitFor(() => toastTexts().some((t) => t.includes('much shorter')), 'the reload-shrank notice');
+    const kept = [...recoveryCopies(app)].filter(([path]) => /\.filo\/recovery\/[^/]+-keep\//.test(path));
+    expect(kept.map(([, text]) => text)).toEqual([long]);
+    expect(toastActions()).toEqual(expect.arrayContaining(['Undo reload', 'Show in folder']));
+  });
+});
 
 describe('an attachment moved by another program', () => {
   it('a tagged Report.docx keeps its tag at the new path', async () => {

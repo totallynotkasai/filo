@@ -30,8 +30,15 @@ export interface MemoryVault {
   beforeWrite: ((rel: string, text: string) => Promise<void> | void) | null;
   /** Called before a read returns; lets a test change the file mid-flush. */
   afterRead: ((rel: string) => void) | null;
+  /**
+   * Called once a read has taken the file's bytes, before it returns them;
+   * await it to hold the read open while something else lands.
+   */
+  duringRead: ((rel: string) => Promise<void> | void) | null;
   /** Fail the next write of `rel` with `code`. */
   failNextWrite(rel: string, code: string): void;
+  /** Fail the next read of `rel` with `code` (e.g. EBUSY: a file held open). */
+  failNextRead(rel: string, code: string): void;
   /** What is in the trash: id, the path it had, and its files (path → text). */
   trash: Map<string, { originalPath: string; files: Map<string, string> }>;
   /** Fail the next trash move of `rel` with `code` (e.g. a locked file). */
@@ -46,6 +53,7 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
   const spelling = new Map<string, string>();
   let clock = 1000;
   const failures = new Map<string, string>();
+  const readFailures = new Map<string, string>();
   const trashFailures = new Map<string, string>();
   let trashSeq = 0;
   const enc = new TextEncoder();
@@ -64,6 +72,8 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
     links: new Set(),
     beforeWrite: null,
     afterRead: null,
+    duringRead: null,
+    failNextRead: (rel, code) => readFailures.set(key(rel), code),
     writeExternally: (rel, text) => put(rel, text),
     remove: (rel) => {
       files.delete(key(rel));
@@ -118,12 +128,19 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
     switch (channel) {
       case 'vault:read-file-text': {
         if (!files.has(k)) return { success: false, code: 'ENOENT', error: 'ENOENT' };
+        const readFail = readFailures.get(k);
+        if (readFail) {
+          readFailures.delete(k);
+          return { success: false, code: readFail, error: readFail };
+        }
         vault.afterRead?.(rel);
         const content = files.get(k) ?? '';
+        const mtimeMs = mtimes.get(k);
+        await vault.duringRead?.(rel);
         return {
           success: true,
           content,
-          mtimeMs: mtimes.get(k),
+          mtimeMs,
           size: enc.encode(content).length,
           encoding: vault.nonUtf8.has(k) ? 'invalid-utf-8' : 'utf-8',
           ...(vault.links.has(k) ? { link: true } : {}),

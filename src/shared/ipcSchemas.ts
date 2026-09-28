@@ -34,6 +34,9 @@ import type { IpcChannel } from './types';
 const nonEmptyString = z.string().min(1);
 const optionalString = z.string().optional();
 
+/** `recovery:keep-unsaved`'s copies: each a name and the text to keep. */
+const keepUnsavedItems = z.array(z.object({ relPath: nonEmptyString, text: z.string() }).strict()).max(1000);
+
 /**
  * Channels that accept an `unknown` payload typed at the renderer site. We
  * still gate arity (number of args) but the value itself is opaque to the
@@ -124,10 +127,10 @@ export const IPC_PAYLOAD_SCHEMAS = {
   ]),
   'recovery:list': z.tuple([nonEmptyString]),
   'recovery:list-sentinels': z.tuple([nonEmptyString]),
-  // (vaultRoot, [{ relPath, text }]): the unsaved text to keep in .filo/recovery.
-  'recovery:keep-unsaved': z.tuple([
-    nonEmptyString,
-    z.array(z.object({ relPath: nonEmptyString, text: z.string() }).strict()).max(1000),
+  // (vaultRoot, [{ relPath, text }], purpose?): the text to keep in .filo/recovery.
+  'recovery:keep-unsaved': z.union([
+    z.tuple([nonEmptyString, keepUnsavedItems]),
+    z.tuple([nonEmptyString, keepUnsavedItems, z.literal('keep')]),
   ]),
   'recovery:preserved-tmp': z.tuple([nonEmptyString]),
   'app:machine-identity': z.tuple([]),

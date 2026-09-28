@@ -11,7 +11,8 @@
  *   writes it back (only if nothing is at the path again); "Discard change"
  *   drops it.
  * - Reload shrank: a clean note reloaded from a much shorter version on disk
- *   (a sync client's truncation looks like this); "Undo reload" writes the
+ *   (a sync client's truncation looks like this). The longer version is
+ *   copied to `.filo/recovery/<ts>-keep/` first; "Undo reload" writes the
  *   previous body back after backing the short version up.
  *
  * Each prompt is sticky and keyed per note, so one note never shows two.
@@ -29,10 +30,12 @@ import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdenti
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { localNoteText } from '../lib/notes/noteFile';
 import { reportError } from '../lib/utils/errorBus';
+import { invokeOk } from '../lib/utils/invokeOk';
 import { holdDecision, releaseDecision } from './heldDecisions';
 
 const conflictKey = (rel: string): string => `ext-mod:${rel}`;
 const deletedKey = (rel: string): string => `ext-deleted:${rel}`;
+const shrankKey = (rel: string): string => `reload-shrank:${rel}`;
 
 /** The text to write back for a note deleted on disk: its last frontmatter over the local body. */
 function recreatedText(m: NoteModel): string {
@@ -42,11 +45,17 @@ function recreatedText(m: NoteModel): string {
 function promptConflict(m: NoteModel): void {
   const rel = m.relPath;
   const key = conflictKey(rel);
+  const stillHeld = (): boolean => noteStore.get(m.relPath) === m && m.status === 'conflict';
+  // An answer that didn't settle it (the backup was declined, the file kept
+  // changing) re-held the decision: releasing it then would hide the question.
+  const releaseIfAnswered = (): void => {
+    if (!stillHeld()) releaseDecision(key);
+  };
   holdDecision({
     key,
     relPath: () => m.relPath,
     text: 'Changed by another program while you were editing it: Reload or Keep mine',
-    stillHeld: () => noteStore.get(m.relPath) === m && m.status === 'conflict',
+    stillHeld,
     reopen: () => promptConflict(m),
   });
   uiStore.pushToast({
@@ -62,7 +71,7 @@ function promptConflict(m: NoteModel): void {
           void noteStore
             .resolveConflict(m.relPath, 'reload')
             .catch((err) => reportError('notePrompts.reload', err, `Couldn't reload "${m.relPath}"`))
-            .finally(() => releaseDecision(key));
+            .finally(releaseIfAnswered);
         },
       },
       {
@@ -74,7 +83,7 @@ function promptConflict(m: NoteModel): void {
           } catch (err) {
             reportError('notePrompts.keepMine', err, `Couldn't keep your version of "${m.relPath}"`);
           } finally {
-            releaseDecision(key);
+            releaseIfAnswered();
           }
         },
       },
@@ -145,7 +154,9 @@ function promptDeleted(m: NoteModel): void {
     key: deletedKey(rel),
     relPath: () => m.relPath,
     text: 'Deleted by another program while it had unsaved edits: Keep mine or Discard',
-    stillHeld: () => noteStore.get(m.relPath) === m && m.status === 'missing' && m.hasUnsavedBody,
+    // An unsaved note keeps its status when its file goes (its editor stays
+    // usable), so `fileGone` is what says the file is still missing.
+    stillHeld: () => noteStore.get(m.relPath) === m && m.hasUnsavedBody && (m.fileGone || m.status === 'missing'),
     reopen: () => promptDeleted(m),
   });
   uiStore.pushToast({
@@ -233,22 +244,53 @@ function promptWriteTargetMissing(rel: string, m: NoteModel | undefined): void {
   });
 }
 
-function promptReloadShrank(m: NoteModel, priorBody: string): void {
+/**
+ * Keeps `text` (the note as it was before a shrinking reload) in
+ * `.filo/recovery/<ts>-keep/`, which no prune removes. Resolves with the
+ * copy's absolute folder, or null when it couldn't be written.
+ */
+async function keepPriorVersion(vaultRoot: string, relPath: string, text: string): Promise<string | null> {
+  try {
+    const kept = await invokeOk('recovery:keep-unsaved', vaultRoot, [{ relPath, text }], 'keep');
+    return kept.kept.length > 0 ? `${vaultRoot.replace(/[\\/]+$/, '')}/${kept.dir}` : null;
+  } catch (err) {
+    console.error('[notePrompts] keeping the version before a reload failed:', err);
+    return null;
+  }
+}
+
+/**
+ * The toast alone would be the only copy of the longer version (a sync
+ * client's truncation looks like this), so a copy is written to
+ * `.filo/recovery/` first and the toast stays until answered.
+ */
+async function promptReloadShrank(m: NoteModel, priorBody: string, priorText: string): Promise<void> {
+  const vaultRoot = getActiveVaultPath();
+  const identity = captureVaultIdentity();
+  if (!vaultRoot) return;
+  const dir = await keepPriorVersion(vaultRoot, m.relPath, priorText);
+  if (!isStillSameVault(identity)) return;
+  const title = noteTitle(m.relPath);
   uiStore.pushToast({
-    text: `"${noteTitle(m.relPath)}" was reloaded from disk and is much shorter than before.`,
+    text: dir
+      ? `"${title}" was reloaded from disk and is much shorter than before. The longer version is saved in .filo/recovery/.`
+      : `"${title}" was reloaded from disk and is much shorter than before. Filo couldn't save a copy of the longer version.`,
     type: 'warning',
-    dedupeKey: conflictKey(m.relPath),
+    duration: 0,
+    sticky: true,
+    dedupeKey: shrankKey(m.relPath),
     actions: [
       {
         label: 'Undo reload',
         handler: async () => {
-          const vaultRoot = getActiveVaultPath();
-          const identity = captureVaultIdentity();
-          if (!vaultRoot || !(await backupExternalVersion(vaultRoot, m.relPath))) return;
-          if (!isStillSameVault(identity)) return;
+          const root = getActiveVaultPath();
+          const current = captureVaultIdentity();
+          if (!root || !(await backupExternalVersion(root, m.relPath))) return;
+          if (!isStillSameVault(current)) return;
           noteStore.restoreBody(m.relPath, priorBody);
         },
       },
+      ...(dir ? [{ label: 'Show in folder', handler: () => void window.filo.invoke('shell:show-item-in-folder', dir) }] : []),
       { label: 'Keep reloaded', handler: () => undefined },
     ],
   });
@@ -260,7 +302,7 @@ export function registerNotePrompts(): void {
     conflict: promptConflict,
     deletedWithUnsavedBody: promptDeleted,
     writeTargetMissing: promptWriteTargetMissing,
-    reloadShrank: promptReloadShrank,
+    reloadShrank: (m, priorBody, priorText) => void promptReloadShrank(m, priorBody, priorText),
     dismiss: (rel) => {
       uiStore.dismissToastsByKey(conflictKey(rel), { silent: true });
       uiStore.dismissToastsByKey(deletedKey(rel), { silent: true });

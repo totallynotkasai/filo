@@ -945,8 +945,10 @@ renderer, a note with a change not yet on disk waits `NOTE_RENAME_GRACE_MS`
 rename re-points it meanwhile. A note write hides only its own echo: a rename,
 delete or save of the file by another program straight after Filo wrote it is
 still reported (`FileWatcher.suppressWrite` drops an event only while the file
-holds the bytes Filo wrote), and the watcher's hash cache is updated with the
-bytes Filo wrote so the pair still matches.
+holds the bytes Filo wrote; once another program's version has been reported,
+Filo's bytes coming back inside the window count as that program's too), and
+the watcher's hash cache is updated with the bytes Filo wrote so the pair
+still matches.
 
 **Where:** [src/main/services/fileWatcher.ts](src/main/services/fileWatcher.ts)
 (`MISSING_NOTE_HOLD_MS`, `suppressWrite`, `recordOwnWrite`),

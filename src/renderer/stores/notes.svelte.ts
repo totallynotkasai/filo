@@ -55,7 +55,7 @@ import { looksTorn } from '../lib/notes/noteWriter';
 import { flushRawViews } from '../lib/notes/rawViews';
 import { askUnlessMoved, dropGraceChecks, settleGraceChecksNow } from '../lib/notes/renameGrace';
 import { unsavedNoteTexts } from '../lib/notes/unsavedNoteTexts';
-import { decideDiskChange } from '../lib/notes/noteDiskChange';
+import { createDiskChangeHandler } from './noteDiskChanges';
 import { backupThenRead } from '../lib/vault/keepLocalBackup';
 import {
   NoteModel,
@@ -153,6 +153,7 @@ function afterWrite(
   const m = models.get(path);
   if (!m) return;
   m.relPath = relPath;
+  m.fileGone = false;
   if (
     consumed.bodyVersion === undefined
     && (m.hasUnsavedBody || writer.hasPendingBody(path))
@@ -222,6 +223,7 @@ function adoptDisk(m: NoteModel, fresh: FreshRead): void {
   m.frontmatter = withQueued(m.path, fresh.text.frontmatter);
   if (!sameBody(m.body, fresh.text.body) || m.status === 'loading') setModelBody(m, fresh.text.body, 'disk');
   m.hasUnsavedBody = false;
+  m.fileGone = false;
   m.conflictDisk = null;
   m.readError = null;
   m.status = 'ready';
@@ -275,6 +277,17 @@ async function load(m: NoteModel, force = false): Promise<void> {
     }
   }
 }
+
+const onDiskChanged = createDiskChangeHandler({
+  model: (path) => models.get(path),
+  writer,
+  prompts: () => prompts,
+  adoptDisk,
+  enterConflict,
+  withQueued,
+  serializeViews: (path) => serializeViews(path),
+  hadFrontmatter,
+});
 
 function evictIfIdle(m: NoteModel): void {
   if (m.views.size > 0) return;
@@ -553,72 +566,9 @@ export const noteStore = {
     await m.loaded;
   },
 
-  /** The file changed on disk (watcher). Decides per the C.5 table. */
-  async onDiskChanged(relPath: string, attempt = 0): Promise<void> {
-    const key = vaultPath(relPath);
-    const m = models.get(key);
-    if (!m) return;
-    const identity = captureVaultIdentity();
-    await m.loaded;
-    const vaultRoot = getActiveVaultPath();
-    if (!vaultRoot || !isStillSameVault(identity)) return;
-    serializeViews(key);
-    let fresh: FreshRead | null = null;
-    try {
-      fresh = await readNoteFresh(vaultRoot, m.relPath);
-    } catch (err) {
-      if (!isMissingFileError(err)) return;
-    }
-    if (models.get(key) !== m || !isStillSameVault(identity)) return;
-    // Keys typed while the read was out must count as unsaved, or the disk
-    // version would replace the body they were typed into.
-    serializeViews(key);
-    const hash = fresh ? noteTextHash(fresh.text.raw) : null;
-    const action = decideDiskChange({
-      exists: fresh !== null,
-      isOwnWrite: hash !== null && (hash === m.base?.hash || writer.isOwnWrite(key, hash)),
-      hasUnsavedBody: m.hasUnsavedBody || writer.hasPendingBody(key),
-      bodyChanged: fresh !== null && (!m.base || !sameBody(fresh.text.body, snapshotBody(m.base))),
-      // After a few tries a file that still looks torn is taken as it is.
-      torn: attempt < TORN_RETRY_MS.length && fresh !== null && looksTorn(fresh.text, hadFrontmatter(key)),
-    });
-    switch (action) {
-      case 'ignore':
-        return;
-      case 'retry':
-        setTimeout(() => void noteStore.onDiskChanged(m.relPath, attempt + 1), TORN_RETRY_MS[attempt]);
-        return;
-      case 'replace': {
-        if (!fresh) return;
-        const prior = m.body;
-        adoptDisk(m, fresh);
-        prompts.dismiss(m.relPath);
-        if (prior.length >= 256 && fresh.text.body.length < prior.length * 0.5) prompts.reloadShrank(m, prior);
-        return;
-      }
-      case 'take-frontmatter':
-        if (!fresh) return;
-        m.base = snapshotOf(fresh.text, fresh.mtimeMs, fresh.size);
-        m.frontmatter = withQueued(key, fresh.text.frontmatter);
-        return;
-      case 'conflict':
-        if (fresh) enterConflict(m, fresh);
-        return;
-      case 'missing': {
-        const unsaved = (): boolean => m.hasUnsavedBody || writer.hasPendingBody(key);
-        if (!unsaved()) {
-          m.status = 'missing';
-          return;
-        }
-        askUnlessMoved(
-          m.relPath,
-          () => models.get(key) === m && unsaved(),
-          () => prompts.deletedWithUnsavedBody(m),
-          () => void noteStore.onDiskChanged(m.relPath),
-        );
-        return;
-      }
-    }
+  /** The file changed on disk (watcher). See `noteDiskChanges.ts`. */
+  onDiskChanged(relPath: string, attempt = 0): Promise<void> {
+    return onDiskChanged(relPath, attempt);
   },
 
   /**
@@ -650,12 +600,20 @@ export const noteStore = {
     } catch (err) {
       if (!isStillSameVault(identity)) return;
       if (!isMissingFileError(err)) throw err;
+      if (models.get(key) !== m) return;
+      m.conflictDisk = null;
+      m.fileGone = true;
       if (choice === 'reload') {
         writer.dropBody(key);
         m.hasUnsavedBody = false;
-        m.conflictDisk = null;
         m.status = 'missing';
+        return;
       }
+      // Keep mine found the file gone: nothing to overwrite, and the body is
+      // still only here. The conflict is over; the missing-file prompt offers
+      // Save as new file (exclusive create) or Discard change.
+      m.status = 'ready';
+      prompts.writeTargetMissing(m.relPath, m);
       return;
     }
     if (models.get(key) !== m || !isStillSameVault(identity)) return;

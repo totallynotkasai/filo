@@ -7,6 +7,7 @@
  * | a read caught another program mid-write     | `retry`            |
  * | file gone                                   | `missing`          |
  * | no unsaved body                             | `replace`          |
+ * | unsaved body, disk already holds that body  | `replace`          |
  * | unsaved body, body on disk unchanged        | `take-frontmatter` |
  * | unsaved body, body on disk changed          | `conflict`         |
  *
@@ -26,6 +27,11 @@ export interface DiskChangeInput {
   hasUnsavedBody: boolean;
   /** The body on disk differs from the one the local state was built on. */
   bodyChanged: boolean;
+  /**
+   * The body on disk is the unsaved one (this edit synced back, or typed the
+   * same elsewhere): taking it loses nothing, so it is no conflict.
+   */
+  diskHasLocalBody?: boolean;
 }
 
 export type DiskChangeAction = 'ignore' | 'retry' | 'missing' | 'replace' | 'take-frontmatter' | 'conflict';
@@ -34,6 +40,6 @@ export function decideDiskChange(input: DiskChangeInput): DiskChangeAction {
   if (!input.exists) return 'missing';
   if (input.isOwnWrite) return 'ignore';
   if (input.torn) return 'retry';
-  if (!input.hasUnsavedBody) return 'replace';
+  if (!input.hasUnsavedBody || input.diskHasLocalBody) return 'replace';
   return input.bodyChanged ? 'conflict' : 'take-frontmatter';
 }

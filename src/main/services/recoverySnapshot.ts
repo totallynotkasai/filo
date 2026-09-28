@@ -423,16 +423,19 @@ export interface KeptUnsavedCopies {
 /**
  * Writes each item's `text` (unsaved work the renderer holds) to
  * `.filo/recovery/<timestamp>-unsaved/<flattened-path>`, one directory per
- * call. A copy that can't be written (too large, a disk error) is reported in
- * `failed` and the rest still go ahead; the caller then asks the user again
- * before dropping it. The paths are only names here: nothing is read from
- * or written to them.
+ * call. `keep` names the directory `<timestamp>-keep/` instead: the text is a
+ * version a note just replaced (a reload that shrank it), not unsaved work.
+ * Neither kind is ever pruned. A copy that can't be written (too large, a
+ * disk error) is reported in `failed` and the rest still go ahead; the caller
+ * then asks the user again before dropping it. The paths are only names here:
+ * nothing is read from or written to them.
  */
 export async function keepUnsavedCopies(
   vaultRoot: string,
   items: ReadonlyArray<{ relPath: string; text: string }>,
+  kind: 'unsaved' | 'keep' = 'unsaved',
 ): Promise<KeptUnsavedCopies> {
-  const name = `${recoveryTimestamp()}${RESCUE_SUFFIX}`;
+  const name = `${recoveryTimestamp()}${kind === 'keep' ? KEEP_SUFFIX : RESCUE_SUFFIX}`;
   const destDir = join(vaultRoot, RECOVERY_DIR, name);
   assertWithinVault(vaultRoot, destDir);
   const out: KeptUnsavedCopies = {

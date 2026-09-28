@@ -258,6 +258,29 @@ describe('vaultExternalChanges — a deleted file that tiles still use', () => {
     await vi.waitFor(() => expect(deletedToast()).toBeDefined());
     expect(uiStore.toasts.find((t) => t.text.includes('is missing from the vault'))).toBeUndefined();
   });
+
+  // The watcher calls a `.txt` a document (so a rename to `.md` pairs), but
+  // the index skips it: an edit must not read as a delete.
+  it('an edited .txt behind a tile raises no missing prompt', async () => {
+    boardCacheStore.hydrate({ kb: kanbanWithTileOn('Log.txt') }, { kb: 'tasks.board.json' });
+    vault.writeExternally('Log.txt', 'edited\n');
+
+    await slice.handleExternalMarkdownChanges(['Log.txt']);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await noteStore.__settleGraceChecksForTests();
+    expect(uiStore.toasts.find((t) => t.text.includes('is missing from the vault'))).toBeUndefined();
+    expect(uiStore.toasts.find((t) => t.text.includes('was deleted externally'))).toBeUndefined();
+  });
+
+  it('a deleted .txt behind a tile still offers to keep or remove the tiles', async () => {
+    boardCacheStore.hydrate({ kb: kanbanWithTileOn('Log.txt') }, { kb: 'tasks.board.json' });
+
+    await slice.handleExternalMarkdownChanges(['Log.txt']);
+    await vi.waitFor(
+      () => expect(uiStore.toasts.find((t) => t.text.includes('was deleted externally'))).toBeDefined(),
+      { timeout: 2000 },
+    );
+  });
 });
 
 /**

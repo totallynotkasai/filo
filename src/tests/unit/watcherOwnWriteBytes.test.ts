@@ -50,6 +50,18 @@ describe('SuppressionWindows: a write window covers only the bytes written', () 
     expect(w.isSuppressed('Note.md', true, probeOf('ourz'))).toBe(false);
   });
 
+  it('once another version is reported, our bytes turning up again are reported too', () => {
+    const w = new SuppressionWindows();
+    w.suppressWrite('Note.md', 7000, 'ours');
+    expect(w.isSuppressed('Note.md', true, probeOf('ours'))).toBe(true);
+    expect(w.isSuppressed('Note.md', true, probeOf('theirs'))).toBe(false);
+    // A sync client puts our version back inside the window.
+    expect(w.isSuppressed('Note.md', true, probeOf('ours'))).toBe(false);
+    // Our next write opens a new window.
+    w.suppressWrite('Note.md', 7000, 'ours again');
+    expect(w.isSuppressed('Note.md', true, probeOf('ours again'))).toBe(true);
+  });
+
   it('any of the last few writes counts as ours (a burst of saves)', () => {
     const w = new SuppressionWindows();
     w.suppressWrite('Note.md', 7000, 'first');

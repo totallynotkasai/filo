@@ -5,6 +5,7 @@ import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { uiStore } from './ui.svelte';
 import { reportError } from '../lib/utils/errorBus';
+import { isMarkdownExtension } from '../lib/vault/extension';
 import { getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
 import {
   writePendingRenameCascade,
@@ -95,13 +96,30 @@ function deferWhileReappearing(rel: string, identity: VaultIdentity, prompt: () 
   return true;
 }
 
+/** A Markdown note: the only kind of `document` event the vault index holds. */
+function isIndexedNote(rel: string): boolean {
+  const dot = rel.lastIndexOf('.');
+  return isMarkdownExtension(dot >= 0 ? rel.slice(dot) : '');
+}
+
 export function makeExternalChangesSlice(ctx: VaultContext) {
-  return {
-    async handleExternalMarkdownChanges(relPaths: string[]): Promise<void> {
+  const slice = {
+    async handleExternalMarkdownChanges(changed: string[]): Promise<void> {
       // Capture vault identity before the first await so the guards below can
       // bail on a swap; otherwise this vault's decisions would apply to the
       // new vault's same-named file.
       const identity = captureVaultIdentity();
+      // A `.txt` is a `document` to the watcher (so a rename to `.md` pairs),
+      // but the index skips it, so "no index entry" can't mean deleted: it is
+      // checked on disk, as an attachment behind a File tile is.
+      const others = changed.filter((rel) => !isIndexedNote(rel));
+      if (others.length > 0) {
+        for (const rel of others) if (noteStore.get(rel)) void noteStore.onDiskChanged(rel);
+        void slice.handleExternalAttachmentChanges(others).catch((err: unknown) => {
+          reportError('externalChange.attachment', err, 'Failed to reconcile external attachment changes');
+        });
+      }
+      const relPaths = changed.filter(isIndexedNote);
       if (relPaths.length === 0) return;
       // A full index rebuild clears the index then re-reads in chunks; wait so
       // the refresh below lands on the rebuilt index.
@@ -304,6 +322,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       await Promise.all(tasks);
     },
   };
+  return slice;
 }
 
 /**

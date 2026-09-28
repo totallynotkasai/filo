@@ -129,8 +129,13 @@ export class SuppressionWindows {
       if (now > writeExpiry) {
         this.writes.delete(key);
         this.ownBytes.delete(key);
-      } else if (present && this.holdsOwnBytes(relativePath, key, probe)) {
-        return true;
+      } else if (present) {
+        if (this.holdsOwnBytes(relativePath, key, probe)) return true;
+        // Another program's version is being reported. Our earlier bytes are
+        // no echo from here on: the file holding them again inside this
+        // window is that program (or another) putting them back.
+        this.writes.delete(key);
+        this.ownBytes.delete(key);
       }
     }
     // Typically one entry per in-flight folder delete, so a scan is cheapest.

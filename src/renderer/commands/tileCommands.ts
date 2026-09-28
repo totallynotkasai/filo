@@ -238,6 +238,13 @@ export class DeleteTilesCommand extends Command {
     }
   }
 
+  /** Its own board, and each board a snapshotted connection lives on. */
+  touchedBoardIds(): ReadonlySet<string> {
+    const ids = new Set<string>(this.targetBoardId ? [this.targetBoardId] : []);
+    for (const conn of this.connections) if (conn.boardId) ids.add(conn.boardId);
+    return ids;
+  }
+
   async execute() {
     // Placement removal stays synchronous (before the first `await`), so
     // callers that immediately assert on `boardStore.getTile(...)` still work.

@@ -169,7 +169,7 @@ export async function reloadBoardFromDisk(
   // one would write its old snapshot over the other change, with no drift
   // prompt (the baseline now names the version just read). Tell the user only when there
   // was something to undo.
-  if (historyStore.clearBoard(boardId) > 0) {
+  if (historyStore.clearBoard(boardId, { changedOnDisk: true }) > 0) {
     uiStore.pushToast({
       text: `Undo history for "${boardNameOf(result.data, rel)}" was cleared because the board changed outside Filo.`,
       type: 'info',

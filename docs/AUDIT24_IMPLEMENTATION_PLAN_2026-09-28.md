@@ -479,7 +479,7 @@ Wire the `config` reconciler for these files so an outside change re-reads them 
 | Phase | Status | Commit |
 |---|---|---|
 | 1 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 1"` |
-| 2 | Not started | |
+| 2 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 2"` |
 | 3 | Not started | |
 | 4 | Not started | |
 | 5 | Not started | |

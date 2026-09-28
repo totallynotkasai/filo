@@ -204,8 +204,9 @@ function waitForRename(relPath: string): Promise<string | null> {
  * anyway" toast). The change goes to the note writer as a delta and the
  * command's board is marked dirty.
  *
- * The compare base is the note as it stands (its model, or a fresh read of the
- * file), never a cache that could lag the disk.
+ * The compare base is a fresh read of the file with any queued change laid
+ * over it, even when the note is open: its model catches up with another
+ * program's save only after the watcher's debounce.
  */
 export async function applyDeltaChecked(args: ApplyDeltaArgs, mayWaitForRename = true): Promise<void> {
   const { relPath, targetBoardId, delta, expected, label, atomic } = args;
@@ -215,13 +216,13 @@ export async function applyDeltaChecked(args: ApplyDeltaArgs, mayWaitForRename =
   // file (the writer resolves its vault root live). Also guards the read.
   const identity = captureVaultIdentity();
 
-  const commit = (part: FrontmatterDelta): void => {
-    noteStore.patchFrontmatter(relPath, part);
+  const commit = (part: FrontmatterDelta, path: string = relPath): void => {
+    noteStore.patchFrontmatter(path, part);
     // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
     boardCacheStore.markDirty(targetBoardId);
   };
 
-  const current = await noteStore.currentFrontmatter(relPath);
+  const current = await noteStore.currentFrontmatter(relPath, { fromDisk: true });
   if (!isStillSameVault(identity)) return;
   // Asked even when the note's model answered: for a second or two after
   // another program deletes the file (the watcher's missing-file hold, then
@@ -263,6 +264,15 @@ export async function applyDeltaChecked(args: ApplyDeltaArgs, mayWaitForRename =
     return;
   }
 
+  // The toast may wait a while: "Apply anyway" writes the note wherever a
+  // rename (in Filo or by another program) has moved it by then.
+  const pending = followRenames(relPath);
+  const applyAnyway = (part: FrontmatterDelta) => (): void => {
+    pending.stop();
+    if (!isStillSameVault(identity)) return;
+    commit(part, pending.path());
+  };
+
   if (atomic) {
     // A coupled pair (recurrence roll-forward): apply NOTHING and offer to
     // force the whole delta.
@@ -270,15 +280,7 @@ export async function applyDeltaChecked(args: ApplyDeltaArgs, mayWaitForRename =
       text: `External edit changed ${conflicts.join(', ')} in ${label}. Skipped this undo/redo to keep the recurring task consistent.`,
       type: 'warning',
       duration: 0,
-      actions: [
-        {
-          label: 'Apply anyway',
-          handler: () => {
-            if (!isStillSameVault(identity)) return;
-            commit(delta);
-          },
-        },
-      ],
+      actions: [{ label: 'Apply anyway', handler: applyAnyway(delta) }],
     });
     return;
   }
@@ -291,14 +293,28 @@ export async function applyDeltaChecked(args: ApplyDeltaArgs, mayWaitForRename =
     text: `External edit changed ${conflicts.join(', ')} in ${label}. Kept the external value — that field's undo/redo was skipped.`,
     type: 'warning',
     duration: 0,
-    actions: [
-      {
-        label: 'Apply anyway',
-        handler: () => {
-          if (!isStillSameVault(identity)) return;
-          commit(pick(delta, conflicts));
-        },
-      },
-    ],
+    actions: [{ label: 'Apply anyway', handler: applyAnyway(pick(delta, conflicts)) }],
   });
+}
+
+// allow-module-state: a counter that only makes each follower's sweep name unique
+let renameFollowers = 0;
+
+/**
+ * `relPath` kept current across renames until `stop()`. The sweep also stops
+ * itself once the vault it was taken in is gone, so a toast left unanswered
+ * holds nothing past a vault swap.
+ */
+function followRenames(relPath: string): { path: () => string; stop: () => void } {
+  let current = relPath;
+  const identity = captureVaultIdentity();
+  const name = `applyDeltaChecked.applyAnyway:${++renameFollowers}`;
+  const stop = registerPathRenamable(name, (oldRel, newRel) => {
+    if (!isStillSameVault(identity)) {
+      stop();
+      return;
+    }
+    current = rebasePath(current, oldRel, newRel) ?? current;
+  });
+  return { path: () => current, stop };
 }

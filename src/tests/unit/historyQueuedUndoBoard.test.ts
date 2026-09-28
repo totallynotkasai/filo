@@ -102,6 +102,79 @@ describe('an undo queued behind a running command', () => {
   });
 });
 
+/** A command that records the board active when its execute body ran. */
+class ExecuteRecorder extends BoardCommand {
+  executedOn: Array<string | null> = [];
+  execute(): void {
+    this.executedOn.push(historyStore.activeBoardId);
+  }
+}
+
+describe('an execute queued behind a running command', () => {
+  let toastSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    historyStore.clear();
+    toastSpy = vi.spyOn(uiStore, 'toast');
+  });
+  afterEach(() => {
+    historyStore.clear();
+    historyStore.setActiveBoard(null);
+    historyStore.setBoardActivator(null);
+    toastSpy.mockRestore();
+  });
+
+  it('runs on the board it was made on, after a tab switch', async () => {
+    historyStore.setBoardActivator((id) => {
+      historyStore.setActiveBoard(id);
+      return true;
+    });
+    historyStore.setActiveBoard('A');
+    const slow = new SlowCommand('A');
+    void historyStore.execute(slow).catch(() => {});
+    const add = new ExecuteRecorder('A');
+    const done = historyStore.execute(add);
+    // The user switches to board B while the add waits behind the slow delete.
+    historyStore.setActiveBoard('B');
+    slow.release();
+    await done;
+
+    expect(add.executedOn).toEqual(['A']);
+  });
+
+  it('is rolled back with a toast when its board was closed meanwhile', async () => {
+    historyStore.setBoardActivator(() => false);
+    historyStore.setActiveBoard('A');
+    const slow = new SlowCommand('A');
+    void historyStore.execute(slow).catch(() => {});
+    const add = new ExecuteRecorder('A');
+    const done = historyStore.execute(add);
+    historyStore.setActiveBoard('B');
+    slow.release();
+    await done;
+
+    expect(add.executedOn).toEqual([]);
+    historyStore.setActiveBoard('A');
+    // Only the slow command is left on A's stack.
+    await historyStore.undo();
+    expect(historyStore.canUndo).toBe(false);
+    expect(toastSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('closed'))).toBe(true);
+  });
+
+  it('a board-agnostic or cross-board execute runs where it is, without switching', async () => {
+    const switched: string[] = [];
+    historyStore.setBoardActivator((id) => {
+      switched.push(id);
+      return true;
+    });
+    historyStore.setActiveBoard('A');
+    const other = new ExecuteRecorder('C');
+    await historyStore.execute(other);
+    expect(other.executedOn).toEqual(['A']);
+    expect(switched).toEqual([]);
+  });
+});
+
 describe('undoIfLatest (an Undo offered on a toast)', () => {
   beforeEach(() => historyStore.clear());
   afterEach(() => {

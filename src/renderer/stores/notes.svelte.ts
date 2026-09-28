@@ -346,14 +346,20 @@ export const noteStore = {
    * the model's when loaded, else a fresh read of the file with any queued
    * change laid over it (the index may lag the disk). Null when the file
    * can't be read.
+   *
+   * `fromDisk` reads the file even when a model is loaded: the model learns
+   * of another program's save only after the watcher's debounce, so a check
+   * for "changed outside since" must not trust it. The model's copy answers
+   * only when that read fails.
    */
-  async currentFrontmatter(relPath: string): Promise<Record<string, unknown> | null> {
+  async currentFrontmatter(relPath: string, opts: { fromDisk?: boolean } = {}): Promise<Record<string, unknown> | null> {
     const key = vaultPath(relPath);
     const identity = captureVaultIdentity();
     const m = models.get(key);
     if (m) await m.loaded;
     if (!isStillSameVault(identity)) return null;
-    if (m && models.get(key) === m && m.status !== 'missing' && m.status !== 'unreadable') return m.frontmatter;
+    const usable = m && models.get(key) === m && m.status !== 'missing' && m.status !== 'unreadable' ? m : null;
+    if (usable && !opts.fromDisk) return usable.frontmatter;
     const vaultRoot = getActiveVaultPath();
     if (!vaultRoot) return null;
     try {
@@ -361,7 +367,7 @@ export const noteStore = {
       if (!isStillSameVault(identity)) return null;
       return withQueued(key, fresh.text.frontmatter);
     } catch {
-      return null;
+      return usable ? usable.frontmatter : null;
     }
   },
 

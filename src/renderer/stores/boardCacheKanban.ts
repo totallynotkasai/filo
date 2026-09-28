@@ -396,6 +396,9 @@ export function makeKanbanSlice(ctx: CacheContext) {
         return;
       }
       const kb = cached.board as KanbanBoard;
+      // A card is on a board once. A re-add of one already placed (an undo
+      // replayed onto a board that still holds the card) must not show it twice.
+      if ((kb.columns ?? []).some((c) => (c.tilePlacements ?? []).some((p) => p.tileId === validDef.id))) return;
 
       const updatedDefs = { ...cached.tileDefs, [validDef.id]: validDef };
       (kb as Record<string, unknown>).columns = (kb.columns ?? []).map((c) => {

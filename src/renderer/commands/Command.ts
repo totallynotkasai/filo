@@ -3,8 +3,8 @@
  *
  * The `Command` *interface* is the public contract used by callers
  * (`historyStore.execute / undo / redo / pushWithoutExecute`). It lists
- * the members every command exposes: `description`, `execute`, `undo` and
- * `targetBoardId`.
+ * the members every command exposes: `description`, `execute`, `undo`,
+ * `targetBoardId` and `touchedBoardIds`.
  *
  * The `Command` *abstract class* implements that interface and adds the
  * `this.snapshot(...)` deep-clone helper. Concrete commands extend the
@@ -41,6 +41,12 @@ export interface Command {
    * which the dispatcher treats as "no guard required".
    */
   readonly targetBoardId: string;
+  /**
+   * Every board whose content this command's undo or redo writes. A board
+   * read again from disk drops each step that touches it, since its
+   * snapshots describe the version replaced.
+   */
+  touchedBoardIds(): ReadonlySet<string>;
 }
 
 /**
@@ -117,5 +123,14 @@ export abstract class Command {
    */
   renamePath(oldRel: string, newRel: string, pinned: readonly string[] = []): void {
     rebaseCommandFields(this, oldRel, newRel, pinned);
+  }
+
+  /**
+   * The command's own board. A command that also holds snapshots of other
+   * boards (a cascade, a batch, cross-board connections) overrides this with
+   * all of them (gate `cascade-touched-boards`).
+   */
+  touchedBoardIds(): ReadonlySet<string> {
+    return new Set(this.targetBoardId ? [this.targetBoardId] : []);
   }
 }

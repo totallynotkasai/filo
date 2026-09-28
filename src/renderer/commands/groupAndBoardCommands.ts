@@ -9,6 +9,7 @@ import { cloneTile } from '../lib/utils/cloneTile';
 import { reportError } from '../lib/utils/errorBus';
 import { fileTagsStore } from '../stores/fileTags.svelte';
 import { restoreFiles, retargetPath, trashFiles, type TrashedItem } from './trashedFiles';
+import { ChangeRefusedError } from './changeRefusedError';
 import { DeleteCardCommand } from './kanbanCommands';
 import { DeleteTaskCommand } from './taskCommands';
 import { restoreClearedPins, type ClearedPin } from '../lib/vault/folderPins';
@@ -66,6 +67,13 @@ export class BatchCommand extends Command {
     // through the same explicit-boardId boilerplate.
     const childWithBoard = commands.find((c) => c.targetBoardId);
     this.targetBoardId = boardId ?? childWithBoard?.targetBoardId ?? boardStore.current?.id ?? '';
+  }
+
+  /** Its own board and every board a child touches. */
+  touchedBoardIds(): ReadonlySet<string> {
+    const ids = new Set<string>(this.targetBoardId ? [this.targetBoardId] : []);
+    for (const cmd of this.commands) for (const id of cmd.touchedBoardIds()) ids.add(id);
+    return ids;
   }
 
   /**
@@ -350,6 +358,17 @@ export class CascadeDeleteCommand extends Command {
     }
   }
 
+  /** Every board it holds a tile, placement, connection or style snapshot for. */
+  touchedBoardIds(): ReadonlySet<string> {
+    const ids = new Set<string>([...Object.keys(this.byBoard), ...this.placementBoards]);
+    for (const conn of this.connections) if (conn.boardId) ids.add(conn.boardId);
+    for (const clears of Object.values(this.styleClears)) {
+      for (const boardId of Object.keys(clears ?? {})) ids.add(boardId);
+    }
+    for (const m of this.memberships) ids.add(m.boardId);
+    return ids;
+  }
+
   private vaultChanged(verb: string): boolean {
     // A path-STRING compare (not the generation-aware `isStillSameVault`) is
     // enough: a same-path new generation requires a vault OPEN, whose pre-swap
@@ -366,11 +385,21 @@ export class CascadeDeleteCommand extends Command {
     const redo = this.hasRun;
     this.hasRun = true;
     // A redo moves the item to the trash again first; the first run comes
-    // after the caller already moved it. If it can't go, nothing changes.
+    // after the caller already moved it. If it can't go, nothing changes and
+    // the step stays a redo: counted as done, the next undo would skip the
+    // restore and put back placements the boards still hold.
     if (redo && this.itemRel && !this.trashed) {
-      const [item] = await trashFiles(this.vaultRoot, [this.itemRel], 'cascadeDelete.redo');
-      if (!item) return;
-      this.trashed = item;
+      const refused: string[] = [];
+      const trashed = await trashFiles(this.vaultRoot, [this.itemRel], 'cascadeDelete.redo', undefined, refused);
+      // Another vault opened during the move: its boards aren't this one's.
+      if (vaultStore.path !== this.vaultRoot) return;
+      if (refused.length > 0) {
+        throw new ChangeRefusedError(
+          `Couldn't redo the delete: "${this.itemRel}" couldn't be moved to Filo's trash (it may be open in another program). Nothing was changed.`,
+        );
+      }
+      // Already gone from disk: nothing to trash, the placements still go.
+      this.trashed = trashed[0] ?? null;
       for (const path of Object.keys(this.fileTags)) fileTagsStore.dropFile(path);
       if (this.clearedPins.length > 0) {
         vaultStore.clearActiveRootFolderIfMatches(this.itemRel);

@@ -217,7 +217,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       await ctx.refreshTree();
       ctx.clearSelection();
       if (noBoardUndo && command) {
-        toastMovedToTrash(itemName, () => historyStore.runOffStack(() => command.undo(), `Undo ${command.description}`));
+        toastMovedToTrash(itemName, () => historyStore.undoOffStack(command, `Undo ${command.description}`));
       }
       return true;
     }, { paths: [itemPath] });

@@ -118,6 +118,9 @@ export function makeTaskListSlice(ctx: CacheContext) {
         return;
       }
       const tl = cached.board as TaskListBoard;
+      // A task is on a board once. A re-add of one already placed (an undo
+      // replayed onto a board that still holds the task) must not list it twice.
+      if (((tl.tasks ?? []) as TaskPlacement[]).some((p) => p.tileId === validDef.id)) return;
 
       const updatedDefs = { ...cached.tileDefs, [validDef.id]: validDef };
       const placements = [...((tl.tasks ?? []) as TaskPlacement[])];

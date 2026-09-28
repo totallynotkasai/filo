@@ -104,8 +104,12 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
 
       // Dispatch through history so Ctrl+Z restores the file, placements and
       // styles. Off the stack, the caller offers the undo itself (a toast).
-      if (offStack) void historyStore.runOffStack(() => command.execute(), command.description);
-      else historyStore.execute(command);
+      if (offStack) {
+        historyStore.holdOffStack(command);
+        void historyStore.runOffStack(() => command.execute(), command.description);
+      } else {
+        historyStore.execute(command);
+      }
       for (const arr of Object.values(byBoardTiles)) {
         for (const t of arr) removedTileIds.push(t.id);
       }

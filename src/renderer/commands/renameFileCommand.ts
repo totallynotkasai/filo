@@ -14,6 +14,7 @@ import { vaultPath } from '@shared/vaultPath';
  * Pushed after the rename has happened (`pushWithoutExecute`), so `execute`
  * is only ever a redo.
  */
+// allow-own-board-only: re-runs the rename, whose cascade reads the boards as they are; it holds no board snapshot
 export class RenameFileCommand extends Command {
   description: string;
   /** Vault-wide: the rename cascade updates every board, not one. */

@@ -29,15 +29,23 @@ export interface RestoredItem {
  * is skipped silently (the goal, "not here any more", holds); any other
  * failure is reported and the path stays where it is. `within` is the token of
  * the drained op this runs inside, if any.
+ *
+ * A caller that must know which paths stayed where they were, and says so
+ * itself, passes `refused`: those paths are collected there, not reported.
  */
 export async function trashFiles(
   vaultRoot: string,
   rels: string[],
   context: string,
   within?: DrainToken,
+  refused?: string[],
 ): Promise<TrashedItem[]> {
   const identity = captureVaultIdentity();
   const trashed: TrashedItem[] = [];
+  const refuse = (rel: string, err: unknown): void => {
+    if (refused) refused.push(rel);
+    else reportError(context, err, `Couldn't move "${rel}" to Filo's trash; it was not deleted.`);
+  };
   for (const rel of rels) {
     if (!isStillSameVault(identity)) break;
     try {
@@ -47,9 +55,9 @@ export async function trashFiles(
         continue;
       }
       if (result.code === 'ENOENT') continue;
-      reportError(context, new Error(result.error ?? result.code ?? 'vault:trash-move failed'), `Couldn't move "${rel}" to Filo's trash; it was not deleted.`);
+      refuse(rel, new Error(result.error ?? result.code ?? 'vault:trash-move failed'));
     } catch (err) {
-      reportError(context, err, `Couldn't move "${rel}" to Filo's trash; it was not deleted.`);
+      refuse(rel, err);
     }
   }
   if (!isStillSameVault(identity)) return trashed;

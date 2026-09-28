@@ -357,4 +357,42 @@ export const checks = [
       return out;
     },
   },
+  {
+    // A board reload dropped only the steps that targeted it, so a cascade
+    // filed on another board replayed the reloaded board's old placements.
+    id: 'cascade-touched-boards',
+    title: 'a command holding snapshots beyond its own board names them in touchedBoardIds()',
+    hint:
+      'A board read again from disk drops every step whose touchedBoardIds() has it. A command that spans boards ' +
+      "(targetBoardId '', child commands, per-board tile maps, connections) must override touchedBoardIds() with " +
+      'every board its undo or redo writes. If it truly writes only its own board, add ' +
+      '`// allow-own-board-only: <reason>` on the class line or the one above.',
+    run(ctx) {
+      const out = [];
+      // A child command (`Command[]`, `DeleteCardCommand[]`, `inner: MoveTaskBlockCommand`), a per-board tile map, connections.
+      const SPANNING_FIELD = /Command\b|\bRecord<string,\s*Tile\[\]>|\bConnection\[\]/;
+      for (const rel of ctx.files(COMMANDS, { ext: ['.ts'], recursive: false })) {
+        if (rel.endsWith('/Command.ts') || rel.endsWith('/index.ts')) continue;
+        const raw = ctx.read(rel);
+        const code = blank(raw, { strings: false });
+        const lines = raw.split('\n');
+        for (const cls of code.matchAll(/export\s+class\s+(\w+)\s+extends\s+\w*Command\b[^{]*\{/g)) {
+          const line = lineAt(raw, cls.index);
+          if (`${lines[line - 1] ?? ''}\n${lines[line - 2] ?? ''}`.includes('allow-own-board-only:')) continue;
+          const open = cls.index + cls[0].length - 1;
+          const end = skipBlock(code, open);
+          const body = code.slice(open, end < 0 ? code.length : end);
+          const reasons = [];
+          if (/this\.targetBoardId\s*=\s*''/.test(body)) reasons.push("targetBoardId ''");
+          for (const f of body.matchAll(/^[ \t]+(?:(?:private|protected|public|readonly)\s+)*(\w+)\??\s*:\s*([^;=\n]+)[;=]/gm)) {
+            if (SPANNING_FIELD.test(f[2])) reasons.push(`field '${f[1]}: ${f[2].trim()}'`);
+          }
+          if (reasons.length === 0) continue;
+          if (/^[ \t]+touchedBoardIds\s*\(\s*\)/m.test(body)) continue;
+          out.push(fail(rel, line, `${cls[1]} spans boards (${reasons.join(', ')}) but doesn't override touchedBoardIds()`));
+        }
+      }
+      return out;
+    },
+  },
 ];

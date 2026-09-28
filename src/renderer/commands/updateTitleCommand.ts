@@ -30,6 +30,7 @@ export interface UpdateTitleArgs {
   newTitleHtml: string | undefined;
 }
 
+// allow-own-board-only: its child field command is on the same board
 export class UpdateTitleCommand extends Command {
   description: string;
   readonly targetBoardId: string;

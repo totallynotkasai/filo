@@ -92,7 +92,9 @@ export function registerPathRenamable(name: string, fn: RenameSweep): () => void
 export function renameAllPathKeys(oldRel: string, newRel: string): boolean {
   if (!oldRel || !newRel || oldRel === newRel) return true;
   let ok = true;
-  for (const { name, fn } of sweeps) {
+  // A copy: a sweep may unregister itself (a one-shot wait for a rename), and
+  // removing it from the live array mid-loop would skip the sweep after it.
+  for (const { name, fn } of [...sweeps]) {
     try {
       fn(oldRel, newRel);
     } catch (err) {

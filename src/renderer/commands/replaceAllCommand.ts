@@ -176,6 +176,7 @@ async function buildPlans(
   return { ok: true, plans };
 }
 
+// allow-own-board-only: rewrites notes only; it holds no board snapshot
 export class ReplaceAllCommand extends Command {
   description: string;
   /**

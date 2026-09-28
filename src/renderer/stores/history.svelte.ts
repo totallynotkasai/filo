@@ -451,6 +451,18 @@ function onTargetBoard(
   };
 }
 
+/**
+ * Commands run off every stack whose undo a toast still offers
+ * (`holdOffStack`). A board reload drops the ones that touch it, as it drops
+ * stack steps, so the toast's Undo can't replay a stale snapshot.
+ */
+let offStackHeld: Command[] = [];
+
+/** Whether `command` writes `boardId` on undo or redo. */
+function touches(command: Command, boardId: string): boolean {
+  return command.targetBoardId === boardId || command.touchedBoardIds().has(boardId);
+}
+
 /** Removes `command` from every stack (the user skipped a step that can't run). */
 function dropCommand(command: Command): void {
   for (const stack of Object.values(stacks)) {
@@ -523,6 +535,32 @@ export const historyStore = {
   },
 
   /**
+   * Keeps `command`, run off the stacks, as one whose undo a toast offers
+   * (`undoOffStack`). Until then a reload of a board it touches drops it,
+   * exactly as `clearBoard` drops a stack step.
+   */
+  holdOffStack(command: Command): void {
+    if (!offStackHeld.includes(command)) offStackHeld = [...offStackHeld, command];
+  },
+
+  /**
+   * The toast's Undo for a held off-stack command: runs its undo in the
+   * chain, once. When a board reload dropped it meanwhile, says so instead.
+   */
+  undoOffStack(command: Command, label: string): Promise<void> {
+    if (!offStackHeld.includes(command)) {
+      uiStore.toast(
+        `Couldn't undo: a board this step changed was reloaded from disk since. Anything it moved to Filo's trash can be restored from Settings → Trash.`,
+        'warning',
+        8000,
+      );
+      return Promise.resolve();
+    }
+    offStackHeld = offStackHeld.filter((c) => c !== command);
+    return this.runOffStack(() => command.undo(), label);
+  },
+
+  /**
    * Executes a command and pushes it onto the active board's undo stack.
    * Clears the redo stack (new action invalidates redo history). Also
    * marks the project as dirty.
@@ -542,8 +580,20 @@ export const historyStore = {
     // See rollbackExecute.
     const originBoardId = activeBoardId;
     const { preRedoStack, redoStackRef } = commitExecute(command);
-    return runChained(() => command.execute()).catch((err) => {
+    // A command made for the active board runs there, even when its body
+    // waits behind a running command and the user switches tabs meanwhile
+    // (facade commands act on whichever board is active when they run). One
+    // made for another board, or none, runs as it is.
+    const body = (): Promise<void> | void => command.execute();
+    const op = command.targetBoardId && command.targetBoardId === originBoardId
+      ? onTargetBoard(command, body, false)
+      : body;
+    return runChained(op).catch((err) => {
       rollbackExecute(command, preRedoStack, redoStackRef, originBoardId);
+      if (err instanceof TargetBoardClosedError) {
+        uiStore.toast(`"${command.description}" wasn't made: its board was closed before it could run.`, 'info', 5000);
+        return;
+      }
       if (err instanceof ChangeRefusedError) {
         toastRefused(err);
         return;
@@ -745,6 +795,7 @@ export const historyStore = {
    */
   clear() {
     stacks = {};
+    offStackHeld = [];
     for (const k of Object.keys(truncationNotified)) delete truncationNotified[k];
   },
 
@@ -759,24 +810,35 @@ export const historyStore = {
    * toast forever — so every surviving stack is swept of commands targeting
    * the removed board.
    *
-   * Also called when the board is read again from disk (another program or
-   * machine changed it): its undo steps hold snapshots of the version before,
-   * and undoing one would write them over the other change.
+   * With `changedOnDisk` the board was read again from disk (another program
+   * or machine changed it): every step that holds a snapshot of it is
+   * dropped, on any stack and off them (`touchedBoardIds`: a cascade filed
+   * on another board, a batch, cross-board connections), since undoing one
+   * would write the version before over the other change. A board that is
+   * only closed or deleted keeps those: a cascade on another board still
+   * brings its file back from the trash.
    *
    * Returns how many undo / redo steps were dropped.
    */
-  clearBoard(boardId: string): number {
+  clearBoard(boardId: string, opts: { changedOnDisk?: boolean } = {}): number {
     const own = stacks[boardId];
     let dropped = own ? own.undoStack.length + own.redoStack.length : 0;
     delete stacks[boardId];
     delete truncationNotified[boardId];
+    const drops = (c: Command): boolean =>
+      opts.changedOnDisk ? touches(c, boardId) : c.targetBoardId === boardId;
     for (const id of Object.keys(stacks)) {
       const stack = stacks[id];
       if (!stack) continue;
       dropped += mutateStack(stack, (s) => {
-        s.undoStack = s.undoStack.filter((c) => c.targetBoardId !== boardId);
-        s.redoStack = s.redoStack.filter((c) => c.targetBoardId !== boardId);
+        s.undoStack = s.undoStack.filter((c) => !drops(c));
+        s.redoStack = s.redoStack.filter((c) => !drops(c));
       }).droppedCount;
+    }
+    if (opts.changedOnDisk) {
+      const kept = offStackHeld.filter((c) => !drops(c));
+      dropped += offStackHeld.length - kept.length;
+      offStackHeld = kept;
     }
     return dropped;
   },

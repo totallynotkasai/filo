@@ -13,6 +13,7 @@ import type {
 import { NoteFieldCommand } from './noteFieldCommand';
 import { restoreFiles, stillTrashed, trashFiles, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
+import { applyMove, layoutOf, movedTasks, regroup, type SectionKey, type TaskLayout } from '../lib/tasklist/sectionMembership';
 
 // ── Task List Commands ──
 //
@@ -53,37 +54,68 @@ export function snapshotTaskListSlice(boardId: string): {
   };
 }
 
-/**
- * Each section's start index, by section id: the only section field adding or
- * removing a task changes.
- */
-type SectionPositions = Record<string, number>;
-
-/** The board's section starts now, or null when it isn't a loaded Task List. */
-function captureSectionPositions(boardId: string): SectionPositions | null {
+/** The live sections and tasks of a loaded Task List, or null. */
+function liveTaskList(boardId: string): { sections: TaskListSection[]; tasks: TaskPlacement[] } | null {
   const cached = boardCacheStore.cache[boardId];
   if (!cached || cached.board.type !== 'tasklist') return null;
-  const out: SectionPositions = {};
-  for (const s of ((cached.board as TaskListBoard).sections ?? []) as TaskListSection[]) out[s.id] = s.position;
-  return out;
+  const tl = cached.board as TaskListBoard;
+  return { sections: (tl.sections ?? []) as TaskListSection[], tasks: (tl.tasks ?? []) as TaskPlacement[] };
 }
 
 /**
- * Puts back the section starts `positions` recorded, for the sections that
- * still exist. Everything else about the sections as they are now (a rename,
- * a collapse, a style, a section added or deleted since) is kept: replaying a
- * whole `sections` snapshot would undo those too.
+ * Runs `change` (one task added or removed) and then recomputes every
+ * section's start from the live order, so each other task stays in the
+ * section it was in just before, whatever else changed the board since this
+ * command was recorded. Putting back recorded absolute starts would misplace
+ * tasks once anything else added or removed one. `placed` names the section a
+ * task added by `change` belongs to.
  */
-function restoreSectionPositions(boardId: string, positions: SectionPositions | null): void {
-  if (!positions) return;
-  const cached = boardCacheStore.cache[boardId];
-  if (!cached || cached.board.type !== 'tasklist') return;
-  const sections = ((cached.board as TaskListBoard).sections ?? []) as TaskListSection[];
-  if (sections.length === 0) return;
-  boardCacheStore.persistTaskListStructure(
-    boardId,
-    sections.map((s) => ({ ...s, position: positions[s.id] ?? s.position })),
-  );
+function keepingSections(boardId: string, change: () => void, placed: Record<string, SectionKey> = {}): void {
+  const before = liveTaskList(boardId);
+  change();
+  const after = liveTaskList(boardId);
+  if (!before || !after || after.sections.length === 0) return;
+  const sectionOf = { ...layoutOf(before.sections, before.tasks).sectionOf, ...placed };
+  const next = regroup(after.sections, after.tasks, sectionOf);
+  boardCacheStore.persistTaskListStructure(boardId, next.sections, next.tasks);
+}
+
+/**
+ * Where a task was: its section and that section's task order at the time,
+ * so it can go back beside whichever of those neighbours are still there.
+ */
+interface TaskSpot {
+  section: SectionKey;
+  sectionOrder: string[];
+}
+
+function spotOf(boardId: string, tileId: string): TaskSpot | null {
+  const live = liveTaskList(boardId);
+  if (!live) return null;
+  const { order, sectionOf } = layoutOf(live.sections, live.tasks);
+  if (!Object.prototype.hasOwnProperty.call(sectionOf, tileId)) return null;
+  const section = sectionOf[tileId] ?? null;
+  return { section, sectionOrder: order.filter((id) => sectionOf[id] === section) };
+}
+
+/** The index in the live `tasks` a task at `spot` goes back to. */
+function indexForSpot(boardId: string, tileId: string, spot: TaskSpot, fallback: number): number {
+  const live = liveTaskList(boardId);
+  if (!live) return fallback;
+  const { sectionOf } = layoutOf(live.sections, live.tasks);
+  const at = spot.sectionOrder.indexOf(tileId);
+  const indexOf = (id: string): number =>
+    sectionOf[id] === spot.section ? live.tasks.findIndex((p) => p.tileId === id) : -1;
+  for (let k = at - 1; k >= 0; k--) {
+    const idx = indexOf(spot.sectionOrder[k] ?? '');
+    if (idx >= 0) return idx + 1;
+  }
+  for (let k = at + 1; k < spot.sectionOrder.length; k++) {
+    const idx = indexOf(spot.sectionOrder[k] ?? '');
+    if (idx >= 0) return idx;
+  }
+  const first = live.tasks.findIndex((p) => sectionOf[p.tileId] === spot.section);
+  return first >= 0 ? first : Math.min(fallback, live.tasks.length);
 }
 
 /** What a create-exclusive seed actually created. */
@@ -100,7 +132,6 @@ export class AddTaskCommand extends Command {
   private position: number;
   private style?: PartialTaskStyle;
   private targetSectionId?: string;
-  private sectionsBefore: SectionPositions | null;
   // Optional backing-`.md` seed folded INTO the command so it runs on the
   // history chain. Awaited on the first execute only; absent for callers (e.g.
   // file-drop) whose `.md` already exists. May resolve the FINAL path it created
@@ -127,7 +158,6 @@ export class AddTaskCommand extends Command {
     this.targetSectionId = targetSectionId;
     this.seedBackingFile = seedBackingFile;
     this.description = `Add task "${defTitle(def)}"`;
-    this.sectionsBefore = captureSectionPositions(boardId);
   }
 
   async execute(): Promise<void> {
@@ -136,13 +166,17 @@ export class AddTaskCommand extends Command {
     // Placement first, synchronously (before any await) so callers/tests that
     // inspect the cache right after execute() — and the placement-only path
     // (file-drop, round-trip tests) — are unaffected.
-    boardCacheStore.persistAddTaskPlacement(
+    const add = (): void => boardCacheStore.persistAddTaskPlacement(
       this.boardId,
       this.def,
       this.position,
       this.style,
       this.targetSectionId,
     );
+    // A redo lands on a board other changes may have reshaped since: the task
+    // goes into its section and every other task stays in its own.
+    if (isFirst || !this.targetSectionId) add();
+    else keepingSections(this.boardId, add, { [this.def.id]: this.targetSectionId });
     // Seed the backing `.md` on the FIRST execute, inside the chained command
     // body, so save()/quit (which drain via whenChainSettled()) can't persist the
     // placement but lose the `.md` and its metadata. Skipped on redo (re-seeding
@@ -177,11 +211,7 @@ export class AddTaskCommand extends Command {
   }
 
   private removePlacement(): void {
-    boardCacheStore.removeTaskPlacement(this.boardId, this.def.id);
-    // The remove/add section-position shifts aren't symmetric at boundary
-    // indices, so the pre-add section starts are put back for an exact
-    // round-trip (and nothing else about the sections).
-    restoreSectionPositions(this.boardId, this.sectionsBefore);
+    keepingSections(this.boardId, () => boardCacheStore.removeTaskPlacement(this.boardId, this.def.id));
   }
 }
 
@@ -205,11 +235,10 @@ export interface DeleteTaskFileOptions {
 /**
  * Removes one task placement (and optionally its backing file).
  *
- * The placement position and the section slices are snapshotted in the
- * CONSTRUCTOR as absolute indices. Instances batched into one BatchCommand
- * must therefore be ordered by DESCENDING position (`orderForBatchDelete`):
- * the batch undoes in reverse, and only then does each re-insert land on the
- * index it was taken from.
+ * The task's section and that section's order are snapshotted in the
+ * CONSTRUCTOR. Undo puts the task back beside the nearest of its old
+ * neighbours still in that section, so tasks added or removed meanwhile
+ * (another delete in the same batch, a cascade) don't shift where it lands.
  */
 export class DeleteTaskCommand extends Command {
   description: string;
@@ -218,7 +247,7 @@ export class DeleteTaskCommand extends Command {
   private tileId: string;
   private snapshotDef: TileDefinition | null;
   private snapshotPlacement: TaskPlacement | null;
-  private sectionsBefore: SectionPositions | null;
+  private spot: TaskSpot | null;
   // When set, execute() also moves the note into Filo's trash and undo()
   // moves it back BEFORE restoring the placement, as DeleteTilesCommand does.
   // Null on the default placement-only path.
@@ -245,7 +274,7 @@ export class DeleteTaskCommand extends Command {
     const cached = boardCacheStore.cache[boardId];
     this.snapshotDef = null;
     this.snapshotPlacement = null;
-    this.sectionsBefore = null;
+    this.spot = null;
     if (cached && cached.board.type === 'tasklist') {
       const tl = cached.board as TaskListBoard;
       const placements = (tl.tasks ?? []) as TaskPlacement[];
@@ -255,7 +284,7 @@ export class DeleteTaskCommand extends Command {
       // Deep-clone so a later tag edit or external rewrite can't mutate the
       // snapshot's nested fields (e.g. the `tags` array) through the cache.
       if (def) this.snapshotDef = this.snapshot(def);
-      this.sectionsBefore = captureSectionPositions(boardId);
+      this.spot = spotOf(boardId, tileId);
     }
   }
 
@@ -315,31 +344,35 @@ export class DeleteTaskCommand extends Command {
   }
 
   private restorePlacement(): void {
-    if (!this.snapshotDef || !this.snapshotPlacement) return;
-    boardCacheStore.persistAddTaskPlacement(
+    const def = this.snapshotDef;
+    const placement = this.snapshotPlacement;
+    if (!def || !placement) return;
+    const spot = this.spot;
+    const index = spot ? indexForSpot(this.boardId, this.tileId, spot, placement.position) : placement.position;
+    keepingSections(
       this.boardId,
-      this.snapshotDef,
-      this.snapshotPlacement.position,
-      this.snapshotPlacement.style,
-      undefined,
-      this.snapshotPlacement,
+      () => boardCacheStore.persistAddTaskPlacement(this.boardId, def, index, placement.style, undefined, placement),
+      spot ? { [this.tileId]: spot.section } : {},
     );
-    restoreSectionPositions(this.boardId, this.sectionsBefore);
   }
 }
 
 /**
- * Structural mutation that replaces both the placements and the sections
- * array for a Task List board. Used by drag-drop block moves, indent /
- * outdent, and section reorder. Snapshots are full slices so undo is
- * unambiguous regardless of which fields actually changed.
+ * A move of tasks within or between the sections of a Task List (drag, move
+ * to section, keyboard reorder). It keeps only the move: the tasks that moved
+ * and the order and section of every task before and after (ids only). Undo
+ * and redo put just those tasks back beside their old or new neighbours on
+ * the board as it is then, and recompute the section starts, so a task added
+ * or removed meanwhile (off this stack) is neither undone nor misplaced. A
+ * whole-array snapshot would put back the arrays as they were.
  */
 export class MoveTaskBlockCommand extends Command {
   description: string;
   readonly targetBoardId: string;
   private boardId: string;
-  private before: { sections: TaskListSection[]; tasks: TaskPlacement[] };
-  private after: { sections: TaskListSection[]; tasks: TaskPlacement[] };
+  private moved: string[];
+  private layoutBefore: TaskLayout;
+  private layoutAfter: TaskLayout;
 
   constructor(
     boardId: string,
@@ -350,27 +383,25 @@ export class MoveTaskBlockCommand extends Command {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;
-    // Deep-clone so any nested style /
-    // tags field on a placement can't leak through to the snapshot.
-    this.before = this.snapshot(before);
-    this.after = this.snapshot(after);
+    this.layoutBefore = this.snapshot(layoutOf(before.sections, before.tasks));
+    this.layoutAfter = this.snapshot(layoutOf(after.sections, after.tasks));
+    this.moved = movedTasks(this.layoutBefore, this.layoutAfter);
     this.description = description;
   }
 
   execute() {
-    boardCacheStore.persistTaskListStructure(
-      this.boardId,
-      this.after.sections.map((s) => ({ ...s })),
-      this.after.tasks.map((p) => ({ ...p })),
-    );
+    this.apply(this.layoutAfter);
   }
 
   undo() {
-    boardCacheStore.persistTaskListStructure(
-      this.boardId,
-      this.before.sections.map((s) => ({ ...s })),
-      this.before.tasks.map((p) => ({ ...p })),
-    );
+    this.apply(this.layoutBefore);
+  }
+
+  private apply(target: TaskLayout): void {
+    const live = liveTaskList(this.boardId);
+    if (!live) return;
+    const next = applyMove(live.sections, live.tasks, this.moved, target);
+    boardCacheStore.persistTaskListStructure(this.boardId, next.sections, next.tasks);
   }
 }
 
@@ -466,6 +497,7 @@ export class TogglePlacementLockCommand extends Command {
  * snapshot/restore that drag-reorder uses — this class is the entry point
  * keyboard handlers call.
  */
+// allow-own-board-only: its inner move is on the same board
 export class ReorderTaskWithinSectionCommand extends Command {
   description: string;
   readonly targetBoardId: string;

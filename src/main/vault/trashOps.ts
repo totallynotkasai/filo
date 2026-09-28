@@ -56,6 +56,12 @@ export interface TrashManifest {
   deletedAt: string;
   machineId: string;
   kind: TrashKind;
+  /**
+   * Set when the item was restored (to this vault-relative path) but its trash
+   * copy couldn't be removed (locked). The entry is not restored a second
+   * time; emptying the trash clears the copy.
+   */
+  restoredTo?: string;
 }
 
 export interface TrashEntry extends TrashManifest {
@@ -76,6 +82,18 @@ export class TrashItemMissingError extends Error {
   constructor(id: string) {
     super(`Trash item ${id} is gone`);
     this.name = 'TrashItemMissingError';
+  }
+}
+
+/**
+ * The entry was restored already; what is left in the trash is a copy. To the
+ * renderer it is an item no longer in the trash (`TRASH_ITEM_MISSING`).
+ */
+export class TrashAlreadyRestoredError extends TrashItemMissingError {
+  constructor(id: string, restoredTo: string) {
+    super(id);
+    this.message = `Trash item ${id} was already restored to ${restoredTo}`;
+    this.name = 'TrashAlreadyRestoredError';
   }
 }
 
@@ -130,7 +148,10 @@ function parseManifest(raw: string): TrashManifest | null {
   if (m.originalPath.startsWith('/') || segments.some((s) => s === '' || s === '.' || s === '..')) return null;
   if (/^[a-zA-Z]:/.test(m.originalPath) || m.originalPath.includes('\\')) return null;
   if (segments[0]?.toLowerCase() === '.filo' && !isThemeFilePath(m.originalPath)) return null;
-  return { originalPath: m.originalPath, deletedAt: m.deletedAt, machineId: m.machineId, kind: m.kind };
+  const manifest: TrashManifest = { originalPath: m.originalPath, deletedAt: m.deletedAt, machineId: m.machineId, kind: m.kind };
+  // Only shown and used to refuse a second restore, never as a path to write.
+  if (typeof m.restoredTo === 'string' && m.restoredTo.length > 0) manifest.restoredTo = m.restoredTo;
+  return manifest;
 }
 
 async function readManifest(vaultRoot: string, trashId: string): Promise<TrashManifest | null> {
@@ -225,10 +246,14 @@ function targetTaken(target: string): NodeJS.ErrnoException {
   return err;
 }
 
-/** Test seams: a racing create just before the move, and a volume without hard links. */
+/**
+ * Test seams: a racing create just before the move, a volume without hard
+ * links, and a trash copy that can't be unlinked.
+ */
 export interface RestoreHooks {
   beforeMove?: (target: string) => Promise<void>;
   link?: (existing: string, created: string) => Promise<void>;
+  unlink?: (path: string) => Promise<void>;
 }
 
 /**
@@ -242,14 +267,15 @@ export interface RestoreHooks {
  *   a folder, the target is re-checked just before each rename attempt; that
  *   leaves only the gap between that check and the rename.
  *
- * Throws EEXIST when the target is taken.
+ * Throws EEXIST when the target is taken. Returns whether a copy of the item
+ * was left in the trash (linked into place, but the trash side is locked).
  */
 async function moveWithoutReplacing(
   item: string,
   target: string,
   kind: TrashKind,
   hooks: RestoreHooks,
-): Promise<void> {
+): Promise<{ copyLeft: boolean }> {
   await hooks.beforeMove?.(target);
   if (kind === 'file') {
     let linked = false;
@@ -262,9 +288,12 @@ async function moveWithoutReplacing(
     }
     if (linked) {
       // The item is in place. A trash copy that can't be unlinked (locked) is
-      // only a duplicate; the bookkeeping clean-up leaves it in the trash.
-      await retryOnWindowsLock(() => fs.unlink(item)).catch(() => undefined);
-      return;
+      // only a duplicate; the caller marks the entry restored.
+      const copyLeft = await retryOnWindowsLock(() => (hooks.unlink ?? fs.unlink)(item)).then(
+        () => false,
+        () => true,
+      );
+      return { copyLeft };
     }
   }
   await retryOnWindowsLock(() => fs.rename(item, target), {
@@ -272,6 +301,7 @@ async function moveWithoutReplacing(
       if (await exists(target)) throw targetTaken(target);
     },
   });
+  return { copyLeft: false };
 }
 
 /** How many free names a restore tries while other programs keep taking them. */
@@ -289,6 +319,7 @@ export async function restoreFromTrash(
 ): Promise<{ restoredPath: string; originalPath: string; kind: TrashKind; alongside: boolean }> {
   const manifest = await readManifest(vaultRoot, trashId);
   if (!manifest) throw new TrashItemMissingError(trashId);
+  if (manifest.restoredTo !== undefined) throw new TrashAlreadyRestoredError(trashId, manifest.restoredTo);
   const item = itemPathOf(vaultRoot, trashId, manifest.originalPath);
   if (!(await exists(item))) throw new TrashItemMissingError(trashId);
   for (let attempt = 0; ; attempt++) {
@@ -296,8 +327,9 @@ export async function restoreFromTrash(
     const target = join(vaultRoot, ...restoredPath.split('/'));
     // The item's folder may have been deleted since.
     await fs.mkdir(dirname(target), { recursive: true });
+    let copyLeft: boolean;
     try {
-      await moveWithoutReplacing(item, target, manifest.kind, hooks);
+      ({ copyLeft } = await moveWithoutReplacing(item, target, manifest.kind, hooks));
     } catch (err) {
       // A rename onto a folder that appeared fails with its own code on some
       // systems; what counts is that the path is taken now.
@@ -305,7 +337,18 @@ export async function restoreFromTrash(
       if (taken && attempt + 1 < RESTORE_ATTEMPTS) continue;
       throw err;
     }
-    await removeBookkeeping(vaultRoot, trashId, manifest.originalPath);
+    if (copyLeft) {
+      // The bookkeeping can't go while the copy is there. Marking the entry
+      // keeps the list from offering a second restore, which would put a
+      // "(restored)" duplicate beside the file just brought back. If even the
+      // mark can't be written, the entry stays restorable as before.
+      const marked: TrashManifest = { ...manifest, restoredTo: restoredPath };
+      await fs
+        .writeFile(join(containerOf(vaultRoot, trashId), MANIFEST), JSON.stringify(marked, null, 2), 'utf-8')
+        .catch(() => undefined);
+    } else {
+      await removeBookkeeping(vaultRoot, trashId, manifest.originalPath);
+    }
     return {
       restoredPath,
       originalPath: manifest.originalPath,

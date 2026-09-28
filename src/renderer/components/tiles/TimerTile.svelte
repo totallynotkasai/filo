@@ -4,9 +4,8 @@
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { UpdateTimerConfigCommand, type TimerMode } from '../../commands/index';
-  import { createCoarsePersistGate } from '../../lib/utils/coarsePersistGate';
-  import { registerComponentFlush } from '../../lib/boards/componentFlush';
+  import { UpdateTimerConfigCommand, type TimerMode, type TimerConfigSnapshot } from '../../commands/index';
+  import { timerRemainingAt, startTimerPatch, stopTimerPatch } from '../../lib/utils/timerCountdown';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -20,20 +19,20 @@
   // changes once per second. Skip the formatTime + assignment when the
   // second hasn't changed (clock mode and idle/running countdowns alike).
   let lastDisplaySecond = -1;
-  // The live countdown lives in component state. Persisting the decrement on
-  // every 100 ms tick would re-arm the board's 300 ms write debounce forever,
-  // so the board's writes would never flush. The tile is written only on
-  // pause / stop / reset / unmount-while-running (plus the coarse persist below).
+  // The time left, recomputed from the tile's wall-clock `endsAt` on every
+  // tick. Nothing is written while the countdown runs: the board file holds
+  // the end time, so a closed board, a quit or another machine all see the
+  // same countdown. The tile is written on start, pause, reset and when it
+  // reaches zero.
   // untrack: deliberately snapshot the initial value — the $effect below
-  // re-seeds it on genuine external changes, and tick() mutates it locally.
-  let liveRemaining = $state(untrack(() => tile.remaining));
-  // Coarse periodic persist of a RUNNING countdown. Quit never unmounts the
-  // Svelte tree (onDestroy's persist never runs) and a vault swap clears the
-  // board cache BEFORE unmount, so neither saves a running timer's progress.
-  // The gate fires every 45 s — far above the board's 300 ms write debounce,
-  // so it can't keep the debounce re-armed. Armed per running countdown by
-  // the interval $effect below; null while stopped / in clock mode.
-  let coarsePersistDue: ((nowMs: number) => boolean) | null = null;
+  // re-seeds it on genuine external changes, and tick() updates it locally.
+  let liveRemaining = $state(untrack(() => timerRemainingAt(tile, Date.now())));
+  // True once this view has shown the countdown running with time left, so
+  // only a countdown that ends on screen flashes and toasts.
+  // DECISION: a countdown that ran out while its board was closed stops
+  // quietly on the next mount (the display shows zero); a toast then, perhaps
+  // at vault open, would not say which timer it was.
+  let countedHere = false;
   // Custom time input state (shown when clicking the display while stopped)
   let editingCustom = $state(false);
   let customInput = $state('');
@@ -82,23 +81,23 @@
   // its last saved value just before the unmount save reads it.
   // A reset while running may leave `remaining` as saved, so `isRunning`
   // is compared too.
-  const seedKey = (t: TimerTile): string => `${t.mode}|${t.duration}|${t.remaining}|${t.isRunning}`;
+  const seedKey = (t: TimerTile): string => `${t.mode}|${t.duration}|${t.remaining}|${t.isRunning}|${t.endsAt ?? ''}`;
   let seeded = untrack(() => seedKey(tile));
   $effect(() => {
     const next = seedKey(tile);
     if (next === seeded) return;
     seeded = next;
-    // Re-seed the local countdown whenever the persisted value changes from
-    // outside our tick — mode swap, duration set, reset, or external reload.
-    // A running countdown writes tile.remaining only via the 45 s coarse
-    // persist, whose value equals the live countdown at write
-    // time — that echo re-seeds by at most one 100 ms tick, a harmless
-    // rewind. Otherwise this fires only on genuine external changes, not on
-    // our own per-second ticks (liveRemaining is written but not read here,
-    // so there is no effect loop).
-    liveRemaining = tile.remaining;
+    // Re-seed the local countdown whenever the persisted value changes —
+    // mode swap, duration set, start, pause, reset, or a reload from disk
+    // (another machine started or paused it). liveRemaining is written but
+    // not read here, so there is no effect loop.
+    liveRemaining = timerRemainingAt(tile, Date.now());
     lastDisplaySecond = -1;
   });
+
+  function configSnapshot(): TimerConfigSnapshot {
+    return { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning, endsAt: tile.endsAt };
+  }
 
   // Config changes (mode swap
   // and duration set) route through UpdateTimerConfigCommand so Ctrl+Z
@@ -108,20 +107,21 @@
   function cycleMode() {
     const modes: TimerMode[] = ['hms', 'ms', 's', 'clock'];
     const nextIdx = (modes.indexOf(tile.mode) + 1) % modes.length;
-    const before = { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning };
-    const after = { ...before, mode: modes[nextIdx] ?? tile.mode, isRunning: false };
+    const before = configSnapshot();
+    // A mode swap stops a running countdown where it is, not where it started.
+    const after = { ...before, ...stopTimerPatch(tile, Date.now()), mode: modes[nextIdx] ?? tile.mode };
     historyStore.execute(new UpdateTimerConfigCommand(tile.id, before, after, 'Change timer mode'));
   }
 
   // allow-direct-mutation: transient play/pause toggle, not history-worthy.
   function toggleRunning() {
     if (tile.mode === 'clock') return;
+    const now = Date.now();
     if (tile.isRunning) {
-      // Pause — persist the live countdown so it survives reload / board swap.
-      boardStore.updateTile(tile.id, { remaining: liveRemaining, isRunning: false });
+      boardStore.updateTile(tile.id, stopTimerPatch(tile, now));
     } else {
-      // Resume — liveRemaining already equals the persisted value while paused.
-      boardStore.updateTile(tile.id, { isRunning: true });
+      // Resume: liveRemaining equals the persisted value while paused.
+      boardStore.updateTile(tile.id, startTimerPatch(liveRemaining, now));
     }
   }
 
@@ -129,8 +129,8 @@
     if (tile.mode === 'clock') return;
     // Reset is a deliberate user action — undoable so an accidental press
     // mid-session can be reversed.
-    const before = { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning };
-    const after = { ...before, remaining: tile.duration, isRunning: false };
+    const before = configSnapshot();
+    const after = { ...before, remaining: tile.duration, isRunning: false, endsAt: undefined };
     historyStore.execute(new UpdateTimerConfigCommand(tile.id, before, after, 'Reset timer'));
   }
 
@@ -173,19 +173,19 @@
       return;
     }
 
-    if (tileRef.isRunning && liveRemaining > 0) {
-      // Count down in component state only — no per-tick markDirty.
-      liveRemaining = Math.max(0, liveRemaining - elapsed);
+    if (tileRef.isRunning) {
+      // No per-tick write: the time left is read off the stored end time. A
+      // board saved without one counts down locally until the interval
+      // effect below stamps it.
+      liveRemaining = tileRef.endsAt !== undefined
+        ? timerRemainingAt(tileRef, now)
+        : Math.max(0, liveRemaining - elapsed);
       if (liveRemaining === 0) {
         // allow-direct-mutation: countdown reached zero; persist the stop once.
-        boardStore.updateTile(tileRef.id, { remaining: 0, isRunning: false });
-        announceFinished();
-      } else if (coarsePersistDue?.(now)) {
-        // Coarse periodic persist so a running countdown
-        // survives quit / vault swap within a minute of truth (see the gate
-        // declaration above).
-        // allow-direct-mutation: transient countdown progress, not history-worthy.
-        boardStore.updateTile(tileRef.id, { remaining: liveRemaining });
+        boardStore.updateTile(tileRef.id, { remaining: 0, isRunning: false, endsAt: undefined });
+        if (countedHere) announceFinished();
+      } else {
+        countedHere = true;
       }
     }
     const remainingSecond = Math.max(0, Math.floor(liveRemaining / 1000));
@@ -197,8 +197,8 @@
 
   function setDuration(minutes: number) {
     const dur = minutes * 60 * 1000;
-    const before = { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning };
-    const after = { ...before, duration: dur, remaining: dur, isRunning: false };
+    const before = configSnapshot();
+    const after = { ...before, duration: dur, remaining: dur, isRunning: false, endsAt: undefined };
     historyStore.execute(new UpdateTimerConfigCommand(tile.id, before, after, 'Set timer duration'));
     editingCustom = false;
   }
@@ -224,8 +224,8 @@
       totalMs = (parseInt(parts[0] ?? '', 10) || 0) * 60 * 1000;
     }
     if (totalMs > 0) {
-      const before = { mode: tile.mode, duration: tile.duration, remaining: tile.remaining, isRunning: tile.isRunning };
-      const after = { ...before, duration: totalMs, remaining: totalMs, isRunning: false };
+      const before = configSnapshot();
+      const after = { ...before, duration: totalMs, remaining: totalMs, isRunning: false, endsAt: undefined };
       historyStore.execute(new UpdateTimerConfigCommand(tile.id, before, after, 'Set timer duration'));
       editingCustom = false;
     } else {
@@ -255,11 +255,13 @@
       lastDisplaySecond = -1;
       tick();
       if (mode !== 'clock' && !running) return; // static — no interval
-      // Fresh cadence gate per RUNNING arm (start / resume):
-      // the first coarse persist comes one full interval after arming.
-      coarsePersistDue = mode !== 'clock' && running
-        ? createCoarsePersistGate(Date.now())
-        : null;
+      // A running countdown from a board saved before end times were stored
+      // gets one now, so it keeps counting once this board closes.
+      const current = boardStore.getTile(tile.id) as TimerTile | undefined;
+      if (mode !== 'clock' && running && current?.isRunning && current.endsAt === undefined && liveRemaining > 0) {
+        // allow-direct-mutation: stamps the end time of a countdown already running.
+        boardStore.updateTile(tile.id, startTimerPatch(liveRemaining, Date.now()));
+      }
       const cadence = mode === 'clock' ? 1000 : 100;
       const id = setInterval(tick, cadence);
       return () => clearInterval(id);
@@ -269,27 +271,7 @@
   onDestroy(() => {
     // Clear the end-of-timer flash handle so it can't fire after unmount.
     if (flashTimer) clearTimeout(flashTimer);
-    // Save countdown progress on unmount (e.g. board switch mid-run) — while
-    // RUNNING we don't write tile.remaining per tick, so the cached value is
-    // otherwise stale.
-    //
-    // The isRunning gate is correct: PAUSE writes `remaining: liveRemaining`
-    // synchronously and the re-seed $effect keeps them equal while paused, so a
-    // paused timer has no unpersisted drift. Dropping the gate would let unmount
-    // overwrite the canonical paused `remaining` with `liveRemaining`, which is
-    // only authoritative while the countdown runs.
-    persistRunningProgress();
   });
-
-  // Written to the tile's own board: by unmount the pane's scope may already
-  // show the board that replaced it. A save or a leave writes it too.
-  function persistRunningProgress(): void {
-    if (tile.isRunning && liveRemaining !== tile.remaining) {
-      // allow-direct-mutation: persist countdown progress on unmount.
-      boardStore.persistUpdateTile(tile.id, { remaining: liveRemaining }, tile.boardId);
-    }
-  }
-  $effect(() => registerComponentFlush('timer tile', persistRunningProgress));
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->

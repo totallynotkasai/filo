@@ -88,6 +88,20 @@ describe('fileBaselineRegistry — contract', () => {
     await fireVaultSwap({ phase: 'pre-swap', previousVault: '/vault', nextVault: '/other', saveOutgoing: false });
     expect(getBaseline('b.board.json')).toBeUndefined();
   });
+
+  it('a ticket taken before a vault swap never stamps a baseline after it, written to or not', async () => {
+    const neverWritten = baselineSeq('Fresh.board.json');
+    refreshBaselineAfterWrite('Written.board.json', 500, 50);
+    const written = baselineSeq('Written.board.json');
+    await fireVaultSwap({ phase: 'pre-swap', previousVault: '/vault', nextVault: '/other', saveOutgoing: false });
+    noteBaseline('Fresh.board.json', 1000, 100, { ifUnchangedSince: neverWritten });
+    noteBaseline('Written.board.json', 1000, 100, { ifUnchangedSince: written });
+    expect(getBaseline('Fresh.board.json')).toBeUndefined();
+    expect(getBaseline('Written.board.json')).toBeUndefined();
+    // A ticket taken after the swap stamps as usual.
+    noteBaseline('Fresh.board.json', 2000, 200, { ifUnchangedSince: baselineSeq('Fresh.board.json') });
+    expect(getBaseline('Fresh.board.json')).toMatchObject({ mtimeMs: 2000, size: 200 });
+  });
 });
 
 describe('fileBaselineRegistry — a reader never rolls the baseline back', () => {

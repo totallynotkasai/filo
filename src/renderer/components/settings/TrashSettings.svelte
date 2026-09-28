@@ -51,13 +51,13 @@
           <div class="item-text">
             <span class="item-name" title={entry.originalPath}>{nameOf(entry.originalPath)}</span>
             <span class="item-meta">
-              {#if folderOf(entry.originalPath)}{folderOf(entry.originalPath)} · {/if}{deletedLabel(entry)}{#if trashStore.thisMachine && entry.machineId !== trashStore.thisMachine} · on another computer{/if}{#if !entry.present} · missing{/if}
+              {#if folderOf(entry.originalPath)}{folderOf(entry.originalPath)} · {/if}{deletedLabel(entry)}{#if trashStore.thisMachine && entry.machineId !== trashStore.thisMachine} · on another computer{/if}{#if entry.restoredTo !== undefined} · restored to {entry.restoredTo}; a copy was left here{:else if !entry.present} · missing{/if}
             </span>
           </div>
           <button
             class="restore-btn"
             onclick={() => void trashStore.restore(entry)}
-            disabled={trashStore.busy || !entry.present}
+            disabled={trashStore.busy || !entry.present || entry.restoredTo !== undefined}
             aria-label={`Restore ${entry.originalPath}`}
           >Restore</button>
         </li>

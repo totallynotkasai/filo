@@ -195,7 +195,7 @@ export const trashStore = {
     const key = vaultPath(rel);
     let best: TrashEntryInfo | undefined;
     for (const e of entries) {
-      if (!e.present) continue;
+      if (!e.present || e.restoredTo !== undefined) continue;
       const at = vaultPath(e.originalPath);
       if (at !== key && !key.startsWith(`${at}/`)) continue;
       if (!best || Date.parse(e.deletedAt) > Date.parse(best.deletedAt)) best = e;

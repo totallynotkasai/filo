@@ -205,6 +205,36 @@ describe('vault:trash-move and vault:trash-restore', () => {
     });
   });
 
+  it('a restore whose trash copy is locked is marked restored, not offered again', async () => {
+    await write('Plan.md', 'original');
+    const moved = await call('vault:trash-move', vault, 'Plan.md');
+    const id = moved.trashId as string;
+    const locked = async (): Promise<void> => {
+      throw Object.assign(new Error('locked'), { code: 'EIO' });
+    };
+    const restored = await trashOps.restoreFromTrash(vault, id, { unlink: locked });
+    expect(restored).toMatchObject({ restoredPath: 'Plan.md', alongside: false });
+    expect((await read('Plan.md')).toString()).toBe('original');
+
+    const listed = await call('vault:trash-list', vault);
+    const entries = listed.entries as Array<{ trashId: string; restoredTo?: string }>;
+    const entry = entries.find((e) => e.trashId === id);
+    // Where hard links aren't supported the rename moved the item, and nothing is left.
+    if (entry) {
+      expect(entry.restoredTo).toBe('Plan.md');
+      expect(await call('vault:trash-restore', vault, id)).toMatchObject({ success: false, code: 'TRASH_ITEM_MISSING' });
+      expect(await exists('Plan (restored).md')).toBe(false);
+      // Emptying the trash clears the copy; the restored file stays.
+      const purged = await trashOps.purgeTrash(vault, [id], {
+        machineId: 'm',
+        trashItem: (p: string) => fs.rm(p, { force: true }),
+      });
+      expect(purged.purged).toEqual([id]);
+      expect(await trashDirEntries()).toEqual([]);
+      expect((await read('Plan.md')).toString()).toBe('original');
+    }
+  });
+
   it('a second restore of the same item reports it missing', async () => {
     await write('X.md', 'x');
     const moved = await call('vault:trash-move', vault, 'X.md');

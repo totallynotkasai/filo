@@ -583,6 +583,30 @@ A real-app check (built app, Playwright `_electron`, two scratch vaults) confirm
 4. **D41.** When the trash-side unlink fails after a hard-link restore, mark the manifest entry "restored, copy left in trash" so the list doesn't offer a second restore.
 5. **R1.** Fix the `fileBaselineRegistry` comment and the CLAUDE.md line, or keep `writeSeqs` across swaps so the documented invariant is true.
 
+#### Phase 7 status: done (2026-09-28)
+
+All five items are fixed, each with a regression test. Each test was checked against the old behaviour (the fix reverted or broken on purpose) and failed every time.
+
+| Item | Fix | Tests |
+|---|---|---|
+| D18 | A running countdown is stored as its wall-clock end, `endsAt` (epoch ms; optional on `TimerTileSchema`, `TimerTileDefSchema` and `InlineTileSchema`). The time left is computed from it on every tick and on mount (`lib/utils/timerCountdown.ts`). Nothing is written while it runs. The tile is written on Play (sets `endsAt`), on Pause, reset, mode change and duration change (clears it, keeping `remaining`), and when it reaches zero. The 45 s coarse persist (`coarsePersistGate.ts`), the unmount save and the timer's component flush are gone: there is no unsaved progress left to save. A board saved as running with no `endsAt` gets one stamped when it is first shown. `UpdateTimerConfigCommand` snapshots carry `endsAt`, so undoing a reset of a running timer resumes it where real time has taken it. | `timerCountdown.test.ts`: the helper; the Mind Map tile op saves and clears `endsAt`; the tile read back keeps it. Characterisation `leavingKeepsHeldChanges`: the board isn't rewritten while the timer runs, and after another board replaces it the saved countdown keeps going down |
+| D19 | An unreadable note is read again after 2 s, 10 s and 60 s (`TRANSIENT_RETRY_DELAYS_MS`), then left alone until its next watcher event, which starts the retries again. A successful read or ENOENT cancels them. | `vaultIndexRetryBackoff.test.ts`: the reads over an hour with fake timers, the restart on a watcher event, and the stop once readable |
+| D28 | `vault:write-file-text` refuses every path except this machine's crash-recovery sentinels, in main (`assertSentinelWriteTarget` in `pathSecurity.ts`, `FORBIDDEN`). The sentinels passed `assertNotInFiloDir` through `isPermittedSentinel` (a write only for this machine's id). The new check uses the same test, so the three sentinel writers (`dirtyFlagRecovery`, `renameCascadeSentinel`, `tagRewriteSentinel`), which are the channel's only callers, are unchanged. | `vaultWriteFileTextSentinelOnly.test.ts` (real handler, temp dir): an existing note keeps its bytes; no `.md`, `.markdown`, other file or folder is created; `.filo/app.json` and another machine's sentinel are refused; this machine's three sentinels are written. `readFileNonUtf8` / `symlinkNoteWrite` now expect `FORBIDDEN` from this channel |
+| D41 | When a hard-link restore can't unlink the trash-side copy, the manifest is marked `restoredTo: <path>`. The Trash list shows the entry as "restored to …; a copy was left here" with Restore disabled. `restoreFromTrash` refuses it (`TrashAlreadyRestoredError`, reported as `TRASH_ITEM_MISSING`, so an undo still sees the file is back). `trashStore.entryHolding` skips it. Emptying the trash clears the copy as before. | `trashMain.test.ts`: a locked trash copy (an `unlink` seam in `RestoreHooks`) is marked, isn't restored a second time (no `Plan (restored).md`), and a purge clears it while `Plan.md` stays |
+| R1 | Made the documented invariant true. A vault swap clears `writeSeqs` and takes a new floor from the never-resetting counter, and a path with no entry reads as that floor. So no ticket taken before a swap can match afterwards, including one for a path never written (before, that read as `0` on both sides of the swap). The comment and the CLAUDE.md line now say so. | `fileBaselineDrift.test.ts`: a ticket taken before a swap stamps nothing after it, for a written and an unwritten path; a ticket taken after it stamps as usual |
+
+**Verification.** `npm run ci:verify` passed: lint, `svelte-check`, `typecheck:main`, 683 test files (6461 passed, 5 skipped), the build, and 69/69 gates.
+
+**Deviations from the plan**
+
+- **D18:** Decision 6 as recommended (timers keep running while their board is closed). The coarse persist was dropped rather than kept for display on another machine: the stored end time already gives every machine the same countdown. Two additions:
+  - Changing the mode of a running timer now stops it at the time it had left, not at the value last saved.
+  - A countdown that ran out while its board was closed stops quietly the next time the board is shown (display at zero, no toast). A toast then, possibly at vault open, wouldn't say which timer it was. This is a `// DECISION:` comment in `TimerTile.svelte`.
+  
+  Machines whose clocks disagree will disagree on the time left by the same amount.
+- **D28:** narrower than "refuse `.md` / `.markdown`". The channel refuses every path that isn't this machine's sentinel, as the plan's second sentence asks. Its note-only checks (non-UTF-8, symbolic link) stay in the handler as defence; the gates inspect them.
+- **R1:** a third option. The plan's "keep `writeSeqs` across swaps" would let a pre-swap ticket for a written path match its old entry after the swap. So the entries are still cleared, and a per-swap floor closes the gap for unwritten paths.
+
 ### Phase 8: hygiene and code health (CH2–CH16)
 
 1. **CH2.** Unit tests for `sanitizeInlineHtml`: script, event handlers, `javascript:` URLs, style and allowed marks.
@@ -620,6 +644,7 @@ A real-app check (built app, Playwright `_electron`, two scratch vaults) confirm
 - **Phase 4:** done 2026-09-28 (status block under Phase 4).
 - **Phase 5:** done 2026-09-28 (status block under Phase 5).
 - **Phase 6:** done 2026-09-28 (status block under Phase 6).
-- Phases 7–8: not started.
+- **Phase 7:** done 2026-09-28 (status block under Phase 7).
+- Phase 8: not started.
 
 When a phase lands, add a "Phase N status" block (fix, tests, verification, deviations) as in Audit-22. When every phase is done, move this file to `docs/archive/`.

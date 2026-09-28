@@ -164,6 +164,8 @@ export const InlineTileSchema = z.object({
   remaining: z.number().finite().nonnegative().optional(),
   mode: z.enum(['hms', 'ms', 's', 'clock']).optional(),
   isRunning: z.boolean().optional(),
+  // Wall-clock end (epoch ms) of a running countdown (lib/utils/timerCountdown.ts).
+  endsAt: z.number().finite().nonnegative().optional(),
 });
 
 export type InlineTile = z.infer<typeof InlineTileSchema>;

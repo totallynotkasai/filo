@@ -75,14 +75,17 @@ export type BaselineSeq = number;
 
 /**
  * Path -> the sequence number of the last self-write that refreshed (or tried
- * to refresh) its baseline. The numbers come from one counter that never
- * resets, so a ticket taken before a vault swap or a rename can never match a
- * later path's entry by accident.
+ * to refresh) its baseline. A path with no entry reads as `swapFloor`. Every
+ * number comes from one counter that never resets, and a vault swap clears the
+ * entries and takes a new floor from it, so a ticket taken before a swap can
+ * never match any path afterwards.
  */
 // allow-module-state: reset on vault swap (resetAllBaselines, registered below)
 const writeSeqs = new Map<string, BaselineSeq>();
 // allow-module-state: a monotonic counter; values stay unique across vault swaps
 let writeCounter = 0;
+// allow-module-state: taken from writeCounter by every reset (resetAllBaselines)
+let swapFloor: BaselineSeq = 0;
 
 /**
  * Take a ticket before reading a file whose stat will become its baseline.
@@ -93,7 +96,7 @@ let writeCounter = 0;
  * edit and prompt.
  */
 export function baselineSeq(path: string): BaselineSeq {
-  return writeSeqs.get(normaliseKey(path)) ?? 0;
+  return writeSeqs.get(normaliseKey(path)) ?? swapFloor;
 }
 
 /**
@@ -177,7 +180,7 @@ export function noteBaseline(
   if (size === undefined || size === null || !Number.isFinite(size)) return;
   const key = normaliseKey(path);
   if (!key) return;
-  if (opts.ifUnchangedSince !== undefined && (writeSeqs.get(key) ?? 0) !== opts.ifUnchangedSince) return;
+  if (opts.ifUnchangedSince !== undefined && (writeSeqs.get(key) ?? swapFloor) !== opts.ifUnchangedSince) return;
   baselines.set(key, { mtimeMs, size });
 }
 
@@ -252,6 +255,7 @@ export function refreshBaselineAfterWrite(
 export function resetAllBaselines(): void {
   baselines.clear();
   writeSeqs.clear();
+  swapFloor = ++writeCounter;
 }
 
 vaultSwapResettable('fileBaselineRegistry', resetAllBaselines);
@@ -299,4 +303,5 @@ registerPathRenamable('fileBaselineRegistry', renameBaselinePath);
 export function __resetBaselinesForTests(): void {
   baselines.clear();
   writeSeqs.clear();
+  swapFloor = ++writeCounter;
 }

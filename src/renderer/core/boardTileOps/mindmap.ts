@@ -163,6 +163,8 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
       if (t.remaining !== undefined) patch.remaining = t.remaining;
       if (t.mode !== undefined) patch.mode = t.mode;
       if (t.isRunning !== undefined) patch.isRunning = t.isRunning;
+      // Present but undefined clears it: a stopped timer has no end time.
+      if ('endsAt' in t) patch.endsAt = t.endsAt;
       (cached.board as { inlineTiles: Record<string, Record<string, unknown>> }).inlineTiles[tileId] = {
         ...inlineTile,
         ...patch,

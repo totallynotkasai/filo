@@ -79,8 +79,15 @@ async function readFileText(vaultRoot: string, relativePath: string): Promise<Re
   return { ok: false, content: null, code: res.code ?? null, mtimeMs: null };
 }
 
-const TRANSIENT_RETRY_MS = 2000;
+/**
+ * Waits before each re-read of a note that couldn't be read (locked, no
+ * access). After the last one the index stops trying until the file's next
+ * watcher event, so a note that stays unreadable isn't re-read all session.
+ */
+export const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [2_000, 10_000, 60_000];
 const pendingRetries = new SvelteMap<string, ReturnType<typeof setTimeout>>();
+/** Retries already spent per path; a watcher event starts it again. */
+const retriesSpent = new SvelteMap<string, number>();
 
 /**
  * Per path, bumped by every change to its entry. A read that started before
@@ -125,31 +132,37 @@ async function indexOnePath(relativePath: string): Promise<void> {
     bumpEntry(rel);
     noteReadEncoding(rel, res.encoding); // a non-UTF-8 note opens non-editable
     noteReadLink(rel, res.link); // so does a symbolic link
-    // Cancel any pending retry — the read succeeded this pass.
-    const pending = pendingRetries.get(relativePath);
-    if (pending) {
-      clearTimeout(pending);
-      pendingRetries.delete(relativePath);
-    }
+    cancelRetry(relativePath);
     return;
   }
   // Only delete the index entry on a true "missing file" signal. EACCES/EBUSY/EPERM/EMFILE mean we couldn't read RIGHT NOW; the
-  // index entry from the prior pass is more accurate than nothing. Schedule
-  // a single retry; subsequent watcher events will re-enqueue if still bad.
+  // index entry from the prior pass is more accurate than nothing.
   const code = res.code ?? 'ENOENT';
   if (code === 'ENOENT') {
+    cancelRetry(relativePath);
     index.remove(relativePath);
     bumpEntry(rel);
     return;
   }
-  // Transient — leave the existing index entry in place and retry in 2 s.
-  // Single in-flight retry per path to avoid timer pile-up.
+  // Transient: keep the existing entry and read again after a growing wait
+  // (TRANSIENT_RETRY_DELAYS_MS). One retry in flight per path.
   if (pendingRetries.has(relativePath)) return;
+  const spent = retriesSpent.get(relativePath) ?? 0;
+  const delay = TRANSIENT_RETRY_DELAYS_MS[spent];
+  if (delay === undefined) return;
+  retriesSpent.set(relativePath, spent + 1);
   const timer = setTimeout(() => {
     pendingRetries.delete(relativePath);
     void indexOnePath(relativePath);
-  }, TRANSIENT_RETRY_MS);
+  }, delay);
   pendingRetries.set(relativePath, timer);
+}
+
+function cancelRetry(relativePath: string): void {
+  const pending = pendingRetries.get(relativePath);
+  if (pending) clearTimeout(pending);
+  pendingRetries.delete(relativePath);
+  retriesSpent.delete(relativePath);
 }
 
 /**
@@ -291,6 +304,8 @@ export const vaultIndexStore = {
       const dot = rel.lastIndexOf('.');
       const ext = dot >= 0 ? rel.slice(dot) : '';
       if (!isMarkdownExtension(ext)) continue;
+      // A watcher event for a note the index gave up on starts its retries again.
+      retriesSpent.delete(rel);
       toIndex.push(rel);
     }
     await indexPathsChunked(toIndex);
@@ -345,6 +360,7 @@ export const vaultIndexStore = {
 onVaultSwap('pre-swap', 'vaultIndex', () => {
   for (const timer of pendingRetries.values()) clearTimeout(timer);
   pendingRetries.clear();
+  retriesSpent.clear();
   entrySeq.clear();
   index.clear();
   bump();

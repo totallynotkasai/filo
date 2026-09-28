@@ -113,7 +113,7 @@ describe('leaving right after an edit', () => {
     expect(app.read('Plan.md')).toContain('First one two');
   });
 
-  it("a running timer's progress is saved to its own board when another board replaces it", async () => {
+  it('a running timer keeps counting in its saved board after another board replaces it', async () => {
     const app = await startApp();
     await createBoard(app, 'mindmap');
     await addRunningTimer(app);
@@ -121,12 +121,21 @@ describe('leaving right after an edit', () => {
     const board = onlyBoardFile(app);
     const [started] = savedTimers(app, board);
     expect(started.isRunning).toBe(true);
+    const bytesWhileRunning = app.read(board);
     await quiesce(1200);
+    // Nothing rewrites the board while the countdown runs.
+    expect(app.read(board)).toBe(bytesWhileRunning);
 
     await createBoard(app, 'kanban');
     await quiesce(600);
     const [saved] = savedTimers(app, board);
-    expect(saved.remaining).toBeLessThan(started.remaining);
+    expect(saved.isRunning).toBe(true);
+    expect(saved.left).toBeLessThan(started.left);
+    expect(saved.left).toBeGreaterThan(0);
+    // Its board is closed, and the countdown still runs.
+    await quiesce(1200);
+    const [later] = savedTimers(app, board);
+    expect(later.left).toBeLessThan(saved.left - 500);
   });
 
   it('notes typed in a task and not yet left are saved by quitting from the window', async () => {

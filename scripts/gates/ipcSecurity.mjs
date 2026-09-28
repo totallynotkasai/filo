@@ -316,7 +316,8 @@ export const checks = [
       const refusing = new Set();
       for (const rel of ctx.files('src/main/ipc', { ext: ['.ts'] })) {
         for (const { channel, body } of handlerSegments(ctx.read(rel))) {
-          if (channel.startsWith('vault:') && /\bassertNotInFiloDir\s*\(/.test(body)) refusing.add(channel);
+          // assertSentinelWriteTarget refuses all of `.filo/` but this machine's sentinels, and every other path too.
+          if (channel.startsWith('vault:') && /\b(?:assertNotInFiloDir|assertSentinelWriteTarget)\s*\(/.test(body)) refusing.add(channel);
         }
       }
       for (const channel of ['vault:write-file-text', 'vault:write-existing-file-text', 'vault:create-file-text']) {

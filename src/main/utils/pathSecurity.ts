@@ -362,6 +362,24 @@ export function assertNotInFiloDir(
 }
 
 /**
+ * The blind, create-capable `vault:write-file-text` may write only this
+ * machine's own crash-recovery sentinels. A note (`.md`) goes through the
+ * note writer's stale-checked `vault:write-existing-file-text` or the
+ * exclusive `vault:create-file-text`; anything else through its own channel.
+ * Enforced here, not only by a renderer source gate, so no renderer bug can
+ * overwrite a note without the stale check.
+ */
+export function assertSentinelWriteTarget(relativePath: string): void {
+  const normalised = toPosix(relativePath).split('/').filter(Boolean).join('/');
+  if (isPermittedSentinel(normalised, 'write')) return;
+  throw new FiloDirForbiddenError(
+    parseSentinelPath(normalised)
+      ? `FORBIDDEN: ${normalised} is another machine's crash-recovery sentinel — only its owner may write or delete it`
+      : `FORBIDDEN: vault:write-file-text writes only crash-recovery sentinels, not ${normalised}`,
+  );
+}
+
+/**
  * Returns true if the URL targets a private/loopback address (SSRF risk).
  * Unparseable input is rejected (returns true) on the conservative
  * assumption that an unknown target may be private — and logged so the

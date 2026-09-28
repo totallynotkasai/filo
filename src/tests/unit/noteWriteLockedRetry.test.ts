@@ -27,6 +27,7 @@ vi.mock('electron', () => ({
 
 const { registerVaultHandlers } = await import('../../main/ipc/vault.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
+const { __setMachineIdentityForTests } = await import('../../main/services/machineIdentity');
 const { vaultPath } = await import('@shared/vaultPath');
 const { createNoteWriter } = await import('../../renderer/lib/notes/noteWriter');
 const { readNoteText, snapshotOf } = await import('../../renderer/lib/notes/noteFile');
@@ -62,6 +63,7 @@ describe('note write channels keep the errno', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    __setMachineIdentityForTests(null);
     errSpy.mockRestore();
     vaultRegistry.setCurrentVault(null);
     await fs.rm(vaultDir, { recursive: true, force: true });
@@ -70,8 +72,10 @@ describe('note write channels keep the errno', () => {
   it('a locked file answers EBUSY, not IO_ERROR', async () => {
     vi.spyOn(fs, 'stat').mockRejectedValueOnce(ebusy());
     expect(await call('vault:write-existing-file-text', vaultDir, 'A.md', 'Two\n')).toMatchObject({ success: false, code: 'EBUSY' });
+    // The blind channel writes only this machine's sentinels; its errno passes through too.
+    __setMachineIdentityForTests({ machineId: 'aaaaaaaaaaaa', hostname: 'A' });
     vi.spyOn(fs, 'mkdir').mockRejectedValueOnce(ebusy());
-    expect(await call('vault:write-file-text', vaultDir, 'B.md', 'x')).toMatchObject({ success: false, code: 'EBUSY' });
+    expect(await call('vault:write-file-text', vaultDir, '.filo/.dirty.aaaaaaaaaaaa', 'x')).toMatchObject({ success: false, code: 'EBUSY' });
   });
 
   it('a file already gone still answers ENOENT, and a taken name EEXIST', async () => {

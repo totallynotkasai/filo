@@ -111,15 +111,21 @@ export async function addRunningTimer(app: CharApp): Promise<void> {
   await settle(20);
 }
 
-/** The timer tiles a `.board.json` holds, as saved. */
-export function savedTimers(app: CharApp, rel: string): Array<{ remaining: number; isRunning: boolean }> {
-  const out: Array<{ remaining: number; isRunning: boolean }> = [];
+/**
+ * The timer tiles a `.board.json` holds, as saved. `left` is the time left
+ * now: a running countdown is saved as its wall-clock end.
+ */
+export function savedTimers(app: CharApp, rel: string): Array<{ remaining: number; isRunning: boolean; left: number }> {
+  const out: Array<{ remaining: number; isRunning: boolean; left: number }> = [];
   const visit = (v: unknown): void => {
     if (Array.isArray(v)) v.forEach(visit);
     else if (v && typeof v === 'object') {
       const o = v as Record<string, unknown>;
-      if (o.type === 'timer' && typeof o.remaining === 'number') out.push({ remaining: o.remaining, isRunning: o.isRunning === true });
-      else Object.values(o).forEach(visit);
+      if (o.type === 'timer' && typeof o.remaining === 'number') {
+        const isRunning = o.isRunning === true;
+        const left = isRunning && typeof o.endsAt === 'number' ? Math.max(0, o.endsAt - Date.now()) : o.remaining;
+        out.push({ remaining: o.remaining, isRunning, left });
+      } else Object.values(o).forEach(visit);
     }
   };
   visit(JSON.parse(app.read(rel)));

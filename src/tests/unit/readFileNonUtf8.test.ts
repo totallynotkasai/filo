@@ -113,8 +113,9 @@ describe('vault text channels vs a non-UTF-8 note (Audit-19 ERR-7)', () => {
 
     const existing = await call('vault:write-existing-file-text', vaultDir, 'Legacy.md', read.content);
     expect(existing).toMatchObject({ success: false, code: 'NOT_UTF8' });
+    // The blind channel writes only crash-recovery sentinels, never a note.
     const plain = await call('vault:write-file-text', vaultDir, 'Legacy.md', read.content);
-    expect(plain).toMatchObject({ success: false, code: 'NOT_UTF8' });
+    expect(plain).toMatchObject({ success: false, code: 'FORBIDDEN' });
 
     expect(Buffer.compare(await fs.readFile(join(vaultDir, 'Legacy.md')), CP1252_BYTES)).toBe(0);
   });

@@ -177,6 +177,8 @@ export const TimerTileSchema = BaseTileSchema.extend({
   remaining: z.number().finite().nonnegative().default(0),
   mode: z.enum(['hms', 'ms', 's', 'clock']).default('hms'),
   isRunning: z.boolean().default(false),
+  // Wall-clock end (epoch ms) of a running countdown; absent while stopped.
+  endsAt: z.number().finite().nonnegative().optional(),
 }).passthrough();
 
 /**
@@ -325,6 +327,7 @@ export const TimerTileDefSchema = InlineTileDefinitionBase.extend({
   remaining: z.number().finite().nonnegative().default(0),
   mode: z.enum(['hms', 'ms', 's', 'clock']).default('hms'),
   isRunning: z.boolean().default(false),
+  endsAt: z.number().finite().nonnegative().optional(),
 });
 
 /**

@@ -599,6 +599,9 @@ export interface TimerConfigSnapshot {
   duration: number;
   remaining: number;
   isRunning: boolean;
+  // A running snapshot keeps its wall-clock end, so undo resumes the countdown
+  // where real time has taken it (lib/utils/timerCountdown.ts).
+  endsAt?: number | undefined;
 }
 
 export class UpdateTimerConfigCommand extends Command {
@@ -631,6 +634,7 @@ export class UpdateTimerConfigCommand extends Command {
       duration: this.after.duration,
       remaining: this.after.remaining,
       isRunning: this.after.isRunning,
+      endsAt: this.after.endsAt,
     } as Partial<Tile>);
   }
 
@@ -641,6 +645,7 @@ export class UpdateTimerConfigCommand extends Command {
       duration: this.before.duration,
       remaining: this.before.remaining,
       isRunning: this.before.isRunning,
+      endsAt: this.before.endsAt,
     } as Partial<Tile>);
   }
 }

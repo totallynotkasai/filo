@@ -102,6 +102,7 @@ export function buildTileDefinition(tile: Tile): TileDefinition {
         remaining: tile.remaining,
         mode: tile.mode,
         isRunning: tile.isRunning,
+        ...(tile.endsAt !== undefined ? { endsAt: tile.endsAt } : {}),
       };
   }
 }
@@ -142,6 +143,7 @@ export function buildInlineTileFromTile(tile: Tile): InlineTile {
         remaining: tile.remaining,
         mode: tile.mode,
         isRunning: tile.isRunning,
+        ...(tile.endsAt !== undefined ? { endsAt: tile.endsAt } : {}),
       } as InlineTile;
     default:
       throw new Error(
@@ -164,7 +166,7 @@ const DEF_FIELDS: Record<TileDefinition['type'], ReadonlySet<string>> = {
   file: new Set(['title', 'titleHtml', 'style', 'filePath']),
   link: new Set(['title', 'titleHtml', 'style', 'tags', 'url']),
   iframe: new Set(['title', 'titleHtml', 'style', 'tags', 'url']),
-  timer: new Set(['title', 'titleHtml', 'style', 'tags', 'duration', 'remaining', 'mode', 'isRunning']),
+  timer: new Set(['title', 'titleHtml', 'style', 'tags', 'duration', 'remaining', 'mode', 'isRunning', 'endsAt']),
 };
 
 /**

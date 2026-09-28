@@ -8,10 +8,6 @@ import { resolveTitleCommitValues } from '@renderer/lib/editor/titleCommit';
 import { UpdateTitleCommand } from '@renderer/commands/updateTitleCommand';
 import { revertFrameDragOnTeardown } from '@renderer/lib/frames/frameDragCancel';
 import { flushLastViewForBoard } from '@renderer/lib/boards/lastViewFlush';
-import {
-  createCoarsePersistGate,
-  TIMER_COARSE_PERSIST_MS,
-} from '@renderer/lib/utils/coarsePersistGate';
 import { TaskListFiltersAndViews } from '@renderer/lib/tasklist/filtersAndViews.svelte';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Frame, Tile } from '@renderer/schema/index';
@@ -37,10 +33,6 @@ import type { MindMapBoard, Frame, Tile } from '@renderer/schema/index';
  *      of switching was never written (the hydratedForBoardId guard blocks
  *      any re-fire after the switch). Fix: flush the ARM-time snapshot for
  *      the CAPTURED board id through the cache (teardown-safe).
- *  4.6 Running TimerTile countdown was unrecoverable on quit (no unmount)
- *      and vault swap (cache cleared pre-unmount). Fix: 45 s coarse persist
- *      while running — far above the 300 ms board debounce, so the Audit2
- *      4.1 re-arm-forever bug is not reintroduced.
  *
  * The jsdom suite has no Svelte component-mount harness, so component wiring
  * is pinned via source-shape assertions (same pattern as audit11Phase1 /
@@ -63,10 +55,6 @@ const TASKLIST_SRC = readFileSync(
 );
 const KANBAN_SRC = readFileSync(
   join(ROOT, 'src/renderer/components/boards/KanbanBoard.svelte'),
-  'utf8',
-);
-const TIMER_SRC = readFileSync(
-  join(ROOT, 'src/renderer/components/tiles/TimerTile.svelte'),
   'utf8',
 );
 
@@ -450,49 +438,5 @@ describe('Audit-17 4.5 — flushLastViewForBoard (teardown-safe lastView sink)',
       // every cleanup that clears the lastView timer also flushes.
       expect(src).not.toContain('boardStore.updateSettings({ lastView');
     }
-  });
-});
-
-// ── 4.6 — TimerTile coarse persist ──────────────────────────────────────
-
-describe('Audit-17 4.6 — coarse persist gate bounds countdown loss on quit/swap', () => {
-  it('fires at most ⌈elapsed/interval⌉ times: 2 writes across a 90 s run', () => {
-    const gate = createCoarsePersistGate(0);
-    const fireTimes: number[] = [];
-    // Simulate the 100 ms tick cadence for 90 s.
-    for (let now = 100; now <= 90_000; now += 100) {
-      if (gate(now)) fireTimes.push(now);
-    }
-    expect(fireTimes).toEqual([45_000, 90_000]);
-  });
-
-  it('on-disk staleness never exceeds the 45 s cadence (≤ 60 s of truth)', () => {
-    expect(TIMER_COARSE_PERSIST_MS).toBeLessThanOrEqual(60_000);
-    const gate = createCoarsePersistGate(0);
-    let lastPersist = 0;
-    let maxGap = 0;
-    for (let now = 100; now <= 300_000; now += 100) {
-      if (gate(now)) {
-        maxGap = Math.max(maxGap, now - lastPersist);
-        lastPersist = now;
-      }
-    }
-    maxGap = Math.max(maxGap, 300_000 - lastPersist);
-    expect(maxGap).toBeLessThanOrEqual(TIMER_COARSE_PERSIST_MS + 100);
-  });
-
-  it('never fires before one full interval after arming (no immediate write on resume)', () => {
-    const gate = createCoarsePersistGate(10_000);
-    expect(gate(10_100)).toBe(false);
-    expect(gate(54_999)).toBe(false);
-    expect(gate(55_000)).toBe(true);
-  });
-
-  it('TimerTile arms the gate per running countdown and persists `remaining` through it (source shape)', () => {
-    expect(TIMER_SRC).toContain('createCoarsePersistGate(Date.now())');
-    const idx = TIMER_SRC.indexOf('coarsePersistDue?.(now)');
-    expect(idx).toBeGreaterThan(-1);
-    const region = TIMER_SRC.slice(idx, idx + 500);
-    expect(region).toContain('{ remaining: liveRemaining }');
   });
 });

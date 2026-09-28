@@ -100,8 +100,9 @@ describe.skipIf(!canSymlink)('vault text channels vs a symlinked note', () => {
       size: read.size,
     });
     expect(existing).toMatchObject({ success: false, code: 'NOTE_IS_LINK' });
+    // The blind channel writes only crash-recovery sentinels, never a note.
     const plain = await call('vault:write-file-text', vaultDir, 'Alias.md', 'Replaced\n');
-    expect(plain).toMatchObject({ success: false, code: 'NOTE_IS_LINK' });
+    expect(plain).toMatchObject({ success: false, code: 'FORBIDDEN' });
 
     expect((await fs.lstat(join(vaultDir, 'Alias.md'))).isSymbolicLink()).toBe(true);
     expect(await fs.readFile(join(vaultDir, 'Notes', 'Original.md'), 'utf-8')).toBe(ORIGINAL);
@@ -166,7 +167,7 @@ describe('vault text channels vs a note lstat reports as a link', () => {
     });
     expect(await call('vault:write-file-text', vaultDir, 'Alias.md', 'x\n')).toMatchObject({
       success: false,
-      code: 'NOTE_IS_LINK',
+      code: 'FORBIDDEN',
     });
     await expect(atomicWriteFile(join(vaultDir, 'Alias.md'), 'x\n', { refuseLink: true })).rejects.toBeInstanceOf(
       LinkedFileError,

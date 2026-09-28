@@ -57,6 +57,8 @@ export interface TrashEntryInfo {
   kind: TrashKind;
   /** False when the manifest is there but the item never arrived (a crash mid-move). */
   present: boolean;
+  /** Restored already (to this path); what is left is a copy the trash couldn't remove. */
+  restoredTo?: string;
 }
 
 // `RecentVault` mirrors the main-side definition in

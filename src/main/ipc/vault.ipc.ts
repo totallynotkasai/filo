@@ -27,6 +27,7 @@ import {
   assertSafeRelativePath,
   assertSafeFilename,
   assertNotInFiloDir,
+  assertSentinelWriteTarget,
 } from '../utils/pathSecurity';
 import { assertActiveVault } from '../utils/activeVaultCheck';
 import { clearApprovedSources } from '../services/approvedSources';
@@ -598,8 +599,10 @@ export function registerVaultHandlers(): void {
   );
 
   /**
-   * Writes text content to a file in the vault. Creates parent directories
-   * if they don't exist. Used for creating/updating .md files.
+   * Writes this machine's crash-recovery sentinels (`.filo/.dirty.<machineId>`
+   * and the rename-cascade / tag-rewrite sentinels). It overwrites without a
+   * stale check, so every other path is refused (`assertSentinelWriteTarget`):
+   * notes go through `vault:write-existing-file-text` / `vault:create-file-text`.
    *
    * Writes atomically (tmp → rename) so a crash mid-write can never leave
    * a half-written file on disk. Mirrors the watcher-suppression model
@@ -621,9 +624,9 @@ export function registerVaultHandlers(): void {
         // `forCreation: true` because this channel can create a NEW file;
         // enforce Win-only rules on every platform so vaults stay portable.
         assertSafeRelativePath(relativePath, { forCreation: true });
-        // Refuse generic writes into `.filo/` except for the allowlisted
-        // crash-recovery sentinels; dedicated channels own `.filo/` writes.
-        assertNotInFiloDir(relativePath);
+        // This machine's crash-recovery sentinels only: a note or any other
+        // file has a channel that checks what it overwrites.
+        assertSentinelWriteTarget(relativePath);
         // Cap the payload up front so the renderer gets a typed "file too
         // large" code instead of a generic write failure.
         assertPayloadByteSize(

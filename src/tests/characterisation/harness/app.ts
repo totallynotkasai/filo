@@ -308,11 +308,12 @@ async function leaveVault(answers: string[], go: () => Promise<boolean>): Promis
 /**
  * File → Close Vault, straight away (no waiting for debounces). A dialog, if
  * one appears, is answered with the button labelled `answer` (its first button
- * when none is given).
+ * when none is given). A list answers several dialogs in turn.
  */
-export async function closeVault(_app: CharApp, answer?: string): Promise<LeaveVaultResult> {
+export async function closeVault(_app: CharApp, answer?: string | string[]): Promise<LeaveVaultResult> {
   const { vaultStore } = await import('@renderer/stores/vault.svelte');
-  return leaveVault(answer ? [answer] : [], () => vaultStore.closeVault());
+  const answers = answer === undefined ? [] : Array.isArray(answer) ? answer : [answer];
+  return leaveVault(answers, () => vaultStore.closeVault());
 }
 
 /** File → Open Vault on a second, new vault seeded with `files`, straight away. */

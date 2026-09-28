@@ -116,6 +116,8 @@ export function recordingFilo(initial: Record<string, string>): RecordingFilo {
       return { ok: true, success: true, mtimeMs: mtimes.get(rel) ?? clock, size: size(content) };
     }
     if (ch === 'vault:file-exists') return files.has(rel);
+    // A missing note's banner looks in Filo's trash: it is empty here.
+    if (ch === 'vault:trash-list') return { ok: true, success: true, entries: [], machineId: 'test' };
     if (WRITE_CHANNELS.has(ch)) {
       if (rel.startsWith('.filo/')) return { ok: true, success: true };
       const code = writeFailures.get(rel);

@@ -27,6 +27,11 @@ export interface ViewHooks {
   serialize?: () => void;
   /** True while the view holds keystrokes it hasn't serialised yet. */
   unserialised?: () => boolean;
+  /**
+   * The view's body as Markdown while it holds keystrokes the model refused
+   * (a read-only or unreadable note), for a rescue copy; else null.
+   */
+  unserialisedBody?: () => string | null;
 }
 
 /** One open note. Reactive fields re-render every view that reads them. */
@@ -90,6 +95,13 @@ export class NoteModel {
  * - `vault-changed`: another vault opened while the note loaded.
  */
 export type SetBodyStatus = 'queued' | 'read-only' | 'unreadable' | 'loading' | 'missing' | 'not-open' | 'vault-changed';
+
+/**
+ * A raw-view save. `conflict`: the file no longer held the bytes the save was
+ * based on, so nothing was written. Otherwise `hash` names the bytes the file
+ * holds from this save.
+ */
+export type RawWriteResult = { status: 'conflict' } | { status: 'written' | 'unchanged'; hash: string };
 
 /** Conflict and deletion prompts, installed by `notePrompts.ts`. */
 export interface NotePromptHandlers {

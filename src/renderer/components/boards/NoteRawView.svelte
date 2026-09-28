@@ -22,6 +22,9 @@
   import { reportError } from '../../lib/utils/errorBus';
   import { keepRawRescueCopy, registerRawView, type RawSaveResult } from '../../lib/notes/rawViews';
   import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
+  import { dropPendingPath, noteAdditionalPendingPath } from '../../lib/boards/writeStateTracking';
+  import { getActiveVaultPath } from '../../lib/vault/activeVaultPath';
+  import { vaultPath } from '@shared/vaultPath';
 
   let {
     path,
@@ -47,13 +50,27 @@
   let destroyed = false;
   /** The save running now, which a second save waits for. */
   let inFlight: Promise<RawSaveResult> | null = null;
-  /** A leave-anyway already kept this text in `.filo/recovery/`. */
-  let rescued = false;
+  /**
+   * The text a leave-anyway kept in `.filo/recovery/`; null when none. Only
+   * that exact text is withheld from the vault being let go: anything typed
+   * after it (a leave called off, then more typing) saves as usual.
+   */
+  let rescuedText: string | null = null;
 
   let dirty = $derived(baseHash !== null && text !== baseText);
   let model = $derived(noteStore.get(path));
 
-  async function load(): Promise<void> {
+  function isRescued(current: string): boolean {
+    return rescuedText !== null && current === rescuedText;
+  }
+
+  /**
+   * Reads the file and shows it. `follow` is a reload because the note
+   * changed elsewhere: it gives way to anything that happened during its
+   * read (typing, a save, a conflict) and tries again later instead.
+   */
+  async function load(follow = false): Promise<void> {
+    const typedAtStart = text;
     const snapshot = await noteStore.readRaw(path);
     if (destroyed) return;
     loading = false;
@@ -61,11 +78,25 @@
       unreadable = true;
       return;
     }
+    if (text !== typedAtStart) return;
+    if (follow && (saving || conflict)) {
+      scheduleFollow();
+      return;
+    }
     unreadable = false;
     baseText = rawTextForView(snapshot.raw);
     baseHash = snapshot.hash;
     text = baseText;
     conflict = false;
+  }
+
+  function scheduleFollow(): void {
+    if (followTimer) clearTimeout(followTimer);
+    followTimer = setTimeout(() => {
+      followTimer = null;
+      if (destroyed) return;
+      if (!dirty && !saving && !conflict) void load(true);
+    }, FOLLOW_MS);
   }
 
   /** Text typed here that isn't on disk. Plain reads, so it still works after unmount. */
@@ -105,20 +136,31 @@
     const sent = text;
     try {
       const result = await noteStore.writeRaw(path, sent, hash);
-      if (result === 'conflict') {
+      if (result.status === 'conflict') {
         conflict = true;
         return 'conflict';
       }
+      // The view now stands on the bytes it wrote. A later read can't be the
+      // base: it may already hold a change another view queued meanwhile (a
+      // Task List tick, a tag), which the next save would then wipe unseen.
+      baseHash = result.hash;
+      baseText = sent;
       const after = await noteStore.readRaw(path);
-      if (!after) {
-        // On disk, but the view can't tell which bytes it now stands on.
-        baseText = sent;
+      if (!after || after.hash === result.hash) {
+        // The file shows as the view does (BOM and line ending aside).
+        if (after && text === sent) baseText = text = rawTextForView(after.raw);
         return 'saved';
       }
-      baseHash = after.hash;
-      // Typing that went on during the save stays unsaved.
-      baseText = text === sent ? rawTextForView(after.raw) : sent;
-      if (text === sent) text = baseText;
+      // Something landed on top of this save.
+      if (text === sent) {
+        // Nothing typed since: follow it.
+        baseHash = after.hash;
+        baseText = text = rawTextForView(after.raw);
+      } else {
+        // Typing went on: it was built on the version before that change,
+        // so the user decides (Keep mine backs the other version up first).
+        conflict = true;
+      }
       return 'saved';
     } catch (err) {
       reportError('NoteRawView.save', err, `Couldn't save "${path}"`);
@@ -157,9 +199,34 @@
     inConflict: () => conflict,
     text: () => text,
     flush: save,
-    markRescued: () => {
-      rescued = true;
+    markRescued: (kept) => {
+      rescuedText = kept;
     },
+    clearRescued: () => {
+      rescuedText = null;
+    },
+  });
+
+  // Typed text counts as a pending write of the note while it is unsaved,
+  // so the save indicator shows it and the crash sentinel names the note.
+  let pendingPath: { root: string | undefined; path: string } | null = null;
+
+  function setPending(on: boolean): void {
+    if (pendingPath && (!on || vaultPath(pendingPath.path) !== vaultPath(path))) {
+      const was = pendingPath;
+      pendingPath = null;
+      dropPendingPath(was.root, was.path);
+    }
+    if (on && !pendingPath) {
+      pendingPath = { root: getActiveVaultPath() || undefined, path };
+      noteAdditionalPendingPath(pendingPath.root, path);
+    }
+  }
+
+  $effect(() => {
+    const on = dirty && !readOnly;
+    void path;
+    untrack(() => setPending(on));
   });
 
   onMount(() => {
@@ -169,9 +236,11 @@
   onDestroy(() => {
     destroyed = true;
     unregister();
+    // The teardown save below tracks its own write from here.
+    setPending(false);
     if (followTimer) clearTimeout(followTimer);
     followTimer = null;
-    if (rescued || (!hasUnsavedText() && !inFlight)) return;
+    if (isRescued(text) || (!hasUnsavedText() && !inFlight)) return;
     // Closing the view saves what was typed; the write outlives the view.
     // Text that can't land (the note changed elsewhere, the write failed,
     // or a save already running comes back with a conflict) is copied to
@@ -180,7 +249,7 @@
     const typed = text;
     void (async () => {
       const result = await save();
-      if (result === 'clean' || result === 'saved' || rescued) return;
+      if (result === 'clean' || result === 'saved' || isRescued(typed)) return;
       await keepRawRescueCopy(closedPath, typed, result);
     })();
   });
@@ -194,11 +263,7 @@
     void m.frontmatter;
     untrack(() => {
       if (loading || dirty || saving || conflict) return;
-      if (followTimer) clearTimeout(followTimer);
-      followTimer = setTimeout(() => {
-        followTimer = null;
-        if (!dirty && !saving && !conflict) void load();
-      }, FOLLOW_MS);
+      scheduleFollow();
     });
   });
 </script>

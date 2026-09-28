@@ -28,11 +28,20 @@
 import type { Editor } from '@tiptap/core';
 import { editorMarkdown, loadMarkdownIntoEditor } from './markdownSync';
 import { vaultPath } from '@shared/vaultPath';
-import { noteStore, type NoteModel } from '../../stores/notes.svelte';
+import { noteStore, type NoteModel, type SetBodyStatus } from '../../stores/notes.svelte';
 import { reportError } from '../utils/errorBus';
 
 /** Idle time before an editor's keystrokes are serialised into the note model. */
 export const SERIALIZE_IDLE_MS = 150;
+
+/** Why the note model didn't take an editor's text, in the user's words. */
+const REFUSAL_TEXT: Partial<Record<SetBodyStatus, string>> = {
+  'read-only': 'the note is read-only',
+  unreadable: "Filo couldn't read the note",
+  missing: 'the file no longer exists',
+  'not-open': 'the note is no longer open',
+  'vault-changed': 'another vault is open',
+};
 
 export class NoteEditorView {
   /** The note this view shows ('' for none). */
@@ -47,6 +56,10 @@ export class NoteEditorView {
   private timer: ReturnType<typeof setTimeout> | null = null;
   /** True while this view loads a body into its editor (its onUpdate must not count it). */
   private loading = false;
+  /** The Markdown the model last refused, kept for a rescue copy. */
+  private refusedBody: string | null = null;
+  /** The refusal last reported, so the same one isn't said at every keystroke. */
+  private refusedStatus: SetBodyStatus | null = null;
 
   constructor(
     readonly viewId: string,
@@ -68,7 +81,13 @@ export class NoteEditorView {
       if (old && vaultPath(old.relPath) === vaultPath(this.path)) noteStore.release(this.path, this.viewId);
     }
     this.path = relPath;
-    if (relPath) noteStore.acquire(relPath, this.viewId, { serialize: () => this.serialize(), unserialised: () => this.unserialised });
+    if (relPath) {
+      noteStore.acquire(relPath, this.viewId, {
+        serialize: () => this.serialize(),
+        unserialised: () => this.unserialised,
+        unserialisedBody: () => (this.unserialised ? this.refusedBody : null),
+      });
+    }
   }
 
   /** Stops showing the note (component destroy). Unsaved keystrokes are kept. */
@@ -100,13 +119,16 @@ export class NoteEditorView {
     const editor = this.getEditor();
     const m = this.model;
     if (!this.unserialised || !editor || editor.isDestroyed || !m) return;
+    let markdown: string;
+    let status: SetBodyStatus;
     try {
-      const markdown = editorMarkdown(editor);
+      markdown = editorMarkdown(editor);
       // The body changed underneath (disk, reload, rewrite) since the editor
       // last showed the model: the text was built on the old one.
       const superseded = m === this.shownModel && this.shownRevision >= 0 && m.diskRevision > this.shownRevision;
-      if (superseded) noteStore.setBodyBuiltOn(m.relPath, markdown, this.viewId, this.shownBody);
-      else noteStore.setBody(m.relPath, markdown, this.viewId);
+      status = superseded
+        ? noteStore.setBodyBuiltOn(m.relPath, markdown, this.viewId, this.shownBody)
+        : noteStore.setBody(m.relPath, markdown, this.viewId);
     } catch (err) {
       // The keystrokes are still only in the editor: they stay counted as
       // unsaved (close and quit ask, and keep a rescue copy), and the user
@@ -114,8 +136,39 @@ export class NoteEditorView {
       reportError('noteEditor.serialize', err, `Couldn't take your latest edits to "${m.relPath}" from the editor, so they aren't saved yet.`, m.relPath);
       return;
     }
+    if (status === 'missing' && noteStore.holdBodyOfMissing(m.relPath, markdown, this.viewId)) status = 'queued';
+    if (status !== 'queued') {
+      this.refused(m, status, markdown);
+      return;
+    }
     this.unserialised = false;
+    this.refusedBody = null;
+    this.refusedStatus = null;
     if (m.bodySource === this.viewId) this.markShown(m);
+  }
+
+  /**
+   * The model didn't take the keystrokes. They stay unserialised, so leave
+   * and quit still count them, and the rescue copy takes this text. A note
+   * still loading takes them once it has loaded; any other refusal is said
+   * once, naming the note.
+   */
+  private refused(m: NoteModel, status: SetBodyStatus, markdown: string): void {
+    this.refusedBody = markdown;
+    if (status === 'loading') {
+      void m.loaded.then(() => {
+        if (this.unserialised && this.model === m) this.serialize();
+      });
+      return;
+    }
+    if (this.refusedStatus === status) return;
+    this.refusedStatus = status;
+    reportError(
+      'noteEditor.serialize',
+      new Error(`note ${status}`),
+      `Your latest edits to "${m.relPath}" can't be saved (${REFUSAL_TEXT[status] ?? status}). Filo keeps them in the editor, and closing or quitting will keep a copy.`,
+      m.relPath,
+    );
   }
 
   /** True while keystrokes wait to be serialised. */

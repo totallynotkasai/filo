@@ -47,6 +47,8 @@ export interface QuitFlushDeps {
   preservedTmpCount?: () => Promise<number>;
   /** Rescue copies before "Quit anyway". Production wires `keepRescueCopies`. */
   keepRescueCopies?: () => Promise<RescueResult>;
+  /** The quit was called off after rescue copies: views that kept one save as usual again. Production wires `rollbackRawRescues`. */
+  rollbackRescue?: () => void;
   /**
    * Freezes the editors for the whole quit, as leaving a vault does, so no
    * keystroke lands after the check; returns the thaw, called only when the
@@ -210,6 +212,8 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<boolean> {
     }
     if (choice === 'quit') {
       if (!(await keepRescueCopiesOrAsk(deps))) {
+        // Staying open: a raw view whose text was copied must still save it.
+        deps.rollbackRescue?.();
         deps.send('app:cancel-quit');
         return false;
       }

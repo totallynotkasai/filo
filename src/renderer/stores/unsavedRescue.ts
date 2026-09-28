@@ -22,7 +22,7 @@ import { isNonUtf8 } from '../lib/vault/nonUtf8Paths.svelte';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { unsavedWork, type UnsavedWork } from '../lib/boards/writeStateTracking';
 import type { RescueResult, UnsavedCause, UnsavedItem } from '../lib/vault/unsavedMessages';
-import { rawViewInConflict, takeRawRescueItems } from '../lib/notes/rawViews';
+import { dirtyRawViews, rawViewInConflict, takeRawRescueItems } from '../lib/notes/rawViews';
 import { notesBoxDraftPath, notesBoxInConflict, takeNotesBoxRescueItems } from '../lib/tasklist/notesBox.svelte';
 import { unsavedConfigPayloads } from '../lib/boards/configWriteScheduler';
 import { unsavedMiscPayloads } from '../lib/boards/miscWriteScheduler';
@@ -87,6 +87,16 @@ async function causeOf(key: VaultPath, relPath: string, vaultRoot: string | null
   return 'write-failed';
 }
 
+/**
+ * The unsaved paths as the files are spelled on disk (the ledger folds case),
+ * so the crash sentinel's list names, and opens, the real files.
+ */
+export function unsavedPathsAsSpelled(work: UnsavedWork = unsavedWork()): string[] {
+  const boards = boardPathsByKey();
+  const raw = new Map(dirtyRawViews().map((v) => [vaultPath(v.path()), v.path()] as const));
+  return [...new Set([...work.failed, ...work.pending])].map((key) => raw.get(key) ?? displayPath(key, boards));
+}
+
 /** Each unsaved path with the reason it isn't on disk. */
 export async function describeUnsaved(work: UnsavedWork = unsavedWork()): Promise<UnsavedItem[]> {
   const vaultRoot = getActiveVaultPath() || null;
@@ -126,7 +136,8 @@ export async function keepRescueCopies(work: UnsavedWork = unsavedWork()): Promi
   }
   // A raw view's text is the user's latest version of the whole file. It is
   // kept even when the note also has a copy above (the two are numbered apart).
-  for (const raw of takeRawRescueItems()) {
+  const raws = takeRawRescueItems();
+  for (const raw of raws.items) {
     items.push(raw);
     covered.add(vaultPath(raw.relPath));
   }
@@ -151,6 +162,7 @@ export async function keepRescueCopies(work: UnsavedWork = unsavedWork()): Promi
   }
   try {
     const result = await invokeOk('recovery:keep-unsaved', vaultRoot, items);
+    raws.commit(result.kept);
     return { dir: result.dir, kept: result.kept, notKept: [...notKept, ...result.failed] };
   } catch (err) {
     console.error('[unsavedRescue] writing rescue copies failed:', err);

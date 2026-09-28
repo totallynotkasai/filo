@@ -13,7 +13,7 @@
  *    can't be written.
  */
 import { vaultPath } from '@shared/vaultPath';
-import { registerUnsavedSource } from '../boards/writeStateTracking';
+import { registerArmedPathSource, registerUnsavedSource } from '../boards/writeStateTracking';
 import { getActiveVaultPath } from '../vault/activeVaultPath';
 import { invokeOk } from '../utils/invokeOk';
 import { reportError } from '../utils/errorBus';
@@ -38,8 +38,14 @@ export interface RawViewHandle {
   text(): string;
   /** Writes what is typed, if it can. */
   flush(): Promise<RawSaveResult>;
-  /** A rescue copy of the text was kept; the view must not write it later. */
-  markRescued(): void;
+  /**
+   * A rescue copy of `text` was kept for a leave or quit going ahead: the
+   * view must not write that same text into the vault being let go. Text
+   * typed after it is new and saves as usual.
+   */
+  markRescued(text: string): void;
+  /** The leave or quit was called off: the view saves its text again. */
+  clearRescued(): void;
 }
 
 // allow-module-state: holds mounted views only; each removes itself on unmount, which a vault swap causes
@@ -52,6 +58,10 @@ export function registerRawView(handle: RawViewHandle): () => void {
     views.delete(handle);
   };
 }
+
+// A dirty raw view keeps its path pending, so another writer finishing a
+// write of the same note never clears the save indicator or the sentinel.
+registerArmedPathSource((key) => dirtyRawViews().some((v) => vaultPath(v.path()) === key));
 
 /** Mounted raw views holding text that isn't on disk. */
 export function dirtyRawViews(): RawViewHandle[] {
@@ -84,15 +94,41 @@ export async function flushRawViews(paths?: readonly string[]): Promise<{ notSav
   return { notSaved };
 }
 
+/** The raw views' part of a rescue: the items to copy, and what to do once they are. */
+export interface RawRescue {
+  items: Array<{ relPath: string; text: string }>;
+  /**
+   * The copies of `keptPaths` were written: those views stop saving the
+   * rescued text. A view whose copy failed still saves on teardown.
+   */
+  commit(keptPaths: readonly string[]): void;
+}
+
 /**
- * The text of every dirty raw view, as rescue items. Each view is marked
- * rescued, so it won't write the same text into a vault being left.
+ * The text of every dirty raw view, as rescue items. Nothing is marked until
+ * `commit`: a rescue that fails, or a leave the user then calls off, must
+ * leave every view saving as before.
  */
-export function takeRawRescueItems(): Array<{ relPath: string; text: string }> {
-  return dirtyRawViews().map((v) => {
-    v.markRescued();
-    return { relPath: v.path(), text: v.text() };
-  });
+export function takeRawRescueItems(): RawRescue {
+  const taken = dirtyRawViews().map((view) => ({ view, relPath: view.path(), text: view.text() }));
+  return {
+    items: taken.map(({ relPath, text }) => ({ relPath, text })),
+    commit(keptPaths) {
+      const kept = new Set(keptPaths.map((p) => vaultPath(p)));
+      for (const t of taken) {
+        if (kept.has(vaultPath(t.relPath))) t.view.markRescued(t.text);
+      }
+    },
+  };
+}
+
+/**
+ * A leave or quit that kept rescue copies was called off (or failed): every
+ * mounted raw view saves its text again, so closing its tab later neither
+ * skips the save nor the copy.
+ */
+export function rollbackRawRescues(): void {
+  for (const view of views) view.clearRescued();
 }
 
 /**

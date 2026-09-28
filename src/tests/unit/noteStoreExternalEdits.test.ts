@@ -156,7 +156,7 @@ describe('a rewrite and an unsaved body', () => {
     expect(vault.read('Note.md')).toBe('---\ntitle: Note\n---\nStart theirs\n');
     // The raw view's save waits the same way.
     const raw = await noteStore.readRaw('Note.md');
-    expect(await noteStore.writeRaw('Note.md', '---\ntitle: Note\n---\nRaw\n', raw?.hash ?? '')).toBe('conflict');
+    expect(await noteStore.writeRaw('Note.md', '---\ntitle: Note\n---\nRaw\n', raw?.hash ?? '')).toEqual({ status: 'conflict' });
     expect(vault.read('Note.md')).toBe('---\ntitle: Note\n---\nStart theirs\n');
     noteStore.release('Note.md', 'doc');
   });

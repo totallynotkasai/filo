@@ -41,6 +41,7 @@ import {
   type TransformOptions,
 } from '../lib/notes/noteWriter';
 import {
+  localNoteText,
   noteTextHash,
   sameBody,
   snapshotBody,
@@ -59,6 +60,7 @@ import { backupThenRead } from '../lib/vault/keepLocalBackup';
 import {
   NoteModel,
   type NotePromptHandlers,
+  type RawWriteResult,
   type SetBodyStatus,
   type ViewHooks,
   type ViewId,
@@ -71,7 +73,7 @@ import {
 } from '../lib/boards/writeStateTracking';
 
 export { NoteModel };
-export type { NotePromptHandlers, NoteStatus, SetBodyStatus, ViewHooks, ViewId } from './noteModel.svelte';
+export type { NotePromptHandlers, NoteStatus, RawWriteResult, SetBodyStatus, ViewHooks, ViewId } from './noteModel.svelte';
 
 /** Waits before re-reading a note caught mid-write by another program. */
 const TORN_RETRY_MS = [500, 1500, 3000];
@@ -490,7 +492,41 @@ export const noteStore = {
    */
   async unsavedTexts(): Promise<Array<{ relPath: string; text: string }>> {
     serializeViews();
-    return unsavedNoteTexts(models.values(), writer, getActiveVaultPath() || null);
+    const out = await unsavedNoteTexts(models.values(), writer, getActiveVaultPath() || null);
+    // Keystrokes the model refused are still only in their editor.
+    for (const m of models.values()) {
+      for (const hooks of m.views.values()) {
+        const body = hooks.unserialisedBody?.();
+        if (body != null) out.push({ relPath: m.relPath, text: localNoteText(m.base, m.frontmatter, body) });
+      }
+    }
+    return out;
+  },
+
+  /**
+   * A view's editor holds `markdown` for a note whose file is gone. It can't
+   * be written there (nothing to build on), so it becomes the model's unsaved
+   * body and the deleted-with-unsaved prompt asks **Keep mine** (writes it
+   * back) or **Discard**; until then leave, quit and the rescue copy hold
+   * it. False when the note
+   * isn't a missing one this view holds.
+   */
+  holdBodyOfMissing(relPath: string, markdown: string, viewId: ViewId): boolean {
+    const key = vaultPath(relPath);
+    const m = models.get(key);
+    if (!m || !m.views.has(viewId) || m.status !== 'missing') return false;
+    const asked = m.hasUnsavedBody;
+    if (m.body !== markdown) setModelBody(m, markdown, viewId);
+    m.hasUnsavedBody = true;
+    if (!asked) {
+      askUnlessMoved(
+        m.relPath,
+        () => models.get(key) === m && m.hasUnsavedBody,
+        () => prompts.deletedWithUnsavedBody(m),
+        () => void noteStore.onDiskChanged(m.relPath),
+      );
+    }
+    return true;
   },
 
   /** The editor found the body can't round-trip; it's shown but not written. */
@@ -800,8 +836,12 @@ export const noteStore = {
    * made elsewhere meanwhile is never overwritten unseen (as it is while
    * another view's edit of the note can't be saved). The file's BOM and
    * line ending are kept. A note that isn't UTF-8 is never written.
+   *
+   * On success `hash` is of the bytes the file now holds from this write, so
+   * the raw view's next save is checked against them, never against a later
+   * read that a change queued meanwhile has already landed on.
    */
-  async writeRaw(relPath: string, text: string, basedOnHash: string): Promise<'written' | 'unchanged' | 'conflict'> {
+  async writeRaw(relPath: string, text: string, basedOnHash: string): Promise<RawWriteResult> {
     let conflict = false;
     const written = await noteStore.transform(relPath, (fresh) => {
       if (noteTextHash(fresh.raw) !== basedOnHash) {
@@ -815,8 +855,11 @@ export const noteStore = {
       conflict = true;
       return null;
     });
-    if (conflict) return 'conflict';
-    return written === null ? 'unchanged' : 'written';
+    if (conflict) return { status: 'conflict' };
+    // Unchanged: the file already holds the bytes the hash names.
+    return written === null
+      ? { status: 'unchanged', hash: basedOnHash }
+      : { status: 'written', hash: noteTextHash(written) };
   },
 
   /** Runs a rename or delete of `paths` (notes or folders) with every note queue under them held idle. */

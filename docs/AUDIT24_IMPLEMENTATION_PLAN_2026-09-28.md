@@ -219,6 +219,24 @@ Both are unregistered on destroy after a final save. The conflict toast becomes 
 
 **Tests.** Unit: an external change to the same key within the debounce raises the conflict toast; a rename between the toast and Apply anyway writes the renamed note.
 
+### Phase 2 outcome
+
+All five items are fixed in `bbc631b`. The regression tests are `cascadeRedoTrashRefused`, `historyReloadDropsTouchingSteps`, `taskUndoKeepsOtherChanges`, `historyQueuedUndoBoard` and `undoConflictFreshRead` (27 tests, all passing). The new gate `commands/cascade-touched-boards` was proven to bite: with `CascadeDeleteCommand`'s override renamed, it fails and names the class, then passes again once reverted. CLAUDE.md is updated (gate count 73, the `commands` row, and three new Undo/Redo bullets).
+
+**Deviations from the plan**
+
+- **A24-08.** The redo throws `ChangeRefusedError` only when the trash move is *refused*. If the file is already gone, the redo still removes the placements, since there is nothing left to trash and a refusal would pin the step for good. To support this, `trashFiles` can collect refused paths instead of reporting them. The Mind Map re-add needed no change: placements are keyed by tile id, so it was already idempotent.
+- **A24-09.**
+  - `DeleteTilesCommand` also overrides `touchedBoardIds()`, because it holds cross-board connections. The plan named only `CascadeDeleteCommand` and `BatchCommand`.
+  - `clearBoard` drops touching steps only when a board is read again from disk (`{ changedOnDisk: true }`). Closing or deleting a board still drops only the steps that *target* it, so a cascade filed on another board keeps its file restore. The plan had every `clearBoard` call drop by the touched set.
+  - A gate escape hatch was added, `// allow-own-board-only: <reason>`, for a command that looks cross-board but writes only its own board.
+- **A24-10.** Section boundaries are not stored as "the first task id of each section". Each step records every task's section and order, before and after, in the new `lib/tasklist/sectionMembership.ts`. Undo and redo then move only the tasks the step moved, placing them beside their live neighbours, and recompute section starts. The reason: a first-task id breaks when that task is itself removed off the stack, while per-task membership still places everything. A deleted task comes back beside its nearest surviving neighbour. `ReorderTaskWithinSectionCommand` delegates to `MoveTaskBlockCommand`.
+- **A24-11.** Only an execute body made for the *active* board is wrapped in `onTargetBoard`. A board-agnostic or cross-board execute runs where it is, without switching. As with a queued undo, a body whose board was closed meanwhile is rolled back with a toast.
+- **A24-12.**
+  - The fresh read goes through `noteStore.currentFrontmatter(path, { fromDisk: true })`, not a direct `readNoteFresh` call, so the queued delta is laid over it in one place.
+  - "Apply anyway" follows renames through a small `followRenames` helper, which is built on `registerPathRenamable`.
+  - Extra fix: `renameAllPathKeys` now iterates over a copy. Without that, a sweep that unregisters itself mid-rename (as this one does) made the next sweep get skipped.
+
 ---
 
 ## Phase 3: The Raw view
@@ -272,6 +290,36 @@ In `NoteRawView.svelte`, `load()` (L56-68) assigns `text = baseText` after the a
 - On `'read-only' | 'loading' | 'unreadable' | 'not-open'`, keep the flag and `reportError` naming the note, so leave and quit ask and the rescue copy takes the editor's text.
 
 **Test.** Unit: serialise against a model in `missing` keeps `hasUnserialisedKeys()` true.
+
+### Phase 3 outcome
+
+All five items are fixed. The regression tests are the characterisation specs `rawViewSaveBase` (A24-16) and `rawViewRescueAndIndicator` (A24-13, A24-15), the component tests `noteRawViewFollow` (A24-14) and `noteEditorRefusedBody` (A24-17), a new assertion in `quitFailureMessage` (the quit path's rollback), and updated `noteRawView` unit cases for the new `writeRaw` result. Each new test was run against the pre-fix code and failed there. No gate was added: none of the five fixes creates a static invariant that a source scan could check.
+
+**Deviations from the plan**
+
+- **A24-13.**
+  - The rollback is a module-level `rollbackRawRescues()`, not a `rollback()` on the object `takeRawRescueItems` returns. The reason: `keepRescueCopies` sits between the take and the caller's decision, and the caller never sees that object. `takeRawRescueItems` returns `{ items, commit(keptPaths) }`, and `keepRescueCopies` calls `commit(result.kept)` once the copies are written.
+  - The quit path gets the rollback through a new injected dep, `rollbackRescue` (wired in `App.svelte`), to match how `handleFlushAndQuit` takes its other deps.
+  - The regression test is a characterisation spec rather than a unit test. It makes the rescue fail by putting a file where `.filo/recovery/` should be. The closing harness helper `closeVault` now takes a list of answers.
+- **A24-14.**
+  - `load(follow)` gives way to text typed during its read on *every* reload, including "Show the new version".
+  - Only a follow-reload re-arms when a save or a conflict got in the way.
+  - The regression test is a component test.
+- **A24-15.**
+  - Besides the `noteAdditionalPendingPath` / `dropPendingPath` effect, dirty raw views are registered as an armed-path source. Without that, another writer finishing a write of the same note would clear the pending mark while the raw text was still unsaved.
+  - The view drops its pending mark in `onDestroy` too, so a view that closes dirty leaves no stale mark.
+  - The `rescued` branch names the files in their on-disk spelling, through the new `unsavedPathsAsSpelled`. The ledger keys are case-folded, so the plain keys would have made the recovery modal list `plan.md` for `Plan.md`.
+  - Extra fix: `leftBehind` had the same case-folding problem and now uses the same helper.
+  - The regression test is characterisation: the indicator shows "saving" while text is typed, and after Close anyway on a raw conflict, reopening the vault lists the note.
+- **A24-16.**
+  - `writeRaw` returns `RawWriteResult` (`{ status, hash }`).
+  - When a change has landed on top of the save but nothing was typed since, the view follows that change instead of raising the banner. The banner shows only when typing went on, since only then was the text built on the older version.
+- **A24-17.**
+  - On `'missing'`, the new `noteStore.holdBodyOfMissing` makes the editor's text the model's unsaved body and raises the existing deleted-with-unsaved prompt. That prompt offers **Keep mine** (write it back) or **Discard**; "Save as new file" is the wording of the other prompt, the write-target-missing one.
+  - On `'loading'`, the view retries once the note has loaded, with no toast.
+  - The other refusals are reported once per kind, not at every keystroke.
+  - A new `ViewHooks.unserialisedBody` lets `noteStore.unsavedTexts()` put the editor's refused text in the rescue copy.
+  - The regression test is a component test rather than a unit test, since it needs a real editor. The component test helper `recordingFilo` now answers `vault:trash-list`, because a missing note's banner lists the trash.
 
 ---
 
@@ -480,7 +528,7 @@ Wire the `config` reconciler for these files so an outside change re-reads them 
 |---|---|---|
 | 1 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 1"` |
 | 2 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 2"` |
-| 3 | Not started | |
+| 3 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 3"` |
 | 4 | Not started | |
 | 5 | Not started | |
 | 6 | Not started | |

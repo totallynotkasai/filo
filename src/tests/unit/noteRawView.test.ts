@@ -61,7 +61,9 @@ describe('noteStore.readRaw / writeRaw', () => {
     const m = noteStore.acquire('Note.md', 'v');
     await m.loaded;
     const { hash } = (await noteStore.readRaw('Note.md'))!;
-    expect(await noteStore.writeRaw('Note.md', '---\ntitle: Renamed\n---\nNew body\n', hash)).toBe('written');
+    const written = '---\ntitle: Renamed\n---\nNew body\n';
+    // The hash names the bytes this write left, for the view's next save.
+    expect(await noteStore.writeRaw('Note.md', written, hash)).toEqual({ status: 'written', hash: noteTextHash(written) });
     expect(vault.read('Note.md')).toBe('---\ntitle: Renamed\n---\nNew body\n');
     expect(m.body).toBe('New body\n');
     expect(m.frontmatter).toEqual({ title: 'Renamed' });
@@ -71,20 +73,21 @@ describe('noteStore.readRaw / writeRaw', () => {
   it('writes nothing when the file changed since the raw view read it', async () => {
     const { hash } = (await noteStore.readRaw('Note.md'))!;
     vault.writeExternally('Note.md', '---\ntitle: Note\n---\nTheirs\n');
-    expect(await noteStore.writeRaw('Note.md', '---\ntitle: Note\n---\nMine\n', hash)).toBe('conflict');
+    expect(await noteStore.writeRaw('Note.md', '---\ntitle: Note\n---\nMine\n', hash)).toEqual({ status: 'conflict' });
     expect(vault.read('Note.md')).toBe('---\ntitle: Note\n---\nTheirs\n');
   });
 
   it('keeps the file BOM and CRLF line endings', async () => {
     const { hash } = (await noteStore.readRaw('Win.md'))!;
-    expect(await noteStore.writeRaw('Win.md', '---\ntitle: Win\n---\nTwo\n', hash)).toBe('written');
+    const result = await noteStore.writeRaw('Win.md', '---\ntitle: Win\n---\nTwo\n', hash);
     expect(vault.read('Win.md')).toBe(`${BOM}---\r\ntitle: Win\r\n---\r\nTwo\r\n`);
+    expect(result).toEqual({ status: 'written', hash: noteTextHash(vault.read('Win.md') ?? '') });
   });
 
   it('an unchanged text writes nothing', async () => {
     const { raw, hash } = (await noteStore.readRaw('Note.md'))!;
     const writes = vault.writes.length;
-    expect(await noteStore.writeRaw('Note.md', raw, hash)).toBe('unchanged');
+    expect(await noteStore.writeRaw('Note.md', raw, hash)).toEqual({ status: 'unchanged', hash });
     expect(vault.writes.length).toBe(writes);
   });
 });

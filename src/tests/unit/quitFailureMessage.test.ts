@@ -140,8 +140,9 @@ describe('handleFlushAndQuit — worded by cause, rescue copies before "Quit any
     expect(order).toEqual(['app:quit-awaiting-user', 'rescue', 'app:ready-to-quit']);
   });
 
-  it('a copy that could not be written asks again; "Stay open" cancels the quit', async () => {
+  it('a copy that could not be written asks again; "Stay open" cancels the quit and lets the views save again', async () => {
     const sent: string[] = [];
+    const rollbackRescue = vi.fn();
     const promise = handleFlushAndQuit({
       saveStateState: () => 'saved',
       save: async () => false,
@@ -149,6 +150,7 @@ describe('handleFlushAndQuit — worded by cause, rescue copies before "Quit any
       reportError: () => {},
       describeUnsaved: async () => [{ path: 'Big.md', cause: 'write-failed' }],
       keepRescueCopies: async () => ({ dir: null, kept: [], notKept: ['Big.md'] }),
+      rollbackRescue,
     });
     await tick();
     uiStore.confirmDialog!.onConfirm(false);
@@ -160,6 +162,7 @@ describe('handleFlushAndQuit — worded by cause, rescue copies before "Quit any
     uiStore.closeConfirm();
     await promise;
     expect(handshakeOf(sent)).toEqual(['app:quit-awaiting-user', 'app:cancel-quit']);
+    expect(rollbackRescue).toHaveBeenCalledOnce();
   });
 
   it('a rescue that throws is treated as not kept, and the user decides', async () => {

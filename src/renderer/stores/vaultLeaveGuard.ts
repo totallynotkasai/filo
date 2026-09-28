@@ -12,7 +12,7 @@
  */
 import { tick } from 'svelte';
 import { uiStore } from './ui.svelte';
-import { describeUnsaved, keepRescueCopies } from './unsavedRescue';
+import { describeUnsaved, keepRescueCopies, unsavedPathsAsSpelled } from './unsavedRescue';
 import { isUnsavedWorkEmpty, unsavedWork } from '../lib/boards/writeStateTracking';
 import { leaveVaultDialog, rescueFailedDialog, rescueKeptText, type RescueResult } from '../lib/vault/unsavedMessages';
 import { reportError } from '../lib/utils/errorBus';
@@ -22,6 +22,7 @@ import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { settleRenameQueue } from './vaultRenameQueue';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { markDirty } from '../lib/vault/dirtyFlagRecovery';
+import { rollbackRawRescues } from '../lib/notes/rawViews';
 
 /**
  * - `saved`: nothing was left unsaved; the vault can be let go cleanly.
@@ -92,17 +93,26 @@ export async function saveBeforeLeaving(save: () => Promise<boolean>, kind: 'clo
       return 'cancelled';
     }
 
-    const rescue = await keepRescueCopies(unsavedWork());
+    const leftWork = unsavedWork();
+    const leftPaths = unsavedPathsAsSpelled(leftWork);
+    const rescue = await keepRescueCopies(leftWork);
     if (rescue.notKept.length > 0) {
       const again = rescueFailedDialog(rescue.notKept, dialog.anyway);
       if (!(await goAhead(dialog.title, again.message, again.detail, again.anyway))) {
+        rollbackRawRescues();
         release();
         return 'cancelled';
       }
     }
     postRescueNotice(rescue);
+    // Some of this work (a raw view's text) is in no writer's ledger, so the
+    // swap's own sentinel update wouldn't name it: reopening the vault must
+    // still offer recovery.
+    const vaultRoot = getActiveVaultPath();
+    if (vaultRoot) await markDirty(vaultRoot, leftPaths);
     return 'rescued';
   } catch (err) {
+    rollbackRawRescues();
     release();
     throw err;
   }
@@ -124,7 +134,7 @@ onVaultSwap('pre-swap', 'leftBehind', async (event) => {
   await tick();
   const work = unsavedWork();
   if (isUnsavedWorkEmpty(work)) return;
-  const paths = [...work.failed, ...work.pending];
+  const paths = unsavedPathsAsSpelled(work);
   console.error('[vaultLeaveGuard] changes were queued after the save before leaving:', paths);
   const rescue = await keepRescueCopies(work);
   if (rescue.notKept.length > 0) {

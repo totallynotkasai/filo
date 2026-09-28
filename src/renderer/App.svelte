@@ -18,6 +18,7 @@
   import { holdCloseDrainUntilSwap } from './lib/editor/closeDrainGate.svelte';
   import { isUnsavedWorkEmpty, unsavedWork } from './lib/boards/writeStateTracking';
   import { describeUnsaved, keepRescueCopies, preservedTmpCount } from './stores/unsavedRescue';
+  import { rollbackRawRescues } from './lib/notes/rawViews';
   import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
   import { themeVersion } from './stores/themeVersion.svelte';
@@ -158,6 +159,7 @@
       describeUnsaved: () => describeUnsaved(),
       preservedTmpCount: () => preservedTmpCount(),
       keepRescueCopies: () => keepRescueCopies(),
+      rollbackRescue: () => rollbackRawRescues(),
     });
   });
 

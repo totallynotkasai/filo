@@ -595,7 +595,16 @@ All five items are fixed, each with a regression test. Each test was checked aga
 | D41 | When a hard-link restore can't unlink the trash-side copy, the manifest is marked `restoredTo: <path>`. The Trash list shows the entry as "restored to …; a copy was left here" with Restore disabled. `restoreFromTrash` refuses it (`TrashAlreadyRestoredError`, reported as `TRASH_ITEM_MISSING`, so an undo still sees the file is back). `trashStore.entryHolding` skips it. Emptying the trash clears the copy as before. | `trashMain.test.ts`: a locked trash copy (an `unlink` seam in `RestoreHooks`) is marked, isn't restored a second time (no `Plan (restored).md`), and a purge clears it while `Plan.md` stays |
 | R1 | Made the documented invariant true. A vault swap clears `writeSeqs` and takes a new floor from the never-resetting counter, and a path with no entry reads as that floor. So no ticket taken before a swap can match afterwards, including one for a path never written (before, that read as `0` on both sides of the swap). The comment and the CLAUDE.md line now say so. | `fileBaselineDrift.test.ts`: a ticket taken before a swap stamps nothing after it, for a written and an unwritten path; a ticket taken after it stamps as usual |
 
-**Verification.** `npm run ci:verify` passed: lint, `svelte-check`, `typecheck:main`, 683 test files (6461 passed, 5 skipped), the build, and 69/69 gates.
+**Verification.** `npm run ci:verify` passed: lint, `svelte-check`, `typecheck:main`, 683 test files (6461 passed, 5 skipped), the build, and 69/69 gates. The first run caught `noteWriteLockedRetry`, which wrote `B.md` through `vault:write-file-text`; it now checks the errno pass-through on this machine's `.dirty` sentinel. Gate `no-filo-path-on-vault-channels` now counts `assertSentinelWriteTarget` as refusing `.filo/`.
+
+A real-app check (built app, Playwright `_electron`, a scratch vault) confirmed:
+- **Play on a new 5-minute timer:** the board file holds `endsAt`, and it wasn't rewritten in the 3 s that followed.
+- **Quit, 4 s closed, reopen:** the display had moved on (4:55 → 4:46), matching the saved end time.
+- **Pause:** the file holds `remaining` (4:46) and no `endsAt`.
+- **Another program set `endsAt` in the past:** the board reloaded, the timer showed 00:00:00 and saved `remaining: 0`, stopped, with no toast and no dialog.
+- No renderer or console errors.
+
+Seen in passing and not part of this phase: a new timer's `.board.json` also holds a `tileDefs` entry for it, written at creation. Nothing updates that entry afterwards, since the inline update branch returns first. The loader uses `inlineTiles`, so it is stale data, not a wrong display.
 
 **Deviations from the plan**
 

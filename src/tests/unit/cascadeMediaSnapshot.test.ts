@@ -15,6 +15,7 @@ import {
 import type { MindMapBoard } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * A sidebar delete of a media file, or of a folder holding media, moves it
@@ -128,7 +129,7 @@ describe('sidebar delete of media goes to the trash; undo brings the bytes back'
   function openBoardShowing(src: string): void {
     const fixture = makeMindMapWithImage('mm', 't_img', src);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'Boards/mm.board.json' });
-    boardStore.setBoard(fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
+    seedBoard(boardStore, fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
     historyStore.setActiveBoard('mm');
   }
 

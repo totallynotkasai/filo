@@ -48,7 +48,7 @@ function makeMindMapFixture(settings: Record<string, unknown> = {}): BoardFileDa
 function activate(initialSettings: Record<string, unknown> = {}): void {
   const fixture = makeMindMapFixture(initialSettings);
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
-  boardStore.setBoard(fixture.board, {}, {}, []);
+  boardStore.setBoard(fixture.board);
   // IMPL_PLAN_2026-05-26 / Item 1 — `setBoard` no longer mutates
   // `historyStore.activeBoardId`; PaneView's `isActive`-gated $effect
   // owns that signal in production. Unit tests without a PaneView

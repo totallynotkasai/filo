@@ -8,6 +8,7 @@ import { CascadeDeleteCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * Audit 4.2 (REPRODUCE-FIRST) — claim: `historyStore.undo()/redo()` mark only
@@ -76,16 +77,9 @@ function makeMindMap(id: string, tileId: string): BoardFileData {
       [tileId]: {
         id: tileId,
         type: 'text',
-        title: 'T',
         style: { headerColor: '', bodyColor: '', borderColor: '' },
-        boardId: id,
-        position: { x: 0, y: 0 },
-        size: { width: 100, height: 100 },
-        tags: [],
         createdAt: 0,
         updatedAt: 0,
-        locked: false,
-        faded: false,
         filePath: `${tileId}.md`,
       },
     },
@@ -104,7 +98,7 @@ describe('history dirty-marking for board-spanning commands (audit 4.2)', () => 
     boardStore.clearBoard();
     historyStore.clear();
     __resetDirtyTrackingForTests();
-    vi.spyOn(uiStore, 'toast').mockImplementation(() => {});
+    vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -122,7 +116,7 @@ describe('history dirty-marking for board-spanning commands (audit 4.2)', () => 
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
     const tilesB = boardCacheStore.getFullTilesForBoard('b');
     // a is active; b is inactive.
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
     historyStore.setActiveBoard('a');
 
     const cmd = new CascadeDeleteCommand(

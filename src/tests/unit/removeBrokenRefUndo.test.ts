@@ -18,6 +18,7 @@ import { DeleteTilesCommand } from '@renderer/commands/index';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TextTile, Tile } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { seedBoard } from '../helpers/seedBoard';
 
 function installSilentBridge(): void {
   installFiloMock(() => null);
@@ -76,7 +77,7 @@ function activate(tiles: TextTile[]): void {
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
   const tilesById: Record<string, Tile> = {};
   for (const t of tiles) tilesById[t.id] = t as unknown as Tile;
-  boardStore.setBoard(fixture.board, tilesById, {}, []);
+  seedBoard(boardStore, fixture.board, tilesById, {}, []);
 }
 
 describe('broken-ref Remove from board — Phase 5 / 5.3', () => {

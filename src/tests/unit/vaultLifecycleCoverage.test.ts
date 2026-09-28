@@ -63,6 +63,9 @@ const EXEMPT_MODULES = new Set([
   // A count of theme applications, not vault data: a vault open applies (and
   // counts) its own theme.
   'src/renderer/stores/themeVersion.svelte.ts',
+  // The NoteModel class: its $state fields are per instance, and the note
+  // store (notes.svelte.ts) drops every model on a vault swap.
+  'src/renderer/stores/noteModel.svelte.ts',
 ]);
 
 function toPosix(p: string): string {

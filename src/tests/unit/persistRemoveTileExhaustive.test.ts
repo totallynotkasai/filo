@@ -54,6 +54,7 @@ import type {
 } from '@renderer/schema/index';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 import { findOrphans } from './contracts/randomOpsNoOrphans.property.test';
+import { seedBoard } from '../helpers/seedBoard';
 
 // ── Fixture factories ──────────────────────────────────────────────────
 
@@ -246,7 +247,7 @@ function hydrateAndActivate(fixture: BoardFixture): void {
     connections[cid] = c as Connection;
   }
   boardCacheStore.hydrate({ [boardId]: envelope }, { [boardId]: `${boardId}.board.json` });
-  boardStore.setBoard(envelope.board, tiles, connections, frames);
+  seedBoard(boardStore, envelope.board, tiles, connections, frames);
 }
 
 function expectNoOrphans(boardId: string, removedTileId: string): void {

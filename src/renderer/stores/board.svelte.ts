@@ -34,11 +34,6 @@ import { makeTilesSlice } from './boardTiles';
 import { makeFrontmatterSyncSlice } from './boardFrontmatterSync';
 import { getActiveScope, makeFacade } from '../lib/boards/boardScope.svelte';
 import { opsFor } from '../core/boardTileOps';
-import {
-  buildTileDefinition,
-  buildInlineTileFromTile,
-  isInlineTileType,
-} from '../lib/boards/tileDefBuilder';
 
 /**
  * Board store — owns the per-pane VIEW of a single board. The view is built
@@ -67,69 +62,6 @@ export interface BoardScopeBoardDeps {
   spatial: SpatialScope;
   canvas: CanvasScope;
   selection: SelectionScope;
-}
-
-/**
- * Builds a minimal `BoardFileData` from the legacy `setBoard(board, tiles,
- * conns, frames)` arguments. Used by `setBoard` as a fallback when the caller
- * didn't hydrate the cache upstream (the legacy test pattern). Production
- * code always hydrates via `boardCacheStore.hydrate(loaderResult)` before
- * activating a board, so this path is exercised only by unit tests.
- *
- * Mind-map split between `placements` / `inlineTiles` mirrors what the live
- * `mindmapTileOps.addTile` writer would have produced for each tile. For
- * other board types we only seed `tileDefs` — Kanban / Task List tests that
- * exercise placements must hydrate the cache explicitly.
- */
-function synthesizeCacheEntry(
-  board: Board,
-  tiles?: Record<string, Tile>,
-  conns?: Record<string, Connection>,
-  frames?: Frame[],
-): BoardFileData {
-  const tileDefs: Record<string, TileDefinition> = {};
-  const placements: Record<
-    string,
-    { x: number; y: number; width: number; height: number; locked?: boolean; faded?: boolean; frameless?: boolean }
-  > = {};
-  const inlineTiles: Record<string, ReturnType<typeof buildInlineTileFromTile>> = {};
-  const isMindMap = board.type === 'mindmap';
-
-  for (const tile of Object.values(tiles ?? {})) {
-    if (isMindMap && isInlineTileType(tile.type)) {
-      inlineTiles[tile.id] = buildInlineTileFromTile(tile);
-      continue;
-    }
-    tileDefs[tile.id] = buildTileDefinition(tile);
-    if (isMindMap) {
-      placements[tile.id] = {
-        x: tile.position.x,
-        y: tile.position.y,
-        width: tile.size.width,
-        height: tile.size.height,
-        locked: tile.locked,
-        faded: tile.faded,
-        frameless: tile.frameless,
-      };
-    }
-  }
-
-  let boardForCache: Board = board;
-  if (isMindMap) {
-    const mm = board as MindMapBoard & Record<string, unknown>;
-    boardForCache = {
-      ...mm,
-      placements: { ...(mm.placements ?? {}), ...placements },
-      inlineTiles: { ...(mm.inlineTiles ?? {}), ...inlineTiles },
-    } as MindMapBoard;
-  }
-
-  return {
-    board: boardForCache,
-    tileDefs,
-    connections: { ...(conns ?? {}) },
-    frames: [...(frames ?? [])],
-  };
 }
 
 /**
@@ -293,49 +225,15 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
      * Pins this scope to a board.
      *
      * The per-pane view is `$derived` from the shared cache and follows
-     * whatever the cache holds for `board.id`. Production code (`BoardRouter`)
-     * calls `setBoard(board)` with no extra args because the cache is the
-     * source of truth — it was already hydrated upstream by `boardLoader`.
-     *
-     * The optional `boardTiles` / `boardConnections` / `boardFrames` args
-     * exist for the legacy unit-test pattern that bootstraps a board state
-     * inline:
-     *
-     * ```ts
-     * boardStore.setBoard(board, tilesById, conns, frames);
-     * ```
-     *
-     * When `boardTiles` contains at least one entry the args are
-     * synthesised into a fresh `BoardFileData` and **replace** any
-     * existing cache entry for `board.id`. This gives tests a single
-     * deterministic seed point without a separate `boardCacheStore.hydrate`
-     * step and keeps the per-test state isolated even when an earlier test
-     * left a stale cache entry behind. When `boardTiles` is empty (or
-     * omitted) the args are ignored — production callers and tests that
-     * hydrate the cache explicitly hit this path.
+     * whatever the cache holds for `board.id`, which the caller has already
+     * hydrated (`boardLoader` → `boardCacheStore.hydrate`): the cache is the
+     * source of truth.
      *
      * The pane's spatial index and canvas viewport are still hydrated
      * imperatively here so single-pane drag/select continues to work
      * without waiting for a reactive recompute.
      */
-    setBoard(
-      board: Board,
-      boardTiles?: Record<string, Tile>,
-      boardConnections?: Record<string, Connection>,
-      boardFrames?: Frame[],
-    ) {
-      // Bootstrap cache from args when tiles were supplied. Used by the
-      // legacy unit-test pattern; production callers (`BoardRouter`) call
-      // `setBoard(board)` with no extra args so the well-hydrated cache
-      // entry stays put.
-      if (boardTiles && Object.keys(boardTiles).length > 0) {
-        const synth = synthesizeCacheEntry(board, boardTiles, boardConnections, boardFrames);
-        boardCacheStore.hydrate(
-          { ...boardCacheStore.cache, [board.id]: synth },
-          { ...boardCacheStore.paths, [board.id]: boardCacheStore.paths[board.id] ?? '' },
-        );
-      }
-
+    setBoard(board: Board) {
       currentBoardId = board.id;
 
       rehydrateSpatialFromCache();

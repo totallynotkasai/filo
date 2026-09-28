@@ -108,18 +108,15 @@ export function assertWithinVault(vaultRoot: string, targetPath: string): void {
   }
 }
 
-// Windows DOS device names; see src/shared/fileNames.ts.
-export { RESERVED_WINDOWS_NAMES };
-
 /**
  * Windows-illegal characters that aren't path separators
  * (caught by the basename check above) or control codes (caught by the
  * loop below). `:` is the load-bearing entry: on NTFS it opens a hidden
  * Alternate Data Stream, so a filename like `note.md:hidden` writes to a
  * stream that's invisible to most tools yet stored inside the vault. The
- * project's own `ILLEGAL_CHARS` regex in `filenameUtils.ts` already bans
- * the same set; this gate aligns `assertSafeFilename` with it so a
- * crafted filename can't slip through the `:`-tolerant `path.basename`.
+ * shared file-name rule (`shared/fileNames.ts`) never derives a name with
+ * one; this check refuses one a caller supplies, since `path.basename`
+ * lets `:` through.
  */
 const WIN_ILLEGAL_CHARS_RE = /[<>:"|?*]/;
 

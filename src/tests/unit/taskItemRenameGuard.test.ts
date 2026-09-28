@@ -118,8 +118,8 @@ describe('REN-1 — inline rename commit is one-shot', () => {
     // async, so the `editTitle !== tileTitle` guard does NOT short-circuit #2.
     const onRename = vi.fn();
     let isEditing = true;
-    const editTitle = 'New';
-    const tileTitle = 'Old';
+    const editTitle: string = 'New';
+    const tileTitle: string = 'Old';
     function buggyCommit(): void {
       isEditing = false;
       if (editTitle.trim() && editTitle !== tileTitle) onRename(editTitle.trim());

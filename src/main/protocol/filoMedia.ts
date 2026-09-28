@@ -65,7 +65,15 @@ export function registerFiloProtocol(): void {
         return new Response('Forbidden', { status: 403 });
       }
 
-      const stat = await fs.promises.stat(absPath);
+      // A missing file is a broken tile, not a server fault: answer 404 like
+      // the other "not there" cases, without an error log on every load.
+      const stat = await fs.promises.stat(absPath).catch((err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
+        throw err;
+      });
+      if (!stat) {
+        return new Response('Not found', { status: 404 });
+      }
       if (!stat.isFile()) {
         return new Response('Not a file', { status: 404 });
       }

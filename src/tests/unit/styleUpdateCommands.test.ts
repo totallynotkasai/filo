@@ -93,7 +93,7 @@ describe('UpdateFrameStyleCommand', () => {
     const after = { headerColor: '#000', borderColor: '#abc' };
     const fixture = makeMindMapWithFrame(before as Frame['style']);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-    boardStore.setBoard(fixture.board, {}, {}, fixture.frames);
+    boardStore.setBoard(fixture.board);
 
     const cmd = new UpdateFrameStyleCommand('f1', before as Frame['style'], after as Frame['style']);
     cmd.execute();
@@ -111,7 +111,7 @@ describe('UpdateFrameStyleCommand', () => {
     const after = {};
     const fixture = makeMindMapWithFrame(before as Frame['style']);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-    boardStore.setBoard(fixture.board, {}, {}, fixture.frames);
+    boardStore.setBoard(fixture.board);
 
     const cmd = new UpdateFrameStyleCommand('f1', before as Frame['style'], after as Frame['style']);
     cmd.execute();
@@ -454,7 +454,7 @@ describe('UpdateConnectionCommand (reused for ConnectionStylePopup)', () => {
       frames: [],
     };
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'mm.board.json' });
-    boardStore.setBoard(fixture.board, {}, { c1: conn }, []);
+    boardStore.setBoard(fixture.board);
 
     const before = {
       pathColor: '#fff',

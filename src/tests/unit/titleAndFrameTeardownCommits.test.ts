@@ -98,7 +98,7 @@ function activateTwoBoards(activeId: 'mm' | 'other'): {
     { mm: 'map.board.json', other: 'other.board.json' },
   );
   const fixture = activeId === 'mm' ? mm : other;
-  boardStore.setBoard(fixture.board, {}, {}, []);
+  boardStore.setBoard(fixture.board);
   return { mm, other };
 }
 
@@ -184,7 +184,7 @@ describe('Audit-17 4.1 — a teardown title commit resolves through the home boa
     // Simulate the tab switch that unmounts TileHeader: the pane's scope now
     // points at 'mm', so the active-tiles lookup misses 't-h'.
     const mm = boardCacheStore.cache['mm'] as unknown as { board: MindMapBoard };
-    boardStore.setBoard(mm.board, {}, {}, []);
+    boardStore.setBoard(mm.board);
     expect(boardStore.getTile('t-h')).toBeUndefined();
 
     await titleCommand('t-h', 'other').execute();
@@ -267,7 +267,7 @@ describe('Audit-17 4.2 — Frame title blur timer is tracked and commits on unmo
     } as unknown as Frame;
     boardStore.addFrame(frame);
     const mm = boardCacheStore.cache['mm'] as unknown as { board: MindMapBoard };
-    boardStore.setBoard(mm.board, {}, {}, []);
+    boardStore.setBoard(mm.board);
 
     boardCacheStore.persistUpdateFrame('f-d', { ...frame, title: 'After', updatedAt: 1 } as Frame);
     const cached = boardCacheStore.cache['other'] as unknown as { frames: Frame[] };

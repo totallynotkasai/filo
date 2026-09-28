@@ -7,6 +7,7 @@ import { DeleteTilesCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, Tile, TileDefinition } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * The tile header's Delete (with or without "delete the file too") runs
@@ -77,7 +78,7 @@ describe('DeleteTilesCommand on a Kanban board', () => {
     vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
     const fixture = kanbanFixture();
     boardCacheStore.hydrate({ kb: fixture }, { kb: 'Board.board.json' });
-    boardStore.setBoard(fixture.board, fixture.tileDefs as unknown as Record<string, Tile>, {}, []);
+    seedBoard(boardStore, fixture.board, fixture.tileDefs as unknown as Record<string, Tile>, {}, []);
   });
   afterEach(() => {
     vi.restoreAllMocks();

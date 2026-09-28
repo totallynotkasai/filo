@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { fakeCommand } from '../helpers/fakeCommand';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -7,6 +8,7 @@ import { BatchCommand, ToggleGroupCommand } from '@renderer/commands/index';
 import type { Command } from '@renderer/stores/history.svelte';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, TileGroup } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * Audit 4.3 (REPRODUCE-FIRST) — claim: a BatchCommand "mixing a whole-array
@@ -66,9 +68,9 @@ function makeMindMapFixture(): BoardFileData {
       groups: [],
     } as unknown as MindMapBoard,
     tileDefs: {
-      a: { id: 'a', type: 'text', filePath: 'A.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, createdAt: 0, updatedAt: 0, locked: false, faded: false },
-      b: { id: 'b', type: 'text', filePath: 'B.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, createdAt: 0, updatedAt: 0, locked: false, faded: false },
-      c: { id: 'c', type: 'text', filePath: 'C.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, createdAt: 0, updatedAt: 0, locked: false, faded: false },
+      a: { id: 'a', type: 'text', filePath: 'A.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, createdAt: 0, updatedAt: 0 },
+      b: { id: 'b', type: 'text', filePath: 'B.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, createdAt: 0, updatedAt: 0 },
+      c: { id: 'c', type: 'text', filePath: 'C.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, createdAt: 0, updatedAt: 0 },
     },
     connections: {},
     frames: [],
@@ -84,7 +86,7 @@ describe('BatchCommand — group (whole-array) + element-level tile op consisten
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
-    vi.spyOn(uiStore, 'toast').mockImplementation(() => {});
+    vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -97,7 +99,7 @@ describe('BatchCommand — group (whole-array) + element-level tile op consisten
     const fixture = makeMindMapFixture();
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
     const tiles = boardCacheStore.getFullTilesForBoard('mm');
-    boardStore.setBoard(fixture.board, tiles, {}, []);
+    seedBoard(boardStore, fixture.board, tiles, {}, []);
 
     // Pre-batch: a + b are grouped (g0). c is ungrouped.
     boardStore.groupTiles(['a', 'b']);
@@ -113,19 +115,19 @@ describe('BatchCommand — group (whole-array) + element-level tile op consisten
     // replaceGroups (whole-array).
     const groupCmd = new ToggleGroupCommand(['b', 'c'], 'group', groupsBefore, 'mm');
     // Child 2 (element-level): delete c, restorable on undo.
-    const deleteC: Command = {
+    const deleteC: Command = fakeCommand({
       description: 'delete c',
       targetBoardId: 'mm',
       execute() { boardStore.removeTile('c'); },
       undo() { void boardStore.addTile(snapshotC); },
-    };
+    });
     // Child 3: throws on execute → triggers full rollback of children 1 + 2.
-    const bomb: Command = {
+    const bomb: Command = fakeCommand({
       description: 'bomb',
       targetBoardId: 'mm',
       execute() { throw new Error('bomb threw'); },
       undo() {},
-    };
+    });
 
     const batch = new BatchCommand('group-merge + delete + bomb', [groupCmd, deleteC, bomb], 'mm');
     await expect(batch.execute()).rejects.toThrow('bomb threw');

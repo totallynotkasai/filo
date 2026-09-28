@@ -36,6 +36,7 @@ function md(path: string): FileMetadata {
     links: [],
     content: 'body text',
     lastModified: 0,
+    rawFrontmatter: '',
   };
 }
 

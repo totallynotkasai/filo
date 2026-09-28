@@ -32,7 +32,7 @@
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { createScheduler } from '../boards/writeScheduler';
-import { WRITE_TIMEOUT_MS } from '../boards/boardWriteDebounce';
+import { BOARD_WRITE_DEBOUNCE_MS, WRITE_TIMEOUT_MS } from '../boards/boardWriteDebounce';
 import {
   beginWrite,
   clearFailedPathAfterLateSuccess,
@@ -68,7 +68,8 @@ import {
 import { openingFenceEol } from './frontmatterFence';
 import { frontmatterRefusalText } from './frontmatterRefusal';
 
-export const NOTE_WRITE_DEBOUNCE_MS = 300;
+/** A note waits the same idle debounce as a board write (300 ms). */
+export const NOTE_WRITE_DEBOUNCE_MS = BOARD_WRITE_DEBOUNCE_MS;
 
 /** Upper bound on one flush, so a wedged IPC can't hang save or quit. */
 export const NOTE_WRITE_TIMEOUT_MS = WRITE_TIMEOUT_MS;

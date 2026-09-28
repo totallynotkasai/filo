@@ -18,6 +18,7 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { baselineSeq, noteBaseline } from '../vault/fileBaselineRegistry';
 import { loadVersionedFile } from '../vault/loadVersionedFile';
 import { detectConflictCopyPath } from '@shared/conflictCopy';
+import { safeFileName } from '@shared/fileNames';
 import { boardNameFromPath } from './boardNaming';
 
 // allow-module-state: immutable lookup table derived from a build-time constant
@@ -662,11 +663,9 @@ interface LoadedBoardEntry {
   result: LoadBoardResult;
 }
 
-/** The file stem Filo would give a board named `name` (mirrors main's sanitizeFilename). */
+/** The file stem, case-folded, of a board named `name` (the shared file-name rule). */
 function boardFileStem(name: string): string {
-  // `\x22` is `"` — spelled as an escape so the CI gates' naive string blanker isn't derailed.
-  const stem = name.replace(/[<>:\x22/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
-  return (stem || 'Untitled').toLowerCase();
+  return safeFileName(name, '').toLowerCase();
 }
 
 function baseName(rel: string): string {

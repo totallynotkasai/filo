@@ -18,7 +18,7 @@
  * board instead. The third test pins the board-agnostic escape hatch:
  * commands with an empty-string `targetBoardId` skip the guard.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { Command } from '@renderer/commands/Command';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -84,7 +84,7 @@ class RetargettableCommand extends Command {
 }
 
 describe('historyStore — cross-board guard (Phase 2)', () => {
-  let toastSpy: ReturnType<typeof vi.spyOn>;
+  let toastSpy: MockInstance<typeof uiStore.toast>;
 
   beforeEach(() => {
     historyStore.clear();

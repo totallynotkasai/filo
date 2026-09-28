@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { ToggleFadeCommand } from '@renderer/commands/index';
 import type { Tile, MindMapBoard } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 function installEmptyFiloStub(): void {
   (window as unknown as Record<string, unknown>).filo = {
@@ -53,7 +54,7 @@ function activate(tiles: Tile[]): void {
   } as unknown as MindMapBoard;
   const byId: Record<string, Tile> = {};
   for (const t of tiles) byId[t.id] = t;
-  boardStore.setBoard(board, byId, {}, []);
+  seedBoard(boardStore, board, byId, {}, []);
 }
 
 describe('ToggleFadeCommand', () => {

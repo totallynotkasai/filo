@@ -44,6 +44,7 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 
 // ── 6.1 helpers ──────────────────────────────────────────────────────────
@@ -89,7 +90,7 @@ function bindBoardToScope(scope: BoardScope): void {
   const fixture = makeMindMapWithTile();
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
   const tiles = boardCacheStore.getFullTilesForBoard('mm');
-  scope.board.setBoard(fixture.board, tiles, {}, []);
+  seedBoard(scope.board, fixture.board, tiles, {}, []);
 }
 
 function makePointerEvent(

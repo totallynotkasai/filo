@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { fakeCommand } from '../helpers/fakeCommand';
 import { BatchCommand } from '@renderer/commands/index';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import type { Command } from '@renderer/stores/history.svelte';
@@ -19,7 +20,7 @@ interface CountingCommand extends Command {
 }
 
 function makeCmd(description: string, opts: { exThrows?: boolean; undoThrows?: boolean } = {}): CountingCommand {
-  const cmd: CountingCommand = {
+  const cmd: CountingCommand = fakeCommand({
     description,
     executed: 0,
     undone: 0,
@@ -31,7 +32,7 @@ function makeCmd(description: string, opts: { exThrows?: boolean; undoThrows?: b
       cmd.undone += 1;
       if (opts.undoThrows) throw new Error(`${description} undo threw`);
     },
-  };
+  });
   return cmd;
 }
 

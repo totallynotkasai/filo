@@ -226,7 +226,7 @@ describe('vaultExternalChanges — a deleted file that tiles still use', () => {
         updatedAt: 0,
         settings: {},
         columns: [{ id: 'c1', title: 'To Do', position: 0, collapsed: false, tilePlacements: [{ tileId: 't1' }] }],
-      } satisfies Partial<KanbanBoard> as KanbanBoard,
+      } as KanbanBoard,
       tileDefs: {
         t1: { id: 't1', type: 'text', filePath: rel, style: { headerColor: '', bodyColor: '', borderColor: '' }, createdAt: 0, updatedAt: 0 },
       },

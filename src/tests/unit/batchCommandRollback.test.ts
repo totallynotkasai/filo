@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { fakeCommand } from '../helpers/fakeCommand';
 import { BatchCommand } from '@renderer/commands/index';
 import type { Command } from '@renderer/stores/history.svelte';
 
@@ -19,7 +20,7 @@ interface CountingCommand extends Command {
 }
 
 function makeCountingCommand(description: string, throws = false): CountingCommand {
-  const cmd: CountingCommand = {
+  const cmd: CountingCommand = fakeCommand({
     description,
     executed: 0,
     undone: 0,
@@ -30,7 +31,7 @@ function makeCountingCommand(description: string, throws = false): CountingComma
     undo() {
       cmd.undone += 1;
     },
-  };
+  });
   return cmd;
 }
 
@@ -128,7 +129,7 @@ describe('Polish phase 2.2 — BatchCommand awaits async children', () => {
     // rollback steps and the rethrow — exactly the silent-failure window
     // polish 2.2 closes.
     const order: string[] = [];
-    const makeAsyncChild = (name: string): Command => ({
+    const makeAsyncChild = (name: string): Command => (fakeCommand({
       description: name,
       execute() {
         order.push(`${name}:execute`);
@@ -138,8 +139,8 @@ describe('Polish phase 2.2 — BatchCommand awaits async children', () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
         order.push(`${name}:undo:end`);
       },
-    });
-    const bomb: Command = {
+    }));
+    const bomb: Command = fakeCommand({
       description: 'bomb',
       execute() {
         order.push('bomb:execute');
@@ -148,7 +149,7 @@ describe('Polish phase 2.2 — BatchCommand awaits async children', () => {
       undo() {
         order.push('bomb:undo');
       },
-    };
+    });
 
     const a = makeAsyncChild('a');
     const b = makeAsyncChild('b');
@@ -175,7 +176,7 @@ describe('Polish phase 2.2 — BatchCommand awaits async children', () => {
     // Best-effort cleanup: when one child's undo throws OR rejects, the
     // BatchCommand reports it but continues attempting the others.
     const order: string[] = [];
-    const failingChild: Command = {
+    const failingChild: Command = fakeCommand({
       description: 'rejecting',
       execute() {
         order.push('rejecting:execute');
@@ -185,8 +186,8 @@ describe('Polish phase 2.2 — BatchCommand awaits async children', () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
         throw new Error('async undo rejected');
       },
-    };
-    const finalChild: Command = {
+    });
+    const finalChild: Command = fakeCommand({
       description: 'fine',
       execute() {
         order.push('fine:execute');
@@ -194,15 +195,15 @@ describe('Polish phase 2.2 — BatchCommand awaits async children', () => {
       undo() {
         order.push('fine:undo');
       },
-    };
-    const bomb: Command = {
+    });
+    const bomb: Command = fakeCommand({
       description: 'bomb',
       execute() {
         order.push('bomb:execute');
         throw new Error('bomb threw');
       },
       undo() {},
-    };
+    });
 
     const batch = new BatchCommand('async-rollback-failure', [finalChild, failingChild, bomb]);
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

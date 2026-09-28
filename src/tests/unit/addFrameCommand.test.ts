@@ -52,7 +52,7 @@ function makeMindMapFixture(): BoardFileData {
 function activate(): void {
   const fixture = makeMindMapFixture();
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-  boardStore.setBoard(fixture.board, {}, {}, []);
+  boardStore.setBoard(fixture.board);
 }
 
 function makeFrame(overrides: Partial<Frame> = {}): Frame {

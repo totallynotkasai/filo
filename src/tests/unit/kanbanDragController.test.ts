@@ -3,7 +3,9 @@ import {
   KanbanDragController,
   type KanbanCardDndItem,
 } from '@renderer/lib/kanban/kanbanDragController.svelte';
-import type { KanbanBoard, KanbanColumn, Tile } from '@renderer/schema/index';
+import type { KanbanBoard, Tile } from '@renderer/schema/index';
+
+type KanbanColumn = KanbanBoard['columns'][number];
 
 /**
  * KanbanDragController — reduced-motion + card mirror behaviour.

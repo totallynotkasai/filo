@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
-import type { Command } from '@renderer/stores/history.svelte';
+import { Command } from '@renderer/commands/Command';
 
 /**
  * Phase 10.3 — history truncation toast. The undo stack caps at a per-board
@@ -15,7 +15,8 @@ import type { Command } from '@renderer/stores/history.svelte';
  * pushing 501 entries per assertion would obscure the behaviour under test.
  */
 
-class NoopCommand implements Command {
+class NoopCommand extends Command {
+  readonly targetBoardId: string = '';
   description = 'noop';
   execute(): void {}
   undo(): void {}
@@ -26,7 +27,7 @@ function pushN(n: number): void {
 }
 
 describe('history truncation toast', () => {
-  let toastSpy: ReturnType<typeof vi.spyOn>;
+  let toastSpy: MockInstance<typeof uiStore.toast>;
 
   beforeEach(() => {
     historyStore.clear();

@@ -67,3 +67,16 @@ export function vaultPath(raw: string): VaultPath {
 export function isVaultPath(v: unknown): v is VaultPath {
   return typeof v === 'string' && v === normalizeVaultRelative(v);
 }
+
+/**
+ * True when vault-relative `path` is `folder` itself or sits anywhere inside
+ * it, compared as `VaultPath`s (case-folded, separator-agnostic, trailing
+ * slash ignored). An empty `folder` matches nothing: the vault root is never
+ * an item a caller deletes or moves.
+ */
+export function isAtOrUnder(path: string, folder: string): boolean {
+  const f = vaultPath(folder).replace(/\/+$/, '');
+  if (!f) return false;
+  const p = vaultPath(path);
+  return p === f || p.startsWith(`${f}/`);
+}

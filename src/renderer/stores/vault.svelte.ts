@@ -96,7 +96,7 @@ import { enqueueRenameQueueWork, resetRenameQueue } from './vaultRenameQueue';
 
 /**
  * Vault store — owns the open vault's lifecycle (open/close/save), the
- * virtual Project view for legacy consumers, and the file-tree UI state
+ * in-memory Project (board list, name, theme), and the file-tree UI state
  * (search, sort, expanded folders).
  *
  * Per-concern slices live in sibling `vault*.ts` files (tree UI, project

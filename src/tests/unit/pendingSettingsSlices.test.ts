@@ -69,7 +69,7 @@ function seedMindMapBoard(): void {
     frames: [],
   };
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-  boardStore.setBoard(fixture.board, {}, {}, []);
+  boardStore.setBoard(fixture.board);
 }
 
 describe('Global Defaults Apply writes only the style defaults', () => {

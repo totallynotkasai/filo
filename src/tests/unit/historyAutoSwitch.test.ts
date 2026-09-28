@@ -15,7 +15,7 @@
  * on the stack (reachable once the user opens that board) — never silently
  * discarded.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { Command } from '@renderer/commands/Command';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -60,14 +60,14 @@ class RetargettableCommand extends Command {
   }
 }
 
-function switchBackToasts(spy: ReturnType<typeof vi.spyOn>): unknown[] {
+function switchBackToasts(spy: MockInstance<typeof uiStore.toast>): unknown[] {
   return spy.mock.calls.filter(
     (args) => typeof args[0] === 'string' && (args[0] as string).includes('the originating board'),
   );
 }
 
 describe('Audit 5.3 — history auto-switch to the originating board', () => {
-  let toastSpy: ReturnType<typeof vi.spyOn>;
+  let toastSpy: MockInstance<typeof uiStore.toast>;
 
   beforeEach(() => {
     historyStore.clear();

@@ -10,6 +10,7 @@ import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * Phase 2 / 2.1 — when an attachment file (image/video/audio) is deleted
@@ -46,15 +47,10 @@ function makeMindMapWithImage(boardId: string, tileId: string, src: string): Boa
       [tileId]: {
         id: tileId,
         type: 'image',
+        style: { headerColor: '', bodyColor: '', borderColor: '' },
         title: 'photo',
-        boardId,
-        position: { x: 0, y: 0 },
-        size: { width: 100, height: 100 },
-        tags: [],
         createdAt: 0,
         updatedAt: 0,
-        locked: false,
-        faded: false,
         src,
       },
     },
@@ -67,6 +63,7 @@ function ctxFor(): VaultContext {
   return {
     getVaultPath: () => '/vault',
     setVaultPath: () => {},
+    resolveRecoveryDismissed: () => {},
     getFileTree: () => [],
     setFileTree: () => {},
     getSearchQuery: () => '',
@@ -165,7 +162,7 @@ describe('vaultExternalChanges — external attachment delete', () => {
     const a = makeMindMapWithImage('a', 't_img', 'attachments/hero.png');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     expect(boardStore.getTile('t_img')).toBeDefined();
 

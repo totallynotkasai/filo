@@ -11,6 +11,7 @@ import { __resetErrorBusForTests, onError, type ReportedError } from '@renderer/
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TextTile, Tile } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * "Delete associated files" is undoable because the files go to Filo's trash,
@@ -100,7 +101,7 @@ function setupActiveBoardWithTiles(tiles: Tile[]): void {
   for (const t of tiles) map[t.id] = t as unknown as TextTile;
   const fixture = makeMindMapFixture(map);
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-  boardStore.setBoard(fixture.board, map as unknown as Record<string, Tile>, {}, []);
+  seedBoard(boardStore, fixture.board, map as unknown as Record<string, Tile>, {}, []);
 }
 
 const userCalls = (h: Harness, channel: string): Array<{ channel: string; args: unknown[] }> =>

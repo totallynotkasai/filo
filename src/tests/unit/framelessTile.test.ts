@@ -15,6 +15,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { ToggleFramelessCommand } from '@renderer/commands/index';
 import { TilePlacementSchema, ImageTileSchema } from '@renderer/schema/index';
 import type { Tile, MindMapBoard } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 describe('frameless schema', () => {
   it('defaults frameless to false on a placement', () => {
@@ -82,7 +83,7 @@ function activate(tiles: Tile[]): void {
   } as unknown as MindMapBoard;
   const byId: Record<string, Tile> = {};
   for (const t of tiles) byId[t.id] = t;
-  boardStore.setBoard(board, byId, {}, []);
+  seedBoard(boardStore, board, byId, {}, []);
 }
 
 describe('ToggleFramelessCommand', () => {

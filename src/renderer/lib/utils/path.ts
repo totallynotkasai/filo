@@ -4,7 +4,7 @@
  * The renderer can't import Node's `path` module, but file-tree nodes carry
  * native paths (backslashes on Windows) while several store getters
  * pre-normalize to forward slashes. Direct `===` comparisons silently fail
- * across that mismatch — `pathsEqual` and `samePath` are the canonical fixes.
+ * across that mismatch — `pathsEqualExact` and `samePath` are the canonical fixes.
  *
  * Two normalisations co-exist because they serve different shapes:
  *   - `normalizePath` is for absolute or directory paths (e.g. file-tree
@@ -24,10 +24,12 @@ import { normalizePath } from '../../../shared/pathUtils';
 export { toPosix, stripLeadingSlash, normalizePath, toVaultRelative, hasHiddenSegment } from '../../../shared/pathUtils';
 
 /**
- * True when two paths refer to the same on-disk location, ignoring separator
- * style and trailing slashes.
+ * True when two absolute paths are spelled the same, ignoring only separator
+ * style and trailing slashes. Case counts: use it to find a path Filo itself
+ * just produced (a new folder in the tree). For "is this the same vault
+ * file?" use `samePath`, which folds case.
  */
-export function pathsEqual(a: string, b: string): boolean {
+export function pathsEqualExact(a: string, b: string): boolean {
   return normalizePath(a) === normalizePath(b);
 }
 

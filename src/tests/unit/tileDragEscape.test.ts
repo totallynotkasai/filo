@@ -12,6 +12,7 @@ import { tileDragAction } from '@renderer/lib/canvas/tileDrag';
 import { getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, TileDefinition } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * Phase 27 / A2 — Escape mid-drag cancels the move. Without this fix, a
@@ -70,7 +71,7 @@ function activate(): void {
   const fixture = makeMindMapWithTile();
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
   const tiles = boardCacheStore.getFullTilesForBoard('mm');
-  boardStore.setBoard(fixture.board, tiles, {}, []);
+  seedBoard(boardStore, fixture.board, tiles, {}, []);
 }
 
 /**

@@ -5,6 +5,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { ToggleGroupCommand, ToggleLockCommand } from '@renderer/commands/index';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TileGroup } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * Phase 10.2 — ToggleGroupCommand and ToggleLockCommand.
@@ -45,9 +46,9 @@ function makeMindMapFixture(): BoardFileData {
       groups: [],
     } as unknown as MindMapBoard,
     tileDefs: {
-      a: { id: 'a', type: 'text', filePath: 'A.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, createdAt: 0, updatedAt: 0, locked: false, faded: false },
-      b: { id: 'b', type: 'text', filePath: 'B.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, createdAt: 0, updatedAt: 0, locked: false, faded: false },
-      c: { id: 'c', type: 'text', filePath: 'C.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, boardId: 'mm', position: { x: 0, y: 0 }, size: { width: 100, height: 100 }, createdAt: 0, updatedAt: 0, locked: true, faded: false },
+      a: { id: 'a', type: 'text', filePath: 'A.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, createdAt: 0, updatedAt: 0 },
+      b: { id: 'b', type: 'text', filePath: 'B.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, createdAt: 0, updatedAt: 0 },
+      c: { id: 'c', type: 'text', filePath: 'C.md', style: { headerColor: '', bodyColor: '', borderColor: '' }, createdAt: 0, updatedAt: 0 },
     },
     connections: {},
     frames: [],
@@ -58,7 +59,7 @@ function activate(): MindMapBoard {
   const fixture = makeMindMapFixture();
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
   const tiles = boardCacheStore.getFullTilesForBoard('mm');
-  boardStore.setBoard(fixture.board, tiles, {}, []);
+  seedBoard(boardStore, fixture.board, tiles, {}, []);
   return boardStore.current as MindMapBoard;
 }
 

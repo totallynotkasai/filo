@@ -61,7 +61,7 @@ describe('boardStore.updateSettings — single write path', () => {
     boardStore.clearBoard();
     const fixture = makeMindMapFixture();
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-    boardStore.setBoard(fixture.board, {}, {}, []);
+    boardStore.setBoard(fixture.board);
   });
 
   afterEach(() => {

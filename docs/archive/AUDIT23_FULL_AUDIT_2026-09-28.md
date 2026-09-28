@@ -253,7 +253,7 @@ All seven items are fixed. Each has a regression test that was run against the u
 | D30 | New `historyStore.undoIfLatest(command, boardId)`. The Manual-sort switch lives in one helper, `lib/tasklist/manualSortSwitch.ts`, used by drag and keyboard reorder; its toast's Undo undoes the batch only while it is still the last step on that board, and otherwise says so. | `historyQueuedUndoBoard.test.ts` (`undoIfLatest`) |
 | D44 | On a definite "missing", `applyDeltaChecked` waits up to `NOTE_RENAME_GRACE_MS` for a rename that moves the note (a temporary rename sweep, `rebasePath`, so a folder rename counts) and applies once more at the new path, or at the old one if the file came back. Missing again on that second try, it throws `NoteGoneError` as before, so nothing is queued for a missing path. | `undoWaitsOutRename.test.ts`: rename after the "missing" answer; still missing after the grace |
 
-**Verification.** `npm run ci:verify` is green: 665 test files, 6331 tests passed, 5 skipped, 69/69 gates (the test-typecheck baseline for `phase24SchemaPolish.test.ts` went down from 12 to 6 with the removed block). A real-app check (built app, Playwright `_electron`, a fresh scratch vault, the real Windows watcher) confirmed:
+**Verification.** `npm run ci:verify` is green: 665 test files, 6331 tests passed, 5 skipped, 69/69 gates (the test-typecheck baseline for `phase24SchemaPolish.test.ts` (now `schemaIdsFrameSizeAndHistoryCap.test.ts`) went down from 12 to 6 with the removed block). A real-app check (built app, Playwright `_electron`, a fresh scratch vault, the real Windows watcher) confirmed:
 - **D1:** three tasks added to a new Task List, then 40 s with no outside change: no drift prompt, no reload, no notice after the 30 s scan.
 - **D3:** another program dropped a task from the board file. The list showed the two left at once, with *Undo history for "Task List 1" was cleared because the board changed outside Filo.* Ctrl+Z then changed nothing, on screen or on disk.
 - No renderer or console errors.
@@ -634,6 +634,46 @@ Seen in passing and not part of this phase: a new timer's `.board.json` also hol
 10. **CH15.** Carried over from Audit-22 `ci-8`; optional churn.
 11. **CH16.** Refresh the `audit-filo-data-integrity` skill's file names (`noteWriter.ts`, `noteDiskChange.ts`, `notes.svelte.ts`, `scripts/gates/`).
 
+#### Phase 8 status: done (2026-09-28)
+
+All fifteen items (CH2–CH16) are done. CH2, CH4 and CH6 each got a regression test, and the new `no-lowercase-path-keys` gate was proven to bite (a planted `.toLowerCase()` key in `vaultDeleteOps.ts` and a planted `normalisePath` wrapper in `tagsStorage.ts` each failed it; both reverted).
+
+| Item | Change | Tests |
+|---|---|---|
+| CH2 | Direct tests for `sanitizeInlineHtml`: script, event handlers, `javascript:` / `data:` / `vbscript:` hrefs, the style filter (`url(`, `expression(`, unknown properties), `data-*`, allowed marks. | `sanitizeHtml.test.ts` |
+| CH4 | One rule, `safeFileName(name, illegalAs)` in `shared/fileNames.ts`. `fileStemFromTitle` (`-` for an illegal character), main's `sanitizeFilename` and the board loader's `boardFileStem` (dropped) call it. `sanitizeFilename` now also drops DEL (`\x7f`) and cuts a long name on a code-point boundary. The unused `RESERVED_WINDOWS_NAMES` re-export in `pathSecurity.ts` is gone. | `fileNameRules.test.ts`: each caller equals the rule, DEL, the code-point cut, and `fileNameProblem` accepts whatever the rule derives |
+| CH5 | `pathsEqual` → `pathsEqualExact`, with a comment saying case counts and pointing at `samePath` for vault files. Its one caller (the sidebar's new-folder lookup, a path Filo just made) keeps the exact compare. | `path.test.ts` |
+| CH6 | New `isAtOrUnder(path, folder)` in `shared/vaultPath.ts`. `vaultDeleteOps`, `boardDiscovery` and `folderPins` key by `vaultPath()` and test "the item or inside it" with `isAtOrUnder`. `tagsStorage`'s `normalisePath` wrapper is gone (keys are `vaultPath()`s). New gate `no-lowercase-path-keys`. | `vaultPathAtOrUnder.test.ts` |
+| CH7 | `setBoard(board)` takes only the board. The test-only seeding (`synthesizeCacheEntry`) moved to `src/tests/helpers/seedBoard.ts` (`seedBoard(store, board, tiles, conns, frames)`). A TypeScript-API codemod rewrote the 50 test files: calls with tiles → `seedBoard`, calls with an empty tile map (where `setBoard` ignored the rest) and the two e2e calls (which hydrate first) → `setBoard(board)`. | the 50 rewritten files pass |
+| CH8 | `__resetRawViewsForTests` removed. | |
+| CH9 | The `js-yaml` declaration moved from `renderer/shims.d.ts` to `src/tests/types/js-yaml.d.ts` (included by `tsconfig.tests.json`). | |
+| CH10 | Comments fixed: the vault store's "virtual Project view for legacy consumers", the loader's "mirrors sanitizeFilename" (now calls the rule), `pathSecurity`'s pointer to the deleted `ILLEGAL_CHARS`, and the history in `ipcEnvelopeContract.test.ts`. | |
+| CH11 | `NOTE_WRITE_DEBOUNCE_MS = BOARD_WRITE_DEBOUNCE_MS`. | |
+| CH12 | `NoteModel` and the store's public types (`ViewId`, `NoteStatus`, `ViewHooks`, `SetBodyStatus`, `NotePromptHandlers`) moved to `stores/noteModel.svelte.ts`; `notes.svelte.ts` re-exports them, so no importer changed. `notes.svelte.ts`: 1000 → 916 lines. | |
+| CH13 | The CLAUDE.md tree now lists every `.ts` / `.svelte` file under `src/main`, `src/renderer` and `src/shared`: 92 files added (87 whose names appeared nowhere, 5 named only in the prose), plus `src/tests/helpers/` and `src/tests/types/`. No entry named a deleted file. The gate count is now 70. | a script checks each tree path against the source files: 0 missing, 0 stale |
+| CH14 | Direct tests for `recentVaults`, `filoMedia`, `renameGrace`, `closeDrainGate`, `seedTextFileForNewTile`, `viewportCache` and the untested half of `themeActions` (`selectTheme`, `deleteCustomTheme`, the four editor sessions). The coverage ratchet for `lib/**` went from 45 / 70 / 75 / 45 to 88 / 77 / 90 / 85 (lines / branches / functions / statements; measured 90.4 / 79.6 / 92.4 / 87.8). The test-typecheck baseline went from 113 errors in 45 files to 9 in 6. Most of the drop came from a typed `fakeCommand()` helper (`src/tests/helpers/fakeCommand.ts`) for hand-written `Command` literals; the rest came from mock and fixture typing. | `recentVaults`, `filoMedia`, `renameGrace`, `closeDrainGate`, `seedTextFileForNewTile`, `viewportCache`, `themeActions` `.test.ts` (8 new files, 180 tests, CH2's included) |
+| CH15 | The ten phase-named test files were renamed after the behaviour they cover (`boardCommandRoundTrips`, `nonFiniteCoordsAndUnknownTileTypes`, `atomicWriteFrameRefsAndSentinelMutex`, `boardWriteFireTimeSnapshot`, `schemaIdsFrameSizeAndHistoryCap`, `schemaFiniteCoordinates`, `externalEditSurvivesCardFieldEdit`, `writePathDataLossRegressions`, `kanbanFieldEditFreshRead`, `propertiesAndBodySaveKeepUntouchedKeys`), with the ids taken out of their titles and comments. The baseline entries moved with them. | the ten renamed files pass |
+| CH16 | `.claude/workflows/audit-filo-data-integrity.js`: every file path and fact in its prompts now matches the tree (note writer / note store, `noteDiskChange`, `frontmatterCstModel`, `boardDrift`, `configDrift`, `keepLocalBackup`, `vaultLeaveGuard`, `scripts/gates/`, 69 → 70 checks). The hard-coded "recent changes" list is replaced by instructions to work out the range from `git log` / `git diff`. Schemas and orchestration are unchanged. | a script checks all 77 paths in it exist; the file parses |
+
+**Two bugs found by the new tests, fixed:**
+- **`sanitizeInlineHtml` stripped `target`, `rel`, `data-color` and `data-highlight`.** DOMPurify checks every attribute outside its URI-safe set against `ALLOWED_URI_REGEXP`, and values like `_blank` or `#f00` have no scheme. So a highlight colour or a link target never survived in a `titleHtml` or a connection label. The fix adds the four attributes to `ADD_URI_SAFE_ATTR`. Both tests failed before the fix.
+- **The `filo://` media protocol answered a missing file with 500** and logged an error on every load of a broken media tile. It now answers 404 with no log, like the other "not there" cases. The test pinned the 500 before the fix.
+
+**Verification.** `npm run ci:verify` passed: lint, `svelte-check`, `typecheck:main`, 693 test files (6650 passed, 5 skipped), the build, and 70/70 gates. `ci:test-typecheck` passes at the new baseline, and `npm run test:unit:coverage` passes the raised thresholds. Line endings were checked (`git diff --stat` matches `--ignore-cr-at-eol`), and no BOM was added.
+
+**Deviations from the plan**
+
+- **CH12:** the split took `NoteModel` and the store's public types into `noteModel.svelte.ts`, not the conflict / Keep mine half. `resolveConflict`, `onDiskChanged` and `recreate` close over the store's private `models`, `writer`, `prompts`, `load` and `adoptDisk`. Moving them would mean threading all of that through a context object. The model split was the clean seam and freed 84 lines. `noteModel.svelte.ts` is exempt from `vault-lifecycle-coverage` (in the gate and its parity test): its `$state` is per instance, and the store drops every model on a swap. `MindMapBoard.svelte` (990) and `TaskListSideToolbar.svelte` (979) are unchanged, as the plan asked ("watch").
+- **CH6:** the gate was added (the plan said "consider"). It is named `no-lowercase-path-keys`, because `vault-path-keys` already exists. It covers the three stores that were converted, plus a check that `tagsStorage`'s wrapper doesn't return. It isn't repo-wide: most of the ~88 `.toLowerCase()` calls fold extensions, tag names or search text, not path keys, and a text scan can't tell them apart. The other ad-hoc prefix compares (`trash.svelte.ts`, `noteWriter.ts`, `renameCascadeSentinel.ts`) could use `isAtOrUnder` too; they were left alone, since they compare keys that are already folded.
+- **CH4:** `pathSecurity.assertSafeFilename` keeps its own Windows character check: it is a platform-gated validator of names supplied from outside, not a derivation, so it isn't a copy of the rule. The only behaviour changes are that `sanitizeFilename` (folder and font names) drops DEL and cuts on a code-point boundary.
+- **CH7:** the two e2e specs and every call with an empty tile map became `setBoard(board)`, which is what `setBoard` already did with them.
+- **CH8:** only the dead export was removed. The seven exports used only by tests were left: they are reset seams the tests need.
+- **CH14:** besides the listed modules, the ratchet was raised (it was 40+ points under what is measured) and the baseline cut to 9. The 9 left are fixtures cast to a full schema type while deliberately missing fields. Fixing them would change the data the code under test parses.
+- **CH15:** only the ten phase-named files were cleaned. About 250 other test files still carry audit ids in comments; scrubbing them is churn the plan marked optional.
+- **Not fixed, noted:** the test agent flagged a possible edge in `closeDrainGate.svelte.ts`. The pre-swap reset sets `depth = 0`, so a `runWithCloseDrain` begun before a swap and finishing after a new `holdCloseDrainUntilSwap` would lower the newer hold's gate early. No current caller overlaps like this, so it is left for a later audit.
+- **Phase 7 commit:** Phase 7 was done but uncommitted, and had no verification record. It was verified (`ci:verify` green) and committed on its own first (`81172f8`), so Phase 8 is a separate commit.
+- **No real-app check:** Phase 8 is refactors, tests and two small fixes whose behaviour the new tests cover against the real handler and the real DOMPurify.
+
 ## Decisions needed
 
 | # | Question | Recommendation |
@@ -654,6 +694,6 @@ Seen in passing and not part of this phase: a new timer's `.board.json` also hol
 - **Phase 5:** done 2026-09-28 (status block under Phase 5).
 - **Phase 6:** done 2026-09-28 (status block under Phase 6).
 - **Phase 7:** done 2026-09-28 (status block under Phase 7).
-- Phase 8: not started.
+- **Phase 8:** done 2026-09-28 (status block under Phase 8).
 
-When a phase lands, add a "Phase N status" block (fix, tests, verification, deviations) as in Audit-22. When every phase is done, move this file to `docs/archive/`.
+When a phase lands, add a "Phase N status" block (fix, tests, verification, deviations) as in Audit-22. Every phase is done; this file now lives in `docs/archive/`.

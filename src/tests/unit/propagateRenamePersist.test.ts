@@ -8,6 +8,7 @@ import {
   type BoardFileData,
 } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, ImageTile } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * Regression: `boardStore.propagateRename` patches the active board's runtime
@@ -140,7 +141,7 @@ describe('boardStore.propagateRename — persists rewritten paths through the de
     const newRel = 'attachments/i1/renamed.jpg';
     const fixture = makeImageBoardFixture(oldRel);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'mm.board.json' });
-    boardStore.setBoard(fixture.board, { i1: makeImageRuntimeTile(oldRel) }, {}, []);
+    seedBoard(boardStore, fixture.board, { i1: makeImageRuntimeTile(oldRel) }, {}, []);
 
     // Sanity: the cache holds the old path before the rename.
     expect(

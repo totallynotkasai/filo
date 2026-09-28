@@ -4,18 +4,17 @@ import { FiloLinkSchema } from '@renderer/schema/link';
 import { LayoutTemplateSchema } from '@renderer/schema/layoutTemplate';
 
 /**
- * Phase 8 / 8.3 — `.finite()` rejects NaN / ±Infinity on every coordinate
- * and size field that a hand-edited (or corrupted) file could otherwise
- * propagate into pan/zoom/transform math. The previous pass covered
- * tile placements and frame coords (see phase17SchemaTypeSafety.test.ts
- * H9); this pass closes the remaining gaps in:
+ * `.finite()` rejects NaN / ±Infinity on every coordinate and size field
+ * that a hand-edited (or corrupted) file could otherwise propagate into
+ * pan/zoom/transform math. Tile placements and frame coords are covered in
+ * nonFiniteCoordsAndUnknownTileTypes.test.ts; this file covers:
  *
  *   - `MindMapBoardSchema.waypoints[*]` x/y/zoom
  *   - `TaskListSettingsSchema.tocPanelBounds` x/y/width/height
  *   - `FiloLinkSchema.targetPosition` x/y
  *   - `LayoutTemplateSchema` relativePosition / size / boundingBox
  */
-describe('Phase 8 / 8.3 — .finite() on coord/size fields', () => {
+describe('.finite() on coord/size fields', () => {
   function baseMindMap(extra: Record<string, unknown> = {}): unknown {
     const now = Date.now();
     return {

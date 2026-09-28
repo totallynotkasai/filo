@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { fakeCommand } from '../helpers/fakeCommand';
 import { historyStore, type Command } from '@renderer/stores/history.svelte';
 
 /**
@@ -31,11 +32,11 @@ describe('Phase C / C.1 — historyStore async command serialisation', () => {
 
   it('a sync command body runs immediately on execute()', () => {
     let executed = false;
-    historyStore.execute({
+    historyStore.execute(fakeCommand({
       description: 'sync',
       execute: () => { executed = true; },
       undo: () => {},
-    });
+    }));
     expect(executed).toBe(true);
     expect(historyStore.canUndo).toBe(true);
   });
@@ -45,7 +46,7 @@ describe('Phase C / C.1 — historyStore async command serialisation', () => {
     let resolveExecute: (() => void) | null = null;
     const executePending = new Promise<void>((res) => { resolveExecute = res; });
 
-    const cmd: Command = {
+    const cmd: Command = fakeCommand({
       description: 'async-then-sync',
       async execute() {
         order.push('exec-start');
@@ -55,7 +56,7 @@ describe('Phase C / C.1 — historyStore async command serialisation', () => {
       undo() {
         order.push('undo');
       },
-    };
+    });
 
     // 1) Apply — async; suspends at await executePending.
     const execPromise = historyStore.execute(cmd);
@@ -80,7 +81,7 @@ describe('Phase C / C.1 — historyStore async command serialisation', () => {
     let resolveUndo: (() => void) | null = null;
     const undoPending = new Promise<void>((res) => { resolveUndo = res; });
 
-    const cmd: Command = {
+    const cmd: Command = fakeCommand({
       description: 'sync-exec-async-undo',
       execute() {
         order.push('exec');
@@ -90,7 +91,7 @@ describe('Phase C / C.1 — historyStore async command serialisation', () => {
         await undoPending;
         order.push('undo-end');
       },
-    };
+    });
 
     historyStore.execute(cmd);
     expect(order).toEqual(['exec']);
@@ -118,11 +119,11 @@ describe('Phase C / C.1 — historyStore async command serialisation', () => {
     const executePending = new Promise<void>((res) => { resolveExecute = res; });
     let chainSettled = false;
 
-    const cmd: Command = {
+    const cmd: Command = fakeCommand({
       description: 'async',
       async execute() { await executePending; },
       undo() {},
-    };
+    });
 
     const execPromise = historyStore.execute(cmd);
     // Command suspended mid-execute → the chain tail must NOT have settled.

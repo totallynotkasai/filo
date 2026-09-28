@@ -44,7 +44,7 @@ function makeMindMapFixture(settings: Record<string, unknown> = {}): BoardFileDa
 function activate(initialSettings: Record<string, unknown> = {}): void {
   const fixture = makeMindMapFixture(initialSettings);
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-  boardStore.setBoard(fixture.board, {}, {}, []);
+  boardStore.setBoard(fixture.board);
 }
 
 function getSettings(): Record<string, unknown> {

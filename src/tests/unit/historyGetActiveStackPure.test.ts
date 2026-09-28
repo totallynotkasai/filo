@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { fakeCommand } from '../helpers/fakeCommand';
 import { historyStore } from '@renderer/stores/history.svelte';
 
 /**
@@ -64,7 +65,7 @@ describe('historyStore.getActiveStack — pure read on canUndo/canRedo', () => {
     expect(historyStore.canRedo).toBe(false);
     let undid = false;
     let executed = false;
-    historyStore.execute({
+    historyStore.execute(fakeCommand({
       description: 'noop',
       execute: () => {
         executed = true;
@@ -72,7 +73,7 @@ describe('historyStore.getActiveStack — pure read on canUndo/canRedo', () => {
       undo: () => {
         undid = true;
       },
-    });
+    }));
     expect(executed).toBe(true);
     expect(historyStore.canUndo).toBe(true);
     historyStore.undo();

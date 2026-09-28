@@ -70,5 +70,9 @@ export function sanitizeInlineHtml(html: string): string {
     ALLOWED_ATTR: INLINE_ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
     ALLOWED_URI_REGEXP,
+    // DOMPurify tests every attribute outside its URI-safe set against
+    // ALLOWED_URI_REGEXP, so `_blank`, `noopener`, `#f00` (no scheme) would be
+    // stripped. These four carry names and colours, never a URI.
+    ADD_URI_SAFE_ATTR: ['target', 'rel', 'data-color', 'data-highlight'],
   });
 }

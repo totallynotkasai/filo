@@ -12,6 +12,7 @@ import {
 import type { MindMapBoard, ImageTile, Tile } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * `vaultStore.rename` must
@@ -203,7 +204,7 @@ describe('vaultStore.rename — transactional flow', () => {
     const oldRel = 'photo.jpg';
     const fixture = makeImageBoardFixture(oldRel);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'mm.board.json' });
-    boardStore.setBoard(fixture.board, { i1: makeImageRuntimeTile(oldRel) }, {}, []);
+    seedBoard(boardStore, fixture.board, { i1: makeImageRuntimeTile(oldRel) }, {}, []);
 
     expect((boardStore.cache.mm.tileDefs.i1 as { src?: string }).src).toBe(oldRel);
 
@@ -228,7 +229,7 @@ describe('vaultStore.rename — transactional flow', () => {
     const newRel = 'renamed.jpg';
     const fixture = makeImageBoardFixture(oldRel);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'mm.board.json' });
-    boardStore.setBoard(fixture.board, { i1: makeImageRuntimeTile(oldRel) }, {}, []);
+    seedBoard(boardStore, fixture.board, { i1: makeImageRuntimeTile(oldRel) }, {}, []);
 
     const result = await vaultStore.rename('/vault/photo.jpg', '/vault/renamed.jpg');
 
@@ -265,7 +266,7 @@ describe('vaultStore.rename — transactional flow', () => {
       { mm: 'a.board.json', 'mm-b': 'b.board.json' },
     );
     // Active board is `mm`. `mm-b` is in the cache but not the active runtime.
-    boardStore.setBoard(fixtureA.board, { i1: makeImageRuntimeTile(oldRel) }, {}, []);
+    seedBoard(boardStore, fixtureA.board, { i1: makeImageRuntimeTile(oldRel) }, {}, []);
 
     const result = await vaultStore.rename('/vault/photo.jpg', '/vault/renamed.jpg');
 

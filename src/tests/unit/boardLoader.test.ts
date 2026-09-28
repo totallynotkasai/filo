@@ -121,7 +121,7 @@ describe('boardLoader', () => {
       const result = await loadBoard('/vault', 'alpha.board.json');
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect((result.data as Record<string, unknown>).futureFeature).toEqual({
+        expect((result.data as BoardFileData & Record<string, unknown>).futureFeature).toEqual({
           enabled: true,
           note: 'keep me',
         });

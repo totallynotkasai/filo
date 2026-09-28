@@ -78,8 +78,9 @@ describe('empty paragraphs — encodeEmptyParagraphs (real markdown-it)', () => 
   let editor: Editor;
   beforeEach(() => {
     editor = makeEditor();
-    md = (editor as { storage: { markdown: { parser: { md: BlockTokenizer } } } }).storage.markdown
-      .parser.md;
+    const markdown = (editor.storage as { markdown?: { parser: { md: BlockTokenizer } } }).markdown;
+    if (!markdown) throw new Error('the editor has no markdown storage');
+    md = markdown.parser.md;
   });
   afterEach(() => editor.destroy());
 

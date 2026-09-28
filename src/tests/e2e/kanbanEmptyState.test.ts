@@ -51,7 +51,7 @@ test.describe('Empty Kanban board (Phase C / C.9)', () => {
         { 'kb-empty': { board, tileDefs: {}, connections: {}, frames: [] } },
         { 'kb-empty': 'Boards/EmptyKanban.board.json' },
       );
-      boardStore.setBoard(board, {}, {}, []);
+      boardStore.setBoard(board);
       tabStore.open('kb-empty', 'Empty Kanban', 'kanban', '');
     });
 

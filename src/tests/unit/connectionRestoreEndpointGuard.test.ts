@@ -6,6 +6,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { CascadeDeleteCommand, DeleteTilesCommand } from '@renderer/commands/index';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, Connection } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * DI-2 (2026-05-29) — connection-restore must not resurrect a dangling edge.
@@ -96,7 +97,7 @@ async function flushAsync(): Promise<void> {
 function hydrateActive(fixture: BoardFileData): Record<string, Tile> {
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'mm.board.json' });
   const tiles = boardCacheStore.getFullTilesForBoard('mm');
-  boardStore.setBoard(fixture.board, tiles, fixture.connections, []);
+  seedBoard(boardStore, fixture.board, tiles, fixture.connections, []);
   return tiles;
 }
 
@@ -109,7 +110,7 @@ describe('DI-2 — connection-restore endpoint guard', () => {
     vaultStore.setPath('');
     boardCacheStore.clear();
     boardStore.clearBoard();
-    vi.spyOn(uiStore, 'toast').mockImplementation(() => {});
+    vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
   });
   afterEach(() => {
     vi.restoreAllMocks();

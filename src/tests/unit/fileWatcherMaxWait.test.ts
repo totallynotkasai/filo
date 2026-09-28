@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -30,12 +30,12 @@ type Internals = {
 describe('FileWatcher — notify debounce max-wait cap (Audit-13 L20)', () => {
   let dir: string;
   let watcher: FileWatcher;
-  let notifySpy: ReturnType<typeof vi.fn>;
+  let notifySpy: Mock<() => Promise<void>>;
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(join(tmpdir(), 'filo-watcher-maxwait-'));
     watcher = new FileWatcher(dir);
-    notifySpy = vi.fn().mockResolvedValue(undefined);
+    notifySpy = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
     (watcher as unknown as Internals).notifyRenderers = notifySpy;
   });
 

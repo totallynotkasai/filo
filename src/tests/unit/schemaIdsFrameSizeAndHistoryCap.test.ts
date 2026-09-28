@@ -1,24 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadBoard } from '@renderer/lib/boards/boardLoader';
 import { historyStore } from '@renderer/stores/history.svelte';
-import type { Command } from '@renderer/stores/history.svelte';
+import { Command } from '@renderer/commands/Command';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { FrameSchema, ConnectionSchema, TileDefinitionSchema } from '@renderer/schema/index';
 import { uniqueBy } from '@renderer/schema/schemaUtils';
 import { __resetErrorBusForTests, onError, type ReportedError } from '@renderer/lib/utils/errorBus';
 
 /**
- * Phase 24 — Schema Polish & History regression tests.
+ * Schema id / frame-size rules and the history cap.
  *
  * Covers:
- *  - M17: `.min(1)` on every `id` field + per-collection uniqueness refines.
- *  - M18: frame minSize lowered to 0; renderer warns on load when a frame
- *         is below the recommended 200×150.
- *  - M23: `historyStore.setMaxHistory` truncates existing stacks immediately.
- *  - M25: external-edit reconciliation surfaces a one-shot stale-undo toast.
- *  - M24 is exercised end-to-end via the existing DeleteFrame/Connection
- *         command tests — the deep-clone change is behavioural and is best
- *         caught by the broader command suites rather than a re-export.
+ *  - `.min(1)` on every `id` field + per-collection uniqueness refines.
+ *  - frame minSize is 0; the loader warns when a frame is below the
+ *    recommended 200×150.
+ *  - `historyStore.setMaxHistory` truncates existing stacks immediately.
+ *
+ * Deep-cloned DeleteFrame / DeleteConnection snapshots are behavioural and
+ * are best caught by the broader command suites, not here.
  */
 
 type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -71,13 +70,14 @@ function validBoardFile(boardId = 'mindmap-1'): BoardFileData {
   };
 }
 
-class NoopCommand implements Command {
+class NoopCommand extends Command {
+  readonly targetBoardId: string = '';
   description = 'noop';
   execute(): void {}
   undo(): void {}
 }
 
-describe('Phase 24 — schema polish & history', () => {
+describe('schema polish & history', () => {
   beforeEach(() => {
     uninstallFiloStub();
     __resetErrorBusForTests();
@@ -92,9 +92,9 @@ describe('Phase 24 — schema polish & history', () => {
     historyStore.setActiveBoard(null);
   });
 
-  // ── M17 ────────────────────────────────────────────────────────────────
+  // ── ids ────────────────────────────────────────────────────────────────
 
-  describe('M17 — id .min(1) + uniqueness refines', () => {
+  describe('id .min(1) + uniqueness refines', () => {
     it('FrameSchema rejects an empty id', () => {
       const now = Date.now();
       const r = FrameSchema.safeParse({
@@ -147,9 +147,9 @@ describe('Phase 24 — schema polish & history', () => {
     });
   });
 
-  // ── M18 ────────────────────────────────────────────────────────────────
+  // ── frame size ─────────────────────────────────────────────────────────
 
-  describe('M18 — frame minSize lowered to 0', () => {
+  describe('frame minSize is 0', () => {
     it('FrameSchema accepts a 0×0 frame on disk', () => {
       const now = Date.now();
       const r = FrameSchema.safeParse({
@@ -228,9 +228,9 @@ describe('Phase 24 — schema polish & history', () => {
     });
   });
 
-  // ── M23 ────────────────────────────────────────────────────────────────
+  // ── history cap ────────────────────────────────────────────────────────
 
-  describe('M23 — historyStore.setMaxHistory', () => {
+  describe('historyStore.setMaxHistory', () => {
     it('truncates an existing stack to the new cap', () => {
       historyStore.setActiveBoard('b1');
       for (let i = 0; i < 30; i++) historyStore.execute(new NoopCommand());

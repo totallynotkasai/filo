@@ -9,8 +9,8 @@ import type {
   MindMapBoard,
   ProjectSettings,
   WorkspaceState,
-  WorkspaceLayout,
 } from '@renderer/schema/index';
+import type { WorkspaceLayout } from '@renderer/stores/workspace.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
@@ -79,7 +79,7 @@ describe('boardSaver — cancelAllPendingWrites', () => {
   });
 
   it('cancels a queued board write so it never fires', () => {
-    const boardSave = vi.fn(async () => null);
+    const boardSave = vi.fn(async (..._args: unknown[]) => null);
     installFiloStub({ 'board:save': boardSave });
 
     scheduleBoardWrite('mm', () => makeBoardArgs());
@@ -117,7 +117,7 @@ describe('boardSaver — cancelAllPendingWrites', () => {
   });
 
   it('after cancel, a fresh scheduleBoardWrite still works', () => {
-    const boardSave = vi.fn(async () => null);
+    const boardSave = vi.fn(async (..._args: unknown[]) => null);
     installFiloStub({ 'board:save': boardSave });
 
     scheduleBoardWrite('mm', () => makeBoardArgs());

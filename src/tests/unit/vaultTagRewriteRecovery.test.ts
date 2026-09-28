@@ -17,6 +17,7 @@ import {
  */
 
 interface TestMetadata {
+  path: string;
   tags: readonly string[];
 }
 
@@ -27,33 +28,33 @@ describe('hasPartialTagRewriteState', () => {
 
   it('returns false when no file carries newName', () => {
     const metadata: TestMetadata[] = [
-      { tags: ['old-tag', 'unrelated'] },
-      { tags: ['another'] },
+      { path: 'note.md', tags: ['old-tag', 'unrelated'] },
+      { path: 'note.md', tags: ['another'] },
     ];
     expect(hasPartialTagRewriteState('new-tag', metadata)).toBe(false);
   });
 
   it('returns true when at least one file already carries newName', () => {
     const metadata: TestMetadata[] = [
-      { tags: ['old-tag'] },
-      { tags: ['new-tag'] }, // partial-rewrite witness
-      { tags: ['old-tag'] },
+      { path: 'note.md', tags: ['old-tag'] },
+      { path: 'note.md', tags: ['new-tag'] }, // partial-rewrite witness
+      { path: 'note.md', tags: ['old-tag'] },
     ];
     expect(hasPartialTagRewriteState('new-tag', metadata)).toBe(true);
   });
 
   it('returns true when every file carries newName (the user finished but the sentinel survived)', () => {
     const metadata: TestMetadata[] = [
-      { tags: ['new-tag'] },
-      { tags: ['new-tag', 'something-else'] },
+      { path: 'note.md', tags: ['new-tag'] },
+      { path: 'note.md', tags: ['new-tag', 'something-else'] },
     ];
     expect(hasPartialTagRewriteState('new-tag', metadata)).toBe(true);
   });
 
   it('returns false for removal sentinels (newName === null) regardless of metadata', () => {
     const metadata: TestMetadata[] = [
-      { tags: ['obsolete'] },
-      { tags: ['kept'] },
+      { path: 'note.md', tags: ['obsolete'] },
+      { path: 'note.md', tags: ['kept'] },
     ];
     // Removal sentinels can't be reliably classified as partial without
     // per-path commit status — the function returns false by design so
@@ -63,8 +64,8 @@ describe('hasPartialTagRewriteState', () => {
 
   it('accepts an iterable (not just an array)', () => {
     function* gen(): IterableIterator<TestMetadata> {
-      yield { tags: ['a'] };
-      yield { tags: ['target'] };
+      yield { path: 'note.md', tags: ['a'] };
+      yield { path: 'note.md', tags: ['target'] };
     }
     expect(hasPartialTagRewriteState('target', gen())).toBe(true);
   });
@@ -73,11 +74,11 @@ describe('hasPartialTagRewriteState', () => {
     let visited = 0;
     function* gen(): IterableIterator<TestMetadata> {
       visited += 1;
-      yield { tags: ['target'] };
+      yield { path: 'note.md', tags: ['target'] };
       visited += 1;
-      yield { tags: ['target'] };
+      yield { path: 'note.md', tags: ['target'] };
       visited += 1;
-      yield { tags: ['target'] };
+      yield { path: 'note.md', tags: ['target'] };
     }
     expect(hasPartialTagRewriteState('target', gen())).toBe(true);
     // Only the first entry of the generator was pulled.
@@ -129,8 +130,8 @@ describe('tag-rewrite recovery dialog — partial-state dispatch', () => {
       { oldName: 'old', newName: 'new', plan: ['a.md', 'b.md'] },
       // No file carries `new` yet — sweep crashed before any commit.
       [
-        { tags: ['old'] },
-        { tags: ['old', 'kept'] },
+        { path: 'note.md', tags: ['old'] },
+        { path: 'note.md', tags: ['old', 'kept'] },
       ],
     );
     expect(result.cancelLabel).toBe('Discard plan');
@@ -144,9 +145,9 @@ describe('tag-rewrite recovery dialog — partial-state dispatch', () => {
       // First two .md files committed to `new` before the crash; the
       // third still carries `old`.
       [
-        { tags: ['new'] },
-        { tags: ['new'] },
-        { tags: ['old'] },
+        { path: 'note.md', tags: ['new'] },
+        { path: 'note.md', tags: ['new'] },
+        { path: 'note.md', tags: ['old'] },
       ],
     );
     expect(result.cancelLabel).toBe('Finalise & discard');
@@ -161,8 +162,8 @@ describe('tag-rewrite recovery dialog — partial-state dispatch', () => {
       // state), so plain Discard is honest.
       { oldName: 'obsolete', newName: null, plan: ['x.md', 'y.md'], committedPaths: [] },
       [
-        { tags: ['obsolete'] },
-        { tags: ['obsolete'] },
+        { path: 'note.md', tags: ['obsolete'] },
+        { path: 'note.md', tags: ['obsolete'] },
       ],
     );
     expect(result.cancelLabel).toBe('Discard plan');
@@ -176,7 +177,7 @@ describe('tag-rewrite recovery dialog — partial-state dispatch', () => {
       // forward instead of plain-discarding the breadcrumb.
       { oldName: 'obsolete', newName: null, plan: ['x.md', 'y.md'], committedPaths: ['x.md'] },
       [
-        { tags: ['obsolete'] }, // y.md still tagged
+        { path: 'note.md', tags: ['obsolete'] }, // y.md still tagged
       ],
     );
     expect(result.cancelLabel).toBe('Finalise & discard');

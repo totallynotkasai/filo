@@ -11,6 +11,7 @@ import { boardStore } from '../../stores/board.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import type { FileTreeNode } from '../../../shared/types';
 import { normalizePath, samePath, stripLeadingSlash } from '../utils/path';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { directoryExistsInTree, flattenTreePaths } from './vaultTreeSort';
 import { folderMoveOfFileRename, pinIsUnder, rebasePin } from './folderPinPaths';
 
@@ -153,14 +154,14 @@ export function clearPinsOfMissingFolders(
   const exists = (pin: string): boolean => directoryExistsInTree(tree, `${root}/${stripLeadingSlash(pin)}`);
   const rootPin = general?.activeRootFolder ?? '';
   if (rootPin && !exists(rootPin)) clearRoot(rootPin);
-  let files: Set<string> | null = null;
+  let files: Set<VaultPath> | null = null;
   for (const [boardId, data] of Object.entries(boardStore.cache)) {
     const settings = (data.board as { settings?: { defaultFolder?: string } }).settings;
     const pin = settings?.defaultFolder ?? '';
     if (!pin || exists(pin)) continue;
-    files ??= new Set([...flattenTreePaths(tree, vaultRoot)].map((p) => p.toLowerCase()));
+    files ??= new Set([...flattenTreePaths(tree, vaultRoot)].map((p) => vaultPath(p)));
     const boardPath = boardStore.paths[boardId];
-    if (!boardPath || !files.has(boardPath.toLowerCase())) continue;
+    if (!boardPath || !files.has(vaultPath(boardPath))) continue;
     boardCacheStore.updateBoardSettings(boardId, { ...settings, defaultFolder: '' });
   }
 }

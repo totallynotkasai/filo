@@ -16,6 +16,7 @@ import {
  */
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
+type FiloInvoke = (channel: string, ...args: unknown[]) => unknown | Promise<unknown>;
 
 interface InMemoryFs {
   files: Map<string, string>;
@@ -178,7 +179,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     // With the mutex, the second call blocks until the first one resolves
     // so payloadB wins.
     let writeCallNo = 0;
-    (window as unknown as { filo: { invoke: InvokeRoute } }).filo.invoke = async (channel: string, ...args: unknown[]) => {
+    (window as unknown as { filo: { invoke: FiloInvoke } }).filo.invoke = async (channel: string, ...args: unknown[]) => {
       if (channel === 'vault:write-file-text') {
         const callNo = ++writeCallNo;
         const [vaultRoot, path, content] = args as [string, string, string];
@@ -233,7 +234,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
 
   it('write failure surfaces as an exception (so the caller can abort)', async () => {
     // Replace the write route with one that fails.
-    (window as unknown as { filo: { invoke: InvokeRoute } }).filo.invoke = async (channel: string) => {
+    (window as unknown as { filo: { invoke: FiloInvoke } }).filo.invoke = async (channel: string) => {
       if (channel === 'vault:write-file-text') {
         return { success: false, code: 'EACCES', error: 'permission denied' };
       }

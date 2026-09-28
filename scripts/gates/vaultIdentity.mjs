@@ -108,6 +108,7 @@ const LIFECYCLE_EXEMPT = new Map([
   ['src/renderer/lib/tasklist/notesBox.svelte.ts', 'per-row notes box, dies with the row'],
   ['src/renderer/lib/utils/ariaAnnouncer.svelte.ts', 'per-instance announcer, disposed on unmount'],
   ['src/renderer/stores/themeVersion.svelte.ts', 'a count of theme applications, no vault data; a vault open applies its theme'],
+  ['src/renderer/stores/noteModel.svelte.ts', 'the NoteModel class: per-instance fields; notes.svelte.ts drops every model on a vault swap'],
 ]);
 // Subscribing proves a reset is wired, not that it resets: pin the behavioural reset tests.
 const RESET_COVERAGE = [
@@ -151,6 +152,15 @@ const DISK_SHAPE_ALLOWLIST = new Set([
 const DISK_SHAPE_CHANNELS = [
   'vault:rename', 'vault:delete', 'vault:create-folder', 'vault:copy-file',
   'vault:trash-move', 'vault:trash-restore', 'vault:trash-purge', 'vault:trash-delete-permanently',
+];
+
+// ── no-lowercase-path-keys config ─────────────────────────────────────────────────
+// Stores whose path keys were moved onto vaultPath(); none may grow a
+// hand-rolled lower-cased key again.
+const VAULTPATH_KEY_FILES = [
+  'src/renderer/stores/boardDiscovery.ts',
+  'src/renderer/stores/vaultDeleteOps.ts',
+  'src/renderer/lib/vault/folderPins.ts',
 ];
 
 // ── board-path-casefold helpers ───────────────────────────────────────────
@@ -483,6 +493,34 @@ export const checks = [
             out.push(fail(rel, line, `raw ${channel}: ${lines[line - 1].trim()}`));
           }
         }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'no-lowercase-path-keys',
+    title: 'path keys in the delete / discovery / pin / file-tag stores go through vaultPath()',
+    hint:
+      'A hand-rolled `.toLowerCase()` key keeps backslashes and a leading slash, so the same file can be two keys. ' +
+      'Key by `vaultPath()` and test "the item or inside it" with `isAtOrUnder` (shared/vaultPath.ts). ' +
+      '`.toLowerCase().endsWith(<ext>)` stays allowed; escape: `// allow-lowercase-key: <reason>` on the line.',
+    run(ctx) {
+      const out = [];
+      for (const file of VAULTPATH_KEY_FILES) {
+        const raw = ctx.read(file);
+        if (raw === null) { out.push(fail(file, undefined, 'file missing')); continue; }
+        const code = stripCommentsKeepLines(raw);
+        const lines = raw.split('\n');
+        for (const m of code.matchAll(/\.toLowerCase\s*\(\s*\)(?!\s*\.endsWith\s*\()/g)) {
+          const line = lineAt(code, m.index);
+          if (lines[line - 1]?.includes('allow-lowercase-key:')) continue;
+          out.push(fail(file, line, 'ad-hoc lower-cased path key; use vaultPath() / isAtOrUnder'));
+        }
+      }
+      const TAGS = 'src/renderer/lib/vault/tagsStorage.ts';
+      const tags = ctx.read(TAGS);
+      if (tags !== null && /\bfunction\s+normalisePath\b/.test(tags)) {
+        out.push(fail(TAGS, undefined, 'a local normalisePath wrapper is back; key fileTags by vaultPath()'));
       }
       return out;
     },

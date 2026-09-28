@@ -14,6 +14,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { installMemoryVault } from '../helpers/memoryVault';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * Audit-14 Phase 2 — undo/redo & command-pattern correctness.
@@ -230,7 +231,7 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
     const fixture = makeMindMapWithTextTile('board-1', 't_1', relPath);
     boardCacheStore.hydrate({ 'board-1': fixture }, { 'board-1': 'board-1.board.json' });
     const tiles = boardCacheStore.getFullTilesForBoard('board-1');
-    boardStore.setBoard(fixture.board, tiles, {}, []);
+    seedBoard(boardStore, fixture.board, tiles, {}, []);
 
     // The SAME file is open as a Document on a second pane.
     const model = noteStore.acquire(relPath, 'document-editor:pane2');

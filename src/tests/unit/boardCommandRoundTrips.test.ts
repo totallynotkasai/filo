@@ -1,13 +1,12 @@
 /**
- * Phase 16 (Sprint E / H1-H7) regression guard.
- *
- * Each H-item from the audit gets one or two cases asserting the new
- * command round-trips. The component-level wiring (TileHeader trash,
+ * Execute → undo round-trips for tile tag, frame and Kanban bulk commands,
+ * plus history clearing on a vault swap. The component-level wiring (TileHeader trash,
  * Frame drag handlers, kanban context menus) is tested at the command
  * layer here; full E2E coverage of the click paths lives in Playwright.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { fakeCommand } from '../helpers/fakeCommand';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -30,25 +29,26 @@ import type {
   TileDefinition,
 } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { seedBoard } from '../helpers/seedBoard';
 
 function installSilentBridge(): void {
   installFiloMock(() => null);
 }
 
-// ── H6: history clear on vault swap (vaultStore is hard to exercise in
+// ── History clear on vault swap (vaultStore is hard to exercise in
 // jsdom, so we just verify historyStore.clear() drops everything). ──
 
-describe('historyStore.clear (H6 — vault swap)', () => {
+describe('historyStore.clear (vault swap)', () => {
   beforeEach(() => { installSilentBridge(); });
   afterEach(() => { restoreFiloDefault(); historyStore.clear(); });
 
   it('drops undo/redo stacks for every board', () => {
     historyStore.setActiveBoard('board-A');
-    historyStore.pushWithoutExecute({
+    historyStore.pushWithoutExecute(fakeCommand({
       description: 'noop',
       execute() {},
       undo() {},
-    });
+    }));
     expect(historyStore.canUndo).toBe(true);
 
     historyStore.clear();
@@ -59,7 +59,7 @@ describe('historyStore.clear (H6 — vault swap)', () => {
   });
 });
 
-// ── H2: AddTileTagCommand / RemoveTileTagCommand ──
+// ── AddTileTagCommand / RemoveTileTagCommand ──
 
 /** A link tile owns its tags on the board def, so its tag edits are pure
  *  cache writes (a note's tags live in its frontmatter instead). */
@@ -105,7 +105,7 @@ function linkTags(): string[] {
   return def?.type === 'link' ? def.tags : [];
 }
 
-describe('AddTileTagCommand / RemoveTileTagCommand (H2)', () => {
+describe('AddTileTagCommand / RemoveTileTagCommand', () => {
   beforeEach(() => {
     installSilentBridge();
     vaultStore.setPath('/vault');
@@ -149,7 +149,7 @@ describe('AddTileTagCommand / RemoveTileTagCommand (H2)', () => {
   });
 });
 
-// ── H4: Frame commands ──
+// ── Frame commands ──
 
 function makeMindMapWithFrame(): BoardFileData {
   return {
@@ -198,7 +198,7 @@ function makeMindMapWithFrame(): BoardFileData {
   };
 }
 
-describe('UpdateFrameCommand / MoveFrameCommand (H4)', () => {
+describe('UpdateFrameCommand / MoveFrameCommand', () => {
   beforeEach(() => {
     installSilentBridge();
     vaultStore.setPath('/vault');
@@ -217,7 +217,7 @@ describe('UpdateFrameCommand / MoveFrameCommand (H4)', () => {
   it('UpdateFrameCommand round-trip on title', () => {
     const fixture = makeMindMapWithFrame();
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
-    boardStore.setBoard(fixture.board, {}, {}, fixture.frames);
+    boardStore.setBoard(fixture.board);
 
     const cmd = new UpdateFrameCommand('f1', { title: 'Frame' }, { title: 'Renamed' });
     cmd.execute();
@@ -229,7 +229,7 @@ describe('UpdateFrameCommand / MoveFrameCommand (H4)', () => {
   it('UpdateFrameCommand round-trip on collapsed', () => {
     const fixture = makeMindMapWithFrame();
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
-    boardStore.setBoard(fixture.board, {}, {}, fixture.frames);
+    boardStore.setBoard(fixture.board);
 
     const cmd = new UpdateFrameCommand('f1', { collapsed: false }, { collapsed: true });
     cmd.execute();
@@ -259,7 +259,7 @@ describe('UpdateFrameCommand / MoveFrameCommand (H4)', () => {
         updatedAt: 0,
       } as unknown as Tile,
     };
-    boardStore.setBoard(fixture.board, tileMap, {}, fixture.frames);
+    seedBoard(boardStore, fixture.board, tileMap, {}, fixture.frames);
 
     const cmd = new MoveFrameCommand(
       'f1',
@@ -277,7 +277,7 @@ describe('UpdateFrameCommand / MoveFrameCommand (H4)', () => {
   });
 });
 
-// ── H5: Kanban bulk delete / move (BatchCommand of DeleteCardCommand) ──
+// ── Kanban bulk delete / move (BatchCommand of DeleteCardCommand) ──
 
 function makeKanbanWithCards(): BoardFileData {
   return {
@@ -306,7 +306,7 @@ function makeKanbanWithCards(): BoardFileData {
   };
 }
 
-describe('Kanban bulk ops via BatchCommand / MoveCardsCommand (H5)', () => {
+describe('Kanban bulk ops via BatchCommand / MoveCardsCommand', () => {
   beforeEach(() => {
     installSilentBridge();
     vaultStore.setPath('/vault');
@@ -328,7 +328,7 @@ describe('Kanban bulk ops via BatchCommand / MoveCardsCommand (H5)', () => {
 
     const commands = [new DeleteCardCommand('kb', 't1'), new DeleteCardCommand('kb', 't2')];
     const batch = new BatchCommand('Remove 2 cards', commands);
-    // Polish phase 2.2 — BatchCommand.execute() / undo() are async.
+    // BatchCommand.execute() / undo() are async.
     await batch.execute();
     const col1 = (boardCacheStore.cache.kb?.board as KanbanBoard).columns[0];
     expect(col1.tilePlacements).toHaveLength(0);

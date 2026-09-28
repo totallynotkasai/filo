@@ -11,6 +11,7 @@ import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * `CascadeDeleteCommand.undo` moves each deleted note back from Filo's trash.
@@ -88,7 +89,7 @@ describe('CascadeDeleteCommand.undo — open editors follow the restored note', 
     const boardData = makeMindMap('board-1', 't_1', relPath);
     boardCacheStore.hydrate({ 'board-1': boardData }, { 'board-1': 'board-1.board.json' });
     const tiles = boardCacheStore.getFullTilesForBoard('board-1');
-    boardStore.setBoard(boardData.board, tiles, {}, []);
+    seedBoard(boardStore, boardData.board, tiles, {}, []);
 
     // The editor is mounted, holding a body the file no longer has by the
     // time it is deleted (another program changed it unseen).
@@ -131,7 +132,7 @@ describe('CascadeDeleteCommand.undo — open editors follow the restored note', 
     const boardData = makeMindMap('board-2', 't_2', relPath);
     boardCacheStore.hydrate({ 'board-2': boardData }, { 'board-2': 'board-2.board.json' });
     const tiles = boardCacheStore.getFullTilesForBoard('board-2');
-    boardStore.setBoard(boardData.board, tiles, {}, []);
+    seedBoard(boardStore, boardData.board, tiles, {}, []);
 
     const [trashed] = await trashFiles('/vault', [relPath], 'test');
     const cmd = new CascadeDeleteCommand({ 'board-2': Object.values(tiles) }, [], { vaultRoot: '/vault', trashed });

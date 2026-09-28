@@ -88,7 +88,7 @@ function seedProject(): void {
   // is the relevant code path. The vaultStore.project is only needed by
   // markMetaDirty which is not exercised here.
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-  boardStore.setBoard(fixture.board, {}, {}, []);
+  boardStore.setBoard(fixture.board);
   // Verify the test's premise: this is the proxy-mismatch scenario.
   // (We don't assert on it directly because the assertion's purpose is to
   // make the test's intent legible to future readers.)

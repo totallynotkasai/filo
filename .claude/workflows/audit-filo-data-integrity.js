@@ -16,14 +16,14 @@ const FINDING = {
     severity: { enum: ['critical', 'high', 'medium', 'low'] },
     confidence: { enum: ['traced-with-snippet', 'plausible-mechanism', 'speculative'] },
     category: { enum: ['data-loss', 'data-corruption', 'write-race', 'lifecycle-leak', 'silent-error', 'state-incoherence', 'undo-redo-bug', 'recovery-gap', 'other'] },
-    file: { type: 'string', description: 'Repo-relative path. e.g., src/renderer/lib/vault/markdownFileWriter.ts' },
-    line_hint: { type: 'string', description: 'Line numbers or function name; "L123-L145" or "fn flushMarkdownWritesForTab".' },
+    file: { type: 'string', description: 'Repo-relative path. e.g., src/renderer/lib/notes/noteWriter.ts' },
+    line_hint: { type: 'string', description: 'Line numbers or function name; "L123-L145" or "fn saveBeforeLeaving".' },
     mechanism: { type: 'string', description: '2-5 sentence walk-through. WHY the bug happens; cite the seam.' },
     trigger: { type: 'string', description: 'Concrete user action sequence that hits it. Be specific.' },
     blast_radius: { type: 'string', description: 'What data is lost/corrupted/wrong, recovery, reversibility.' },
     fix_sketch: { type: 'string', description: 'Smallest change that closes the seam. 1-3 sentences.' },
-    introduced_by_uncommitted: { type: 'boolean', description: 'True if this exists ONLY in the working tree (Phase-5 changes), false if also at HEAD.' },
-    not_already_in_audit2: { type: 'boolean', description: 'True if NOT covered by the AUDIT2 plan items 1.1-5.10. Be honest.' },
+    introduced_by_uncommitted: { type: 'boolean', description: 'True if this was introduced by the change range under audit (the uncommitted working tree, or the recent commits the audit covers); false if it predates that range.' },
+    not_already_in_audit2: { type: 'boolean', description: 'True if NOT already covered by a prior audit plan or report (docs/ for active, docs/archive/ for done). Be honest.' },
   },
 }
 
@@ -74,31 +74,37 @@ const VERDICTS_BATCH_SCHEMA = {
 const SHARED_CONTEXT = `
 You are auditing Filo, an Electron + Svelte 5 + TS Markdown PKM app. The user is about to start dogfooding their real notes. Your job is to find data-integrity, concurrency, and silent-error bugs that previous audits MISSED.
 
-A previous "Codex" audit rated the system 8/9 across the board. A more recent self-audit (AUDIT2 plan, untracked at repo root) found 30 items and reports all fixed. **Do NOT rate this codebase — find the things both audits missed.** Be brutally critical. False positives are fine; false negatives are not.
+Many earlier audits have been run and remediated; their plans and reports live in docs/ (active) and docs/archive/ (done). **Do NOT rate this codebase — find the things those audits missed.** Skim the latest report in docs/ so you don't re-file a known item. Be brutally critical. False positives are fine; false negatives are not.
+
+Read CLAUDE.md first: it has the authoritative module tree, the write-path description ("The Vault API Contract", "Persistence Boundary", "Common Gotchas") and the list of CI gates. If this prompt and CLAUDE.md disagree, trust CLAUDE.md and the code.
 
 Key paths:
-- Write gateway:    src/renderer/lib/vault/markdownFileWriter.ts
-- Frontmatter:      src/renderer/lib/vault/frontmatterEngine.ts, lib/editor/markdownSync.ts, lib/vault/tagRewriter.ts
-- Board write:      src/renderer/lib/boards/{boardWriteScheduler,configWriteScheduler,miscWriteScheduler,frontmatterWriteScheduler,boardSaver,boardLoader}.ts
-- Vault lifecycle:  src/renderer/stores/vault.svelte.ts, vaultExternalChanges.ts; lib/vault/conflictResolver.ts, fileBaselineRegistry.ts, externalChangeWindows.ts, dirtyFlagRecovery.ts
-- File watcher:     src/main/services/{fileWatcher,renameCorrelation,recoverySnapshot}.ts
-- Undo/redo:        src/renderer/stores/history.svelte.ts, commands/*.ts
-- IPC main:         src/main/ipc/*.ts, vault/{fileOps,boardFileOps,filenameUtils}.ts, utils/pathSecurity.ts
+- Note writer:      src/renderer/lib/notes/noteWriter.ts (THE only .md writer: one queue per path, fresh read per flush), reached via src/renderer/stores/notes.svelte.ts (noteStore: setBody, patchFrontmatter, transform, writeRaw, createUnique/createExclusive, hold, recreate, discardQueued)
+- Note model:       src/renderer/lib/notes/noteFile.ts (pure parse/assemble, BOM, EOL, hash), noteDiskChange.ts (decideDiskChange), frontmatterFence.ts, rawViews.ts, renameGrace.ts; conflict prompts in src/renderer/stores/notePrompts.ts (Reload / Keep mine)
+- Frontmatter:      src/renderer/lib/vault/frontmatterCstModel.ts (source-preserving CST patch), frontmatterDelta.ts, frontmatterRead.ts, frontmatterInverse (src/renderer/commands/frontmatterInverse.ts), tagRewriter.ts, tagRewriteSweep.ts; src/renderer/lib/editor/markdownSync.ts
+- Board / config:   src/renderer/lib/boards/{writeScheduler,boardWriteScheduler,boardWriteDebounce,configWriteScheduler,miscWriteScheduler,configDrift,boardSaver,boardLoader,componentFlush,writeStateTracking}.ts; src/renderer/stores/boardCache.svelte.ts, boardDrift.ts
+- Vault lifecycle:  src/renderer/stores/vault.svelte.ts, vaultLeaveGuard.ts, vaultExternalChanges.ts, vaultRenameQueue.ts, unsavedRescue.ts; src/renderer/lib/vault/{vaultOperations,vaultCandidate,externalChangeRegistry,fileBaselineRegistry,externalChangeWindows,keepLocalBackup,dirtyFlagRecovery,handleFlushAndQuit}.ts
+- File watcher:     src/main/services/{fileWatcher,fileWatcherClassify,fileWatcherHash,fileWatcherWalk,watcherSuppression,renameCorrelation,recoverySnapshot}.ts
+- Undo/redo:        src/renderer/stores/history.svelte.ts, src/renderer/commands/*.ts (commandPaths.ts for rename-following)
+- IPC main:         src/main/ipc/*.ts, src/main/vault/{fileOps,boardFileOps,filenameUtils,exclusiveCreate,trashOps}.ts, src/main/utils/pathSecurity.ts
 
 Conventions:
-- Renderer never touches fs; everything is IPC.
-- Markdown writes ALL go through markdownFileWriter (the CI gate enforces this).
+- Renderer never touches fs; everything is IPC through window.filo.
+- Every .md write goes through the note writer (gate single-note-writer); each flush applies a change (FrontmatterDelta and/or body) to a fresh read, and the overwrite names the read's stat so main refuses it with STALE if the file changed.
+- Body drift is a conflict (Reload / Keep mine, which backs up first); frontmatter-only drift is taken silently.
+- Disk-shape ops (rename / trash / restore / create-folder / copy) go through vaultOperations.withDrainedWrites; deletes go to .filo/trash.
+- Close, open-another-vault and quit save first (saveBeforeLeaving) and write rescue copies to .filo/recovery/<ts>-unsaved/ for anything left.
 - Stores use Svelte 5 runes ($state, $derived, $effect, SvelteSet) in .svelte.ts files.
-- ~53 static checks in scripts/gates (npm run ci:gates; list them with: node scripts/gates/run.mjs --list) ratchet many invariants.
+- 69 static checks in scripts/gates/*.mjs (run: node scripts/gates/run.mjs; list them with --list) ratchet many invariants. A gate proves only the pattern it greps for.
 
 Anti-patterns to hunt:
 - $effect that subscribes to something with no return-cleanup → memory leak across vault swaps.
 - "await" missing on a write that should block downstream IO.
-- Catch blocks that swallow + log only (no toast, no sentinel) → silent failure.
+- Catch blocks that swallow + log only (no toast, no sentinel, no save-state failure) → silent failure.
 - Snapshots taken AFTER the mutation begins instead of before → undo restores corrupted state.
-- A flush-on-X path that doesn't await all queues (markdown + board + config + frontmatter + tags).
+- A flush / save-before-leaving path that doesn't await every writer (note writer + board + config + misc + tags + component flushes).
 - Cache invalidation that races with a debounced write that's already armed.
-- A code path that says "the gateway handles this" but is being called from a context that bypasses the gateway.
+- A code path that relies on "the note writer handles this" but reaches disk some other way, or builds a write from a cached whole file instead of a fresh read.
 
 Output: structured per the schema. NO prose outside the schema. Your text is the return value.
 `.trim()
@@ -111,25 +117,27 @@ const dimensions = [
     label: 'find:write-paths-core',
     prompt: `${SHARED_CONTEXT}
 
-Dimension: **Markdown write paths — gateway, frontmatter engine, tag rewriter, atomicity.**
+Dimension: **Markdown write paths — note writer, note store, frontmatter engine, tag rewriter, atomicity.**
 
 Read deeply:
-- src/renderer/lib/vault/markdownFileWriter.ts (the canonical gateway, ~822 LOC — read the whole thing)
-- src/renderer/lib/vault/frontmatterEngine.ts (NEW in Audit2 4.8 — source-preserving Document API)
-- src/renderer/lib/editor/markdownSync.ts (parseMarkdownFile + assembleMarkdownFile — the seam where rawFrontmatter is captured/replayed)
-- src/renderer/lib/vault/tagRewriter.ts (line-level fast path + dump fallback)
-- src/main/vault/filenameUtils.ts (atomicWriteFile — open→write→fsync→close→rename→fsync(dir))
-- src/main/ipc/vault.ipc.ts (the write IPC handlers)
-- The CI gates: scripts/gates/writePath.mjs + markdownFormat.mjs (markdown-gateway, markdown-read-gateway, frontmatter-invariant, no-prod-md-test-flushers, …)
+- src/renderer/lib/notes/noteWriter.ts (the only .md writer — read the whole thing)
+- src/renderer/stores/notes.svelte.ts (noteStore: NoteModel per path, base tracking, hold, conflict / drift handling)
+- src/renderer/lib/notes/noteFile.ts (pure parse/assemble: frontmatter, body, BOM, EOL, content hash) and noteDiskChange.ts (what a watcher event does to a loaded note)
+- src/renderer/lib/vault/frontmatterCstModel.ts (patchFrontmatterSourceCst — source-preserving patch on the yaml CST) and frontmatterDelta.ts
+- src/renderer/lib/editor/markdownSync.ts (assembleMarkdownFile) and src/renderer/lib/editor/noteEditorView.ts (editor ↔ noteStore bridge)
+- src/renderer/lib/vault/tagRewriter.ts (line-level fast path + CST-patch fallback) and tagRewriteSweep.ts
+- src/main/vault/filenameUtils.ts (atomicWriteFile, tmpSiblingPath) and src/main/vault/exclusiveCreate.ts
+- src/main/ipc/vault.ipc.ts (the write IPC handlers, incl. vault:write-existing-file-text and its STALE check)
+- The CI gates: scripts/gates/writePath.mjs + scripts/gates/markdownFormat.mjs (single-note-writer, note-write-expects-stat, note-write-suppression, frontmatter-parse-preserved, eol-preservation, frontmatter-invariant, …)
 
 Hunt for:
-- A code path that writes markdown without going through scheduleMarkdownWrite/forceWrite*.
-- Stale-cache races: a write that captured frontmatter at keystroke time and fires AFTER an external sync-frontmatter event.
-- atomicWriteFile failure modes: what happens on rename failure mid-fsync? Are partial writes rolled back? Is the recovery snapshot consistent?
-- CRLF / BOM handling: BOM-preserving hydrate — does it survive every code path (frontmatter rewrite, tag rewrite, body rewrite)?
-- frontmatterEngine: what happens when the YAML Document has !!tag custom types, anchors, aliases, multi-document streams (---\\n...\\n---\\n...)? Source-preserving patcher edge cases.
-- The "live frontmatter at fire time" fix (2.5) — is the rebase ACTUALLY atomic, or is there a TOCTOU between the read and the write?
-- markdownSync rawFrontmatter passthrough (1.2): what if the document was opened, frontmatter was edited via tags/properties, then a body-only save fires? Is rawFrontmatter invalidated correctly?
+- A code path that writes markdown without going through the note writer, or an escape-hatch comment that hides a real bypass.
+- Stale-copy writes: a change built at keystroke time that lands on a file another program changed between the fresh read and the rename (the STALE check window, coarse FAT/SMB timestamps, files over the byte-compare size).
+- Base tracking: a body write whose NoteModel.base is wrong (after a reload, a rewrite, a rename, Keep mine) so a real conflict is written over, or a phantom conflict is raised.
+- atomicWriteFile failure modes: rename failure mid-fsync, Windows lock backoff, temp left behind — is the renderer told, and is the queued change kept for Retry?
+- CRLF / BOM handling: does every path (frontmatter delta, tag rewrite, body write, raw view write) keep the BOM and line endings?
+- frontmatterCstModel: !!tag custom types, anchors / aliases, multi-document streams (---\\n...\\n---\\n...), flow maps, comments next to a changed key — which edge cases fall back to a full re-dump and lose bytes?
+- Own-write echo detection by content hash: can a genuine external change be mistaken for our echo (or vice versa)?
 
 Report findings per schema.`,
   },
@@ -138,29 +146,31 @@ Report findings per schema.`,
     label: 'find:write-paths-board',
     prompt: `${SHARED_CONTEXT}
 
-Dimension: **Board / config / frontmatter write paths — schedulers, persist*, snapshot discipline, undo/redo.**
+Dimension: **Board / config / misc write paths — schedulers, persist*, drift baselines, snapshot discipline, undo/redo.**
 
 Read deeply:
-- src/renderer/lib/boards/boardWriteScheduler.ts
-- src/renderer/lib/boards/configWriteScheduler.ts (modified in Phase 5.1 — resurrection guard)
+- src/renderer/lib/boards/writeScheduler.ts (createScheduler: the shared debounce/retry/timeout primitive)
+- src/renderer/lib/boards/boardWriteScheduler.ts, boardWriteDebounce.ts
+- src/renderer/lib/boards/configWriteScheduler.ts and configDrift.ts (a .filo/ config changed or deleted outside Filo)
 - src/renderer/lib/boards/miscWriteScheduler.ts
-- src/renderer/lib/boards/frontmatterWriteScheduler.ts
-- src/renderer/lib/boards/boardWriteDebounce.ts
 - src/renderer/lib/boards/boardLoader.ts and boardSaver.ts
-- src/renderer/stores/boardCache.svelte.ts (and boardCacheTiles/Kanban/TaskList/ConnectionsFrames/Frontmatter.ts)
-- src/renderer/stores/history.svelte.ts (per-board undo/redo, snapshot fan-out)
-- src/renderer/commands/*.ts — read at least Command.ts, tileCommands.ts, kanbanCommands.ts, taskCommands.ts, groupAndBoardCommands.ts, styleCommands.ts
-- The CI gates: scripts/gates/commands.mjs (direct-board-mutations, command-snapshot-discipline, commands-target-board, command-roundtrip-coverage, …)
+- src/renderer/stores/boardCache.svelte.ts (and boardCacheTiles/Kanban/TaskList/ConnectionsFrames/Frontmatter/Delete.ts)
+- src/renderer/stores/boardDrift.ts (one drift prompt per board path: Reload / Keep local) and src/renderer/lib/vault/keepLocalBackup.ts
+- src/renderer/lib/vault/fileBaselineRegistry.ts (baselineSeq / noteBaseline ifUnchangedSince — baselines only move forward)
+- src/renderer/stores/history.svelte.ts (per-board undo/redo, rename sweep)
+- src/renderer/commands/*.ts — read at least Command.ts, commandPaths.ts, frontmatterInverse.ts, noteFieldCommand.ts, tileCommands.ts, kanbanCommands.ts, taskCommands.ts, groupAndBoardCommands.ts, styleCommands.ts, replaceAllCommand.ts
+- The CI gates: scripts/gates/commands.mjs (direct-board-mutations, command-snapshot-discipline, commands-target-board, command-roundtrip-coverage, commands-follow-renames, no-note-body-in-commands, …) and scripts/gates/writePath.mjs (baseline-stamp-forward-only, keep-local-backup)
 
 Hunt for:
 - Commands that mutate state without snapshotting first (or after the mutation — corrupted undo).
-- Snapshot scope too narrow: snapshot covers tile but not the placement, so undo desyncs.
+- Snapshot scope too narrow: snapshot covers the tile but not the placement, so undo desyncs.
 - BatchCommand: what if one inner command throws mid-execute? Is the partial state rolled back?
-- targetBoardId discipline: any command that reads boardStore.current to know where to write? (The 2.4 fix.)
-- configWriteScheduler resurrection guard (5.1): does the ENOENT skip handle the "delete-then-immediately-recreate" race?
-- frontmatter scheduler: who owns frontmatter writes? Tag mutation, properties popup, AND undo of a property command — three writers. Lock?
-- boardLoader → boardCache hydrate: is there a window where the cache is hydrated but tile defs not yet reconciled against frontmatter?
-- 5.3 reconcile loop in vault.svelte.ts runPostCommitTasks: does it run in correct order with the index rebuild? Does it fire on every vault swap?
+- targetBoardId discipline: any command that reads the active board to know where to write?
+- Undo of a frontmatter change: the inverse FrontmatterDelta via applyDeltaChecked — same-key conflict detection, NoteGoneError, ChangeRefusedError; can undo write over a newer value?
+- Drift baselines: a reader's older stat replacing a newer self-write stamp, or a new board's create not counted as Filo's own write, so the next save sees its own write as external.
+- Board drift: Reload cancels the queued write and clears undo history — can a queued write or an undo step still land the replaced version?
+- configDrift: deleted config recreated with createOnly — can a copy put back meanwhile be overwritten? Reload / Keep local on app.json / defaults.json / appearance.json.
+- boardLoader → boardCache hydrate: is there a window where the cache is hydrated but broken-reference tracking or rename rewrites aren't applied yet?
 
 Report findings per schema.`,
   },
@@ -169,31 +179,32 @@ Report findings per schema.`,
     label: 'find:concurrency-vault',
     prompt: `${SHARED_CONTEXT}
 
-Dimension: **Vault lifecycle, file watcher, external-edit reconciliation, rename correlation, dirty sentinel.**
+Dimension: **Vault lifecycle, file watcher, external-edit reconciliation, rename correlation, dirty sentinel, leave-and-rescue.**
 
 Read deeply:
-- src/renderer/stores/vault.svelte.ts (~1400 LOC — the vault swap orchestrator)
-- src/renderer/stores/vaultExternalChanges.ts (~1500 LOC — external-edit classifier and drift prompt)
+- src/renderer/stores/vault.svelte.ts (the vault open / swap orchestrator) and src/renderer/lib/vault/vaultCandidate.ts (open as a transaction)
+- src/renderer/stores/vaultLeaveGuard.ts (saveBeforeLeaving / saveUntilSettled, leftBehind) and src/renderer/lib/editor/closeDrainGate.svelte.ts
+- src/renderer/stores/unsavedRescue.ts (rescue copies) and src/renderer/lib/vault/handleFlushAndQuit.ts
+- src/renderer/stores/vaultExternalChanges.ts, vaultExternalReconcilers.ts, vaultRenameQueue.ts; src/renderer/lib/vault/externalChangeRegistry.ts
 - src/renderer/core/vaultLifecycle.ts (onVaultSwap registry)
-- src/renderer/lib/vault/conflictResolver.ts
-- src/renderer/lib/vault/dirtyFlagRecovery.ts
-- src/renderer/lib/vault/externalChangeWindows.ts
-- src/renderer/lib/vault/fileBaselineRegistry.ts
+- src/renderer/stores/notePrompts.ts (note Reload / Keep mine, deleted-note prompt) and src/renderer/lib/notes/renameGrace.ts (askUnlessMoved)
+- src/renderer/lib/vault/dirtyFlagRecovery.ts, externalChangeWindows.ts, fileBaselineRegistry.ts
 - src/renderer/lib/vault/renameCascadeSentinel.ts, tagRewriteSentinel.ts
-- src/main/services/fileWatcher.ts, fileWatcherTypes.ts
-- src/main/services/renameCorrelation.ts (Audit2 2.1 same-basename gate)
+- src/main/services/fileWatcher.ts, fileWatcherTypes.ts, fileWatcherClassify.ts, fileWatcherWalk.ts, watcherSuppression.ts, watcherSupervisor.ts
+- src/main/services/renameCorrelation.ts and fileWatcherHash.ts (content hash with a size ceiling)
 - src/main/services/recoverySnapshot.ts
 - src/renderer/stores/vaultRecovery.ts
 
 Hunt for:
-- onVaultSwap hooks: any subscriber that doesn't clean up timers on the OLD vault before the NEW one mounts?
-- File watcher: are events from the old vault drained before the new vault attaches? Race: vault A swap to B, in-flight A event lands during B's bootstrap.
-- Dirty sentinel: every write path SHOULD write .filo/.dirty before disk write, clear after. Does any path skip it? (Markdown body write was 2.3, supposedly fixed — verify.)
-- Rename correlation: the same-basename content-hash gate (2.1) — what about EMPTY files (hash matches by coincidence)? What about files larger than the hash budget?
-- Conflict resolver: classifier categories (sync-frontmatter, conflict, ignore-self, etc.). Are there interleavings where the classifier picks the wrong category?
-- External FM-only edit while body is dirty (2.5 fix): does it cover ALL fire paths, including forceWriteForDocument from tab close?
-- Index rebuild during vault swap: is there a window where the renderer queries vaultIndexStore mid-rebuild?
-- Recovery snapshot: when does .filo/recovery/ get written and reaped? Any orphaned snapshots after crash?
+- onVaultSwap hooks: any subscriber that doesn't clean up timers or queues of the OLD vault before the NEW one mounts? Does every async reader re-check isStillSameVault after an await?
+- File watcher: are events from the old vault dropped before the new vault attaches? Race: vault A swap to B, an in-flight A event or queued reconcile lands during B's bootstrap.
+- Leaving a vault: can saveBeforeLeaving report "nothing unsaved" while a component flush, raw view text or an un-serialised editor keystroke still holds work? Can a rescue copy miss something that then gets dropped?
+- Dirty sentinel (.filo/.dirty.<machineId>): set before writes and kept when work is left behind — does any path clear it too early, or skip it?
+- Rename correlation: the content-hash pairing — what about EMPTY files (hash matches by coincidence)? Files larger than the hash ceiling? A missing .md held MISSING_NOTE_HOLD_MS with no partner?
+- Echo suppression: suppressWrite only hides our own bytes — can another program's save, rename or delete inside the window still be swallowed?
+- External frontmatter-only edit while the body is unsaved: is it merged on every path, including a flush from tab close and the quit drain?
+- Index rebuild during vault swap: is there a window where the renderer queries the vault index mid-rebuild?
+- Recovery snapshots: when is .filo/recovery/ written and pruned? Can a prune remove something the user still needs?
 
 Report findings per schema.`,
   },
@@ -206,26 +217,29 @@ Dimension: **Svelte 5 rune store lifecycle — $effect cleanup, dispose chains, 
 
 Read deeply:
 - All src/renderer/stores/*.svelte.ts files. Pay extra attention to:
-  - vault.svelte.ts, vaultIndex.svelte.ts, vaultExternalChanges.ts
+  - vault.svelte.ts, vaultIndex.svelte.ts, notes.svelte.ts, vaultExternalChanges.ts
   - boardCache.svelte.ts, board.svelte.ts, boardConnections.ts, boardFrames.ts, boardTiles.ts
   - history.svelte.ts, tabs.svelte.ts, workspace.svelte.ts
-  - fileTags.svelte.ts (Phase 5 modified), templates.svelte.ts
-  - canvas.svelte.ts, selection.svelte.ts, spatial.svelte.ts
-- src/renderer/lib/tasklist/filtersAndViews.svelte.ts (5.6 modified — dispose path)
-- Components that own timers:
-  - src/renderer/components/boards/TaskListBoard.svelte (5.6 — lastViewPersistTimer)
-  - src/renderer/components/tiles/TimerTile.svelte (4.1 — counts down in component state)
+  - fileTags.svelte.ts, tagUndo.svelte.ts, templates.svelte.ts, trash.svelte.ts
+  - canvas.svelte.ts, selection.svelte.ts, spatial.svelte.ts, saveState.svelte.ts
+- src/renderer/lib/boards/componentFlush.ts (registerComponentFlush) and writeStateTracking.ts (unsavedWork)
+- src/renderer/lib/tasklist/filtersAndViews.svelte.ts and src/renderer/lib/kanban/kanbanFiltersAndSort.svelte.ts (debounced view persistence)
+- Components that own timers or save on teardown:
+  - src/renderer/components/boards/TaskListBoard.svelte, KanbanBoard.svelte
+  - src/renderer/components/boards/DocumentEditor.svelte, NoteRawView.svelte
+  - src/renderer/components/tiles/TimerTile.svelte (with src/renderer/lib/utils/timerCountdown.ts — a running timer is its wall-clock endsAt)
 - The reactive scheduler: how vault swap resets stores; vaultLifecycle hooks.
 
 Hunt for:
-- $effect that subscribes to a long-lived store (vaultIndex, fileTags) without a return cleanup → leak per vault swap.
+- $effect that subscribes to a long-lived store (vault index, note store, fileTags) without a return cleanup → leak per vault swap.
 - $effect with a stale closure on a variable that should be reactive but is captured at $effect.root creation.
 - A setTimeout/setInterval that's not cleared on store reset / component unmount / vault swap.
+- A component that saves on teardown but whose save isn't registered with registerComponentFlush, so a leave cancels it (gate teardown-saves-registered only sees the pattern it greps for).
 - An onDestroy that doesn't actually run (e.g. on workspace pane teardown vs Svelte component unmount).
 - A SvelteSet/SvelteMap that's repopulated on every vault swap but never cleared, so old entries linger.
-- A debounce-on-unmount race: component unmounts mid-debounce; the timer fires after unmount and writes a stale value.
+- A debounce-on-unmount race: component unmounts mid-debounce; the timer fires after unmount and writes a stale value (or into the next vault).
 - A "this store is a singleton" assumption that breaks when a second vault is opened in the same process.
-- 5.6 fix in filtersAndViews — does it actually dispose all timers, or only some? Does TaskListBoard call filters.dispose() in onDestroy?
+- One note open in several views: any view keeping its own copy of a note instead of reading the NoteModel (gate views-read-note-store)?
 
 Report findings per schema.`,
   },
@@ -237,28 +251,30 @@ Report findings per schema.`,
 Dimension: **Silent errors, swallowed promises, IPC envelope, recovery sentinels, save-state honesty.**
 
 Read deeply:
-- src/renderer/lib/utils/errorBus.ts, errorToastAggregator.ts
-- src/renderer/stores/saveState.svelte.ts (idle/saving/saved/error indicator)
-- src/shared/ipcEnvelope.ts (ok/error envelope)
-- src/shared/ipcSchemas.ts, ipcContracts.ts
+- src/renderer/lib/utils/errorBus.ts, errorToastAggregator.ts, invokeOk.ts
+- src/renderer/stores/saveState.svelte.ts, saveStateFeed.ts, heldDecisions.ts (saved / saving / failed / waiting-for-a-decision indicator)
+- src/renderer/lib/boards/writeStateTracking.ts (unsavedWork) and componentWriteRetry.ts
+- src/shared/ipcEnvelope.ts (ok/error envelope), src/main/ipc/ipcErrorCode.ts (errorEnvelope / errorResult)
+- src/shared/ipcSchemas.ts, ipcContracts.ts, untrusted.ts
 - src/main/utils/mainLogger.ts
-- src/renderer/lib/vault/dirtyFlagRecovery.ts (sentinel contract)
-- src/renderer/stores/vaultRecovery.ts (.filo/.dirty recovery modal)
-- Recovery sentinels: tagRewriteSentinel.ts, renameCascadeSentinel.ts, recoverySnapshot.ts
-- Tab close paths: src/renderer/stores/tabs.svelte.ts (modified Phase 5), Tab.svelte
-- vaultOperations.ts withDrainedWrites + the four disk-shape IPCs
+- src/renderer/lib/vault/dirtyFlagRecovery.ts (sentinel contract) and src/renderer/stores/vaultRecovery.ts (recovery modal)
+- Recovery: src/renderer/lib/vault/tagRewriteSentinel.ts, renameCascadeSentinel.ts, src/main/services/recoverySnapshot.ts, emergencyFileRegistry.ts, quitFailureBreadcrumb.ts, src/main/ipc/recovery.ipc.ts, src/renderer/stores/unsavedRescue.ts
+- Leave / quit: src/renderer/stores/vaultLeaveGuard.ts, src/renderer/lib/vault/handleFlushAndQuit.ts, src/renderer/lib/vault/unsavedMessages.ts
+- Tab close paths: src/renderer/stores/tabs.svelte.ts, src/renderer/components/layout/Tab.svelte
+- src/renderer/lib/vault/vaultOperations.ts (withDrainedWrites, scoped drain, the disk-shape IPCs) and src/main/vault/trashOps.ts
 
 Hunt for:
 - catch (e) { logger.error(...); } with no toast, no rethrow, no sentinel → user has no idea something failed.
-- An IPC handler that returns ok envelope but actually partially failed.
-- A write path where the failure mode would leave the user thinking it saved.
-- Save indicator: are there paths that don't increment/decrement inflight correctly? (4.1 timer fix was about this.)
-- "drain all writers before doing X" pattern: any X that needs to drain but doesn't? Vault swap, app quit, vault delete, vault export.
-- App quit (before-quit): is every writer flushed? Are sentinels reaped?
-- atomicWriteFile failure: ENOSPC preserves the temp — but does the renderer know? Does the user get a "you may have lost data" prompt?
+- An IPC handler that returns an ok envelope but actually partially failed, or a write handler failure without a code (gate ipc-errors-carry-code).
+- A write path where the failure mode would leave the user thinking it saved (save indicator shows Saved while a write failed, is held for a decision, or is still queued).
+- A failed write that isn't kept for Retry, or a Retry that re-fires a stale change.
+- "drain all writers before doing X" pattern: any X that needs to drain but doesn't, or a scoped drain whose paths miss a parent/child it touches.
+- App quit: is every writer flushed, including component flushes and raw views? Are rescue copies written when something is left, and does the dialog name it?
+- atomicWriteFile failure: ENOSPC / locked file preserves the temp — does the renderer know? Does the user get told where the data is?
 - A try/catch around a Promise.all that swallows individual rejections.
 - A throw inside a $effect — Svelte may not surface it; does the UI report it?
 - A debounced batch error: the timer fires, throws inside async, error is lost in the void.
+- Trash: a restore or purge that fails halfway, or a manifest that no longer matches the files.
 
 Report findings per schema.`,
   },
@@ -267,35 +283,25 @@ Report findings per schema.`,
     label: 'find:uncommitted-diff',
     prompt: `${SHARED_CONTEXT}
 
-Dimension: **What did the uncommitted Phase-5 changes introduce or regress?**
+Dimension: **What did the most recent changes introduce or regress?**
 
-Concretely, the working tree has these uncommitted modifications from a Phase-5 hygiene batch:
-- DELETED: src/renderer/lib/boards/markdownWriteRegistry.ts (the shim; supposed to be dead-in-prod)
-- MODIFIED: src/main/utils/pathSecurity.ts (5.4 — reject ':' in filenames)
-- MODIFIED: src/main/vault/filenameUtils.ts (5.5 — Windows reserved names CON/NUL/COM1, trailing dots)
-- MODIFIED: src/renderer/lib/boards/configWriteScheduler.ts (5.1 — ENOENT skip / resurrection guard)
-- MODIFIED: src/renderer/lib/tasklist/filtersAndViews.svelte.ts (5.6 — dispose)
-- MODIFIED: src/renderer/lib/vault/markdownFileWriter.ts (gateway extensions for the shim removal)
-- MODIFIED: src/renderer/lib/vault/vaultOperations.ts (5.10 — removed duplicate flush call)
-- MODIFIED: src/renderer/stores/document.svelte.ts, fileTags.svelte.ts, tabs.svelte.ts, vault.svelte.ts, vaultExternalChanges.ts (5.x — shim → gateway migration; 5.3 reconcile loop)
-- MODIFIED: src/renderer/components/boards/{KanbanCard,TaskListBoard}.svelte, components/layout/GlobalToolbar.svelte (5.7, 5.8, focus)
-- NEW: 6 unit tests + scripts/check-no-prod-markdown-test-flushers.mjs (CI gate)
-- MODIFIED: CLAUDE.md, package.json, scripts/check-file-sizes.mjs
-
-To get the exact diff: \`git diff HEAD -- <path>\` for each modified file. \`git log --oneline HEAD~10..HEAD\` shows the 10 prior fixes the audit confirms.
+Work out the change range yourself — do not assume a list:
+1. \`git status --short\` and \`git diff HEAD --stat\` for uncommitted work.
+2. \`git log --oneline -20\` for recent commits; commit subjects name the audit phase each one remediates. Take the commits since the last audit report in docs/ (or, if none is obvious, the last ~10 commits) as the range under audit.
+3. \`git diff <base>..HEAD --stat\` then \`git diff <base>..HEAD -- <path>\` (plus \`git diff HEAD -- <path>\` for the working tree) for each file that touches a write path, the vault lifecycle, the watcher, undo/redo, IPC, or a gate in scripts/gates/.
+4. Read the matching plan in docs/ to learn what each change was meant to fix, then check it actually does.
 
 Hunt for:
-- The shim deletion broke a caller the CI gate missed. Grep for any remaining "markdownWriteRegistry" string in src/ outside tests.
-- The 5.4 / 5.5 filename hardening blocks an existing filename pattern users might have on disk (creates a corruption-on-rename scenario).
-- The 5.1 ENOENT skip silently drops a config write the user expected to land.
-- The 5.6 dispose path was added but not actually called from the only caller, leaving the original timer leak.
-- The 5.3 reconcile loop has wrong ordering with index rebuild → cache reads from a stale index.
-- The 5.10 single-owner flush actually breaks an invocation that depended on the duplicate flush firing.
-- The vault.svelte.ts / vaultExternalChanges.ts modifications introduce a window where the runPostCommitTasks loop runs before or after the expected lifecycle hook.
-- Any test that was "modified" because the assertion was loosened to make the new behavior pass (verify the test still meaningfully tests the bug it was written for).
-- check-no-prod-markdown-test-flushers.mjs — does it have a false-positive escape hatch that the prod code uses?
+- A removed or renamed function / module still referenced from a caller the gates don't see (grep src/ for the old name outside tests).
+- Filename / path hardening (src/main/utils/pathSecurity.ts, src/shared/fileNames.ts) that now blocks a name users already have on disk, turning a rename or save into a failure or a data-loss path.
+- A new guard or early return that silently drops a write the user expected to land (config, board, note, tags).
+- A new dispose / cleanup path that was added but is not called from the only caller, leaving the original leak.
+- A reordering in the vault open / leave sequence (vault.svelte.ts, vaultLeaveGuard.ts, vaultCandidate.ts) that lets a reconcile or write run against the wrong vault or before the index is ready.
+- A flush that was removed as "duplicate" but some path depended on it.
+- A test that was modified because the assertion was loosened to make the new behavior pass (verify it still meaningfully tests the bug it was written for).
+- A gate in scripts/gates/*.mjs that was added or changed: does it have an escape hatch the prod code now uses, or a pattern so narrow the real violation slips past?
 
-For each finding, set introduced_by_uncommitted=true. Be ruthless — these changes are LATE in a remediation cycle and the project is about to be used.
+For each finding, set introduced_by_uncommitted=true if the range under audit introduced it. Be ruthless — these changes are LATE in a remediation cycle and the project is about to be used.
 
 Report findings per schema.`,
   },
@@ -373,8 +379,8 @@ Mechanism (finder's words): ${f.mechanism}
 Trigger: ${f.trigger}
 Blast radius: ${f.blast_radius}
 Fix sketch: ${f.fix_sketch}
-Introduced by uncommitted Phase-5? ${f.introduced_by_uncommitted ? 'yes' : 'no'}
-Not in Audit2 plan? ${f.not_already_in_audit2 ? 'yes' : 'no'}
+Introduced by the change range under audit? ${f.introduced_by_uncommitted ? 'yes' : 'no'}
+Not in a prior audit plan? ${f.not_already_in_audit2 ? 'yes' : 'no'}
 `).join('\n')
 
     const result = await agent(

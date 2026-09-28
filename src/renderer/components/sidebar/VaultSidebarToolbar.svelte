@@ -20,7 +20,7 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
-  import { pathsEqual } from '../../lib/utils/path';
+  import { pathsEqualExact } from '../../lib/utils/path';
   import { SORT_FIELDS, GROUP_FIELDS, DIRECTIONS } from '../../constants/vaultSidebarOptions';
   import type {
     VaultSortField,
@@ -165,7 +165,7 @@
     // platform's separators (backslashes on Windows), so take the spelling
     // from the refreshed tree rather than joining one here.
     const newAbs = `${vaultStore.path.replace(/[\\/]+$/, '')}/${name}`;
-    const node = vaultStore.tree.find((n) => n.isDirectory && pathsEqual(n.path, newAbs));
+    const node = vaultStore.tree.find((n) => n.isDirectory && pathsEqualExact(n.path, newAbs));
     uiStore.setPendingSidebarRenameId(node?.path ?? newAbs);
   }
 

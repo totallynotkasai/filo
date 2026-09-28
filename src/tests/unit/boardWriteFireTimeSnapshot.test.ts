@@ -35,20 +35,20 @@ function emptyMindmapBoard(id: string, label = 'b'): BoardFileData {
 }
 
 /**
- * Phase C / C.5 supersedes Phase 22 M6 — `scheduleBoardWrite` now snapshots
- * at FIRE TIME (inside the timer callback) rather than at every schedule
- * call. Coalesces N keystrokes within the 300ms debounce window into a
- * single deep-clone instead of N. The Phase 22 race remains closed
- * because the fire-time snapshot is taken synchronously immediately
- * before `writeBoardFile` — no microtask can interleave between
- * `JSON.parse(JSON.stringify(args.cached))` and the call that consumes it.
+ * `scheduleBoardWrite` snapshots at FIRE TIME (inside the timer callback),
+ * not at every schedule call. That coalesces N keystrokes within the 300ms
+ * debounce window into a single deep-clone instead of N. No write can be
+ * built from a stale snapshot, because the fire-time snapshot is taken
+ * synchronously immediately before `writeBoardFile` — no microtask can
+ * interleave between `JSON.parse(JSON.stringify(args.cached))` and the call
+ * that consumes it.
  *
  * The behavioural consequence: a mutation that lands AFTER the schedule
  * call but BEFORE the timer fires IS reflected on disk (the cache is
  * already the source of truth; the snapshot just captures whatever it
  * holds when the debounce expires).
  */
-describe('Phase 22 M6 / Phase C C.5 — scheduleBoardWrite snapshots at fire time', () => {
+describe('scheduleBoardWrite snapshots at fire time', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     __resetDirtyTrackingForTests();
@@ -61,7 +61,7 @@ describe('Phase 22 M6 / Phase C C.5 — scheduleBoardWrite snapshots at fire tim
     restoreFiloDefault();
   });
 
-  it('writes the latest cache state at fire time (was schedule-time before C.5)', async () => {
+  it('writes the latest cache state at fire time', async () => {
     let savedPayload: string | null = null;
     installFiloMock({
       'board:save': (..._args: unknown[]) => {
@@ -78,8 +78,8 @@ describe('Phase 22 M6 / Phase C C.5 — scheduleBoardWrite snapshots at fire tim
       cached: live,
     }));
 
-    // Mutate the live proxy AFTER scheduling. Phase C / C.5 — the deferred
-    // write now picks this up because the snapshot is taken at fire time.
+    // Mutate the live proxy AFTER scheduling. The deferred write picks this
+    // up because the snapshot is taken at fire time.
     (live.board as { name: string }).name = 'after';
 
     await vi.advanceTimersByTimeAsync(500);
@@ -116,9 +116,8 @@ describe('Phase 22 M6 / Phase C C.5 — scheduleBoardWrite snapshots at fire tim
     }));
 
     // Mutate again AFTER the second schedule but before the timer fires.
-    // Phase C / C.5 — this lands on disk because the snapshot is taken at
-    // fire time. (Pre-C.5 Phase 22 M6 would have frozen at the second
-    // schedule call's v2.)
+    // This lands on disk because the snapshot is taken at fire time, not
+    // frozen at the second schedule call's v2.
     (live.board as { name: string }).name = 'v3';
 
     await vi.advanceTimersByTimeAsync(500);

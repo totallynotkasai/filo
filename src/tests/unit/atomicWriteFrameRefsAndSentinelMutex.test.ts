@@ -76,7 +76,7 @@ function makeMindmapBoardWithFrames(
   };
 }
 
-describe('Phase 18 — FS integrity & cascade', () => {
+describe('FS integrity & cascade', () => {
   beforeEach(() => {
     uninstallFiloStub();
   });
@@ -84,11 +84,11 @@ describe('Phase 18 — FS integrity & cascade', () => {
     uninstallFiloStub();
   });
 
-  describe('H8 — atomicWriteFile crash-safety', () => {
+  describe('atomicWriteFile crash-safety', () => {
     let dir: string;
 
     beforeEach(async () => {
-      dir = await fs.mkdtemp(join(tmpdir(), 'filo-h8-'));
+      dir = await fs.mkdtemp(join(tmpdir(), 'filo-atomic-'));
     });
     afterEach(async () => {
       await fs.rm(dir, { recursive: true, force: true });
@@ -125,7 +125,7 @@ describe('Phase 18 — FS integrity & cascade', () => {
     });
   });
 
-  describe('H11 — frame backgroundImage participates in rename / cascade / broken-ref', () => {
+  describe('frame backgroundImage participates in rename / cascade / broken-ref', () => {
     it('rewriteRenameInBoard rewrites frame.style.backgroundImage on rename', () => {
       const board = makeMindmapBoardWithFrames([
         makeFrame('f1', 'attachments/hero.jpg'),
@@ -206,7 +206,7 @@ describe('Phase 18 — FS integrity & cascade', () => {
     });
   });
 
-  describe('H14 — sentinel mutex serialises markDirty/markClean', () => {
+  describe('sentinel mutex serialises markDirty/markClean', () => {
     it('markDirty(vault, [...]) followed by markClean(vault) ends with .filo/.dirty deleted', async () => {
       const calls: Array<{ channel: string; args: unknown[] }> = [];
       installFiloStub({

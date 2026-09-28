@@ -14,6 +14,7 @@ import { UpdateAttachmentSrcCommand } from '@renderer/commands/index';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { seedBoard } from '../helpers/seedBoard';
 
 function installSilentBridge(): void {
   installFiloMock(() => null);
@@ -53,7 +54,7 @@ function makeFixture(tile: Tile): BoardFileData {
 function activate(tile: Tile): void {
   const fixture = makeFixture(tile);
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
-  boardStore.setBoard(fixture.board, { [tile.id]: tile }, {}, []);
+  seedBoard(boardStore, fixture.board, { [tile.id]: tile }, {}, []);
 }
 
 function baseFields(id: string, type: Tile['type']) {

@@ -130,8 +130,3 @@ export async function keepRawRescueCopy(path: string, text: string, why: RawSave
 }
 
 registerUnsavedSource(() => dirtyRawViews().map((v) => v.path()));
-
-/** Test-only: forget every registered view. */
-export function __resetRawViewsForTests(): void {
-  views.clear();
-}

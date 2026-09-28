@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
-import type { Command } from '@renderer/stores/history.svelte';
+import { Command } from '@renderer/commands/Command';
 import {
   cancelAllPendingWrites,
   __resetDirtyTrackingForTests,
@@ -24,7 +24,8 @@ import {
  * the test environment matches the contract `tabStore.close` expects.
  */
 
-class NoopCommand implements Command {
+class NoopCommand extends Command {
+  readonly targetBoardId: string = '';
   description = 'noop';
   execute(): void {}
   undo(): void {}

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { SvelteSet } from 'svelte/reactivity';
 
 import { makeRecoverySlice } from '@renderer/stores/vaultRecovery';
@@ -74,7 +74,7 @@ describe('Audit-18 4.1 — bypassed Recovery-modal close preserves the sentinel'
       getProject: () => null,
       setProject: () => {},
       getRecoveryPendingPaths: () => recoveryPaths,
-      setRecoveryPendingPaths: (next) => { recoveryPaths = next; },
+      setRecoveryPendingPaths: (next: string[]) => { recoveryPaths = next; },
       resolveRecoveryDismissed: () => { resolveCount++; },
       markMetaDirty: () => {},
       refreshTree: async () => {},
@@ -183,7 +183,7 @@ function taskRow(id: string): TaskRow {
 }
 
 describe('Audit-18 4.6 — Task List bulk ops gate the success toast on the chain', () => {
-  let toastSpy: ReturnType<typeof vi.spyOn>;
+  let toastSpy: MockInstance<typeof uiStore.toast>;
 
   beforeEach(() => {
     (window as unknown as Record<string, unknown>).filo = {
@@ -242,7 +242,7 @@ describe('Audit-18 4.6 — Task List bulk ops gate the success toast on the chai
 });
 
 describe('Audit-18 4.6 — Kanban bulk Add tag gates the success toast on the chain', () => {
-  let toastSpy: ReturnType<typeof vi.spyOn>;
+  let toastSpy: MockInstance<typeof uiStore.toast>;
 
   function makeMultiSelect() {
     const tiles: Record<string, Tile> = {

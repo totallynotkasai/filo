@@ -7,6 +7,7 @@ import { CascadeDeleteCommand } from '@renderer/commands/index';
 import { cancelAllPendingWrites, resetWriteTracking, type BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile, Connection } from '@renderer/schema/index';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * CascadeDeleteCommand. When a vault file is deleted (OS Explorer, git
@@ -122,7 +123,7 @@ describe('CascadeDeleteCommand', () => {
     const a = makeMindMap('a', 't_a', 'Notes.md');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     const tile = tilesA.t_a;
     expect(tile).toBeDefined();
@@ -148,7 +149,7 @@ describe('CascadeDeleteCommand', () => {
     );
     // a is active; b is inactive.
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     const tilesB = boardCacheStore.getFullTilesForBoard('b');
     const byBoard: Record<string, Tile[]> = {
@@ -173,7 +174,7 @@ describe('CascadeDeleteCommand', () => {
     const a = makeMindMap('a', 't_a', 'A.md');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     const tile = { ...tilesA.t_a };
     const conn: Connection = {
@@ -201,7 +202,7 @@ describe('CascadeDeleteCommand', () => {
     const a = makeMindMap('a', 't_a', 'Notes.md');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     // Capture a non-empty vaultRoot at construction time so the guard has
     // something to compare against.
@@ -245,7 +246,7 @@ describe('CascadeDeleteCommand', () => {
     const a = makeMindMap('a', 't_a', 'Notes.md');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     const tile = tilesA.t_a;
     const cmd = new CascadeDeleteCommand({ a: [tile] }, [], { vaultRoot: '/v' });
@@ -275,7 +276,7 @@ describe('CascadeDeleteCommand', () => {
     const a = makeMindMap('a', 't_a', 'Notes.md');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     const trashed = await trashInVault(vault, 'Notes.md');
     const cmd = new CascadeDeleteCommand({ a: [tilesA.t_a] }, [], { vaultRoot: '/v', trashed });
@@ -300,7 +301,7 @@ describe('CascadeDeleteCommand', () => {
     const a = makeMindMap('a', 't_a', 'Notes.md');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     const trashed = await trashInVault(vault, 'Notes.md');
     const cmd = new CascadeDeleteCommand({ a: [tilesA.t_a] }, [], { vaultRoot: '/v', trashed });
@@ -328,7 +329,7 @@ describe('CascadeDeleteCommand', () => {
     const a = makeMindMap('a', 't_a', 'Notes.md');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     const trashed = await trashInVault(vault, 'Notes.md');
     const cmd = new CascadeDeleteCommand({ a: [tilesA.t_a] }, [], { vaultRoot: '/v', trashed });
@@ -357,7 +358,7 @@ describe('CascadeDeleteCommand', () => {
     const a = makeMindMap('a', 't_a', 'Notes.md');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     const trashed = await trashInVault(vault, 'Notes.md');
     const cmd = new CascadeDeleteCommand({ a: [tilesA.t_a] }, [], { trashed });
@@ -384,7 +385,7 @@ describe('CascadeDeleteCommand', () => {
     const a = makeMindMap('a', 't_a', 'Notes.md');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
     const tilesA = boardCacheStore.getFullTilesForBoard('a');
-    boardStore.setBoard(a.board, tilesA, {}, []);
+    seedBoard(boardStore, a.board, tilesA, {}, []);
 
     const tile = tilesA.t_a;
     const cmd = new CascadeDeleteCommand({ a: [tile] }, [], { vaultRoot: '/old/vault' });

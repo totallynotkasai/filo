@@ -55,13 +55,13 @@ describe('active-pane shortcut guard (M2)', () => {
       name: 'kanban:add-tile', label: 'Kanban: Add tile', description: 'Kanban: Add tile',
       binding: { key: 'n' },
       enabled: () => isActiveScope(kanbanScope),
-      execute: () => fired.push('kanban'),
+      execute: () => { fired.push('kanban'); },
     });
     registerCommandWithShortcut({
       name: 'tasklist:focus-quick-add', label: 'Task List: Focus quick-add', description: 'Task List: Focus quick-add',
       binding: { key: 'n' },
       enabled: () => isActiveScope(taskListScope),
-      execute: () => fired.push('tasklist'),
+      execute: () => { fired.push('tasklist'); },
     });
 
     setActiveScope(kanbanScope);
@@ -81,13 +81,13 @@ describe('active-pane shortcut guard (M2)', () => {
       name: 'kanban:add-tile', label: 'Kanban: Add tile', description: 'Kanban: Add tile',
       binding: { key: 'n' },
       enabled: () => isActiveScope(kanbanScope),
-      execute: () => fired.push('kanban'),
+      execute: () => { fired.push('kanban'); },
     });
     registerCommandWithShortcut({
       name: 'tasklist:focus-quick-add', label: 'Task List: Focus quick-add', description: 'Task List: Focus quick-add',
       binding: { key: 'n' },
       enabled: () => isActiveScope(taskListScope),
-      execute: () => fired.push('tasklist'),
+      execute: () => { fired.push('tasklist'); },
     });
 
     dispatchKey({ key: 'n' });

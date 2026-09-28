@@ -60,7 +60,7 @@ function validBoardFile(boardId = 'mindmap-1'): BoardFileData {
   };
 }
 
-describe('Phase 17 — schema type safety', () => {
+describe('schema type safety', () => {
   beforeEach(() => {
     uninstallFiloStub();
     __resetErrorBusForTests();
@@ -70,7 +70,7 @@ describe('Phase 17 — schema type safety', () => {
     __resetErrorBusForTests();
   });
 
-  describe('H9 — coordinate/size schemas reject non-finite numbers', () => {
+  describe('coordinate/size schemas reject non-finite numbers', () => {
     it('TilePlacementSchema rejects NaN x', () => {
       const r = TilePlacementSchema.safeParse({
         x: NaN,
@@ -91,13 +91,13 @@ describe('Phase 17 — schema type safety', () => {
       expect(r.success).toBe(false);
     });
 
-    it('TilePlacementSchema rejects -Infinity width (M2 — fail loud, no silent default)', () => {
-      // M2 (2026-05-28): width/height flow through `coerceToNumber`, which
-      // now passes ±Infinity through unchanged so the downstream `.finite()`
-      // gate rejects it — routing the board to `failedBoards` + a recovery
-      // snapshot. Previously the post-union transform folded the non-finite
-      // value to the fallback (240) and persisted it, silently rewriting a
-      // hand-edited coordinate. Now it fails loud, matching the NaN path.
+    it('TilePlacementSchema rejects -Infinity width (fail loud, no silent default)', () => {
+      // width/height flow through `coerceToNumber`, which passes ±Infinity
+      // through unchanged so the downstream `.finite()` gate rejects it —
+      // routing the board to `failedBoards` + a recovery snapshot. Folding
+      // the non-finite value to the fallback (240) and persisting it would
+      // silently rewrite a hand-edited coordinate; failing loud matches the
+      // NaN path.
       const r = TilePlacementSchema.safeParse({
         x: 0,
         y: 0,
@@ -110,8 +110,7 @@ describe('Phase 17 — schema type safety', () => {
     it('TilePlacementSchema rejects NaN height (Zod default rejects NaN)', () => {
       // Unlike ±Infinity, Zod's `z.number()` rejects NaN at the union step
       // before our transform ever runs — so a NaN size routes the board to
-      // `failedBoards` rather than being silently coerced. The plan calls
-      // this out as "reject NaN explicitly" and this is how it lands.
+      // `failedBoards` rather than being silently coerced.
       const r = TilePlacementSchema.safeParse({
         x: 0,
         y: 0,
@@ -123,9 +122,9 @@ describe('Phase 17 — schema type safety', () => {
 
     // `coerceToNumber`'s contract: null + NaN are REJECTED at the union step
     // (no null branch + Zod default reject on NaN); ±Infinity is REJECTED at
-    // the downstream `.finite()` gate (M2, 2026-05-28); an unparseable string
-    // is REJECTED too (SC-1, 2026-05-29 — `parseFloat("abc")` → NaN flows to
-    // the same `.finite()` gate). Only undefined falls back to the
+    // the downstream `.finite()` gate; an unparseable string is REJECTED too
+    // (`parseFloat("abc")` → NaN flows to the same `.finite()` gate). Only
+    // undefined falls back to the
     // schema-provided default. These tests pin the contract so a future
     // schema refactor can't quietly broaden it.
     it('TilePlacementSchema rejects null width (no null branch in coerceToNumber union)', () => {
@@ -152,13 +151,13 @@ describe('Phase 17 — schema type safety', () => {
       }
     });
 
-    it('TilePlacementSchema rejects an unparseable string width (SC-1 — fail loud, no silent 240)', () => {
-      // SC-1 (2026-05-29): a corrupt size string like "wide" / "abc" now
-      // parses to NaN and is REJECTED at the downstream `.finite()` gate,
-      // routing the board to `failedBoards` + a recovery snapshot. Previously
-      // the string branch folded the NaN parse to the fallback (240) and
-      // persisted it, silently substituting a hand-edited corrupt size —
-      // inconsistent with the ±Infinity fail-loud stance above.
+    it('TilePlacementSchema rejects an unparseable string width (fail loud, no silent 240)', () => {
+      // A corrupt size string like "wide" / "abc" parses to NaN and is
+      // REJECTED at the downstream `.finite()` gate, routing the board to
+      // `failedBoards` + a recovery snapshot. Folding the NaN parse to the
+      // fallback (240) and persisting it would silently substitute a
+      // hand-edited corrupt size, inconsistent with the ±Infinity fail-loud
+      // stance above.
       const r = TilePlacementSchema.safeParse({
         x: 0,
         y: 0,
@@ -259,7 +258,7 @@ describe('Phase 17 — schema type safety', () => {
     });
   });
 
-  describe('H10 — unknown tile-def types are filtered with a toast', () => {
+  describe('unknown tile-def types are filtered with a toast', () => {
     it('TileDefinitionSchema parses every live type in TILE_TYPES', () => {
       const now = Date.now();
       // `TileDefinitionSchema` is a discriminated union with per-variant
@@ -317,10 +316,10 @@ describe('Phase 17 — schema type safety', () => {
         createdAt: now,
         updatedAt: now,
       };
-      // Phase B / B.3 — loader aborts with snapshot-failed when an
-      // unknown-type prune is required AND `recovery:snapshot` fails.
-      // Stub a successful snapshot so the load proceeds to the prune.
-      // Envelope contract — `src/main/ipc/board.ipc.ts:360-371` returns
+      // The loader aborts with snapshot-failed when an unknown-type prune
+      // is required AND `recovery:snapshot` fails. Stub a successful
+      // snapshot so the load proceeds to the prune. Envelope contract —
+      // `src/main/ipc/board.ipc.ts:360-371` returns
       // `{ ok: true, path }` / `{ ok: false, code?, error }`.
       installFiloStub({
         'board:load': () => JSON.parse(JSON.stringify(file)),
@@ -378,10 +377,10 @@ describe('Phase 17 — schema type safety', () => {
         createdAt: now,
         updatedAt: now,
       };
-      // Phase B / B.3 — loader aborts with snapshot-failed when an
-      // unknown-type prune is required AND `recovery:snapshot` fails.
-      // Stub a successful snapshot so the load proceeds to the prune.
-      // Envelope contract — see `board.ipc.ts:360-371`.
+      // The loader aborts with snapshot-failed when an unknown-type prune
+      // is required AND `recovery:snapshot` fails. Stub a successful
+      // snapshot so the load proceeds to the prune. Envelope contract —
+      // see `board.ipc.ts:360-371`.
       installFiloStub({
         'board:load': () => JSON.parse(JSON.stringify(file)),
         'recovery:snapshot': () => ({ ok: true, path: '.filo/recovery/dup.board.json' }),

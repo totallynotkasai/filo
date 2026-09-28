@@ -19,6 +19,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { settle } from './helpers/mountEditor';
+import { seedBoard } from '../helpers/seedBoard';
 
 const STYLE = { headerColor: '', bodyColor: '', borderColor: '' };
 
@@ -63,7 +64,7 @@ beforeEach(() => {
   boardStore.clearBoard();
   const f = fixture();
   boardCacheStore.hydrate({ mm: f }, { mm: 'map.board.json' });
-  boardStore.setBoard(f.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
+  seedBoard(boardStore, f.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
   historyStore.clear();
   historyStore.setActiveBoard('mm');
 });

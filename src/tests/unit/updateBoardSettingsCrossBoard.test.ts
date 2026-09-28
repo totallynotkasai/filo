@@ -65,7 +65,7 @@ describe('UpdateBoardSettingsCommand — board-targeted execute/undo (audit2 2.4
     );
     // Board A is the active scope: the global facade points at A while every
     // command below targets B — the exact cross-board precondition for the bug.
-    boardStore.setBoard(a.board, {}, {}, []);
+    boardStore.setBoard(a.board);
     expect(boardStore.current?.id).toBe('boardA');
   });
 

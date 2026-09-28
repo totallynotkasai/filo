@@ -15,7 +15,8 @@ import { uiStore } from './ui.svelte';
 import { historyStore } from './history.svelte';
 import { reindexUnder, toastMovedToTrash } from './trash.svelte';
 import { markRecentSelfWrite } from '../lib/boards/writeStateTracking';
-import { normalizePath, toPosix, toVaultRelative } from '../lib/utils/path';
+import { samePath, toVaultRelative } from '../lib/utils/path';
+import { isAtOrUnder } from '@shared/vaultPath';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import {
   PendingWritesFailedError,
@@ -27,13 +28,10 @@ import type { FileTreeNode } from '../../shared/types';
 import type { VaultContext } from './vaultStoreTypes';
 
 function findTreeNode(fileTree: FileTreeNode[], vaultRoot: string, relPath: string): FileTreeNode | null {
-  const root = normalizePath(vaultRoot).toLowerCase();
-  const targetLower = relPath.toLowerCase();
   const stack: FileTreeNode[] = [...fileTree];
   while (stack.length > 0) {
     const next = stack.pop()!;
-    const absLower = toPosix(next.path).toLowerCase();
-    if (absLower === `${root}/${targetLower}`) return next;
+    if (samePath(toVaultRelative(next.path, vaultRoot), relPath)) return next;
     if (next.children) stack.push(...next.children);
   }
   return null;
@@ -58,11 +56,9 @@ function filesOf(node: FileTreeNode | null, vaultRoot: string): string[] {
 
 /** The `.filo/tags.json` file tags at or under `rel` (path → tags). */
 function fileTagsUnder(rel: string): Record<string, string[]> {
-  const key = rel.toLowerCase();
   const out: Record<string, string[]> = {};
   for (const [path, tags] of Object.entries(fileTagsStore.file.fileTags)) {
-    const lower = path.toLowerCase();
-    if (lower === key || lower.startsWith(`${key}/`)) out[path] = [...tags];
+    if (isAtOrUnder(path, rel)) out[path] = [...tags];
   }
   return out;
 }
@@ -136,24 +132,20 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       // Boards whose `.board.json` went with the item: drop their cache,
       // project entry, viewport, open tabs and undo history now, rather than
       // leaving a phantom tab until the watcher reconcile.
-      const relLower = toPosix(rel).toLowerCase();
-      const relPrefix = relLower.endsWith('/') ? relLower : `${relLower}/`;
       // Board undo lives on the active board's stack. With no board open, a
       // Document tab active (its stack is the note's text history, keyed by a
       // tab id no board file carries), or the active board's own file going
       // with the item, no board stack the user can reach holds the delete:
       // the toast offers the undo instead.
       const activeId = historyStore.activeBoardId;
-      const activePath = activeId ? toPosix(boardStore.paths[activeId] ?? '').toLowerCase() : '';
+      const activePath = activeId ? boardStore.paths[activeId] ?? '' : '';
       const noBoardUndo = !activeId
         || !boardCacheStore.cache[activeId]
-        || activePath === relLower
-        || activePath.startsWith(relPrefix);
+        || isAtOrUnder(activePath, rel);
       const cleanupPromises: Array<Promise<unknown>> = [];
       for (const [boardId, bp] of Object.entries(boardStore.paths)) {
         if (!bp) continue;
-        const bpLower = toPosix(bp).toLowerCase();
-        if (bpLower === relLower || bpLower.startsWith(relPrefix)) {
+        if (isAtOrUnder(bp, rel)) {
           cleanupPromises.push(boardStore.cleanupMissingBoardAsync(boardId));
         }
       }
@@ -189,8 +181,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
         const b = cached.board;
         if (b.type !== 'document') continue;
         if (!b.filePath) continue;
-        const docPathLower = toPosix(b.filePath).toLowerCase();
-        if (docPathLower === relLower || docPathLower.startsWith(relPrefix)) {
+        if (isAtOrUnder(b.filePath, rel)) {
           b.filePath = '';
           boardCacheStore.markDirty(boardId);
           cleanupPromises.push(

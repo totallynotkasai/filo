@@ -71,7 +71,7 @@ function makeConnection(id: string): Connection {
 function activate(): void {
   const fixture = makeFixture();
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-  boardStore.setBoard(fixture.board, {}, {}, []);
+  boardStore.setBoard(fixture.board);
 }
 
 beforeEach(() => {

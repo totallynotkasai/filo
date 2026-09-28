@@ -201,7 +201,7 @@ describe('Layout Algorithms', () => {
         positions.set(id, moved ? moved.after : tiles[id].position);
       }
       // Apex must be at depth 0 (smallest y), others fan out below it.
-      const minY = Math.min(...positions.values().map(p => p.y) as unknown as number[]);
+      const minY = Math.min(...[...positions.values()].map((p) => p.y));
       expect(positions.get('a')!.y).toBe(minY);
       // Row 1 (2 tiles) and Row 2 (3 tiles) must each occupy a distinct y row.
       const ys = new Set(
@@ -223,7 +223,7 @@ describe('Layout Algorithms', () => {
         positions.set(id, moved ? moved.after : tiles[id].position);
       }
       // Apex column (smallest x) must be the leftmost original tile.
-      const minX = Math.min(...positions.values().map(p => p.x) as unknown as number[]);
+      const minX = Math.min(...[...positions.values()].map((p) => p.x));
       expect(positions.get('a')!.x).toBe(minX);
       // Two distinct depth columns (apex row + children row).
       const xs = new Set([...positions.values()].map(p => Math.round(p.x)));

@@ -13,6 +13,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TextTile } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 function setupTile(): void {
   const tile: TextTile = {
@@ -67,7 +68,7 @@ function setupTile(): void {
     frames: [],
   };
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
-  boardStore.setBoard(fixture.board, { [tile.id]: tile }, {}, []);
+  seedBoard(boardStore, fixture.board, { [tile.id]: tile }, {}, []);
 }
 
 describe('UpdateTilePathCommand — refresh tree on relink', () => {

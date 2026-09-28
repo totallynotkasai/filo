@@ -10,6 +10,7 @@
     "src/tests/characterisation/**/*.ts",
     "src/tests/helpers/**/*.ts",
     "src/tests/setup.ts",
+    "src/tests/types/**/*.d.ts",
     "src/renderer/**/*.d.ts"
   ],
   "exclude": ["node_modules", "dist", "release", "src/tests/e2e"]

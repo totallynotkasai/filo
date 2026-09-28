@@ -19,7 +19,7 @@ import {
 } from '../../schema/tagsFile';
 import { ACCENT_COLOR } from '../../constants/defaults';
 import { reportError } from '../utils/errorBus';
-import { normalizeVaultRelative } from '../utils/path';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { loadVersionedFile } from './loadVersionedFile';
 
 /**
@@ -159,11 +159,23 @@ export function parseTagsFile(raw: string | null | undefined): TagsFile {
   return loadTagsFile(raw).file;
 }
 
+/**
+ * Keys in `fileTags` are `VaultPath`s
+ * (separator-normalised + lowercased) so a rename that crosses a
+ * case-difference (`Notes/Foo.md` → `notes/foo.md`, the typical Windows /
+ * macOS shape from OS file events) resolves to the same entry.
+ *
+ * Implication for the on-disk `.filo/tags.json` format: keys are stored
+ * lowercased. A human reading the file sees `notes/foo.md` rather than
+ * the file's actual `Notes/Foo.md`. The vault index and any UI surface
+ * still shows the case-preserved name from the filesystem itself, so
+ * the user-visible representation is unaffected.
+ */
 function migrateFileTagKeys(file: TagsFile): TagsFile {
   let mutated = false;
   const next: Record<string, string[]> = {};
   for (const [key, tagArr] of Object.entries(file.fileTags)) {
-    const canonical = normalisePath(key);
+    const canonical = vaultPath(key);
     if (canonical !== key) mutated = true;
     const existing = next[canonical];
     if (existing) {
@@ -186,7 +198,7 @@ function migrateFileTagKeys(file: TagsFile): TagsFile {
  * path. Returns an empty array if the file has no tags.
  */
 export function tagsForFile(file: TagsFile, path: string): string[] {
-  return file.fileTags[normalisePath(path)] ?? [];
+  return file.fileTags[vaultPath(path)] ?? [];
 }
 
 /**
@@ -324,7 +336,7 @@ export function canonicaliseTagName(file: TagsFile, name: string): string {
  * separate tags when the user types them inconsistently across surfaces.
  */
 export function addTagToFile(file: TagsFile, path: string, tagName: string): TagsFile {
-  const key = normalisePath(path);
+  const key = vaultPath(path);
   const canonical = canonicaliseTagName(file, tagName);
   if (!canonical) return file;
   const existing = file.fileTags[key] ?? [];
@@ -344,7 +356,7 @@ export function addTagToFile(file: TagsFile, path: string, tagName: string): Tag
  * the entry is pruned. Returns a new TagsFile.
  */
 export function removeTagFromFile(file: TagsFile, path: string, tagName: string): TagsFile {
-  const key = normalisePath(path);
+  const key = vaultPath(path);
   const existing = file.fileTags[key];
   if (!existing || !existing.includes(tagName)) return file;
   const nextTags = existing.filter((t) => t !== tagName);
@@ -364,7 +376,7 @@ export function removeTagFromFile(file: TagsFile, path: string, tagName: string)
  * existing `project` tag keeps `project`, not both).
  */
 export function setFileTags(file: TagsFile, path: string, tags: string[]): TagsFile {
-  const key = normalisePath(path);
+  const key = vaultPath(path);
   let working = file;
   const canonical: string[] = [];
   const seen = new Set<string>();
@@ -466,7 +478,7 @@ export function setTagColor(file: TagsFile, tagName: string, color: string): Tag
  * the vault. Pure helper for the watcher's cascade-delete path.
  */
 export function dropFile(file: TagsFile, path: string): TagsFile {
-  const key = normalisePath(path);
+  const key = vaultPath(path);
   if (!(key in file.fileTags)) return file;
   const nextFileTags = { ...file.fileTags };
   delete nextFileTags[key];
@@ -478,8 +490,8 @@ export function dropFile(file: TagsFile, path: string): TagsFile {
  * so `fileTags['old.md']` becomes `fileTags['new.md']` with the same tags.
  */
 export function renameFile(file: TagsFile, oldPath: string, newPath: string): TagsFile {
-  const oldKey = normalisePath(oldPath);
-  const newKey = normalisePath(newPath);
+  const oldKey = vaultPath(oldPath);
+  const newKey = vaultPath(newPath);
   if (oldKey === newKey || !(oldKey in file.fileTags)) return file;
   const tags = file.fileTags[oldKey];
   if (tags === undefined) return file; // oldKey is present (checked above)
@@ -499,8 +511,8 @@ export function renameFile(file: TagsFile, oldPath: string, newPath: string): Ta
  * the input reference unchanged.
  */
 export function renameFolderInTags(file: TagsFile, oldPrefix: string, newPrefix: string): TagsFile {
-  const oldKey = normalisePath(oldPrefix);
-  const newKey = normalisePath(newPrefix);
+  const oldKey = vaultPath(oldPrefix);
+  const newKey = vaultPath(newPrefix);
   if (!oldKey || !newKey || oldKey === newKey) return file;
   const oldChild = `${oldKey}/`;
   const next: Record<string, string[]> = {};
@@ -527,7 +539,7 @@ export function renameFolderInTags(file: TagsFile, oldPrefix: string, newPrefix:
  * removes a folder containing tagged files.
  */
 export function dropFolderInTags(file: TagsFile, prefix: string): TagsFile {
-  const key = normalisePath(prefix);
+  const key = vaultPath(prefix);
   if (!key) return file;
   const child = `${key}/`;
   const next: Record<string, string[]> = {};
@@ -562,14 +574,14 @@ export function pruneFileTagsAgainstKnownPaths(
   knownPaths: ReadonlySet<string>,
   keep: (path: string) => boolean = () => false,
 ): { file: TagsFile; droppedPaths: string[] } {
-  const knownLower = new Set<string>();
-  for (const p of knownPaths) knownLower.add(normalisePath(p).toLowerCase());
+  const known = new Set<VaultPath>();
+  for (const p of knownPaths) known.add(vaultPath(p));
 
   const droppedPaths: string[] = [];
   const nextFileTags: Record<string, string[]> = {};
   for (const [key, tagArr] of Object.entries(file.fileTags)) {
-    const norm = normalisePath(key).toLowerCase();
-    if ((knownLower.has(norm) || keep(key)) && !/\.(md|markdown)$/.test(norm)) {
+    const norm = vaultPath(key);
+    if ((known.has(norm) || keep(key)) && !/\.(md|markdown)$/.test(norm)) {
       nextFileTags[key] = tagArr;
       continue;
     }
@@ -584,20 +596,4 @@ function hasFileTag(file: TagsFile, tagName: string): boolean {
     if (tagArr.includes(tagName)) return true;
   }
   return false;
-}
-
-/**
- * Keys in `fileTags` are canonicalised through `normalizeVaultRelative`
- * (separator-normalised + lowercased) so a rename that crosses a
- * case-difference (`Notes/Foo.md` → `notes/foo.md`, the typical Windows /
- * macOS shape from OS file events) resolves to the same entry.
- *
- * Implication for the on-disk `.filo/tags.json` format: keys are stored
- * lowercased. A human reading the file sees `notes/foo.md` rather than
- * the file's actual `Notes/Foo.md`. The vault index and any UI surface
- * still shows the case-preserved name from the filesystem itself, so
- * the user-visible representation is unaffected.
- */
-function normalisePath(path: string): string {
-  return normalizeVaultRelative(path);
 }

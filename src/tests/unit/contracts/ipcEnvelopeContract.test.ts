@@ -6,19 +6,15 @@
  * `assertIpcOk` (or a typed wrapper that fronts it). The assertion runs as
  * a source-scan inside the test — we walk the renderer tree, find every
  * `invoke('channel', ...)` callsite, and look at the surrounding ±10 lines
- * for an `assertIpcOk` consumer. This is the same surface the planned
- * Phase 1 CI gate (`scripts/gates:ipc-envelope-usage`) will police.
+ * for an `assertIpcOk` consumer. The `ipc-envelope-usage` gate
+ * (`scripts/gates/ipcSecurity.mjs`) polices the same surface in CI.
  *
  * Why this matters: when a renderer caller forgets `assertIpcOk` on an
  * envelope channel, an `{ ok: false, error }` failure mode looks like a
  * resolved success on the renderer side — the disk write didn't happen,
- * but the UI proceeds as though it had. That's the generative pattern
- * behind bug #1 (recovery:snapshot) and bug #3 (vault:write-existing-
- * file-text) in CONSOLIDATION_PLAN_2026-05-25.md.
+ * but the UI proceeds as though it had.
  *
- * Phase 1 / 1.7 — the four `it.skip(...)` blocks that originally documented
- * the gap (CONSOLIDATION_PLAN Phase 1) are now real `it(...)` assertions.
- * Every envelope-returning channel in `board.ipc.ts` has either an
+ * Every envelope-returning channel in `board.ipc.ts` must have either an
  * `assertIpcOk` / `invokeOk` consumer in scope or an explicit
  * `// allow-envelope-bare:` annotation on the caller.
  */

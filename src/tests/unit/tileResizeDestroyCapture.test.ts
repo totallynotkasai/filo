@@ -6,6 +6,7 @@ import { canvasStore } from '@renderer/stores/canvas.svelte';
 import { tileResizeAction } from '@renderer/lib/canvas/tileResize';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * Audit 3.4 — `tileResizeAction.destroy()` must release the captured pointer.
@@ -66,7 +67,7 @@ function activate(): void {
   const fixture = makeMindMapWithTile();
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
   const tiles = boardCacheStore.getFullTilesForBoard('mm');
-  boardStore.setBoard(fixture.board, tiles, {}, []);
+  seedBoard(boardStore, fixture.board, tiles, {}, []);
 }
 
 function makePointerEvent(

@@ -14,6 +14,7 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Frame, MindMapBoard, TextTile, Tile, TileGroup } from '@renderer/schema/index';
 import { installMemoryVault } from '../helpers/memoryVault';
+import { seedBoard } from '../helpers/seedBoard';
 
 function textTile(id: string): TextTile {
   return {
@@ -62,7 +63,7 @@ function setup(): void {
     frames: [frame('f1', ['t1', 't2']), frame('f2', ['t3'])],
   };
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'Map.board.json' });
-  boardStore.setBoard(fixture.board, tiles as unknown as Record<string, Tile>, {}, fixture.frames);
+  seedBoard(boardStore, fixture.board, tiles as unknown as Record<string, Tile>, {}, fixture.frames);
 }
 
 const frameIds = (id: string): string[] => boardCacheStore.cache.mm?.frames.find((f) => f.id === id)?.tileIds ?? [];

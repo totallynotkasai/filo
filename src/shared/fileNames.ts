@@ -29,16 +29,17 @@ function isReservedStem(name: string): boolean {
 }
 
 /**
- * The file stem Filo gives a new note titled `title`. The title itself may
- * hold any character (it lives in frontmatter); only the filename is
- * restricted. Illegal characters become `-`, whitespace collapses, trailing
- * dots and spaces go (Windows strips them, which would collide with a
- * neighbour), a reserved device name gets a `_` prefix, and an empty result
- * is `Untitled`. Example: `What? / Why` → `What- - Why`.
+ * `name` made safe to use as a file or folder name on every supported OS.
+ * Each illegal character is replaced by `illegalAs`, whitespace collapses,
+ * trailing dots and spaces go (Windows strips them, which would collide with
+ * a neighbour), the result is cut to 200 characters (whole code points), a
+ * reserved device name gets a `_` prefix, and an empty result is `Untitled`.
+ * Every name Filo derives goes through this one rule, so the main process and
+ * the renderer agree on what a given name becomes.
  */
-export function fileStemFromTitle(title: string): string {
-  let stem = title
-    .replace(ILLEGAL_NAME_CHARS, '-')
+export function safeFileName(name: string, illegalAs: '-' | ''): string {
+  let stem = name
+    .replace(ILLEGAL_NAME_CHARS, illegalAs)
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/[. ]+$/, '');
@@ -47,6 +48,16 @@ export function fileStemFromTitle(title: string): string {
   }
   if (!stem) return 'Untitled';
   return isReservedStem(stem) ? `_${stem}` : stem;
+}
+
+/**
+ * The file stem Filo gives a new note titled `title`. The title itself may
+ * hold any character (it lives in frontmatter); only the filename is
+ * restricted, and an illegal character becomes `-` so the words stay apart.
+ * Example: `What? / Why` → `What- - Why`.
+ */
+export function fileStemFromTitle(title: string): string {
+  return safeFileName(title, '-');
 }
 
 /**

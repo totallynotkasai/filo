@@ -34,6 +34,7 @@ function ctxFor(): VaultContext {
   return {
     getVaultPath: () => '/vault',
     setVaultPath: () => {},
+    resolveRecoveryDismissed: () => {},
     getFileTree: () => [],
     setFileTree: () => {},
     getSearchQuery: () => '',

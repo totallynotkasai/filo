@@ -114,7 +114,7 @@ describe('Phase 6.1.R3 — commands dirty their originating board, not the activ
       { tags: ['prev'] },
     );
 
-    boardStore.setBoard(b.board, {}, {}, []);
+    boardStore.setBoard(b.board);
 
     await cmd.execute();
     await vi.advanceTimersByTimeAsync(1000);

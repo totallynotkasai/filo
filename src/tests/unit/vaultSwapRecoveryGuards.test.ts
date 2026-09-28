@@ -14,7 +14,6 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { fileTagsStore, type TagSweepOutcome } from '@renderer/stores/fileTags.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
-import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
 import { __resetTagRewriteSentinelForTests } from '@renderer/lib/vault/tagRewriteSentinel';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';

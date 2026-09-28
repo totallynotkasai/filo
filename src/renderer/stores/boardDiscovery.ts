@@ -23,6 +23,7 @@ import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../l
 import { promptBoardLoadRetry } from '../lib/boards/boardLoadRetryPrompt';
 import type { Board } from '../schema/index';
 import { samePath } from '../lib/utils/path';
+import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { reportError } from '../lib/utils/errorBus';
 import { boardCacheStore } from './boardCache.svelte';
 import { vaultStore } from './vault.svelte';
@@ -44,11 +45,11 @@ export function findLoadedBoardIdForPath(rel: string): string | null {
 const inFlight = new Map<string, Promise<AdoptOutcome>>(); // allow-no-rename-transfer: lives for one load only
 
 // allow-module-state: last failure reason per path, read by the Retry prompt right after the attempt
-const lastFailure = new Map<string, { message: string; transient: boolean }>(); // allow-no-rename-transfer: diagnostic only, overwritten on the next attempt
+const lastFailure = new Map<VaultPath, { message: string; transient: boolean }>(); // allow-no-rename-transfer: diagnostic only, overwritten on the next attempt
 
 /** The reason the most recent adoption of `relPath` failed (for the Retry prompt). */
 export function lastAdoptFailure(relPath: string): { message: string; transient: boolean } | undefined {
-  return lastFailure.get(relPath.toLowerCase());
+  return lastFailure.get(vaultPath(relPath));
 }
 
 export interface AdoptOptions {
@@ -65,7 +66,7 @@ export function adoptBoardAtRuntime(
   captured: VaultIdentity,
   opts: AdoptOptions = {},
 ): Promise<AdoptOutcome> {
-  const key = `${captured.generation}|${relPath.toLowerCase()}`;
+  const key = `${captured.generation}|${vaultPath(relPath)}`;
   const existing = inFlight.get(key);
   if (existing) return existing;
   const p = adoptOnce(relPath, captured, opts).finally(() => inFlight.delete(key));
@@ -82,7 +83,7 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
   if (!isStillSameVault(captured)) return 'failed';
   if (!result.ok) {
     const transient = isTransientBoardLoadError(result.error);
-    lastFailure.set(relPath.toLowerCase(), { message: result.message, transient });
+    lastFailure.set(vaultPath(relPath), { message: result.message, transient });
     // A transient failure is re-offered by the caller's Retry prompt; anything
     // else (parse / schema / version) is surfaced once here.
     if (!transient && !opts.quiet) {
@@ -90,7 +91,7 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
     }
     return 'failed';
   }
-  lastFailure.delete(relPath.toLowerCase());
+  lastFailure.delete(vaultPath(relPath));
   // A concurrent adoption / rename rebind may have registered it meanwhile.
   if (findLoadedBoardIdForPath(relPath)) return 'already';
 
@@ -155,7 +156,7 @@ async function isGoneFromDisk(vaultRoot: string, relPath: string): Promise<boole
 }
 
 // allow-module-state: per-session record of untracked paths already tried (cleared on vault swap below)
-const scanned = new Set<string>(); // allow-no-rename-transfer: a renamed file is simply a new untracked path
+const scanned = new Set<VaultPath>(); // allow-no-rename-transfer: a renamed file is simply a new untracked path
 let scanInFlight: Promise<void> | null = null;
 
 vaultSwapResettable('boardDiscovery', () => {
@@ -175,10 +176,11 @@ export function adoptUntrackedTreeBoards(treePaths: Iterable<string>, captured: 
   if (scanInFlight) return scanInFlight;
   const candidates: string[] = [];
   for (const p of treePaths) {
-    const lower = p.toLowerCase();
-    if (!lower.endsWith('.board.json') || scanned.has(lower)) continue;
+    if (!p.toLowerCase().endsWith('.board.json')) continue;
+    const key = vaultPath(p);
+    if (scanned.has(key)) continue;
     if (findLoadedBoardIdForPath(p)) continue;
-    scanned.add(lower);
+    scanned.add(key);
     candidates.push(p);
   }
   if (candidates.length === 0) return Promise.resolve();

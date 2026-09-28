@@ -8,6 +8,7 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetErrorBusForTests } from '@renderer/lib/utils/errorBus';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Connection, MindMapBoard, TextTile, Tile } from '@renderer/schema/index';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * Audit 4.1 — `DeleteTilesCommand.undo()` re-adds the connections it
@@ -120,7 +121,7 @@ describe('DeleteTilesCommand — cross-board connection redo (audit 4.1)', () =>
     boardStore.clearBoard();
     __resetDirtyTrackingForTests();
     __resetErrorBusForTests();
-    vi.spyOn(uiStore, 'toast').mockImplementation(() => {});
+    vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
     installFiloStub({
       'vault:read-tree': async () => ({ ok: true, tree: [] }),
       'vault:file-exists': async () => false,
@@ -150,12 +151,7 @@ describe('DeleteTilesCommand — cross-board connection redo (audit 4.1)', () =>
       { mm: fixtureMm, mm2: fixtureMm2 },
       { mm: 'mm.board.json', mm2: 'mm2.board.json' },
     );
-    boardStore.setBoard(
-      fixtureMm.board,
-      { t1: t1 as unknown as Tile },
-      {},
-      [],
-    );
+    seedBoard(boardStore, fixtureMm.board, { t1: t1 as unknown as Tile }, {}, []);
 
     // Sanity: the edge starts parked in mm2's cache.
     expect(boardCacheStore.cache.mm2.connections.c1).toBeDefined();

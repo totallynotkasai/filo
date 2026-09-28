@@ -19,6 +19,7 @@ import type { DocumentBoard, MindMapBoard } from '@renderer/schema/index';
 import { historyStore } from '@renderer/stores/history.svelte';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * `vaultStore.delete` on a file or folder: every open note under the deleted
@@ -422,7 +423,7 @@ describe('vaultStore.delete — the item goes to Filo\'s trash and Ctrl+Z brings
     installFiloStub(ROUTES, FILES);
     const fixture = makeMindMapFixture('mm', 't_foo', 'Notes/2026/foo.md');
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'Boards/mm.board.json' });
-    boardStore.setBoard(fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
+    seedBoard(boardStore, fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
     historyStore.setActiveBoard('mm');
     const foo = await open('Notes/2026/foo.md');
 
@@ -447,7 +448,7 @@ describe('vaultStore.delete — the item goes to Filo\'s trash and Ctrl+Z brings
     installFiloStub(ROUTES, FILES);
     const fixture = makeMindMapFixture('mm', 't_foo', 'Notes/2026/foo.md');
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'Boards/mm.board.json' });
-    boardStore.setBoard(fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
+    seedBoard(boardStore, fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
     historyStore.setActiveBoard('mm');
 
     expect(await deleteConfirmed('/vault/Notes/2026')).toBe(true);
@@ -464,7 +465,7 @@ describe('vaultStore.delete — the item goes to Filo\'s trash and Ctrl+Z brings
     // A board is active (so history has a stack) but nothing on it shows the note.
     const fixture = makeMindMapFixture('mm', 't_foo', 'Notes/2026/foo.md');
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'Boards/mm.board.json' });
-    boardStore.setBoard(fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
+    seedBoard(boardStore, fixture.board, boardCacheStore.getFullTilesForBoard('mm'), {}, []);
     historyStore.setActiveBoard('mm');
 
     expect(await deleteConfirmed('/vault/Other/bar.md')).toBe(true);

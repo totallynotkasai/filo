@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { fakeCommand } from '../helpers/fakeCommand';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { historyStore } from '@renderer/stores/history.svelte';
@@ -119,13 +120,13 @@ describe('historyStore.activeBoardId — inactive pane does not hijack', () => {
 
     // Push a no-op onto board A's stack so undo has something to do.
     let undidA = false;
-    await historyStore.execute({
+    await historyStore.execute(fakeCommand({
       description: 'noop-a',
       execute: () => {},
       undo: () => {
         undidA = true;
       },
-    });
+    }));
 
     // Pane B churns — pre-fix this would re-target historyStore at B.
     paneB.board.setBoard(fixtureB.board);

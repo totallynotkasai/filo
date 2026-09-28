@@ -173,7 +173,7 @@ describe('Audit-6 H3/H4/L27 — reconciler vault-identity guard', () => {
       get: () => 'dark',
       configurable: true,
     });
-    const applySpy = vi.spyOn(themeStore, 'applyById').mockResolvedValue(undefined);
+    const applySpy = vi.spyOn(themeStore, 'applyById').mockResolvedValue({ ok: true });
 
     await dispatchExternalChange({
       kind: 'config-theme',

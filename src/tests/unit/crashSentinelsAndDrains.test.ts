@@ -378,6 +378,7 @@ describe('Audit-17 3.6 — external rename drain failure writes the rename-casca
     return {
       getVaultPath: () => '/vault',
       setVaultPath: () => {},
+      resolveRecoveryDismissed: () => {},
       getFileTree: () => [],
       setFileTree: () => {},
       getSearchQuery: () => '',

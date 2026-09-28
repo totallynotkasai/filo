@@ -66,7 +66,7 @@ beforeEach(() => {
   } as Project;
   vi.spyOn(vaultStore, 'project', 'get').mockReturnValue(project);
   boardCacheStore.hydrate({ mm: f }, { mm: 'map.board.json' });
-  boardStore.setBoard(f.board, {}, {}, []);
+  boardStore.setBoard(f.board);
 });
 afterEach(() => {
   pendingSettingsStore.cancel();

@@ -13,8 +13,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
  * this is an integration test of the wrapper against the live schema map.
  */
 
-const sendSpy = vi.fn();
-const invokeSpy = vi.fn(async () => undefined);
+const sendSpy = vi.fn<(...args: unknown[]) => void>();
+const invokeSpy = vi.fn(async (..._args: unknown[]) => undefined);
 let exposed: Record<string, unknown> = {};
 
 vi.mock('electron', () => ({

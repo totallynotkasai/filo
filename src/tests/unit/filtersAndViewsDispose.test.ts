@@ -22,7 +22,7 @@ describe('TaskListFiltersAndViews.dispose() (5.6)', () => {
       updateSettings,
       setSavedViews: () => {},
       tickAndPersist: () => {},
-      getGroupBy: () => 'section',
+      getGroupBy: () => 'none',
       getSortBy: () => 'manual',
       announce: () => {},
     });
@@ -33,7 +33,7 @@ describe('TaskListFiltersAndViews.dispose() (5.6)', () => {
     vi.useFakeTimers();
     const { filters } = makeFilters();
     const cb = vi.fn();
-    filters.lastViewPersistTimer = setTimeout(cb, 300);
+    filters.lastViewPersistTimer = setTimeout<[]>(cb, 300);
 
     filters.dispose();
     expect(filters.lastViewPersistTimer).toBeNull();

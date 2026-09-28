@@ -11,6 +11,7 @@ import { MoveFrameCommand } from '@renderer/commands/index';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Frame, MindMapBoard, Tile } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { seedBoard } from '../helpers/seedBoard';
 
 /**
  * A locked tile never moves: not when it is selected or grouped with a tile
@@ -122,7 +123,7 @@ describe('frame move undo and redo leave a locked tile alone', () => {
   it('only the tiles that travelled with the frame move back and forth', () => {
     const data = fixture();
     boardCacheStore.hydrate({ mm: data }, { mm: 'm.board.json' });
-    boardStore.setBoard(data.board, {
+    seedBoard(boardStore, data.board, {
       t1: makeTile('t1', 50, 50),
       t2: makeTile('t2', 400, 50, true),
     }, {}, data.frames);

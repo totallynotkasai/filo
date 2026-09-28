@@ -1,22 +1,12 @@
 import { promises as fs } from 'fs';
 import { randomBytes } from 'crypto';
 import { basename, dirname, join } from 'path';
-import { RESERVED_WINDOWS_NAMES } from '../utils/pathSecurity';
+import { safeFileName } from '../../shared/fileNames';
 import {
   recordPreservedEmergencyFile,
   clearPreservedEmergencyFilesForTarget,
 } from '../services/emergencyFileRegistry';
 import { fnv1a32 } from '../services/fileWatcherHash';
-
-/**
- * Characters that are illegal in Windows filenames.
- */
-const ILLEGAL_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
-
-/**
- * Max filename length (without extension). Conservative for cross-platform safety.
- */
-const MAX_NAME_LENGTH = 200;
 
 /** A path component may hold at most 255 UTF-16 units (NTFS) or 255 bytes (ext4/APFS). */
 const MAX_COMPONENT = 255;
@@ -47,45 +37,14 @@ export function tmpSiblingPath(finalPath: string, nonce: string): string {
 }
 
 /**
- * Sanitizes a string for use as a filename.
- * Strips illegal characters, collapses whitespace, truncates to max length,
- * strips trailing dots / spaces (Win32 silently strips them at
- * file-create time, which collides with a same-stem neighbour), and prefixes
- * an underscore in front of any name whose stem matches a Windows DOS device
- * name (CON / NUL / COM1 / LPT1 / …) so the sanitised result can pass
- * `assertSafeFilename` instead of throwing downstream.
+ * `name` as a file or folder name: illegal characters are dropped, and the
+ * rest follows the shared rule (`safeFileName` in `shared/fileNames.ts`):
+ * whitespace collapses, trailing dots / spaces go, a Windows device name gets
+ * a `_` prefix so the result clears `assertSafeFilename`, and an empty
+ * result is `Untitled`.
  */
 export function sanitizeFilename(name: string): string {
-  let sanitized = name
-    .replace(ILLEGAL_CHARS, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    // Strip any trailing dots (or dot+space runs) BEFORE the
-    // length truncation. `note.` on Win32 saves as `note`, masking a name
-    // collision with a sibling `note`.
-    .replace(/[. ]+$/, '');
-
-  if (sanitized.length > MAX_NAME_LENGTH) {
-    sanitized = sanitized
-      .slice(0, MAX_NAME_LENGTH)
-      .trim()
-      .replace(/[. ]+$/, '');
-  }
-
-  // Fallback for empty names
-  if (!sanitized) {
-    sanitized = 'Untitled';
-  }
-
-  // Same stem-based match as `assertSafeFilename`: `CON.md` /
-  // `aux.tar.gz` / `nul` all collide. Prefix with `_` so the sanitised
-  // result clears the assert instead of throwing.
-  const stem = (sanitized.split('.')[0] ?? '').toUpperCase();
-  if (RESERVED_WINDOWS_NAMES.has(stem)) {
-    sanitized = `_${sanitized}`;
-  }
-
-  return sanitized;
+  return safeFileName(name, '');
 }
 
 /**

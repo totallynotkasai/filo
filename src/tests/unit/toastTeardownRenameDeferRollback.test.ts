@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { fakeCommand } from '../helpers/fakeCommand';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { fireVaultSwap } from '@renderer/core/vaultLifecycle';
 import { historyStore, type Command } from '@renderer/stores/history.svelte';
@@ -227,7 +228,7 @@ describe('Audit-18 M4 — rollback restores via identity guard, not a blind snap
   it('a rejected undo preserves an interleaved execute (command on exactly one stack)', async () => {
     let rejectA: (e: Error) => void = () => {};
     let aUndoCount = 0;
-    const cmdA: Command = {
+    const cmdA: Command = fakeCommand({
       description: 'A',
       targetBoardId: '',
       execute() {},
@@ -236,8 +237,8 @@ describe('Audit-18 M4 — rollback restores via identity guard, not a blind snap
         if (aUndoCount === 1) return new Promise<void>((_r, rej) => { rejectA = rej; });
         // second undo (during the drain) succeeds
       },
-    };
-    const cmdB: Command = { description: 'B', targetBoardId: '', execute() {}, undo() {} };
+    });
+    const cmdB: Command = fakeCommand({ description: 'B', targetBoardId: '', execute() {}, undo() {} });
 
     historyStore.execute(cmdA); // undo=[A]
     const pUndo = historyStore.undo(); // A.undo parks; undo=[], redo=[A]
@@ -259,7 +260,7 @@ describe('Audit-18 M4 — rollback restores via identity guard, not a blind snap
   it('a rejected redo preserves an interleaved undo (command on exactly one stack)', async () => {
     let rejectA: (e: Error) => void = () => {};
     let aExecCount = 0;
-    const cmdA: Command = {
+    const cmdA: Command = fakeCommand({
       description: 'A',
       targetBoardId: '',
       execute() {
@@ -268,8 +269,8 @@ describe('Audit-18 M4 — rollback restores via identity guard, not a blind snap
         // call 1 (seed) + call 3 (drain redo) succeed
       },
       undo() {},
-    };
-    const cmdC: Command = { description: 'C', targetBoardId: '', execute() {}, undo() {} };
+    });
+    const cmdC: Command = fakeCommand({ description: 'C', targetBoardId: '', execute() {}, undo() {} });
 
     historyStore.execute(cmdA); // call1; undo=[A]
     await historyStore.undo(); // undo=[], redo=[A]
@@ -292,12 +293,12 @@ describe('Audit-18 M4 — rollback restores via identity guard, not a blind snap
 
   it('fast path: with no interleave, a rejected undo restores the stack exactly', async () => {
     let reject: (e: Error) => void = () => {};
-    const cmd: Command = {
+    const cmd: Command = fakeCommand({
       description: 'solo',
       targetBoardId: '',
       execute() {},
       undo() { return new Promise<void>((_r, rej) => { reject = rej; }); },
-    };
+    });
     historyStore.execute(cmd); // undo=[cmd]
     const p = historyStore.undo(); // parks; undo=[], redo=[cmd]
     reject(new Error('boom'));

@@ -64,7 +64,7 @@ describe('boardStore.addWaypoint', () => {
   it('exposes the new waypoint via both the slice getter and `current.waypoints`', () => {
     const fixture = makeMindMapFixture();
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'map.board.json' });
-    boardStore.setBoard(fixture.board, {}, {}, []);
+    boardStore.setBoard(fixture.board);
 
     expect(boardStore.waypoints.length).toBe(0);
     expect((boardStore.current as MindMapBoard).waypoints.length).toBe(0);

@@ -21,7 +21,7 @@ import { restoreFiloDefault } from '../helpers/filoBridge';
  * Either way every untouched key — an empty `aliases:`, a full datetime, a
  * comment, key order, a key another program added — must survive on disk,
  * and a malformed block is never replaced. (The Kanban field-edit seam is in
- * writePathRemediationPhase4.test.ts.)
+ * kanbanFieldEditFreshRead.test.ts.)
  */
 
 let vault: MemoryVault;

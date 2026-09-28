@@ -83,6 +83,7 @@ function ctxFor(project: Project | null, opts?: { markMetaDirty?: () => void }):
   return {
     getVaultPath: () => '/vault',
     setVaultPath: () => {},
+    resolveRecoveryDismissed: () => {},
     getFileTree: () => [],
     setFileTree: () => {},
     getSearchQuery: () => '',

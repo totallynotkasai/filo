@@ -64,7 +64,7 @@ test('Escape closes the Kanban tag popup with focus inside the editor input (Pha
       },
       { 'kb-tag': 'Boards/TagTest.board.json' },
     );
-    boardStore.setBoard(board, { t1: { id: 't1', type: 'text', title: 'Card 1', tags: [], position: { x: 0, y: 0 }, size: { width: 200, height: 80 }, style: {} } }, {}, []);
+    boardStore.setBoard(board);
     tabStore.open('kb-tag', 'Tag Test', 'kanban', '');
   });
 

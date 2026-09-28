@@ -92,7 +92,7 @@ describe('boardStore.setBoardDefaultFolder', () => {
   it('sets the per-board pin from an absolute path', () => {
     const fixture = makeFixture('b1');
     boardCacheStore.hydrate({ b1: fixture }, { b1: 'b1.board.json' });
-    boardStore.setBoard(fixture.board, {}, {}, []);
+    boardStore.setBoard(fixture.board);
 
     boardStore.setBoardDefaultFolder('/vault/Folder A');
     const settings = boardStore.current?.settings as { defaultFolder?: string };
@@ -102,7 +102,7 @@ describe('boardStore.setBoardDefaultFolder', () => {
   it('toggles off when the same path is passed twice', () => {
     const fixture = makeFixture('b1', 'Folder A');
     boardCacheStore.hydrate({ b1: fixture }, { b1: 'b1.board.json' });
-    boardStore.setBoard(fixture.board, {}, {}, []);
+    boardStore.setBoard(fixture.board);
 
     boardStore.setBoardDefaultFolder('/vault/Folder A');
     const settings = boardStore.current?.settings as { defaultFolder?: string };

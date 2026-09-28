@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { fakeCommand } from '../helpers/fakeCommand';
 import { historyStore, type Command } from '@renderer/stores/history.svelte';
 
 /**
@@ -28,7 +29,7 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
   });
 
   it('undo() restores the command to the undo stack when its body rejects', async () => {
-    const cmd: Command = {
+    const cmd: Command = fakeCommand({
       description: 'undo-rejects',
       targetBoardId: '',
       execute() {
@@ -37,7 +38,7 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
       async undo() {
         throw new Error('undo boom');
       },
-    };
+    });
 
     historyStore.execute(cmd);
     expect(historyStore.canUndo).toBe(true);
@@ -51,12 +52,12 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
 
     // And it is genuinely re-undoable — a second undo (this time with a
     // succeeding body) flips the stacks as normal.
-    const cmd2: Command = {
+    const cmd2: Command = fakeCommand({
       description: 'undo-succeeds',
       targetBoardId: '',
       execute() {},
       undo() {},
-    };
+    });
     // Replace the failing command with a clean one to prove the stack is sane.
     historyStore.clear();
     historyStore.execute(cmd2);
@@ -67,7 +68,7 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
 
   it('redo() restores the command to the redo stack when its body rejects', async () => {
     let execCount = 0;
-    const cmd: Command = {
+    const cmd: Command = fakeCommand({
       description: 'redo-rejects',
       targetBoardId: '',
       execute() {
@@ -77,7 +78,7 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
         if (execCount >= 2) throw new Error('redo boom');
       },
       undo() {},
-    };
+    });
 
     historyStore.execute(cmd);
     await historyStore.undo();
@@ -93,7 +94,7 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
 
   it('a successful undo/redo is unaffected by the rollback wiring', async () => {
     const log: string[] = [];
-    const cmd: Command = {
+    const cmd: Command = fakeCommand({
       description: 'happy-path',
       targetBoardId: '',
       execute() {
@@ -102,7 +103,7 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
       undo() {
         log.push('undo');
       },
-    };
+    });
 
     historyStore.execute(cmd);
     await historyStore.undo();
@@ -121,7 +122,7 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
   // must NOT resurrect the redo entry B invalidated.
   it('#18 — a failed async execute does not resurrect a redo entry a later command cleared', async () => {
     // Seed a redo entry: execute then undo a throwaway command.
-    const seed: Command = { description: 'seed', targetBoardId: '', execute() {}, undo() {} };
+    const seed: Command = fakeCommand({ description: 'seed', targetBoardId: '', execute() {}, undo() {} });
     historyStore.execute(seed);
     await historyStore.undo();
     expect(historyStore.canRedo).toBe(true); // redoStack = [seed]
@@ -131,16 +132,16 @@ describe('UR-1 — undo()/redo() rollback on body failure', () => {
     const aBody = new Promise<void>((_resolve, reject) => {
       rejectA = reject;
     });
-    const cmdA: Command = {
+    const cmdA: Command = fakeCommand({
       description: 'A-async-fails',
       targetBoardId: '',
       execute() {
         return aBody;
       },
       undo() {},
-    };
+    });
     // Command B — synchronous, succeeds.
-    const cmdB: Command = { description: 'B-sync', targetBoardId: '', execute() {}, undo() {} };
+    const cmdB: Command = fakeCommand({ description: 'B-sync', targetBoardId: '', execute() {}, undo() {} });
 
     const pA = historyStore.execute(cmdA); // commit A clears redo ([seed] → [])
     expect(historyStore.canRedo).toBe(false);

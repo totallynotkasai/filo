@@ -92,14 +92,14 @@ describe('Snap Tiles is saved on the board', () => {
   it('opening a board applies its saved snap setting', () => {
     const data = fixture(true);
     boardCacheStore.hydrate({ mm: data }, { mm: 'map.board.json' });
-    boardStore.setBoard(data.board, {}, {}, []);
+    boardStore.setBoard(data.board);
     expect(canvasStore.snapEnabled).toBe(true);
   });
 
   it('toggling writes settings.snapToGrid and flips the canvas', () => {
     const data = fixture(false);
     boardCacheStore.hydrate({ mm: data }, { mm: 'map.board.json' });
-    boardStore.setBoard(data.board, {}, {}, []);
+    boardStore.setBoard(data.board);
     expect(canvasStore.snapEnabled).toBe(false);
     boardStore.toggleSnapToGrid();
     expect(canvasStore.snapEnabled).toBe(true);

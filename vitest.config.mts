@@ -55,8 +55,7 @@ export default defineConfig({
       // Ratchet-style coverage gate for `src/renderer/lib/**` — the pure
       // logic surface that should always be unit-testable. Components and
       // stores are excluded because they currently rely on a real browser
-      // shell, not jsdom. The branch floor of 70 is the first MEASURED one
-      // (an earlier 80 was never actually run). Ratchet up only: raise a
+      // shell, not jsdom. Ratchet up only: raise a
       // threshold whenever new tests push coverage past it, never lower one.
       // Known gaps: lib/editor (TipTap), most of lib/canvas
       // gesture handlers, and the lib/**/persistence helpers that the
@@ -65,11 +64,13 @@ export default defineConfig({
       reporter: ['text', 'html', 'lcov'],
       include: ['src/renderer/lib/**/*.ts'],
       exclude: ['src/renderer/lib/**/*.svelte.ts'],
+      // Floors 2-3 points under the measured (Windows) lines 90.4, branches 79.6, functions 92.4,
+      // statements 87.8: the Linux CI job skips some Windows-only paths.
       thresholds: {
-        lines: 45,
-        branches: 70,
-        functions: 75,
-        statements: 45,
+        lines: 88,
+        branches: 77,
+        functions: 90,
+        statements: 85,
       },
     },
   },

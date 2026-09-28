@@ -5,7 +5,9 @@
  * Filo saves as you go, so there is nothing to "not save" on purpose. Leaving
  * freezes the editors, hands over what components hold (an uncommitted title,
  * a debounced filter or camera move), saves, and asks only when something is
- * still not on disk afterwards. The views unmount later, in the swap, so this
+ * still not on disk afterwards. Settings edits not yet applied (the theme
+ * editor, a Settings tab) are asked about first, since no writer holds them.
+ * The views unmount later, in the swap, so this
  * is the last point where their changes can still be saved. That dialog names each file and
  * why; "Close anyway" / "Open anyway" first keeps a rescue copy of each in
  * `.filo/recovery/`, and asks once more for anything it couldn't copy.
@@ -48,6 +50,21 @@ async function goAhead(title: string, message: string, detail: string, anyway: s
   }
 }
 
+/**
+ * Asks about unapplied Settings edits; true to go on. Loaded when needed: the
+ * settings stores import the vault store, which imports this module. A
+ * failure stays, so nothing is dropped unseen.
+ */
+async function settleSettingsFirst(kind: 'close' | 'open'): Promise<boolean> {
+  try {
+    const { settleOpenSettings } = await import('../lib/settings/settleOpenSettings');
+    return await settleOpenSettings(kind);
+  } catch (err) {
+    reportError('vault.leave', err, 'Asking about unapplied settings before leaving the vault failed');
+    return false;
+  }
+}
+
 async function saveOnce(save: () => Promise<boolean>): Promise<boolean> {
   try {
     return await save();
@@ -78,6 +95,9 @@ export async function saveUntilSettled(save: () => Promise<boolean>): Promise<bo
 }
 
 export async function saveBeforeLeaving(save: () => Promise<boolean>, kind: 'close' | 'open'): Promise<LeaveOutcome> {
+  // Settings the user hasn't applied (a theme being edited, a Settings tab)
+  // are in no writer, so the save below wouldn't see them: ask first.
+  if (!(await settleSettingsFirst(kind))) return 'cancelled';
   // The editors stay frozen from here until the swap has unmounted them, so
   // no keystroke lands after the check below; staying thaws them.
   const release = holdCloseDrainUntilSwap();

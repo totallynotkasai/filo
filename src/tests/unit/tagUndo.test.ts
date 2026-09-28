@@ -8,6 +8,9 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { beginVaultGeneration, captureVaultIdentity, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
+import { ViewHydration } from '@renderer/stores/boardViewRevision.svelte';
+import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
+import type { KanbanBoard } from '@renderer/schema/index';
 
 /**
  * Undo of a vault-wide tag delete puts the tag back in the notes the delete
@@ -100,5 +103,53 @@ describe('undo of a tag rename', () => {
     await undoRename(identity, 'old', 'fresh', undefined);
 
     expect(rename).not.toHaveBeenCalled();
+  });
+});
+
+describe('undo of a tag delete: filter chips on a mounted view', () => {
+  function kanban(filterTags: string[]): BoardFileData {
+    return {
+      version: 8,
+      board: {
+        id: 'kb', type: 'kanban', name: 'K', emoji: '', createdAt: 0, updatedAt: 0,
+        settings: { lastView: { sortBy: 'manual', filterTags: [...filterTags], filterProp: null } },
+        columns: [],
+      } as unknown as KanbanBoard,
+      tileDefs: {},
+      connections: {},
+      frames: [],
+    };
+  }
+
+  function lastViewTags(): string[] {
+    const s = boardCacheStore.cache.kb?.board.settings as { lastView?: { filterTags?: string[] } } | undefined;
+    return s?.lastView?.filterTags ?? [];
+  }
+
+  afterEach(() => boardCacheStore.clear());
+
+  it('the restored chip survives the view writing its filters back on its next save', async () => {
+    // The state after the delete: the chip is gone, and the mounted view has
+    // hydrated its filters from that `lastView`.
+    boardCacheStore.hydrate({ kb: kanban(['keep']) }, { kb: 'K.board.json' });
+    vi.spyOn(boardCacheStore, 'markDirty').mockImplementation(() => {});
+    const view = new ViewHydration();
+    view.mark('kb');
+    let viewFilters = [...lastViewTags()];
+    const settingsBefore = boardCacheStore.cache.kb?.board.settings;
+
+    await undoRemoval(snapshot({ writtenPaths: [], chips: [{ boardId: 'kb', slot: 'lastView', index: 0 }] }));
+
+    // What a mounted Kanban / Task List does before its save: hydrate again
+    // only when the revision moved on, then write its filters to `lastView`.
+    if (view.needs('kb')) {
+      viewFilters = [...lastViewTags()];
+      view.mark('kb');
+    }
+    const settings = boardCacheStore.cache.kb!.board.settings as { lastView: { filterTags: string[] } };
+    settings.lastView.filterTags = viewFilters;
+
+    expect(lastViewTags()).toEqual(['work', 'keep']);
+    expect(boardCacheStore.cache.kb?.board.settings).not.toBe(settingsBefore);
   });
 });

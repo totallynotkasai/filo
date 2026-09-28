@@ -23,6 +23,7 @@ import { noteStore } from './notes.svelte';
 import { uiStore } from './ui.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { iterateBoardOnlyTiles, flushTagRewriteBoardWrites } from './fileTagsCascade.svelte';
+import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { addTagToMarkdown } from '../lib/vault/tagRewriter';
 import { isMarkdownExtension } from '../lib/vault/extension';
 import { isMissingFileError } from '../lib/notes/noteWriter';
@@ -94,6 +95,28 @@ function insertAt(list: readonly string[], tagName: string, index: number): stri
 }
 
 /**
+ * Puts a filter chip back. The board's settings get a new object holding the
+ * chip, and its view revision moves on: a mounted Kanban / Task List hydrated
+ * its filters from `lastView` after the delete and writes them back on its
+ * next save, so without the bump it would write the chip away again.
+ */
+function restoreFilterChip(chip: FilterChip, tagName: string): void {
+  const board = boardCacheStore.cache[chip.boardId]?.board;
+  if (!board) return;
+  const settings = (board.settings ?? {}) as ViewSettings;
+  const carrier = carrierAt(settings, chip.slot);
+  if (!carrier || carrier.filterTags?.includes(tagName)) return;
+  const restored = { ...carrier, filterTags: insertAt(carrier.filterTags ?? [], tagName, chip.index) };
+  const slot = chip.slot;
+  const next: ViewSettings = slot === 'lastView'
+    ? { ...settings, lastView: restored }
+    : { ...settings, savedViews: (settings.savedViews ?? []).map((v, i) => (i === slot ? restored : v)) };
+  board.settings = next as typeof board.settings;
+  boardCacheStore.markDirty(chip.boardId);
+  bumpBoardViewRevision(chip.boardId);
+}
+
+/**
  * Deletes `tagName` everywhere (the caller has confirmed) and, once the
  * delete has committed, offers Undo on a toast. Resolves true when it committed.
  */
@@ -146,13 +169,7 @@ export async function undoRemoval(snapshot: TagRemovalSnapshot): Promise<void> {
     boardCacheStore.persistUpdateTile(t.id, { tags: insertAt(live.tags, tagName, t.index) }, t.boardId);
   }
 
-  for (const chip of snapshot.chips) {
-    const settings = viewSettings(chip.boardId);
-    const carrier = settings ? carrierAt(settings, chip.slot) : undefined;
-    if (!carrier || carrier.filterTags?.includes(tagName)) continue;
-    carrier.filterTags = insertAt(carrier.filterTags ?? [], tagName, chip.index);
-    boardCacheStore.markDirty(chip.boardId);
-  }
+  for (const chip of snapshot.chips) restoreFilterChip(chip, tagName);
 
   // Re-add to exactly the notes the delete rewrote, each on its fresh bytes.
   const failed: string[] = [];

@@ -12,6 +12,8 @@
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
   import { buildWriteErrorToast } from './lib/boards/writeErrorToast';
   import { retryAllFailedWrites } from './lib/boards/writeSchedulerFailures';
+  import { retryAndReport } from './lib/boards/retryFeedback';
+  import { hasOpenSettingsEdits, settleOpenSettings } from './lib/settings/settleOpenSettings';
   import { listenForSyncConflicts } from './lib/vault/syncConflictNotices';
   import { handleFlushAndQuit } from './lib/vault/handleFlushAndQuit';
   import { saveUntilSettled } from './stores/vaultLeaveGuard';
@@ -29,7 +31,7 @@
   import { registerNewNotesInTree } from './stores/newNotesInTree';
   import { registerBoardNamesFollowFiles } from './stores/boardIdentity';
   import { pushSaveState } from './stores/saveStateFeed';
-  import { setHeldDecisionsListener } from './stores/heldDecisions';
+  import { heldDecisions, setHeldDecisionsListener } from './stores/heldDecisions';
 
   // The markdown and board writers ask before overwriting a file another
   // program changed; without this they keep the local version silently.
@@ -78,10 +80,7 @@
     // display prefix stays `context`). Retry re-fires every retained failed
     // write (all five schedulers).
     const actions = retryable
-      ? [{ label: 'Retry', handler: async () => {
-          const { failed } = await retryAllFailedWrites();
-          if (failed.length > 0) uiStore.toast('Save still failing. Filo will try again on the next save and at quit.', 'error', 6000);
-        } }]
+      ? [{ label: 'Retry', handler: () => retryAndReport() }]
       : undefined;
     // Retry re-fires every failed write, so it fits a toast that names several files.
     writeErrorAggregator({ context, error: info.error, message, coalesceKey, path: info.path, sharedActions: actions });
@@ -160,6 +159,13 @@
       preservedTmpCount: () => preservedTmpCount(),
       keepRescueCopies: () => keepRescueCopies(),
       rollbackRescue: () => rollbackRawRescues(),
+      // A theme being edited or a Settings tab's unapplied fields: Apply /
+      // Discard / Cancel before the save, which can't see them.
+      openSettingsEdits: () => hasOpenSettingsEdits(),
+      settleOpenSettings: () => settleOpenSettings('quit'),
+      // When only decisions are left, the dialog offers to show them.
+      heldDecisionPaths: () => heldDecisions().map((d) => d.relPath()),
+      showDecisions: () => saveStateStore.requestDetails(),
     });
   });
 

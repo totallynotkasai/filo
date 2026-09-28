@@ -1,11 +1,11 @@
 import { ipcMain } from 'electron';
 import { basename } from 'path';
 import { promises as fsPromises } from 'fs';
-import { relativePosix } from '../utils/pathHelpers';
 import { toPosix } from '../../shared/pathUtils';
 import { copyFileToVault } from '../vault/fileOps';
 import {
-  assertWithinVault,
+  vaultRelativeIfInside,
+  vaultRelativeWithin,
   assertSafeRelativePath,
   assertNotInFiloDir,
 } from '../utils/pathSecurity';
@@ -105,14 +105,13 @@ export function registerVaultCopyHandlers(): void {
         } else {
           assertNotInFiloDir(basename(sourcePath));
         }
-        const sourceRel = relativePosix(vaultPath, sourcePath);
-        if (sourceRel && !sourceRel.startsWith('..') && !sourceRel.startsWith('/')) {
-          assertNotInFiloDir(sourceRel);
-        }
+        // Decided on the spelling containment matched, so a source named
+        // through an 8.3 or junction spelling of the vault is still seen inside.
+        const sourceRel = vaultRelativeIfInside(vaultPath, sourcePath);
+        if (sourceRel) assertNotInFiloDir(sourceRel);
 
         const destPath = await copyFileToVault(sourcePath, vaultPath, subfolder, VAULT_COPY_MAX_SIZE_BYTES, true); // final `true` = noFollowSource (O_NOFOLLOW/lstat-reject; see openSourceForCopy)
-        assertWithinVault(vaultPath, destPath);
-        const relativePath = relativePosix(vaultPath, destPath);
+        const relativePath = vaultRelativeWithin(vaultPath, destPath);
         return { success: true, path: destPath, relativePath };
       } catch (err) {
         logMainError('vault:copy-file', err);

@@ -579,6 +579,37 @@ Each new test file was run against the pre-fix source and failed there (23 failu
 
 **Gate.** `ipcSecurity/relative-from-canonical`: handlers must not call `relativePosix(vaultRoot, …)` on a path `assertWithinVault` checked.
 
+### Phase 6 outcome
+
+All five items are fixed. The regression tests are:
+- the new unit file `settingsOnLeave` (A24-36; 7 tests: quit, close and open another vault, each with Apply / Discard / Cancel and the theme editor);
+- the new unit file `retryAndDecisionMessages` (A24-37 and A24-38; 9 tests);
+- a new case in `tagUndo` (A24-39);
+- the new unit file `filoGuardOtherSpelling` (A24-40; 7 tests).
+
+Each new test was run against the pre-fix source and failed there (the passing cases are controls). Two gates were added (77 in all), each proven to bite:
+- `ipcSecurity/relative-from-canonical` (new): no `relativePosix` / `path.relative` in `src/main/ipc` or `src/main/protocol` (escape hatch `// allow-lexical-relative: <reason>`); `assertWithinVault`'s canonical branch returns the canonical pair; `vaultRelativeWithin` takes its relative path from that pair.
+- `writePath/leave-settles-unapplied-settings` (new): `saveBeforeLeaving` settles Settings edits before it freezes the editors, `handleFlushAndQuit` before `freeze()`, and `App.svelte` hands the quit handler `openSettingsEdits` and `settleOpenSettings('quit')`.
+
+**Deviations from the plan**
+
+- **A24-36.**
+  - The prompts live in a new `lib/settings/settleOpenSettings.ts`, which runs `settleThemeEditor`, then `settleUnappliedEdits` for Global Defaults, then for Current Board (so up to three prompts, one per scope, each naming the action: "quit Filo", "close the vault", "open another vault"). A settled tab is re-armed from the live values (`startGlobal` / `startBoard`), as the dialog's own bulk actions do, because the leave can still be called off later and the dialog stays open.
+  - `vaultLeaveGuard` loads that module with a dynamic `import()`. A static import made the settings stores part of the test setup's import graph (`setup.ts` → … → `vault.svelte.ts` → `vaultLeaveGuard`), so `vi.mock` of `pendingSettings` stopped working in `unappliedEditsPrompt.test.ts`; it also closed a `vault.svelte` ↔ `pendingSettings` import cycle. A failed load stays on the vault (reported), never drops the edits.
+  - On quit, the prompt is asked before the editors freeze and before the drain, after `app:quit-awaiting-user` (main would otherwise close the window under it after 5 s). Main then no longer bounds the rest of that quit with its heartbeat timer; the renderer's own 60 s drain deadline still does. With nothing unapplied, nothing is awaited, so the first heartbeat still goes out synchronously.
+  - The plan's component test is a unit test: `handleFlushAndQuit`, `saveBeforeLeaving` and the real prompts, with `pendingSettingsStore` mocked.
+  - The characterisation harness's `stopApp` now answers **Discard** to any such prompt while it closes the vault. Several `themes` specs end with the theme editor still open and changed, and the new prompt otherwise waited forever in teardown. Only the harness changed; the specs are untouched.
+- **A24-37.**
+  - The Retry handler moved out of `App.svelte` into a new `lib/boards/retryFeedback.ts` (`retryAndReport`). It diffs `unsavedWork().failed` before and after, describes what is left with `describeUnsaved`, and words it with a new pure `retryResultText` in `unsavedMessages.ts`, grouped by kind: a board or note write ("another program may be holding it", retried on every save and asked about before leaving), a theme or template save ("tried again only from here"; new `componentRetryPaths()` in `componentWriteRetry.ts`), a held decision (named by `heldDecisions()` or a `conflict` cause; no retry helps), a missing file and a non-UTF-8 note. Everything saved gives a short success toast.
+  - The toast is one paragraph (toasts render no line breaks), names up to three files, and carries its own **Retry again** when a write could still succeed, so "Retry again from here" is literally on it. It replaces the previous result toast (`dedupeKey`).
+- **A24-38.**
+  - A new pure `quitDialog` in `unsavedMessages.ts` decides the title from the held decisions' paths (`heldDecisions()`, passed in by `App.svelte`). "Waiting for your decision" is used only when every unsaved item is a held decision and no failed write preserved a `.tmp`; **Show decisions** sends `app:cancel-quit` and opens the save popover (`saveStateStore.requestDetails`). In a mixed case the dialog stays "Save failed" with **Retry now**, and `quitFailureBody` names how many of the items are waiting for a decision, in place of the old conflict-only line.
+- **A24-39.** As planned: `restoreFilterChip` gives the board a new settings object (and a new saved view or `lastView`) holding the chip, marks it dirty and bumps its view revision.
+- **A24-40.**
+  - `assertWithinVault` now returns `{ root, target }`: the resolved pair, or the canonical pair when only the canonical forms matched. The symlink walk moved unchanged into `assertNoLinkOutOfVault`.
+  - The relative path comes from a new `vaultRelativeWithin(vaultRoot, target)` rather than each handler reading the pair: it also throws for anything still starting with `..` or absolute, which covers the plan's third bullet in one place. `vaultRelativeIfInside` serves `vault:copy-file`'s source, which may be outside the vault; an inside source that `assertWithinVault` refuses (a link out, an unstatable folder) still gets its lexical path checked, so it can't skip the `.filo/` guard.
+  - Beyond the handlers the plan named (`vault:rename`, `vault:copy-file`, media), `vault:create-folder`, `vault:delete` and `board:create` now use it too; the gate covers every handler file. The test uses a junction as the stand-in for an 8.3 alias (both are the vault spelled another way; a junction needs no admin rights and works on the CI runners).
+
 ---
 
 ## Phase 7: Verification, docs, archive
@@ -609,5 +640,5 @@ Each new test file was run against the pre-fix source and failed there (23 failu
 | 3 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 3"` |
 | 4 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 4"` |
 | 5 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 5"` |
-| 6 | Not started | |
+| 6 | Done (2026-09-29) | see `git log --grep "Audit-24 Phase 6"` |
 | 7 | Not started | |

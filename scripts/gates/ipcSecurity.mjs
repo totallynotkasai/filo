@@ -402,6 +402,41 @@ export const checks = [
     },
   },
   {
+    id: 'relative-from-canonical',
+    title: 'IPC handlers take a vault-relative path only from the spelling containment was decided on',
+    hint:
+      'Use vaultRelativeWithin(vaultRoot, abs) (or vaultRelativeIfInside for a path that may be outside): ' +
+      'path.relative from a canonical root to an 8.3 / junction spelling gives `../..`, which the `.filo/` guards read as outside. ' +
+      'Or `// allow-lexical-relative: <reason>` on the line.',
+    run(ctx) {
+      const out = [];
+      for (const rel of ctx.files(['src/main/ipc', 'src/main/protocol'], { ext: ['.ts'] })) {
+        const code = stripCommentsKeepOffsets(ctx.read(rel));
+        const lines = ctx.read(rel).split('\n');
+        for (const m of code.matchAll(/\b(?:relativePosix|path\.relative|relative)\s*\(/g)) {
+          const line = lineAt(code, m.index);
+          if (/\/\/ allow-lexical-relative:/.test(lines[line - 1] ?? '')) continue;
+          out.push(fail(rel, line, `lexical relative path: ${(lines[line - 1] ?? '').trim()}`));
+        }
+      }
+      const SEC = 'src/main/utils/pathSecurity.ts';
+      const sec = ctx.read(SEC);
+      if (!sec) {
+        out.push(fail(SEC, undefined, 'missing'));
+      } else {
+        const code = stripCommentsKeepOffsets(sec);
+        if (!/return\s+assertWithinVault\(\s*canonicalRoot\s*,\s*canonicalTarget\s*\)/.test(code)) {
+          out.push(fail(SEC, undefined, "assertWithinVault's canonical branch must return the canonical pair"));
+        }
+        const fn = functionBody(code, 'vaultRelativeWithin');
+        if (!fn || !/assertWithinVault\(/.test(fn.text) || !/relativePosix\(\s*root\s*,\s*target\s*\)/.test(fn.text)) {
+          out.push(fail(SEC, undefined, 'vaultRelativeWithin must take the relative path from the pair assertWithinVault returns'));
+        }
+      }
+      return out;
+    },
+  },
+  {
     id: 'versioned-config',
     title: 'versioned config schemas are only parsed after migration',
     hint:

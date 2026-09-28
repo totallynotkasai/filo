@@ -681,6 +681,44 @@ export const checks = [
     },
   },
   {
+    id: 'leave-settles-unapplied-settings',
+    title: 'close, open-another-vault and quit ask about unapplied Settings edits before they save',
+    hint:
+      'A Settings tab\'s fields and the theme editor\'s colours are in no writer, so the save never sees them. ' +
+      'saveBeforeLeaving calls settleSettingsFirst() before holdCloseDrainUntilSwap(); handleFlushAndQuit settles ' +
+      'before freeze(); App.svelte gives the quit handler openSettingsEdits and settleOpenSettings(\'quit\').',
+    run(ctx) {
+      const out = [];
+      const GUARD = 'src/renderer/stores/vaultLeaveGuard.ts';
+      const guard = stripComments(ctx.read(GUARD) ?? '');
+      const leave = functionBody(guard, 'saveBeforeLeaving')?.text ?? '';
+      const settle = leave.search(/\bsettleSettingsFirst\s*\(/);
+      const freeze = leave.search(/\bholdCloseDrainUntilSwap\s*\(/);
+      if (settle < 0 || freeze < 0 || settle > freeze) {
+        out.push(fail(GUARD, undefined, 'saveBeforeLeaving must call settleSettingsFirst() before holdCloseDrainUntilSwap()'));
+      }
+      const first = functionBody(guard, 'settleSettingsFirst', { fnKeyword: true })?.text ?? '';
+      if (!/\bsettleOpenSettings\s*\(\s*kind\s*\)/.test(first)) {
+        out.push(fail(GUARD, undefined, 'settleSettingsFirst must run settleOpenSettings(kind)'));
+      }
+      const QUIT = 'src/renderer/lib/vault/handleFlushAndQuit.ts';
+      const quit = stripComments(ctx.read(QUIT) ?? '');
+      const handler = functionBody(quit, 'handleFlushAndQuit', { fnKeyword: true })?.text ?? '';
+      const qSettle = handler.search(/\bsettleSettingsBeforeQuit\s*\(/);
+      const qFreeze = handler.search(/\bdeps\.freeze\?*\.?\(/);
+      if (qSettle < 0 || qFreeze < 0 || qSettle > qFreeze) {
+        out.push(fail(QUIT, undefined, 'handleFlushAndQuit must settle unapplied settings before freeze()'));
+      }
+      const APP = 'src/renderer/App.svelte';
+      const app = stripComments(ctx.read(APP) ?? '');
+      if (!/\bopenSettingsEdits\s*:\s*\(\)\s*=>\s*hasOpenSettingsEdits\s*\(/.test(app)
+        || !/\bsettleOpenSettings\s*:\s*\(\)\s*=>\s*settleOpenSettings\s*\(\s*'quit'\s*\)/.test(app)) {
+        out.push(fail(APP, undefined, 'the quit handler must be given openSettingsEdits and settleOpenSettings(\'quit\')'));
+      }
+      return out;
+    },
+  },
+  {
     id: 'no-adhoc-schedulers',
     title: 'debounced IPC writes use createScheduler, not a hand-rolled setTimeout',
     hint: 'A hand-rolled timer-around-IPC drops failure attribution and flush/quit draining. Use createScheduler (writeScheduler.ts).',

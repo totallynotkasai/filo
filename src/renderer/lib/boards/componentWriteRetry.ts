@@ -32,6 +32,14 @@ export function releaseComponentWrite(relPath: string): void {
   retained.delete(vaultPath(relPath));
 }
 
+/**
+ * The paths of the kept writes. Only Retry fires these again (no save
+ * does), so a message about them says to retry from there.
+ */
+export function componentRetryPaths(): string[] {
+  return [...retained.values()].map((entry) => entry.relPath);
+}
+
 export function clearComponentRetries(): void {
   retained.clear();
 }

@@ -1,6 +1,7 @@
 import { uiStore } from '../../stores/ui.svelte';
 import type { SaveState } from '../../stores/saveState.svelte';
-import { quitFailureBody, rescueFailedDialog, type RescueResult, type UnsavedItem } from './unsavedMessages';
+import { quitDialog, rescueFailedDialog, type RescueResult, type UnsavedItem } from './unsavedMessages';
+import { vaultPath } from '../../../shared/vaultPath';
 
 /**
  * Flush-and-quit handler, extracted from `App.svelte` for testability.
@@ -13,7 +14,11 @@ import { quitFailureBody, rescueFailedDialog, type RescueResult, type UnsavedIte
  * drains again; Quit anyway first keeps a rescue copy of each unsaved change
  * in `.filo/recovery/` (and asks once more for any it couldn't copy);
  * Stay open sends `app:cancel-quit` so main can rewind `isFlushingForQuit`
- * and the user keeps editing.
+ * and the user keeps editing. When all that is left is held for the user's
+ * decision, the dialog is "Waiting for your decision" and offers
+ * "Show decisions" (stay open, list them) instead of "Retry now". Before any
+ * of this, unapplied Settings edits (the theme editor, a Settings tab) are
+ * asked about, since the save can't see them.
  *
  * Dependencies are injected so the unit test can drive every branch
  * without mocking the whole renderer.
@@ -61,6 +66,14 @@ export interface QuitFlushDeps {
    * `isUnsavedWorkEmpty(unsavedWork())`.
    */
   nothingUnsaved?: () => boolean;
+  /** Whether the theme editor or a Settings tab holds unapplied edits. Production wires `hasOpenSettingsEdits`. */
+  openSettingsEdits?: () => boolean;
+  /** Asks about those edits; false stays open. Production wires `settleOpenSettings('quit')`. */
+  settleOpenSettings?: () => Promise<boolean>;
+  /** Paths held for the user's answer (a conflict, a deleted note). Production wires `heldDecisions()`. */
+  heldDecisionPaths?: () => string[];
+  /** Opens the save indicator's list of decisions. Production wires `saveStateStore.requestDetails`. */
+  showDecisions?: () => void;
 }
 
 /**
@@ -145,16 +158,41 @@ export async function handleFlushAndQuit(deps: QuitFlushDeps): Promise<void> {
   // no-ops; the first invocation drives the quit to a terminal signal.
   if (isDrainingForQuit) return;
   isDrainingForQuit = true;
-  const thaw = deps.freeze?.();
   try {
-    // Staying (or anything that stops the quit) thaws the editors; a quit
-    // that goes ahead leaves them frozen until the window closes.
-    if (!(await drainAndQuit(deps))) thaw?.();
-  } catch (err) {
-    thaw?.();
-    throw err;
+    // Awaited only when there is something to ask: the drain's first
+    // heartbeat must go out synchronously, before main's 5 s timer runs down.
+    if (deps.openSettingsEdits?.() && !(await settleSettingsBeforeQuit(deps))) {
+      deps.send('app:cancel-quit');
+      return;
+    }
+    const thaw = deps.freeze?.();
+    try {
+      // Staying (or anything that stops the quit) thaws the editors; a quit
+      // that goes ahead leaves them frozen until the window closes.
+      if (!(await drainAndQuit(deps))) thaw?.();
+    } catch (err) {
+      thaw?.();
+      throw err;
+    }
   } finally {
     isDrainingForQuit = false;
+  }
+}
+
+/**
+ * Settings edits not yet applied are in no writer, so the save would never
+ * see them: ask Apply / Discard / Cancel before it runs. True to go on.
+ * Main is told a human is deciding first, or its 5 s timer would close the
+ * window under the prompt.
+ */
+async function settleSettingsBeforeQuit(deps: QuitFlushDeps): Promise<boolean> {
+  if (!deps.settleOpenSettings) return true;
+  deps.send('app:quit-awaiting-user');
+  try {
+    return await deps.settleOpenSettings();
+  } catch (err) {
+    deps.reportError('App', err, 'Asking about unapplied settings before quitting failed');
+    return false;
   }
 }
 
@@ -193,19 +231,32 @@ async function drainAndQuit(deps: QuitFlushDeps): Promise<boolean> {
     // clears its 5 s auto-destroy timer (which would otherwise vanish the
     // dialog and discard the choice). The ready/cancel reply drives the quit.
     deps.send('app:quit-awaiting-user');
-    const body = quitFailureBody(await settledOr(deps.describeUnsaved, []), await settledOr(deps.preservedTmpCount, 0));
-    const choice = await new Promise<'quit' | 'stay' | 'retry'>((resolve) => {
+    const decisions = new Set((deps.heldDecisionPaths?.() ?? []).map((p) => vaultPath(p)));
+    const dialog = quitDialog(
+      await settledOr(deps.describeUnsaved, []),
+      await settledOr(deps.preservedTmpCount, 0),
+      decisions,
+    );
+    const choice = await new Promise<'quit' | 'stay' | 'retry' | 'show'>((resolve) => {
       uiStore.openConfirm({
-        title: 'Save failed',
-        body,
+        title: dialog.title,
+        body: dialog.body,
         confirmLabel: 'Quit anyway',
         cancelLabel: 'Stay open',
-        secondaryAction: { label: 'Retry now', onClick: () => resolve('retry') },
+        // No retry answers a decision; staying to answer it does.
+        secondaryAction: dialog.decisionsOnly && deps.showDecisions
+          ? { label: 'Show decisions', onClick: () => resolve('show') }
+          : { label: 'Retry now', onClick: () => resolve('retry') },
         danger: true,
         onConfirm: () => resolve('quit'),
         onCancel: () => resolve('stay'),
       });
     });
+    if (choice === 'show') {
+      deps.send('app:cancel-quit');
+      deps.showDecisions?.();
+      return false;
+    }
     if (choice === 'retry') {
       retrying = true;
       continue;

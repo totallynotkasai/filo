@@ -460,7 +460,18 @@ export async function stopApp(opts: { keep?: boolean } = {}): Promise<void> {
   mainBridge().attach();
   const { vaultStore } = await import('@renderer/stores/vault.svelte');
   await quiesce(100);
-  await vaultStore.closeVault();
+  // Closing asks about unapplied Settings / theme-editor edits a case left
+  // open; tearing down, the answer is Discard (as a user abandoning them).
+  const closing = vaultStore.closeVault();
+  let closed = false;
+  void closing.finally(() => { closed = true; });
+  while (!closed) {
+    const discard = [...document.querySelectorAll<HTMLElement>('.confirm-dialog .confirm-btn.secondary')]
+      .find((b) => /^Discard/.test(b.textContent?.trim() ?? ''));
+    discard?.click();
+    await settle(50);
+  }
+  await closing;
   await settle(100);
   if (opts.keep) return;
   for (const root of [app.root, ...extraRoots.splice(0)]) {

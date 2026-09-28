@@ -1,7 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { basename, dirname, join } from 'path';
 import { promises as fsPromises, realpathSync } from 'fs';
-import { relativePosix } from '../utils/pathHelpers';
 import {
   readDirectoryTree,
   createFolder,
@@ -24,6 +23,7 @@ import { createExclusiveFile } from '../vault/exclusiveCreate';
 import { FileWatcher } from '../services/fileWatcher';
 import {
   assertWithinVault,
+  vaultRelativeWithin,
   assertSafeRelativePath,
   assertSafeFilename,
   assertNotInFiloDir,
@@ -179,12 +179,11 @@ export function registerVaultHandlers(): void {
   ipcMain.handle('vault:create-folder', async (_event, vaultRoot: string, folderPath: string) => {
     try {
       assertActiveVault(vaultRoot);
-      assertWithinVault(vaultRoot, folderPath);
       // Per-segment safety guard: rejects depth overrun, separators, `..`,
       // and Windows-illegal chars / reserved DOS names. `forCreation`
       // enforces the Win-only rules on every platform so a Mac user can't
       // seed a folder that breaks Windows.
-      const relPath = relativePosix(vaultRoot, folderPath);
+      const relPath = vaultRelativeWithin(vaultRoot, folderPath);
       assertSafeRelativePath(relPath, { forCreation: true });
       // Refuse mkdir inside `.filo/` via the generic
       // channel; dedicated config/tags/templates handlers own that dir.
@@ -224,12 +223,14 @@ export function registerVaultHandlers(): void {
   ipcMain.handle('vault:rename', async (_event, vaultRoot: string, oldPath: string, newPath: string) => {
     try {
       assertActiveVault(vaultRoot);
-      assertWithinVault(vaultRoot, oldPath);
-      assertWithinVault(vaultRoot, newPath);
+      // Both relative paths come from the spelling containment was decided on,
+      // so an 8.3 or junction spelling of the vault can't read as outside `.filo/`.
+      const oldRel = vaultRelativeWithin(vaultRoot, oldPath);
+      const newRel = vaultRelativeWithin(vaultRoot, newPath);
       // Refuse both src and dest inside `.filo/`: renaming out would let the
       // renderer exfiltrate config; renaming in would let it overwrite.
-      assertNotInFiloDir(relativePosix(vaultRoot, oldPath));
-      assertNotInFiloDir(relativePosix(vaultRoot, newPath));
+      assertNotInFiloDir(oldRel);
+      assertNotInFiloDir(newRel);
       // Validate the NEW basename (portable on every platform). The OLD
       // basename intentionally isn't — a POSIX file legitimately named
       // `2025:01:15.md` must still rename.
@@ -238,8 +239,6 @@ export function registerVaultHandlers(): void {
       // doesn't echo back as a `vault:file-renamed` external event and run
       // the whole rename cascade a second time (idempotent, but costs a
       // sentinel write + dirty-flush per descendant on a folder rename).
-      const oldRel = relativePosix(vaultRoot, oldPath);
-      const newRel = relativePosix(vaultRoot, newPath);
       let oldIsDirectory = false;
       try {
         const stat = await fsPromises.stat(oldPath);
@@ -319,15 +318,14 @@ export function registerVaultHandlers(): void {
   ipcMain.handle('vault:delete', async (_event, vaultRoot: string, itemPath: string) => {
     try {
       assertActiveVault(vaultRoot);
-      assertWithinVault(vaultRoot, itemPath);
+      const rel = vaultRelativeWithin(vaultRoot, itemPath);
       // Block generic deletes inside `.filo/` except the allowlisted
       // crash-recovery sentinels, whose cleanup flows through this channel.
-      assertNotInFiloDir(relativePosix(vaultRoot, itemPath));
+      assertNotInFiloDir(rel);
       // Pre-stat the path so we know whether to suppress as a single
       // entry (file) or a tree prefix (folder). Suppression has to
       // happen BEFORE the unlink so events that fire during the delete
       // are dropped — calling suppress after the fact is racy.
-      const rel = relativePosix(vaultRoot, itemPath);
       let isDirectory = false;
       try {
         const stat = await fsPromises.stat(itemPath);

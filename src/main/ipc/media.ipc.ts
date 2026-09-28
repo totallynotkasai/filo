@@ -3,11 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dns from 'dns';
 import { promisify } from 'util';
-import { assertNotInFiloDir, assertSafeFilename, assertSafeRelativePath, assertWithinVault, isPrivateUrl } from '../utils/pathSecurity';
+import { assertNotInFiloDir, assertSafeFilename, assertSafeRelativePath, assertWithinVault, isPrivateUrl, vaultRelativeWithin } from '../utils/pathSecurity';
 import { assertActiveVault } from '../utils/activeVaultCheck';
 import { getMimeType } from '../utils/mime';
 import { logMainError } from '../utils/mainLogger';
-import { relativePosix } from '../utils/pathHelpers';
 import { toPosix } from '../../shared/pathUtils';
 import { getVaultRoot, getActiveWatcher } from './vault.ipc';
 import { assertPayloadByteSize, PAYLOAD_LIMITS } from '../utils/payloadLimits';
@@ -172,8 +171,7 @@ export function registerMediaHandlers(): void {
       for (let n = 1; n <= MAX_RECORDING_NAME_TRIES; n++) {
         const candidate = n === 1 ? fileName : `${stem} (${n})${ext}`;
         const filePath = path.join(mediaDir, candidate);
-        assertWithinVault(vaultPath, filePath);
-        const relPath = relativePosix(vaultPath, filePath);
+        const relPath = vaultRelativeWithin(vaultPath, filePath);
         // Bracket the write with watcher suppression so the create event
         // doesn't force a full sidebar refresh while the renderer is still
         // wiring up the new audio tile.

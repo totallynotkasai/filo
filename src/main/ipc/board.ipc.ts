@@ -36,6 +36,7 @@ import {
 } from '../vault/configOps';
 import {
   assertWithinVault,
+  vaultRelativeWithin,
   assertSafeFilename,
   assertSafeRelativePath,
   assertNotInFiloDir,
@@ -47,7 +48,6 @@ import { vaultRegistry } from '../services/vaultRegistry';
 import { getActiveWatcher } from './vault.ipc';
 import { snapshotForRecovery, listRecoverySnapshots, type SnapshotPurpose } from '../services/recoverySnapshot';
 import { sweepOrphanTmpFiles } from '../services/orphanTmpSweep';
-import { relativePosix } from '../utils/pathHelpers';
 import {
   assertPayloadByteSize,
   jsonPayloadByteSize,
@@ -315,18 +315,17 @@ export function registerBoardHandlers(): void {
       // renderer would read the empty file as a broken board from another
       // program. Hide the path up front, but only while it holds one of those
       // two contents: another program's file at the name still gets through.
-      const plannedRel = relativePosix(vaultRoot, boardFilePath(vaultRoot, name, subfolder));
+      const plannedRel = vaultRelativeWithin(vaultRoot, boardFilePath(vaultRoot, name, subfolder));
       getActiveWatcher()?.suppressWrite(plannedRel, LOCK_AWARE_SUPPRESS_MS, '');
       getActiveWatcher()?.suppressWrite(plannedRel, LOCK_AWARE_SUPPRESS_MS, serializeBoardPayload(data));
       // A taken name fails here with EEXIST (`TARGET_EXISTS` to the renderer),
       // before anything is written.
       const fullPath = await createBoardFile(vaultRoot, name, data, subfolder);
-      assertWithinVault(vaultRoot, fullPath);
       // `path.relative`, not a string strip: the root the renderer sends can be
       // spelled differently from the path `createBoardFile` joined (forward
       // slashes, a trailing separator), and a strip that misses returns an
       // absolute path every later `board:save` of the board refuses.
-      const relativePath = relativePosix(vaultRoot, fullPath);
+      const relativePath = vaultRelativeWithin(vaultRoot, fullPath);
       // Hidden after the write (a refused create changes nothing); the
       // watcher's debounce still holds the event then. Unhidden, the create
       // reaches the renderer as an external change to a board the user may

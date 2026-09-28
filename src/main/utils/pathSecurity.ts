@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { toPosix } from '../../shared/pathUtils';
+import { relativePosix } from './pathHelpers';
 import { parseSentinelPath } from '../../shared/sentinelPaths';
 import { getMachineIdentity } from '../services/machineIdentity';
 import { RESERVED_WINDOWS_NAMES } from '../../shared/fileNames';
@@ -36,8 +37,15 @@ function canonicalPath(p: string): string | null {
  * out (e.g. to C:\Windows\System32) would pass the prefix check. We harden
  * this by realpath-ing the deepest existing ancestor of the target and
  * re-checking the prefix on the realpath result.
+ *
+ * Returns the root and target in the one spelling containment was decided
+ * on: the resolved pair, or the canonical pair when only the canonical forms
+ * matched. A vault-relative path must come from that pair
+ * (`vaultRelativeWithin`): from a canonical root and an 8.3-spelled target,
+ * `path.relative` gives `../../RUNNER~1/…`, which a `.filo/` check reads as
+ * outside `.filo/`.
  */
-export function assertWithinVault(vaultRoot: string, targetPath: string): void {
+export function assertWithinVault(vaultRoot: string, targetPath: string): VaultContainment {
   const resolvedRoot = path.resolve(vaultRoot);
   const resolvedTarget = path.resolve(targetPath);
 
@@ -59,14 +67,60 @@ export function assertWithinVault(vaultRoot: string, targetPath: string): void {
       const cRoot = isWindows ? canonicalRoot.toLowerCase() : canonicalRoot;
       const cTarget = isWindows ? canonicalTarget.toLowerCase() : canonicalTarget;
       if (cTarget === cRoot || cTarget.startsWith(cRoot + sep)) {
-        assertWithinVault(canonicalRoot, canonicalTarget);
-        return;
+        return assertWithinVault(canonicalRoot, canonicalTarget);
       }
     }
     throw new Error(`Path traversal denied: target is outside vault`);
   }
-  // Resolve symlinks/junctions for the deepest existing ancestor. If any
-  // ancestor canonicalises out of the vault, the operation is unsafe.
+  assertNoLinkOutOfVault(resolvedRoot, resolvedTarget);
+  return { root: resolvedRoot, target: resolvedTarget };
+}
+
+/** The root and target in the spelling `assertWithinVault` decided containment on. */
+export interface VaultContainment {
+  root: string;
+  target: string;
+}
+
+/**
+ * The vault-relative POSIX path of `targetPath`, after `assertWithinVault`,
+ * computed from the pair it matched. Throws for anything that would still
+ * come out as `..` or absolute, so no `.filo/` check downstream ever sees a
+ * path that climbs out and back in.
+ */
+export function vaultRelativeWithin(vaultRoot: string, targetPath: string): string {
+  const { root, target } = assertWithinVault(vaultRoot, targetPath);
+  const rel = relativePosix(root, target);
+  if (rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) {
+    throw new Error(`Path traversal denied: target is outside vault`);
+  }
+  return rel;
+}
+
+/**
+ * The vault-relative path of `p` when it is inside the vault, else null: for
+ * a path that may legitimately be outside (a copy source), where an inside
+ * one still has to pass the `.filo/` checks. A path lexically inside that
+ * `assertWithinVault` refuses (a link out of the vault, an unstatable folder)
+ * still gets its lexical relative path, so it can't skip those checks.
+ */
+export function vaultRelativeIfInside(vaultRoot: string, p: string): string | null {
+  try {
+    return vaultRelativeWithin(vaultRoot, p);
+  } catch {
+    const rel = relativePosix(path.resolve(vaultRoot), path.resolve(p));
+    return rel === '..' || rel.startsWith('../') || path.isAbsolute(rel) ? null : rel;
+  }
+}
+
+/**
+ * Resolves symlinks/junctions for the deepest existing ancestor of a target
+ * already lexically inside the root. If any ancestor canonicalises out of the
+ * vault, the operation is unsafe.
+ */
+function assertNoLinkOutOfVault(resolvedRoot: string, resolvedTarget: string): void {
+  const isWindows = process.platform === 'win32';
+  const sep = isWindows ? '\\' : path.sep;
   let probe = resolvedTarget;
   while (probe && probe !== path.dirname(probe)) {
     try {

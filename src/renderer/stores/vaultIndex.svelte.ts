@@ -11,7 +11,7 @@ import { reportError } from '../lib/utils/errorBus';
 import { isMarkdownExtension } from '../lib/vault/extension';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { noteReadEncoding, noteReadLink } from '../lib/vault/nonUtf8Paths.svelte';
-import { stripLeadingSlash, toPosix } from '../lib/utils/path';
+import { hasHiddenSegment, stripLeadingSlash, toPosix } from '../lib/utils/path';
 import type { FileTreeNode } from '../../shared/types';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { vaultPath, type VaultPath } from '../../shared/vaultPath';
@@ -283,6 +283,9 @@ export const vaultIndexStore = {
       const rel = toPosix(raw);
       if (seen.has(rel)) continue;
       seen.add(rel);
+      // A hidden folder (a sync client's `.stversions/` archive) is outside
+      // the sidebar tree, so outside search, tag counts and Replace All too.
+      if (hasHiddenSegment(rel)) continue;
       // Accept both `.md` and `.markdown` (case-insensitive), matching the
       // watcher classifier, which emits `document` events for both.
       const dot = rel.lastIndexOf('.');

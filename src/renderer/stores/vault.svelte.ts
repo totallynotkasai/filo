@@ -26,7 +26,7 @@ import {
   hasPartialTagRewriteState,
   hasPartialTagRemovalState,
 } from '../lib/vault/tagRewriteSentinel';
-import { readPendingRenameCascades } from '../lib/vault/renameCascadeSentinel';
+import { readPendingRenameCascades, namedByPendingRename } from '../lib/vault/renameCascadeSentinel';
 import { discardRenameCascade, repairRenameCascade } from '../lib/vault/renameCascadeRepair';
 import { noteFolderMoves, takeFolderMoves } from '../lib/vault/unreconciledFolderMoves';
 import { clearPinsOfMissingFolders } from '../lib/vault/folderPins';
@@ -81,7 +81,7 @@ import { invokeOk } from '../lib/utils/invokeOk';
 import { createTrailingDebounce } from '../lib/utils/trailingDebounce';
 import { flushAllComponents } from '../lib/boards/componentFlush';
 import { fileTagsStore } from './fileTags.svelte';
-import { emptyTagsFile } from '../lib/vault/tagsStorage';
+import { tidyTagsAfterOpen } from './openTagHousekeeping';
 import { fireVaultSwap, isVaultTearingDown, onVaultSwap } from '../core/vaultLifecycle';
 import type { VaultContext } from './vaultStoreTypes';
 import { makeTreeSlice } from './vaultTree';
@@ -464,67 +464,33 @@ function runPostCommitTasks(
     }
   })();
 
-  // ── 2. Vault-index rebuild + tags self-seed / orphan prune ───────
-  void vaultIndexStore.rebuild(fileTree).then(() => {
-    // Vault-identity guard. The rebuild yields, so an A→B swap can leave
-    // `fileTree` pointing at B while `newVaultPath` is still A — pruning B's
-    // tags against A's prefix would drop every entry and save them into B's
-    // tags.json (`assertActiveVault` can't help: B is legitimately active).
-    if (!isStillSameVault(identity)) return;
-    if (!fileTagsStore.isEmpty()) {
-      // Prune `.filo/tags.json:fileTags` entries whose path is no longer in
-      // the tree. Uses the LIVE `fileTree`, not the load-time `candidate.tree`:
-      // a file added/moved during the index rebuild would otherwise lose its
-      // tag entry. The identity bail above guarantees it's this vault's tree.
-      const flat = flattenTreePaths(fileTree, newVaultPath);
-      const dropped = fileTagsStore.pruneOrphanFileTags(flat);
-      if (dropped.length > 0) {
-        uiStore.toast(
-          `Pruned ${dropped.length} stale tag entr${dropped.length === 1 ? 'y' : 'ies'} from .filo/tags.json (files no longer in the vault).`,
-          'info',
-          5000,
-        );
-      }
-      // Surface drift: orphan tag references (a tile or file points
-      // at a tag name that has no registry entry).
-      const { tile, file } = fileTagsStore.detectOrphans();
-      if (tile + file > 0) {
-        uiStore.toast(
-          `Found ${tile + file} undefined tag reference${tile + file === 1 ? '' : 's'} (${tile} on tiles, ${file} on files). Open the Tags Browser to review.`,
-          'warning',
-          7000,
-        );
-      }
-      return;
-    }
-    // tags.json was empty — seed the tag registry from the frontmatter tags
-    // the index rebuild found. A note's tags themselves stay in its file.
-    const seed = emptyTagsFile();
-    let mutated = false;
-    for (const md of vaultIndexStore.allMetadata()) {
-      if (md.tags.length === 0) continue;
-      const unique = Array.from(new SvelteSet(
-        md.tags.map((t) => t.replace(/^#/, '').trim()).filter(Boolean),
-      ));
-      if (unique.length === 0) continue;
-      for (const t of unique) {
-        if (!seed.tags[t]) seed.tags[t] = { color: '#3a86ff', createdAt: Date.now() };
-      }
-      mutated = true;
-    }
-    if (mutated) fileTagsStore.setAll(seed);
+  // ── 2. Vault-index rebuild + recovery prompts, then tag housekeeping ─
+  // The rename-cascade sentinel is read before the prompts start, so the
+  // tag prune can spare the paths it names even after a Discard clears it.
+  const pendingRenames = readPendingRenameCascades(newVaultPath);
+  const recovered = pendingRenames
+    .catch(() => undefined)
+    .then(() => runRecoverySequencer(newVaultPath))
+    .catch((err) => {
+      reportError('vault.recovery', err, 'Failed to check for unfinished work from the last session');
+    });
+  const rebuilt = vaultIndexStore.rebuild(fileTree);
+  void tidyTagsAfterOpen({
+    identity,
+    vaultRoot: newVaultPath,
+    tree: () => fileTree,
+    rebuilt,
+    recovered,
+    pendingRenames,
   }).catch((err) => {
     // `rebuild()` can't reject (internally caught); backstop a programming
-    // error in the follow-up above.
+    // error in the follow-up.
     reportError(
       'vault.postCommit',
       err,
       'Post-open housekeeping failed (frontmatter reconcile / tag seeding). Reopen the vault to retry.',
     );
   });
-
-  // ── 3. Recovery sentinel sequencer ───────────────────────────────
-  void runRecoverySequencer(newVaultPath);
 }
 
 /**
@@ -756,9 +722,12 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
             if (!isStillSameVault(captured)) return;
           }
           await clearPendingRewrite(newVaultPath);
+          // An unfinished rename (answered in the next prompt) still moves
+          // its paths' attachment tags; leave them for it.
+          const renames = await readPendingRenameCascades(newVaultPath).catch(() => ({ entries: undefined }));
           if (!isStillSameVault(captured)) return;
           const flat = flattenTreePaths(fileTree, newVaultPath);
-          fileTagsStore.pruneOrphanFileTags(flat);
+          fileTagsStore.pruneOrphanFileTags(flat, namedByPendingRename(renames.entries ?? []));
         },
       });
     } else if (res.unreadable) {

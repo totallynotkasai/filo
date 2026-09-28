@@ -551,12 +551,16 @@ export function dropFolderInTags(file: TagsFile, prefix: string): TagsFile {
  * a `.md` key here is never a tag's home. The lookup is case-insensitive to
  * match `flattenTreePaths`'s producer convention.
  *
+ * `keep` names entries to leave alone although their file is missing (a
+ * rename still to be finished moves them later).
+ *
  * Returns `{ file, droppedPaths }`. `file === input` when nothing changed
  * so callers can skip a scheduleSave.
  */
 export function pruneFileTagsAgainstKnownPaths(
   file: TagsFile,
   knownPaths: ReadonlySet<string>,
+  keep: (path: string) => boolean = () => false,
 ): { file: TagsFile; droppedPaths: string[] } {
   const knownLower = new Set<string>();
   for (const p of knownPaths) knownLower.add(normalisePath(p).toLowerCase());
@@ -565,7 +569,7 @@ export function pruneFileTagsAgainstKnownPaths(
   const nextFileTags: Record<string, string[]> = {};
   for (const [key, tagArr] of Object.entries(file.fileTags)) {
     const norm = normalisePath(key).toLowerCase();
-    if (knownLower.has(norm) && !/\.(md|markdown)$/.test(norm)) {
+    if ((knownLower.has(norm) || keep(key)) && !/\.(md|markdown)$/.test(norm)) {
       nextFileTags[key] = tagArr;
       continue;
     }

@@ -23,6 +23,17 @@ export function stripLeadingSlash(p: string): string {
 }
 
 /**
+ * True when any `/`-separated segment of a vault-relative path starts with a
+ * dot (`.stversions/Note~1.md`, `.obsidian/app.json`, `.hidden.md`). The
+ * sidebar tree skips such entries, so the watcher and the vault index skip
+ * them too: otherwise a sync client's archived versions show up in search,
+ * tag counts and Replace All while the tree hides them.
+ */
+export function hasHiddenSegment(rel: string): boolean {
+  return toPosix(rel).split('/').some((s) => s.startsWith('.') && s !== '.' && s !== '..');
+}
+
+/**
  * An absolute or directory path in comparable form: forward slashes, trailing
  * slashes stripped. Case is kept (callers that need a case-insensitive match
  * fold it themselves, or use `samePath`).

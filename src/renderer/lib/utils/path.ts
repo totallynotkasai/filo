@@ -21,7 +21,7 @@ import { normalizeVaultRelative as sharedNormalizeVaultRelative } from '../../..
 import { normalizePath } from '../../../shared/pathUtils';
 
 // One implementation, shared with the main process (`src/shared/pathUtils.ts`).
-export { toPosix, stripLeadingSlash, normalizePath, toVaultRelative } from '../../../shared/pathUtils';
+export { toPosix, stripLeadingSlash, normalizePath, toVaultRelative, hasHiddenSegment } from '../../../shared/pathUtils';
 
 /**
  * True when two paths refer to the same on-disk location, ignoring separator

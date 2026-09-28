@@ -42,6 +42,7 @@ import { createId } from '../utils/ids';
 import { onVaultSwap } from '../../core/vaultLifecycle';
 import { ownSentinelPath } from './machineIdentity';
 import { readOwnSentinel, clearOwnSentinel } from './machineSentinels';
+import { normalizeVaultRelative } from '../../../shared/vaultPath';
 
 /**
  * PER MACHINE (`.filo/rename-cascade-pending.<machineId>.json`):
@@ -200,6 +201,23 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
  */
 export function readPendingRenameCascades(vaultRoot: string): Promise<ReadResult> {
   return withMutex(() => readSentinelInternal(vaultRoot));
+}
+
+/**
+ * Whether a path is, or sits under, a path an unfinished rename names (old or
+ * new side). Its attachment tags in `.filo/tags.json` still move with a Retry,
+ * so the open-time orphan prune must leave them: attachment tags have no
+ * other copy.
+ */
+export function namedByPendingRename(entries: readonly RenameCascadeEntry[]): (path: string) => boolean {
+  const roots = entries
+    .flatMap((e) => [e.oldPath, e.newPath])
+    .map((p) => normalizeVaultRelative(p).replace(/\/+$/, ''))
+    .filter((p) => p.length > 0);
+  return (path) => {
+    const p = normalizeVaultRelative(path);
+    return roots.some((r) => p === r || p.startsWith(`${r}/`));
+  };
 }
 
 /**

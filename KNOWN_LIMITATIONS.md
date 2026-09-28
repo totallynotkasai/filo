@@ -925,8 +925,8 @@ it survives only as the backup in `.filo/recovery/`.
 ## 31. A move by another program is followed only if its two halves arrive within about 1.5 s
 
 **What:** The watcher sees a move as "old name gone" plus "new name appeared"
-and pairs them back into a rename. A note that goes missing without a partner
-is held for `MISSING_NOTE_HOLD_MS` (1.5 s) so a partner that arrives in a later
+and pairs them back into a rename. A note or attachment that goes missing
+without a partner is held for `MISSING_NOTE_HOLD_MS` (1.5 s) so a partner that arrives in a later
 batch can still pair with it; after that it is reported as deleted. In the
 renderer, a note with a change not yet on disk waits `NOTE_RENAME_GRACE_MS`
 (3 s) before the "deleted" or "couldn't save" prompt, and asks nothing if a
@@ -960,6 +960,9 @@ new name and removal of the old one can be further apart.
   window also hides an empty file. Another program emptying that note within
   about 7 s of Filo creating it is not reported at once; the next reconcile
   pass shows it.
+- A file with no extension (`LICENSE`, `Makefile`) is not followed as a move:
+  from its name alone the watcher can't tell it from a folder, so it shows as
+  a delete plus a new file.
 
 ---
 
@@ -1070,3 +1073,29 @@ reliably. Hard-linked notes are rare, so Filo doesn't try.
 
 **Impact:** Edit a linked note through its original file. Don't hard-link
 notes inside a vault; use a symbolic link (read-only in Filo) or a copy.
+
+---
+
+## 35. An attachment's tags are dropped if its file is missing when the vault opens
+
+**What:** An attachment's tags (image, video, audio, any non-note file) live
+only in `.filo/tags.json`. After a vault opens, and after the startup prompts
+(an unfinished rename's **Retry** among them) are answered, Filo drops the
+entries whose file is not in the vault, with a toast saying how many. Paths an
+unfinished rename names are spared, whatever the answer to its prompt.
+
+**Where:** `tidyTagsAfterOpen` in
+[src/renderer/stores/openTagHousekeeping.ts](src/renderer/stores/openTagHousekeeping.ts),
+`namedByPendingRename` in
+[src/renderer/lib/vault/renameCascadeSentinel.ts](src/renderer/lib/vault/renameCascadeSentinel.ts).
+
+**Why accepted:** Without the prune, the tags of a file deleted while Filo was
+closed would stay in the tag counts, and would land on any new file given the
+same name.
+
+**Impact:** If a sync client delivers another machine's `.filo/tags.json`
+before an attachment that machine renamed, and this machine opens the vault in
+between, the attachment's tags are lost. Syncthing usually applies a rename at
+once (it rebuilds the new file from the old one's blocks), so the gap is short.
+If the "Pruned … stale tag entries" toast appears for a file that is still
+there, add its tags again.

@@ -56,6 +56,14 @@ function canonicalise(p: string): string {
   }
 }
 
+/**
+ * When the current vault was armed (`Date.now()`), i.e. when the renderer
+ * began reading it. A re-arm of the same path (`vault:watch`) keeps it. The
+ * watcher's first walk reports files changed since then, which the renderer's
+ * open-time reads may have missed.
+ */
+let armedAt = 0;
+
 export const vaultRegistry = {
   get currentVaultPath(): string | null {
     return currentVaultPath;
@@ -64,8 +72,14 @@ export const vaultRegistry = {
   get epoch(): number {
     return registrationEpoch;
   },
+  /** See `armedAt`. */
+  get armedAt(): number {
+    return armedAt;
+  },
   setCurrentVault(path: string | null): void {
     registrationEpoch += 1;
-    currentVaultPath = path === null ? null : canonicalise(path);
+    const next = path === null ? null : canonicalise(path);
+    if (next !== null && next !== currentVaultPath) armedAt = Date.now();
+    currentVaultPath = next;
   },
 };

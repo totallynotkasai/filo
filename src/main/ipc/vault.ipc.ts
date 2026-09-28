@@ -424,7 +424,7 @@ export function registerVaultHandlers(): void {
       // window can synchronously read the active vault path on startup.
       vaultRegistry.setCurrentVault(canonical);
       activeWatcher = new FileWatcher(canonical);
-      activeWatcher.start();
+      activeWatcher.start({ reportChangedSince: vaultRegistry.armedAt });
       // Reset the reconcile throttle so the new vault's first focus-driven
       // reconcile isn't dropped because the OLD vault's ran < 5 s ago.
       lastReconcileAt = 0;

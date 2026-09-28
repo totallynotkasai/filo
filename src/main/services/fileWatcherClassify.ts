@@ -1,5 +1,6 @@
 import { extname } from 'path';
 import type { FileChangeType } from './fileWatcherTypes';
+import { hasHiddenSegment } from '../../shared/pathUtils';
 
 /**
  * Path classification + ignore rules for the vault file watcher: the "what
@@ -37,6 +38,10 @@ export function shouldIgnorePath(normalized: string): boolean {
   for (const prefix of IGNORE_RULES.prefixedPaths) {
     if (normalized.startsWith(prefix)) return true;
   }
+  // Every other hidden entry (a sync client's `.stversions/` / `.stfolder/`,
+  // `.obsidian/`, `.trash/`, a dotfile) is outside what the sidebar shows, so
+  // it is outside what the watcher reports. `.filo/` keeps its own rules above.
+  if (!normalized.startsWith('.filo/') && hasHiddenSegment(normalized)) return true;
   const segments = normalized.split('/');
   const lastIdx = segments.length - 1;
   for (let i = 0; i < segments.length; i++) {
@@ -125,5 +130,28 @@ export function classifyChange(relativePath: string): FileChangeType {
     return 'attachment';
   }
 
+  // Any other file (`Report.docx`, `data.csv`) can back a File tile and carry
+  // tags in `.filo/tags.json`, so an outside move of it must pair as a rename
+  // too: a `'tree'` event is never correlated, which broke the tile and let
+  // the next open prune its tags. See `isAttachmentByExtensionOnly` for the
+  // folder-name caveat.
+  if (isAttachmentByExtensionOnly(relativePath)) return 'attachment';
+
   return 'tree';
+}
+
+/**
+ * True for a path that is an `'attachment'` only because its last segment has
+ * an extension (not media, not under `attachments/`, not a note or board). A
+ * path alone can't tell a file from a folder, so a folder whose name has a dot
+ * (`v1.2`) matches too; the watcher turns such an event back into `'tree'`
+ * once it sees the path is (or was) a directory. A name with no extension
+ * (`LICENSE`, a plain folder) stays `'tree'`.
+ */
+export function isAttachmentByExtensionOnly(relativePath: string): boolean {
+  if (relativePath.startsWith('.filo/') || relativePath.startsWith('attachments/')) return false;
+  if (relativePath.toLowerCase().endsWith('.board.json')) return false;
+  const ext = extname(relativePath).toLowerCase();
+  if (ext === '' || ext === '.' || ext === '.md' || ext === '.markdown' || ext === '.txt') return false;
+  return !MEDIA_EXTENSIONS.has(ext);
 }

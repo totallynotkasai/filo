@@ -110,8 +110,9 @@ filo/
 │   │   ├── services/                  # Main-process-only services
 │   │   │   ├── fileWatcher.ts         # fs.watch wrapper, debounced events
 │   │   │   ├── fileWatcherTypes.ts    # Shared watcher types
-│   │   │   ├── fileWatcherClassify.ts # Path classification + ignore rules for watcher events
+│   │   │   ├── fileWatcherClassify.ts # Path classification + ignore rules for watcher events (hidden segments like .stversions/ ignored; any other file with an extension is an attachment)
 │   │   │   ├── fileWatcherHash.ts     # Content hash (with a size ceiling) for echo and rename matching
+│   │   │   ├── fileWatcherWalk.ts     # The 30 s reconcile walk (re-reads a file only when its stat moved); files changed since the vault was armed
 │   │   │   ├── watcherSupervisor.ts   # Reopens the fs.watch handle after it dies
 │   │   │   ├── watcherSuppression.ts  # Own-echo windows: suppress / suppressWrite / suppressTree
 │   │   │   ├── syncConflictNotifier.ts # Live notices for sync-client conflict copies
@@ -121,7 +122,7 @@ filo/
 │   │   │   ├── emergencyFileRegistry.ts # Files preserved after a failed write (disk full, locked)
 │   │   │   ├── orphanTmpSweep.ts      # Sweeps orphaned atomic-write temps
 │   │   │   ├── quitFailureBreadcrumb.ts # `.filo/quit-failure.json` when quit preserved files
-│   │   │   ├── vaultRegistry.ts       # Active vault tracker (gates IPC)
+│   │   │   ├── vaultRegistry.ts       # Active vault tracker (gates IPC); armedAt: when the open began
 │   │   │   ├── recoverySnapshot.ts    # `.filo/recovery/` snapshots; `<ts>-unsaved/` rescue copies and `<ts>-keep/` kept versions (never pruned)
 │   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames
 │   │   │   ├── rendererCrashHandler.ts # Renderer crash → breadcrumb + Reload/Quit dialog
@@ -177,6 +178,7 @@ filo/
 │   │   │   ├── vaultExternalReconcilers.ts # Registers a reconciler per watcher event kind
 │   │   │   ├── vaultExternalPrompts.ts  # Attachment / note deleted outside Filo while tiles point at it
 │   │   │   ├── vaultExternalDriftPrompts.ts # Startup registration of the writers' drift prompts
+│   │   │   ├── openTagHousekeeping.ts # After open: seed an empty tag registry, or prune gone files' tags once the recovery prompts are answered
 │   │   │   ├── search.svelte.ts       # Search panel state: query, matches, replace
 │   │   │   ├── vaultRecovery.ts       # `.filo/.dirty.<machineId>` sentinel + recovery modal
 │   │   │   ├── vaultLeaveGuard.ts     # saveBeforeLeaving: close / open another vault save first, ask only if work is left

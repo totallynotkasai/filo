@@ -19,7 +19,7 @@ const FILE_SIZE_ALLOWLIST = {
   'src/renderer/components/boards/TaskItem.svelte': 1481,
   'src/renderer/components/boards/KanbanBoard.svelte': 1436,
   'src/renderer/components/boards/KanbanColumn.svelte': 1170,
-  'src/renderer/stores/vault.svelte.ts': 1572,
+  'src/renderer/stores/vault.svelte.ts': 1541,
 };
 
 // The refactor characterisation suite: user-visible behaviour the file-model
@@ -53,6 +53,7 @@ const CHARACTERISATION_SPECS = {
   'errorStates.test.ts': 7,
   'folderPinsAndVaultName.test.ts': 4,
   'boardFolders.test.ts': 8,
+  'syncedVault.test.ts': 2,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

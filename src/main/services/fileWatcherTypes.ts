@@ -21,7 +21,7 @@ export type FileChangeType =
   | 'config-tags'     // .filo/tags.json changed
   | 'config-theme'    // .filo/themes/*.json changed
   | 'config-template' // .filo/templates/*.template.json changed
-  | 'attachment'      // file in attachments/ changed
+  | 'attachment'      // any other file with an extension (media, documents, data)
   | 'tree'            // general tree structure changed (fallback)
   ;
 

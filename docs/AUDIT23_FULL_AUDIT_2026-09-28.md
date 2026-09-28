@@ -426,6 +426,43 @@ T5, T8, T9, T10 and T11 are covered by the specs above; they were not driven by 
 - Rename a `.docx` on B.
 - Turn versioning on and check that search shows no `.stversions` notes.
 
+#### Phase 4 status: done (2026-09-28)
+
+All seven items are fixed. Each has a regression test, and each test was proved to bite: a script put every old behaviour back in turn (16 mutations in the unit tests, 2 in the characterisation spec) and the matching test failed every time. Decision 3 was taken as recommended: every hidden segment is ignored, except Filo's own `.filo/` rules.
+
+| Item | Fix | Tests |
+|---|---|---|
+| S1 | New `hasHiddenSegment` (`shared/pathUtils.ts`). `shouldIgnorePath` ignores any path with a segment starting with a dot, outside `.filo/` (which keeps its own rules). The reconcile walk skips every hidden entry, not only `.git*` and the root `.filo`. `vaultIndex.applyChanges` skips hidden paths too. | `watcherSyncEdges.test.ts`: the ignore rule; a create under `.stversions/` is never reported; a note archived into `.stversions/` is not paired as a rename into it. `openTagPruneAndHiddenIndex.test.ts`: a `.stversions` note is not indexed and adds no tag. `syncedVault.test.ts` (characterisation): an archived version arriving while open adds no tag to the Tags browser |
+| D2 | New `stores/openTagHousekeeping.ts` (`tidyTagsAfterOpen`), moved out of `vault.svelte.ts`. The prune waits for the recovery prompts (the rename-cascade Retry moves the tags first), and spares every path an unfinished rename named when the vault opened (`namedByPendingRename`), whatever the prompt's answer. The sentinel is read before the prompts start, so a Discard can't hide it. The tag-rewrite prompt's Discard prune spares them too. | `openTagPruneAndHiddenIndex.test.ts`: nothing pruned while the prompts are open; afterwards a gone file's entry is dropped and the pending rename's is kept; `namedByPendingRename` matches both sides, children, case-folded |
+| D5 | `classifyChange` makes any other file with an extension an `attachment` (`isAttachmentByExtensionOnly`). The walk now caches every file's size, not only a hashed one's: without it an attachment's old side had no size, and the correlator's cold-cache rule refused every attachment pair. An `attachment` event for a path that is, or was, a folder (`v1.2`) goes out as `tree` (`knownDirs`). The attachment reconciler already prompts only when a tile points at the file. | `watcherSyncEdges.test.ts`: classification; an outside move of `Report.docx` pairs; a dotted folder goes out as `tree`. `syncedVault.test.ts`: a tagged `Report.docx` moved by another program keeps its tag at the new path |
+| D4 | Before correlating, a notify pass re-hashes every present file whose hash is cached, so a later move compares current content. | `watcherSyncEdges.test.ts`: a small note edited by another program (live event, no walk), then moved, pairs |
+| D11 | Notify passes are chained (`notifyChain`); `stop()` awaits the tail. Unpaired missing attachments are held like notes (`MISSING_NOTE_HOLD_MS`), so a move split across two passes pairs. | `watcherSyncEdges.test.ts`: three passes never overlap; an attachment delete and create in two passes pair |
+| D15 | The walk keeps a file's hash without reading it when size, mtime, change time and inode all match the last walk's and the mtime was already more than 5 s old then (`TRUST_STAT_AFTER_MS`). A younger file is still read every walk. | `watcherSyncEdges.test.ts`: an old unchanged note isn't re-read; a young note is; a same-size rewrite that puts the old mtime back is still reported |
+| D16 | `vaultRegistry.armedAt` records when a vault was armed (`vault:init-config`, the open's first IPC); a same-path re-arm keeps it. `vault:watch` passes it to the watcher, whose seed walk reports every note, board and reconciled `.filo/` config whose mtime or change time is at or after it (`changedSinceEvents`). | `watcherSyncEdges.test.ts`: a board changed after the vault was armed is reported, one from before and media aren't; no start time, no report; `armedAt` moves on arm, not on re-arm |
+
+The reconcile walk moved to a new `main/services/fileWatcherWalk.ts`, since `fileWatcher.ts` would otherwise have crossed the 1000-line gate. `vault.svelte.ts` shrank from 1572 to 1541 lines and its gate ceiling follows. The new characterisation spec is registered in the `characterisation-suite` gate.
+
+**Verification.** `npm run ci:verify` is green: 677 test files, 6414 tests passed, 5 skipped, 69/69 gates (the first run's `board-path-casefold` gate caught a `.board.json` compare on a lower-cased copy rather than an inline `.toLowerCase()`; fixed and the gates re-run). No existing test had to change.
+
+A real-app check (built app, Playwright `_electron`, a scratch vault with `Note.md` tagged `real`, a `Report.docx` tagged `work` in `tags.json`, and an archived `.stversions/Note~….md` tagged `ghost` holding the same word) confirmed:
+- **S1:** a search for the shared word found 1 result, not 2. A second archived version written while the vault was open added no tag: the Tags browser listed `real` and `work` only.
+- **D5:** `Report.docx` moved to `Archive/` by another program; `tags.json` then keyed `archive/report.docx` only.
+- **D4:** with `Note.md` open in a Document tab, another program edited it, then 2 s later moved it to `Moved/`. No "deleted" prompt or other toast appeared, the editor showed the edited text, and nothing was written back at the old name.
+- No renderer or console errors.
+
+D2, D11, D15 and D16 are timing- or crash-dependent and are covered by the specs above; they were not driven by hand.
+
+**Deviations from the plan**
+
+- **S1:** dotfiles are ignored as well as dot-folders (the sidebar tree skips both).
+- **D2:** both options, not one: the prune runs after the recovery prompts *and* spares the sentinel's paths. The plan's second trigger, Syncthing delivering `tags.json` before the renamed media while this machine opens the vault, has no sentinel on this machine and can't be told from a real delete; it is written up as KNOWN_LIMITATIONS #35. The tag-rewrite prompt's Discard, which also pruned before the rename prompt, got the same guard.
+- **D5:** the plan said "every non-`.md`, non-board, non-`.filo` file". A name with no extension (`LICENSE`) stays `tree`, because from the path alone it can't be told from a folder; KNOWN_LIMITATIONS #31 says so. Also needed, and not in the plan: the walk caching every file's size (without it no attachment moved outside `attachments/` could pair, even before this change), and the folder check.
+- **D4:** the plan offered "invalidate or re-hash"; it re-hashes, so a small note (under the 256-byte size-only floor) still pairs. An edit and a move that land in the *same* pass still can't pair (the old bytes are gone before they can be read); the move then shows as a delete plus a create, as before.
+- **D11:** also extended the missing-file hold from notes to attachments, which the plan didn't name, so a split attachment move pairs; `heldMissing` needs no merge once passes can't overlap.
+- **D15:** the plan said "only when mtime or size changed". That alone would have lost the reason the walk hashes (a same-size rewrite within one coarse timestamp tick on FAT / SMB), so a stat is trusted only once the mtime is safely in the past, and change time and inode must match too.
+- **D16:** the plan said "compare the seed stats with the candidate-load baselines". Themes and templates have no baselines, so the watcher instead reports files changed since the vault was armed; each reconciler already treats an unchanged file as a no-op. The change time counts too, since Syncthing gives a downloaded file the other machine's mtime.
+- **Real-app check:** no second Syncthing machine was available; see Verification for what was driven by hand.
+
 ### Phase 5: note write-path edges (D20, D21, D22, D24, D25, D35, CH1, D14, D26)
 
 1. **CH1.** One frontmatter object reader. `markdownSync` calls `parseFrontmatterObject`, or both call one function with an explicit policy for recoverable errors. Decide whether a duplicate key reads (index behaviour) or reads as `{}` (see Decisions). Add a fixture with a duplicate key and a tab indent, opened and closed.
@@ -504,6 +541,7 @@ T5, T8, T9, T10 and T11 are covered by the specs above; they were not driven by 
 - **Phase 1:** done 2026-09-28 (status block under Phase 1).
 - **Phase 2:** done 2026-09-28 (status block under Phase 2).
 - **Phase 3:** done 2026-09-28 (status block under Phase 3).
-- Phases 4–8: not started.
+- **Phase 4:** done 2026-09-28 (status block under Phase 4).
+- Phases 5–8: not started.
 
 When a phase lands, add a "Phase N status" block (fix, tests, verification, deviations) as in Audit-22. When every phase is done, move this file to `docs/archive/`.

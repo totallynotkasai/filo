@@ -1,16 +1,21 @@
-import { watch, type FSWatcher, readFileSync, statSync, promises as fsPromises } from 'fs';
+import { watch, type FSWatcher, readFileSync, statSync } from 'fs';
 import { BrowserWindow } from 'electron';
 import { join } from 'path';
 import { correlateRenames } from './renameCorrelation';
 import { announceSyncConflicts, loadKnownHosts, knownHostsFor } from './syncConflictNotifier';
 import {
   WATCHER_HASH_MAX_BYTES,
-  fnv1a32,
   sha1Hex,
   hashFileForRename,
 } from './fileWatcherHash';
+import {
+  walkVault,
+  changedSinceEvents,
+  isReconcileHashed,
+  reconcileHash,
+  type ReconcileEntry,
+} from './fileWatcherWalk';
 import { logMainError } from '../utils/mainLogger';
-import { relativePosix } from '../utils/pathHelpers';
 import { toPosix } from '../../shared/pathUtils';
 import { vaultPath, type VaultPath } from '../../shared/vaultPath';
 import type { FileChangeEvent, FileChangeType } from './fileWatcherTypes';
@@ -18,7 +23,7 @@ import {
   WatcherSupervisor,
   type WatcherState,
 } from './watcherSupervisor';
-import { shouldIgnorePath, classifyChange } from './fileWatcherClassify';
+import { shouldIgnorePath, classifyChange, isAttachmentByExtensionOnly } from './fileWatcherClassify';
 import { SuppressionWindows, type FileProbe } from './watcherSuppression';
 
 /**
@@ -31,30 +36,6 @@ const OWN_WRITE_COMPARE_MAX_BYTES = 2 * 1024 * 1024;
 export { correlateRenames } from './renameCorrelation';
 export type { FileChangeEvent, FileChangeType } from './fileWatcherTypes';
 export type { WatcherState, WatcherStatePayload } from './watcherSupervisor';
-
-interface ReconcileEntry {
-  mtimeMs: number;
-  size: number;
-  /**
-   * FNV-1a 32-bit hash of the file content (the whole file under
-   * {@link WATCHER_HASH_MAX_BYTES}, a 4 KB prefix above it). Catches the
-   * FAT/SMB case where 2-second mtime granularity leaves both stat fields
-   * unchanged across two writes. `undefined` for non-`.md`/`.board.json`
-   * files (media isn't hashed, for cost) and for files we couldn't open.
-   */
-  hash?: number;
-}
-
-/** Whether the reconcile walk hashes this path's content (notes and boards). */
-function isReconcileHashed(rel: string): boolean {
-  const lower = rel.toLowerCase();
-  return lower.endsWith('.md') || lower.endsWith('.board.json');
-}
-
-/** The reconcile hash of `bytes`: the whole file under the ceiling, a 4 KB prefix above it. */
-function reconcileHash(bytes: Buffer): number {
-  return bytes.length <= WATCHER_HASH_MAX_BYTES ? fnv1a32(bytes) : fnv1a32(bytes.subarray(0, 4096));
-}
 
 /**
  * How long between reconciliation passes. The walker has to stat every file
@@ -70,8 +51,9 @@ const RECONCILE_INTERVAL_MS = 30_000;
  * across volumes, a sync client that downloads the new name before it removes
  * the old one), and the correlator only pairs events it sees together. A held
  * delete joins the next batch; if nothing pairs it by the deadline, it goes
- * out as a delete. Only `.md` notes are held: attachments and boards have
- * their own grace windows in the renderer.
+ * out as a delete. Notes and attachments are held (the renderer's attachment
+ * grace window can only wait for a rename the watcher sends, never pair one);
+ * boards have their own drift handling in the renderer.
  */
 export const MISSING_NOTE_HOLD_MS = 1500;
 
@@ -150,6 +132,21 @@ export class FileWatcher {
    * but not their content.
    */
   private lastKnownHashes = new Map<VaultPath, string>();
+
+  /**
+   * Folders the walk or a notify pass has seen. An event for a folder whose
+   * name has a dot (`v1.2`) classifies as an attachment by its "extension";
+   * once gone, only this set says it was a folder, so it goes out as `'tree'`
+   * and never reaches the attachment "deleted" prompt.
+   */
+  private knownDirs = new Set<VaultPath>();
+
+  /**
+   * The tail of the notify-pass chain. Passes run one at a time: two passes
+   * in flight at once could send their renames out of order, and a pass that
+   * took the held missing notes could race one still pairing them.
+   */
+  private notifyChain: Promise<void> = Promise.resolve();
 
   /**
    * Snapshot of the vault filesystem from the last successful reconciliation
@@ -303,6 +300,9 @@ export class FileWatcher {
       mtimeMs: stat.mtimeMs,
       size: stat.size,
       hash: isReconcileHashed(onDisk) ? reconcileHash(bytes) : undefined,
+      ctimeMs: stat.ctimeMs,
+      ino: stat.ino,
+      seenAt: Date.now(),
     });
   }
 
@@ -349,7 +349,11 @@ export class FileWatcher {
     return classifyChange(relativePath);
   }
 
-  start(): void {
+  /**
+   * `reportChangedSince`: when the renderer began reading the vault (see
+   * `changedSinceEvents`); omitted, the seed pass reports nothing.
+   */
+  start(options: { reportChangedSince?: number } = {}): void {
     if (this.watcher) return;
     if (this.aborted) return;
 
@@ -357,11 +361,12 @@ export class FileWatcher {
     void loadKnownHosts(this.vaultPath); // OneDrive device names for conflict detection
 
     // Seed the reconciliation snapshot in the background (the first pass
-    // fires no events). The reconcile timer is intentionally independent of
+    // fires no events, apart from files changed since the vault was armed).
+    // The reconcile timer is intentionally independent of
     // the live watcher state — it keeps running during `reconnecting` so
     // external edits still surface (at the 30 s cadence) until the live
     // handle comes back.
-    void this.reconcileNow({ seedOnly: true });
+    void this.reconcileNow({ seedOnly: true, reportChangedSince: options.reportChangedSince });
     this.reconcileTimer = setInterval(() => {
       void this.reconcileNow({ seedOnly: false });
     }, RECONCILE_INTERVAL_MS);
@@ -491,6 +496,7 @@ export class FileWatcher {
     this.heldMissing.clear();
     this.lastKnownSizes.clear();
     this.lastKnownHashes.clear();
+    this.knownDirs.clear();
     this.reconcileSnapshot = null;
     this.reconcileInFlight = false;
     this.reconcileInFlightPromise = null;
@@ -511,7 +517,7 @@ export class FileWatcher {
    * Surfaces `vault:watcher-failed` if the walker errors (the vault root has
    * gone unreadable) rather than leaving a silently dead watcher.
    */
-  async reconcileNow(options: { seedOnly?: boolean } = {}): Promise<void> {
+  async reconcileNow(options: { seedOnly?: boolean; reportChangedSince?: number } = {}): Promise<void> {
     if (this.reconcileInFlight) return;
     if (this.aborted) return;
     this.reconcileInFlight = true;
@@ -519,7 +525,12 @@ export class FileWatcher {
     // happens before any await suspension, so a same-tick `stop()` sees it.
     const promise = (async () => {
       try {
-        const current = await this.walkVault();
+        const current = await walkVault(this.vaultPath, {
+          previous: this.reconcileSnapshot,
+          knownDirs: this.knownDirs,
+          lastKnownSizes: this.lastKnownSizes,
+          lastKnownHashes: this.lastKnownHashes,
+        });
         if (current === null) return;
         if (this.aborted) return;
         const previous = this.reconcileSnapshot;
@@ -553,7 +564,16 @@ export class FileWatcher {
           }
         }
         this.reconcileSnapshot = current;
-        if (options.seedOnly || previous === null) return;
+        if (options.seedOnly || previous === null) {
+          const changed = options.reportChangedSince === undefined
+            ? []
+            : changedSinceEvents(current, options.reportChangedSince);
+          if (changed.length > 0 && !this.aborted) {
+            this.pendingChanges.push(...changed);
+            this.scheduleNotify();
+          }
+          return;
+        }
 
         const synthesised: FileChangeEvent[] = [];
         // Vanished paths go first: the correlator pairs a case-only rename by
@@ -630,125 +650,6 @@ export class FileWatcher {
     await promise;
   }
 
-  /**
-   * Recursively walks the vault directory and returns a map of every regular
-   * file's vault-relative path to its mtime + size. Returns `null` if the
-   * vault root itself can't be opened — the caller surfaces a watcher
-   * failure rather than treating the missing root as "vault is empty"
-   * (which would synthesise a delete for every known file).
-   */
-  private async walkVault(): Promise<Map<string, ReconcileEntry> | null> {
-    const out = new Map<string, ReconcileEntry>();
-    try {
-      await fsPromises.access(this.vaultPath);
-    } catch {
-      return null;
-    }
-    await this.walkDir(this.vaultPath, out);
-    await this.walkFiloConfig(out);
-    return out;
-  }
-
-  /**
-   * The main walk skips `.filo/` wholesale (cache / recovery / viewports
-   * rewrite constantly), but the renderer-reconciled config files must still
-   * be covered, or an external edit to tags.json / a theme / a template made
-   * while the live handle is down would never surface. Stat just the `.filo`
-   * paths `classifyChange` maps to a granular `config-*` type. The granular
-   * reconcilers are echo-tolerant, so self-writes are harmless.
-   */
-  private async walkFiloConfig(out: Map<string, ReconcileEntry>): Promise<void> {
-    const tagsRel = '.filo/tags.json';
-    try {
-      const stat = await fsPromises.stat(join(this.vaultPath, tagsRel));
-      if (stat.isFile()) {
-        out.set(tagsRel, { mtimeMs: stat.mtimeMs, size: stat.size, hash: undefined });
-      }
-    } catch {
-      // No tags.json yet (fresh vault) — nothing to track.
-    }
-    for (const sub of ['themes', 'templates'] as const) {
-      // walkDir's `.filo`-skip only fires at the vault ROOT, so walking the
-      // subdirectory directly reuses the EACCES/ENOENT-tolerant walk + the
-      // `.tmp`/`.bak` filter; entries land as `.filo/<sub>/…` rel paths.
-      await this.walkDir(join(this.vaultPath, '.filo', sub), out);
-    }
-  }
-
-  private async walkDir(dir: string, out: Map<string, ReconcileEntry>): Promise<void> {
-    let entries: import('fs').Dirent[];
-    try {
-      entries = await fsPromises.readdir(dir, { withFileTypes: true });
-    } catch (err) {
-      // EACCES on a subdirectory is recoverable — just skip the subtree.
-      // ENOENT here means the dir was deleted between readdir and stat,
-      // which is fine too.
-      const code = (err as NodeJS.ErrnoException | null)?.code;
-      if (code === 'EACCES' || code === 'ENOENT') return;
-      throw err;
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith('.git')) continue;
-      if (entry.name === '.filo' && dir === this.vaultPath) {
-        // .filo is owned by Filo; skip the whole subtree from the main
-        // reconciliation walk. Cache, recovery, viewports rewrite often
-        // and would produce constant synthesised events for no benefit.
-        // The renderer-reconciled config files are re-added by
-        // walkFiloConfig().
-        continue;
-      }
-      if (entry.name.endsWith('.tmp') || entry.name.endsWith('.bak')) continue;
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await this.walkDir(full, out);
-      } else if (entry.isFile()) {
-        try {
-          const stat = await fsPromises.stat(full);
-          const rel = relativePosix(this.vaultPath, full);
-          let hash: number | undefined;
-          // Hash `.md` + `.board.json` so reconcile can detect mid-second
-          // rewrites on filesystems with second-resolution mtime (FAT, SMB,
-          // some NFS configs), AND seed the SHA-1 the cross-basename
-          // correlator consumes for the now-missing source of a rename. One
-          // read feeds both digests so the walk stays at one open per file.
-          //
-          // Under WATCHER_HASH_MAX_BYTES hash the WHOLE file, so a deep edit
-          // past 4 KB is caught and the SHA-1 seed matches the on-demand
-          // rename probe's digest. Above the ceiling use a 4 KB-prefix FNV
-          // only; the rename gate refuses such pairs, so no SHA-1 is seeded.
-          if (isReconcileHashed(rel)) {
-            try {
-              if (stat.size <= WATCHER_HASH_MAX_BYTES) {
-                const buf = await fsPromises.readFile(full);
-                // The size too: the cross-basename pass answers a now-missing
-                // file's size from this cache.
-                this.lastKnownSizes.set(vaultPath(rel), buf.length);
-                hash = reconcileHash(buf);
-                this.lastKnownHashes.set(vaultPath(rel), sha1Hex(buf));
-              } else {
-                const fd = await fsPromises.open(full, 'r');
-                try {
-                  const head = Buffer.alloc(4096);
-                  const { bytesRead } = await fd.read(head, 0, 4096, 0);
-                  hash = fnv1a32(head.subarray(0, bytesRead));
-                } finally {
-                  await fd.close();
-                }
-              }
-            } catch {
-              // Hash failure isn't fatal; leave undefined and the diff
-              // falls back to mtime+size comparison.
-            }
-          }
-          out.set(rel, { mtimeMs: stat.mtimeMs, size: stat.size, hash });
-        } catch {
-          // File gone between readdir and stat — race with a concurrent
-          // delete. Skip; the next pass picks it up if it stays gone.
-        }
-      }
-    }
-  }
-
   private scheduleNotify(): void {
     // Refuse to arm a new debounce after `stop()`: the live watcher callback
     // may have queued events in the same tick stop() fired.
@@ -776,6 +677,24 @@ export class FileWatcher {
     }, delay);
   }
 
+  /**
+   * An "attachment" event for a path that is, or was, a folder goes out as
+   * `'tree'` (see `isAttachmentByExtensionOnly`): folder moves are read off
+   * the tree, and the attachment path would ask about a "deleted" file.
+   */
+  private folderAsTree(c: FileChangeEvent): FileChangeEvent {
+    if (c.type !== 'attachment' || !isAttachmentByExtensionOnly(c.filename)) return c;
+    const key = vaultPath(c.filename);
+    let isDir: boolean;
+    try {
+      isDir = statSync(join(this.vaultPath, c.filename)).isDirectory();
+      if (isDir) this.knownDirs.add(key);
+    } catch {
+      isDir = this.knownDirs.has(key);
+    }
+    return isDir ? { ...c, type: 'tree' } : c;
+  }
+
   /** Runs a notify pass when the oldest held missing note's wait is over. */
   private armHeldTimer(): void {
     if (this.heldTimer) {
@@ -794,15 +713,19 @@ export class FileWatcher {
   }
 
   private async notifyRenderers(): Promise<void> {
-    // Publish the in-flight handle so `stop()` can await the pass. Cleared
-    // only when THIS pass is still the published one, so an overlapping pass
-    // can't drop a sibling's handle.
-    const promise = this.notifyRenderersImpl();
-    this.notifyInFlightPromise = promise;
+    // Queue behind the running pass (see `notifyChain`). The pass takes the
+    // pending events when it starts, so a pass queued while another runs
+    // sends whatever arrived meanwhile, after the first one's renames.
+    const run = this.notifyChain.then(() => this.notifyRenderersImpl());
+    const tail = run.catch(() => undefined); // the caller's catch logs it
+    this.notifyChain = tail;
+    // Publish the in-flight tail so `stop()` can await every queued pass.
+    // Cleared only when THIS pass is still the last one queued.
+    this.notifyInFlightPromise = tail;
     try {
-      await promise;
+      await run;
     } finally {
-      if (this.notifyInFlightPromise === promise) {
+      if (this.notifyInFlightPromise === tail) {
         this.notifyInFlightPromise = null;
       }
     }
@@ -842,7 +765,8 @@ export class FileWatcher {
       seen.add(key);
       unique.push(h.event);
     }
-    for (const c of changes) {
+    for (const raw of changes) {
+      const c = this.folderAsTree(raw);
       const key = `${c.type}:${c.filename}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -912,6 +836,19 @@ export class FileWatcher {
         return cached ?? null;
       }
     };
+    // A file another program changed keeps the hash cached before the change
+    // (the walk re-reads only every 30 s), and a stale hash vetoes the pair
+    // when the file is then moved: a delete plus a create, and broken tiles.
+    // Re-hash every present file with a cached hash here, while its bytes can
+    // still be read; a move in a later pass then compares current content.
+    await Promise.all(unique.map(async (c) => {
+      if (c.type !== 'document' && c.type !== 'board' && c.type !== 'attachment') return;
+      const key = vaultPath(c.filename);
+      if (!this.lastKnownHashes.has(key) || !exists(c.filename)) return;
+      this.lastKnownHashes.delete(key);
+      await hashAsync(c.filename);
+    }));
+    if (this.aborted) return;
     const { filtered: correlated, renames, conflicts } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath));
     // Re-check after the only await: a vault swap inside the hash-probe
     // window must not send the OLD vault's events — the renderer's rename
@@ -936,13 +873,14 @@ export class FileWatcher {
       }
     }
 
-    // An unpaired missing note waits (up to MISSING_NOTE_HOLD_MS from when it
-    // was first seen) for a create in a later batch to pair with.
+    // An unpaired missing note or attachment waits (up to
+    // MISSING_NOTE_HOLD_MS from when it was first seen) for a create in a
+    // later batch to pair with.
     const now = Date.now();
     const filtered: FileChangeEvent[] = [];
     for (const c of correlated) {
       const key = `${c.type}:${c.filename}`;
-      if (c.type === 'document' && !exists(c.filename)) {
+      if ((c.type === 'document' || c.type === 'attachment') && !exists(c.filename)) {
         const since = held.get(key)?.since ?? now;
         if (now - since < MISSING_NOTE_HOLD_MS) {
           this.heldMissing.set(key, { event: c, since });

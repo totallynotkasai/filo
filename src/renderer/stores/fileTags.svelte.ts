@@ -314,8 +314,8 @@ export const fileTagsStore = {
    * producer convention) — Windows/macOS users routinely have a single file
    * recorded with a case variant the live tree no longer carries.
    */
-  pruneOrphanFileTags(knownPaths: ReadonlySet<string>): string[] {
-    const result = pruneFileTagsAgainstKnownPaths(file, knownPaths);
+  pruneOrphanFileTags(knownPaths: ReadonlySet<string>, keep?: (path: string) => boolean): string[] {
+    const result = pruneFileTagsAgainstKnownPaths(file, knownPaths, keep);
     if (result.droppedPaths.length === 0) return [];
     file = result.file;
     scheduleSave();

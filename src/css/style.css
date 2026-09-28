@@ -193,7 +193,8 @@ img, svg {
   --text-secondary: #a8a8c0;
   --text-tertiary: #787898;
   --text-disabled: #585878;
-  --text-inverse: #2b2b3d;
+  /* Text on the accent: 4.5:1 or better on --accent-primary and its hover. */
+  --text-inverse: #14141f;
 
   /* Accent */
   --accent-primary: #7c73ff;

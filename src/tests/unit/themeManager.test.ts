@@ -91,16 +91,18 @@ describe('themeManager', () => {
       expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     });
 
-    it('rejects entries that do not look like CSS custom properties', () => {
+    it('sets only theme tokens: not other variables, nor anything that is not a variable', () => {
       applyCustomTheme({
         id: 't',
         name: 'T',
         variables: {
-          '--legit': '#abc',
+          '--ui-bg': '#abc',
+          '--legit': '#def',
           'not-a-var': 'leaked',
         },
       });
-      expect(document.documentElement.style.getPropertyValue('--legit').trim()).toBe('#abc');
+      expect(document.documentElement.style.getPropertyValue('--ui-bg').trim()).toBe('#abc');
+      expect(document.documentElement.style.getPropertyValue('--legit').trim()).toBe('');
       // Should not have set anything for the bogus key.
       expect(document.documentElement.style.getPropertyValue('not-a-var').trim()).toBe('');
     });

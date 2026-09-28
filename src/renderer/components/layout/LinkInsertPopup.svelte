@@ -238,7 +238,7 @@
 
   .link-btn.primary {
     background: var(--accent-primary);
-    color: #fff;
+    color: var(--text-inverse);
   }
 
   .link-btn.primary:hover {

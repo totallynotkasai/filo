@@ -231,7 +231,7 @@
     border-radius: 6px;
     border: none;
     background: var(--accent);
-    color: white;
+    color: var(--text-inverse);
     cursor: pointer;
     transition: opacity 0.15s ease, transform 0.1s ease;
   }

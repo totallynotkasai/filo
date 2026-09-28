@@ -1,8 +1,8 @@
 /**
- * Unit coverage for "Apply to all Existing Items"
- * (`lib/styles/applyDefaultsToAll.ts`): every board type's elements get the
- * current Default Board Font Size values baked in as per-element overrides,
- * touched boards are marked dirty, and untouched ones are left alone.
+ * "Use Default Font Sizes for all Existing Items"
+ * (`lib/styles/applyDefaultsToAll.ts`): every element's own font size is
+ * cleared, on every board type, so it follows the style cascade again; touched
+ * boards are marked dirty and untouched ones are left alone.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -28,132 +28,98 @@ vi.mock('@renderer/stores/vault.svelte', () => ({
   },
 }));
 
-import { applyFontDefaultsToAllExisting } from '@renderer/lib/styles/applyDefaultsToAll';
+import { clearFontSizesOnAllExisting } from '@renderer/lib/styles/applyDefaultsToAll';
 
 type Obj = Record<string, unknown>;
-
-function withDefaults(defaults: Obj | undefined, boards: Obj[] = []): void {
-  h.project = { boards, settings: { general: { defaultBoardFontSize: defaults } } };
-}
-
-const ALL = {
-  tileTitle: 11,
-  tileBody: 12,
-  connectionLabel: 13,
-  frameTitle: 14,
-  kanbanColumnTitle: 15,
-  kanbanCardTitle: 16,
-  kanbanCardBody: 17,
-  taskListTitle: 18,
-  taskItem: 19,
-  taskItemBody: 20,
-  taskSectionTitle: 21,
-};
 
 beforeEach(() => {
   h.markDirty.mockReset();
   h.cache = {};
-  h.project = undefined;
+  h.project = { boards: [], settings: {} };
 });
 
-describe('applyFontDefaultsToAllExisting', () => {
+describe('clearFontSizesOnAllExisting', () => {
   it('does nothing without a project', () => {
-    expect(applyFontDefaultsToAllExisting()).toEqual({ boardsTouched: 0, elementsTouched: 0 });
-  });
-
-  it('does nothing when no font defaults are set', () => {
-    h.project = { boards: [], settings: {} };
-    expect(applyFontDefaultsToAllExisting()).toEqual({ boardsTouched: 0, elementsTouched: 0 });
+    h.project = undefined;
+    expect(clearFontSizesOnAllExisting()).toEqual({ boardsTouched: 0, elementsTouched: 0 });
   });
 
   it('skips ids with neither a cached nor a project board, and tolerates a missing boards list', () => {
-    h.project = { settings: { general: { defaultBoardFontSize: ALL } } };
+    h.project = { settings: {} };
     h.cache = { ghost: {} };
-    expect(applyFontDefaultsToAllExisting()).toEqual({ boardsTouched: 0, elementsTouched: 0 });
+    expect(clearFontSizesOnAllExisting()).toEqual({ boardsTouched: 0, elementsTouched: 0 });
     expect(h.markDirty).not.toHaveBeenCalled();
   });
 
-  it('mind map: stamps tile defs (creating style), frames and connection labels', () => {
-    const styled = { style: { color: 'red' } };
-    const bare: Obj = {};
-    const frame: Obj = {};
-    const labelled = { label: { text: 'x' } };
-    const unlabelled: Obj = {};
+  it('mind map: clears tile defs, frames and connection labels, and keeps every other style field', () => {
+    const tile = { style: { headerColor: 'red', fontSizeTitle: 20, fontSizeBody: 15 } };
+    const bodyOnly = { style: { fontSizeBody: 9 } };
+    const frame = { style: { borderWidth: 2, fontSizeTitle: 18 } };
+    const labelled = { label: { text: 'x', fontSize: 13 } };
     h.cache = {
       mm: {
         board: { id: 'mm', type: 'mindmap' },
-        tileDefs: { a: styled, b: bare },
-        frames: [frame],
-        connections: { c1: labelled, c2: unlabelled },
+        tileDefs: { a: tile, b: bodyOnly, c: {} },
+        frames: [frame, {}],
+        connections: { c1: labelled, c2: {} },
       },
     };
-    withDefaults(ALL);
-    expect(applyFontDefaultsToAllExisting()).toEqual({ boardsTouched: 1, elementsTouched: 4 });
-    expect(styled.style).toEqual({ color: 'red', fontSizeTitle: 11, fontSizeBody: 12 });
-    expect(bare).toEqual({ style: { fontSizeTitle: 11, fontSizeBody: 12 } });
-    expect(frame).toEqual({ style: { fontSizeTitle: 14 } });
-    expect(labelled.label).toEqual({ text: 'x', fontSize: 13 });
-    expect(unlabelled).toEqual({});
+    expect(clearFontSizesOnAllExisting()).toEqual({ boardsTouched: 1, elementsTouched: 4 });
+    expect(tile.style).toEqual({ headerColor: 'red' });
+    expect(bodyOnly.style).toEqual({});
+    expect(frame.style).toEqual({ borderWidth: 2 });
+    expect(labelled.label).toEqual({ text: 'x' });
     expect(h.markDirty).toHaveBeenCalledWith('mm');
   });
 
-  it('mind map: a partial default (body only) still counts the tile', () => {
-    const def: Obj = {};
-    h.cache = { mm: { board: { id: 'mm', type: 'mindmap' }, tileDefs: { a: def } } };
-    withDefaults({ tileBody: 9 });
-    expect(applyFontDefaultsToAllExisting()).toEqual({ boardsTouched: 1, elementsTouched: 1 });
-    expect(def).toEqual({ style: { fontSizeBody: 9 } });
+  it('kanban: clears columns, card placements and the sizes an older card def was given', () => {
+    const placement = { tileId: 'c', style: { fontSizeTitle: 22, backgroundColor: '#fff' } };
+    const col = { style: { fontSizeTitle: 15 }, tilePlacements: [placement] };
+    const card = { style: { fontSizeTitle: 16, fontSizeBody: 17 } };
+    h.cache = { kb: { board: { id: 'kb', type: 'kanban', columns: [col] }, tileDefs: { c: card } } };
+    expect(clearFontSizesOnAllExisting()).toEqual({ boardsTouched: 1, elementsTouched: 3 });
+    expect(col.style).toEqual({});
+    expect(placement.style).toEqual({ backgroundColor: '#fff' });
+    expect(card.style).toEqual({});
   });
 
-  it('kanban: stamps columns and card tile defs', () => {
-    const col: Obj = {};
-    const card: Obj = {};
+  it('task list: clears the board title size, task placements, task defs and sections', () => {
+    const settings: Obj = { titleFontSize: 18, accentColor: '' };
+    const task = { tileId: 't', style: { fontSizeTitle: 19 } };
+    const def = { style: { fontSizeBody: 20 } };
+    const sec = { style: { fontSizeTitle: 21 } };
     h.cache = {
-      kb: { board: { id: 'kb', type: 'kanban', columns: [col] }, tileDefs: { c: card } },
+      tl: { board: { id: 'tl', type: 'tasklist', settings, tasks: [task], sections: [sec] }, tileDefs: { t: def } },
     };
-    withDefaults(ALL);
-    expect(applyFontDefaultsToAllExisting()).toEqual({ boardsTouched: 1, elementsTouched: 2 });
-    expect(col).toEqual({ style: { fontSizeTitle: 15 } });
-    expect(card).toEqual({ style: { fontSizeTitle: 16, fontSizeBody: 17 } });
-  });
-
-  it('task list: stamps board title setting, task defs and sections', () => {
-    const settings: Obj = {};
-    const t: Obj = {};
-    const sec: Obj = {};
-    h.cache = {
-      tl: { board: { id: 'tl', type: 'tasklist', settings, sections: [sec] }, tileDefs: { t } },
-    };
-    withDefaults(ALL);
-    expect(applyFontDefaultsToAllExisting()).toEqual({ boardsTouched: 1, elementsTouched: 3 });
-    expect(settings).toEqual({ titleFontSize: 18 });
-    expect(t).toEqual({ style: { fontSizeTitle: 19, fontSizeBody: 20 } });
-    expect(sec).toEqual({ style: { fontSizeTitle: 21 } });
+    expect(clearFontSizesOnAllExisting()).toEqual({ boardsTouched: 1, elementsTouched: 4 });
+    expect(settings).toEqual({ accentColor: '' });
+    expect(task.style).toEqual({});
+    expect(def.style).toEqual({});
+    expect(sec.style).toEqual({});
   });
 
   it('project-only boards (no cache entry) are walked but have no frames/connections', () => {
-    const col: Obj = {};
-    withDefaults(ALL, [
-      { id: 'kb', type: 'kanban', columns: [col] },
-      { id: 'tl', type: 'tasklist' },
-      { id: 'doc', type: 'document' },
-    ]);
-    expect(applyFontDefaultsToAllExisting()).toEqual({ boardsTouched: 1, elementsTouched: 1 });
+    const col = { style: { fontSizeTitle: 15 } };
+    h.project = {
+      boards: [
+        { id: 'kb', type: 'kanban', columns: [col] },
+        { id: 'tl', type: 'tasklist' },
+        { id: 'doc', type: 'document' },
+      ],
+      settings: {},
+    };
+    expect(clearFontSizesOnAllExisting()).toEqual({ boardsTouched: 1, elementsTouched: 1 });
     expect(h.markDirty).toHaveBeenCalledTimes(1);
     expect(h.markDirty).toHaveBeenCalledWith('kb');
   });
 
-  it('leaves boards untouched (not dirty) when the relevant defaults are unset', () => {
-    const col: Obj = {};
-    const settings: Obj = {};
+  it('leaves boards with no sizes of their own untouched (not dirty)', () => {
     h.cache = {
-      kb: { board: { id: 'kb', type: 'kanban', columns: [col] }, tileDefs: { c: {} } },
-      tl: { board: { id: 'tl', type: 'tasklist', settings, sections: [{}] }, tileDefs: { t: {} } },
+      kb: { board: { id: 'kb', type: 'kanban', columns: [{ tilePlacements: [{}] }] }, tileDefs: { c: {} } },
+      tl: { board: { id: 'tl', type: 'tasklist', settings: {}, sections: [{}] }, tileDefs: { t: {} } },
       mm: { board: { id: 'mm', type: 'mindmap' }, frames: [{}], connections: { c: { label: {} } } },
     };
-    withDefaults({});
-    expect(applyFontDefaultsToAllExisting()).toEqual({ boardsTouched: 0, elementsTouched: 0 });
-    expect(settings).toEqual({});
+    expect(clearFontSizesOnAllExisting()).toEqual({ boardsTouched: 0, elementsTouched: 0 });
     expect(h.markDirty).not.toHaveBeenCalled();
   });
 });

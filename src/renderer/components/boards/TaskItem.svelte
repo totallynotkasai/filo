@@ -960,7 +960,7 @@
     padding: 0 6px;
     border-radius: 11px;
     background: var(--accent-primary);
-    color: #fff;
+    color: var(--text-inverse);
     font-size: 11px;
     font-weight: 600;
     line-height: 22px;

@@ -128,12 +128,12 @@
 
   .tab.active {
     background: var(--accent);
-    color: white;
+    color: var(--text-inverse);
   }
 
   .tab.active .count {
-    background: rgba(255, 255, 255, 0.25);
-    color: white;
+    background: color-mix(in srgb, var(--text-inverse) 22%, transparent);
+    color: var(--text-inverse);
   }
 
   .label {

@@ -10,6 +10,7 @@ import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import { loadedTheme } from '../lib/themes/themeFiles';
 
 /**
  * Theme store — owns the active theme, the catalogue of themes loaded
@@ -96,17 +97,17 @@ export const themeStore = {
         if (cached && !reload.includes(id)) next[id] = cached;
       }
       const parseFailures: string[] = [];
+      const problems: string[] = [];
       for (const id of ids) {
         if (next[id]) continue;
-        const data = (await window.filo.invoke('theme:load', vaultRoot, id)) as
-          | ThemeFile
-          | { ok: false; code: 'invalid-json'; name?: string }
-          | null;
-        if (isThemeParseFailure(data)) {
+        const loaded = loadedTheme(id, await window.filo.invoke('theme:load', vaultRoot, id));
+        if (loaded === 'invalid') {
           parseFailures.push(id);
           continue;
         }
-        if (data) next[id] = data;
+        if (!loaded) continue;
+        next[id] = loaded.file;
+        if (loaded.problem) problems.push(loaded.problem);
       }
       // Commit `availableThemeIds` + `themeCache` together AFTER the loop so a
       // swap detected mid-loop leaves neither set to the outgoing vault's data.
@@ -121,6 +122,7 @@ export const themeStore = {
           `Failed to load theme${parseFailures.length > 1 ? 's' : ''}: ${list} — invalid JSON. Fix the file in .filo/themes/ to make it available again.`,
         );
       }
+      if (problems.length > 0) reportError('theme.base', null, problems.join(' '));
     } catch (err) {
       reportError(
         'theme.list',
@@ -172,10 +174,7 @@ export const themeStore = {
     let file = themeCache[themeId];
     if (!file && vaultRoot) {
       try {
-        const loaded = (await window.filo.invoke('theme:load', vaultRoot, themeId)) as
-          | ThemeFile
-          | { ok: false; code: 'invalid-json'; name?: string }
-          | null;
+        const loaded = loadedTheme(themeId, await window.filo.invoke('theme:load', vaultRoot, themeId));
         // A swap during the load await means `themeId` belongs to the outgoing
         // vault; applying it would flash the wrong palette over the new vault
         // (which drives its own theme via `commitFromCandidate`).
@@ -185,7 +184,7 @@ export const themeStore = {
         // Surface a parse-failure toast distinctly from
         // the generic "not found" path so the user knows the file exists
         // but is malformed. Falls back to built-in light below.
-        if (isThemeParseFailure(loaded)) {
+        if (loaded === 'invalid') {
           applyFallbackLight();
           reportError(
             'theme.parse',
@@ -195,8 +194,9 @@ export const themeStore = {
           return { ok: false, error: `Theme "${themeId}" has invalid JSON` };
         }
         if (loaded) {
-          file = loaded;
+          file = loaded.file;
           themeCache = { ...themeCache, [themeId]: file };
+          if (loaded.problem) reportError('theme.base', null, loaded.problem);
         }
       } catch (err) {
         // theme:load IPC failed — fall through to the no-file branch
@@ -402,16 +402,6 @@ export const themeStore = {
 
 // ── Helpers ──
 
-/**
- * Type guard for the `{ ok: false, code: 'invalid-json' }` envelope the
- * main-side `theme:load` handler returns when a theme file exists on disk
- * but isn't valid JSON. Bare `null` (ENOENT or unknown error) doesn't match.
- */
-function isThemeParseFailure(value: unknown): value is { ok: false; code: 'invalid-json'; name?: string } {
-  if (!value || typeof value !== 'object') return false;
-  const v = value as Record<string, unknown>;
-  return v.ok === false && v.code === 'invalid-json';
-}
 
 
 /**

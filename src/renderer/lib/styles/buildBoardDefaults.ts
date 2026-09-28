@@ -29,12 +29,12 @@ type BoardSettings = Record<string, unknown>;
  * A board's settings with no style of its own: blank colours, no pattern and
  * an empty `defaults` block, so every style field follows the Global
  * Defaults. `backgroundPattern` is present as `undefined` so a merge clears a
- * board's own pattern. The Task List title size is the one creation-time seed
- * (`general.defaultBoardFontSize.taskListTitle`).
+ * board's own pattern. Nothing is copied from the Global Defaults (`_globals`),
+ * font sizes included: those reach the board through the cascade.
  */
 export function buildBoardSettingsFromGlobal(
   type: Board['type'],
-  src: ProjectSettings,
+  _globals: ProjectSettings,
 ): BoardSettings {
   const style = { backgroundColor: '', backgroundPattern: undefined, defaults: {} };
   switch (type) {
@@ -49,16 +49,8 @@ export function buildBoardSettingsFromGlobal(
       };
     case 'kanban':
       return { ...style, accentColor: '' };
-    case 'tasklist': {
-      const titleFontSize = src.general?.defaultBoardFontSize?.taskListTitle;
-      return {
-        ...style,
-        accentColor: '',
-        groupBy: 'status',
-        sortBy: 'priority',
-        ...(typeof titleFontSize === 'number' && { titleFontSize }),
-      };
-    }
+    case 'tasklist':
+      return { ...style, accentColor: '', groupBy: 'status', sortBy: 'priority' };
     case 'document':
       return { ...style, accentColor: '' };
   }
@@ -100,18 +92,12 @@ function bakeBoardSettings(type: Board['type'], src: ProjectSettings): BoardSett
     }
     case 'tasklist': {
       const tl = src.tasklist;
-      // Bake the current Default Board Font Size for "Task List Title"
-      // into the new board's `titleFontSize`. Subsequent changes to the
-      // global default never retroactively update this board (per the
-      // creation-time-seed semantics for font sizes).
-      const titleFontSize = src.general?.defaultBoardFontSize?.taskListTitle;
       return {
         backgroundColor: tl.backgroundColor,
         backgroundPattern: tl.backgroundPattern,
         accentColor: tl.accentColor,
         groupBy: 'status',
         sortBy: 'priority',
-        ...(typeof titleFontSize === 'number' && { titleFontSize }),
         defaults: {
           task: { ...tl.task },
           section: { ...tl.section },

@@ -4,10 +4,13 @@ import {
   cleanThemeVariables,
   copyName,
   freeThemeName,
+  loadedTheme,
   parseImportedTheme,
+  readThemeFile,
   themeIdFromName,
   themeNameProblem,
 } from '@renderer/lib/themes/themeFiles';
+import { applyCustomTheme, __resetThemeManagerForTests } from '@renderer/lib/themes/themeManager';
 
 /**
  * A custom theme's id is its file name. A built-in's name or id would hide
@@ -91,5 +94,80 @@ describe('parseImportedTheme', () => {
       ok: false,
       message: expect.stringMatching(/no colours/),
     });
+  });
+});
+
+/**
+ * A theme may set only theme tokens. A theme file (imported, or synced into
+ * `.filo/themes/`) that sets any other variable could put every dialog behind
+ * the app (`--z-modal`) or change the user's settings.
+ */
+describe('theme files set only theme tokens', () => {
+  const HOSTILE = {
+    name: 'Hostile',
+    base: 'dark',
+    variables: { '--ui-bg': '#101010', '--z-modal': '-1', '--z-dropdown': '-1', '--tile-min-width': '1px' },
+  };
+
+  it('an import keeps the colours and drops the rest', () => {
+    const result = parseImportedTheme(JSON.stringify(HOSTILE));
+    expect(result.ok && result.variables).toEqual({ '--ui-bg': '#101010' });
+  });
+
+  it('a file read from .filo/themes/ goes through the same filter', () => {
+    const read = readThemeFile('hostile', HOSTILE);
+    expect(read.ok && read.file.variables).toEqual({ '--ui-bg': '#101010' });
+  });
+
+  it('applying a theme that still carries one never sets it, so the dialog stays on top', () => {
+    const root = document.documentElement;
+    __resetThemeManagerForTests();
+    root.style.removeProperty('--z-modal');
+    applyCustomTheme({ id: 'hostile', name: 'Hostile', base: 'dark', variables: HOSTILE.variables });
+    expect(root.style.getPropertyValue('--z-modal')).toBe('');
+    expect(root.style.getPropertyValue('--ui-bg')).toBe('#101010');
+    __resetThemeManagerForTests();
+  });
+});
+
+/** A theme file's `base` is cosmetic: a bad one falls back to Light, never refuses. */
+describe('readThemeFile', () => {
+  it('reads a theme, taking the id from the file name', () => {
+    expect(readThemeFile('sea', { name: 'Sea', base: 'blueprint', variables: { '--ui-bg': '#001122' } })).toEqual({
+      ok: true,
+      file: { id: 'sea', name: 'Sea', base: 'blueprint', variables: { '--ui-bg': '#001122' } },
+      problem: null,
+    });
+  });
+
+  it('an unknown base becomes Light, with a note naming it', () => {
+    const read = readThemeFile('odd', { name: 'Odd', base: 'solarized', variables: {} });
+    expect(read.ok && read.file.base).toBe('light');
+    expect(read.ok && read.problem).toMatch(/"Odd" is based on "solarized"/);
+  });
+
+  it('no base means dark, and no name means the id', () => {
+    const read = readThemeFile('plain', { variables: {} });
+    expect(read.ok && read.file).toEqual({ id: 'plain', name: 'plain', base: 'dark', variables: {} });
+  });
+
+  it('refuses a file that isn\'t a theme', () => {
+    expect(readThemeFile('x', { colours: {} })).toEqual({ ok: false });
+    expect(readThemeFile('x', 'text')).toEqual({ ok: false });
+  });
+
+  it('loadedTheme reads theme:load answers: missing, invalid JSON, or a file', () => {
+    expect(loadedTheme('x', null)).toBeNull();
+    expect(loadedTheme('x', { ok: false, code: 'invalid-json' })).toBe('invalid');
+    expect(loadedTheme('x', { nope: true })).toBe('invalid');
+    expect(loadedTheme('x', { name: 'X', variables: {} })).toEqual({
+      file: { id: 'x', name: 'X', base: 'dark', variables: {} },
+      problem: null,
+    });
+  });
+
+  it('an import with an unknown base opens over Light too', () => {
+    const result = parseImportedTheme(JSON.stringify({ name: 'Odd', base: 'solarized', variables: { '--ui-bg': '#000000' } }));
+    expect(result.ok && result.base).toBe('light');
   });
 });

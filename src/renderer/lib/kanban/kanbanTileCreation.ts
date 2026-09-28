@@ -4,7 +4,6 @@ import type {
   TileDefinition,
 } from '../../schema/index';
 import { defaultTileStyleSnapshot } from '../../constants/defaults';
-import { defaultKanbanCardFontSizes } from '../styles/defaultFontSizes';
 import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
@@ -25,13 +24,9 @@ export function newCardFolder(board: KanbanBoardType | null): string {
   return getActiveContentFolder(board);
 }
 
+/** A new card's tile style. No font sizes: the card follows the card cascade. */
 function buildBaseTileStyle() {
-  const fs = defaultKanbanCardFontSizes();
-  return {
-    ...defaultTileStyleSnapshot(),
-    ...(fs.fontSizeTitle !== undefined && { fontSizeTitle: fs.fontSizeTitle }),
-    ...(fs.fontSizeBody !== undefined && { fontSizeBody: fs.fontSizeBody }),
-  };
+  return defaultTileStyleSnapshot();
 }
 
 export interface KanbanTileCreationDeps {

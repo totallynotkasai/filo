@@ -55,9 +55,8 @@ export const TileStyleSchema = z.object({
   // Per-element override of the Dynamic Contrast Text feature. `null` means
   // "inherit from board settings"; `true`/`false` overrides at this layer.
   dynamicContrastText: z.boolean().nullable().optional(),
-  // Per-element font-size overrides (px). Seeded from
-  // `settings.general.defaultBoardFontSize` at creation; absent for
-  // legacy tiles, which fall through to CSS fallbacks.
+  // Per-element font-size overrides (px). Absent → the tile cascade (board,
+  // Global Defaults, then General → Default Board Font Size).
   fontSizeTitle: z.number().min(8).max(48).optional(),
   fontSizeBody: z.number().min(8).max(48).optional(),
 }).passthrough();

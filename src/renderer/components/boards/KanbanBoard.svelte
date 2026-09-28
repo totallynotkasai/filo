@@ -250,15 +250,8 @@
 
   function addColumn() {
     if (!board) return;
-    const id = createId();
-    const colFontSize = vaultStore.project?.settings?.general?.defaultBoardFontSize?.kanbanColumnTitle;
-    historyStore.execute(
-      new AddColumnCommand(board.id, {
-        id,
-        title: 'New Column',
-        ...(colFontSize !== undefined && { style: { fontSizeTitle: colFontSize } }),
-      }),
-    );
+    // No style: the column's title size follows the column cascade.
+    historyStore.execute(new AddColumnCommand(board.id, { id: createId(), title: 'New Column' }));
     tickAndPersist();
     announce('Column added');
   }

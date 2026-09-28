@@ -48,22 +48,16 @@ describe('themeStore.applyById — non-throwing contract', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
   });
 
-  it('returns { ok: false } when the custom theme has an unknown base', async () => {
-    const badTheme: ThemeFile = {
-      id: 'broken',
-      name: 'Broken',
-      base: 'nonsense' as 'dark',
-      variables: {},
-    };
+  it('a theme file on disk with an unknown base is applied over Light', async () => {
     installFiloMock({
-      'theme:load': async () => badTheme,
+      'theme:load': async () => ({ id: 'broken', name: 'Broken', base: 'nonsense', variables: { '--ui-bg': '#123456' } }),
     });
 
     const result = await themeStore.applyById('/vault', 'broken');
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/unknown base/);
-    // Rescue applied — DOM ended on built-in light.
+    expect(result.ok).toBe(true);
+    expect(themeStore.cache.broken?.base).toBe('light');
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    expect(document.documentElement.style.getPropertyValue('--ui-bg')).toBe('#123456');
   });
 
   it('returns { ok: false } when the theme file is missing on disk', async () => {

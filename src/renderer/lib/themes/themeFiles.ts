@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { ThemeId } from '../../../shared/types';
 import { asSafeThemeValue } from '../../../shared/untrusted';
 import type { ThemeFile, ThemeVariableMap } from './themeManager';
-import { SETTINGS_VAR_NAMES } from './themeTokens';
+import { THEME_TOKEN_NAMES } from './themeTokens';
 
 export const BUILTIN_THEME_LABELS: Record<ThemeId, string> = {
   light: 'Light Mode',
@@ -84,15 +84,24 @@ export function copyName(name: string, takenIds: readonly string[]): string {
   return freeThemeName(`${name.trim().slice(0, THEME_NAME_MAX - 10)} copy`, takenIds);
 }
 
+const THEME_TOKENS: ReadonlySet<string> = new Set(THEME_TOKEN_NAMES);
+
+/** Whether `name` is a colour (or shadow) a theme may set. */
+export function isThemeToken(name: string): boolean {
+  return THEME_TOKENS.has(name);
+}
+
 /**
- * The variables a theme may carry: CSS custom properties whose values pass
- * the theme-value sanitiser, minus the user's settings. Anything else is
- * dropped, not refused, so a theme from a newer version still loads.
+ * The variables a theme may carry: the theme tokens (`themeTokens.ts`) whose
+ * values pass the theme-value sanitiser. Anything else is dropped, not
+ * refused, so a theme from a newer version still loads. A theme that could set
+ * any variable could also set the app's own (`--z-modal` would put every
+ * dialog behind the app) or the user's settings.
  */
 export function cleanThemeVariables(raw: Record<string, unknown>): ThemeVariableMap {
   const out: ThemeVariableMap = {};
   for (const [name, value] of Object.entries(raw)) {
-    if (!/^--[a-z0-9-]+$/i.test(name) || SETTINGS_VAR_NAMES.includes(name)) continue;
+    if (!THEME_TOKENS.has(name)) continue;
     if (typeof value !== 'string') continue;
     const safe = asSafeThemeValue(value);
     if (safe !== null) out[name] = safe;
@@ -100,11 +109,59 @@ export function cleanThemeVariables(raw: Record<string, unknown>): ThemeVariable
   return out;
 }
 
-const ImportedThemeSchema = z.object({
-  name: z.string().trim().min(1),
-  base: z.enum(['light', 'dark', 'blueprint', 'retro', 'nature']).optional(),
+const ThemeShapeSchema = z.object({
+  name: z.string().optional(),
+  base: z.string().optional(),
   variables: z.record(z.string(), z.unknown()),
 });
+
+/**
+ * The built-in a theme file's `base` names: `dark` when it names none (the
+ * default since custom themes began), Light with a note when it names one Filo
+ * doesn't have. A theme is only colours, so a bad base never stops a vault
+ * opening.
+ */
+function themeBase(raw: string | undefined, label: string): { base: ThemeId; problem: string | null } {
+  if (raw === undefined) return { base: 'dark', problem: null };
+  if ((BUILTIN_IDS as string[]).includes(raw)) return { base: raw as ThemeId, problem: null };
+  return {
+    base: 'light',
+    problem: `Theme "${label}" is based on "${raw}", which isn't a built-in theme. Light is used under its colours.`,
+  };
+}
+
+export type DiskThemeResult =
+  | { ok: true; file: ThemeFile; problem: string | null }
+  | { ok: false };
+
+/**
+ * Reads a `.filo/themes/<id>.json` file's parsed JSON. It goes through the same
+ * shape check and variable filter as an import: the file syncs and can be
+ * edited by hand. `ok: false` when it isn't a theme at all.
+ */
+export function readThemeFile(id: string, data: unknown): DiskThemeResult {
+  const parsed = ThemeShapeSchema.safeParse(data);
+  if (!parsed.success) return { ok: false };
+  const name = parsed.data.name?.trim() || id;
+  const { base, problem } = themeBase(parsed.data.base, name);
+  return { ok: true, file: { id, name, base, variables: cleanThemeVariables(parsed.data.variables) }, problem };
+}
+
+/**
+ * What `theme:load` answered, read as a theme: the file (with a note when its
+ * `base` had to be replaced), `'invalid'` when the file isn't valid JSON (the
+ * main side's `{ ok: false, code: 'invalid-json' }`) or isn't a theme, or null
+ * when there is no file.
+ */
+export function loadedTheme(
+  id: string,
+  value: unknown,
+): { file: ThemeFile; problem: string | null } | 'invalid' | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'object' && (value as { ok?: unknown }).ok === false) return 'invalid';
+  const read = readThemeFile(id, value);
+  return read.ok ? { file: read.file, problem: read.problem } : 'invalid';
+}
 
 export type ImportResult =
   | { ok: true; name: string; base: ThemeId; variables: ThemeVariableMap }
@@ -118,15 +175,16 @@ export function parseImportedTheme(text: string): ImportResult {
   } catch {
     return { ok: false, message: "That file isn't valid JSON." };
   }
-  const parsed = ImportedThemeSchema.safeParse(data);
-  if (!parsed.success) {
+  const parsed = ThemeShapeSchema.safeParse(data);
+  const name = parsed.success ? parsed.data.name?.trim() : '';
+  if (!parsed.success || !name) {
     return { ok: false, message: 'That file is not a Filo theme: it needs a "name" and a "variables" map.' };
   }
   const variables = cleanThemeVariables(parsed.data.variables);
   if (Object.keys(variables).length === 0) {
     return { ok: false, message: 'That theme has no colours Filo can use.' };
   }
-  return { ok: true, name: parsed.data.name, base: parsed.data.base ?? 'dark', variables };
+  return { ok: true, name, base: themeBase(parsed.data.base, name).base, variables };
 }
 
 /** The theme file written for `name`. */

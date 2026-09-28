@@ -141,6 +141,24 @@ export const THEME_SHADOW_TOKENS: readonly string[] = [
   '--toolbar-shadow', '--connection-label-shadow',
 ];
 
+/**
+ * Colours the built-in themes give an alpha (tints, overlays, the selection).
+ * The theme editor always offers an opacity for them, so picking a hue there
+ * doesn't turn a backdrop solid.
+ */
+export const TRANSLUCENT_TOKENS: ReadonlySet<string> = new Set([
+  '--modal-backdrop',
+  '--accent-primary-alpha',
+  '--status-error-alpha',
+  '--menu-danger-bg',
+  '--selection-bg',
+  '--selection-border',
+  '--canvas-pattern',
+  '--frame-header-btn-danger-bg',
+  '--connection-label-btn-danger-bg',
+  '--toast-border',
+]);
+
 /** Every token a theme file holds, colours and shadows. */
 export const THEME_TOKEN_NAMES: readonly string[] = [
   ...THEME_TOKEN_GROUPS.flatMap((g) => g.tokens.map((t) => t.name)),

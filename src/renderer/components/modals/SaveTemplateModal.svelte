@@ -252,7 +252,7 @@
 
   .btn-primary {
     background: var(--accent-primary);
-    color: var(--accent-on-primary, white);
+    color: var(--text-inverse);
     border-color: var(--accent-primary);
   }
 

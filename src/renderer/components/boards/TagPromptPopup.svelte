@@ -127,7 +127,7 @@
   }
   .tag-prompt-btn.primary {
     background: var(--accent-primary);
-    color: #fff;
+    color: var(--text-inverse);
   }
   .tag-prompt-btn.primary:hover {
     opacity: 0.9;

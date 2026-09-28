@@ -4,7 +4,6 @@ import { createId } from '../lib/utils/ids';
 import { TILE_DEFAULTS, defaultTileStyleSnapshot } from '../constants/defaults';
 import { boardStore } from './board.svelte';
 import { getTileDefaults } from '../core/tileRegistry';
-import { defaultFontSizesForBoard } from '../lib/styles/defaultFontSizes';
 
 /**
  * Tile factory — centralised tile creation with correct defaults per type.
@@ -19,22 +18,14 @@ export function createTile(
 ): Tile {
   const now = Date.now();
 
-  // Bake the *current* default fontSize values for this board's type
-  // into the new tile's per-element style override. Subsequent changes
-  // to the defaults in Project Settings will not retroactively touch
-  // this tile — see `defaultFontSizes.ts`.
-  const fontSizes = defaultFontSizesForBoard(boardId);
-
   const base = {
     id: createId(),
     title: boardStore.getNextTileName(),
     position: { ...position },
     size: { width: TILE_DEFAULTS.width, height: TILE_DEFAULTS.height },
-    style: {
-      ...defaultTileStyleSnapshot(),
-      ...(fontSizes.fontSizeTitle !== undefined && { fontSizeTitle: fontSizes.fontSizeTitle }),
-      ...(fontSizes.fontSizeBody !== undefined && { fontSizeBody: fontSizes.fontSizeBody }),
-    },
+    // No font sizes: the tile follows the style cascade, down to General →
+    // Default Board Font Size (`effectiveStyle.ts`).
+    style: defaultTileStyleSnapshot(),
     locked: false,
     faded: false,
     frameless: false,

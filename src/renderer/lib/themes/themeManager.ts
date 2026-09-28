@@ -23,7 +23,7 @@ import type { ThemeId } from '../../../shared/types';
 import { asSafeThemeValue } from '../../../shared/untrusted';
 import { reportError } from '../utils/errorBus';
 import { themeVersion } from '../../stores/themeVersion.svelte';
-import { SETTINGS_VAR_NAMES, THEME_TOKEN_NAMES } from './themeTokens';
+import { THEME_TOKEN_NAMES } from './themeTokens';
 
 /** Every CSS custom property a Filo theme may set. Used to drive cleanup. */
 export type ThemeVariableMap = Record<string, string>;
@@ -44,11 +44,11 @@ function applySafeThemeVar(
   root: HTMLElement,
   prop: string,
   rawValue: string,
-): boolean {
+): string | null {
   const safe = asSafeThemeValue(rawValue);
-  if (safe === null) { reportError('themeManager', null, `Dropped theme variable "${prop}"`); return false; }
+  if (safe === null) { reportError('themeManager', null, `Dropped theme variable "${prop}"`); return null; }
   root.style.setProperty(prop, safe);
-  return true;
+  return safe;
 }
 
 /**
@@ -107,15 +107,18 @@ export const SYSTEM_VAR_NAMES: readonly string[] = THEME_TOKEN_NAMES.filter(isSy
  */
 export const THEME_VAR_NAMES: readonly string[] = THEME_TOKEN_NAMES;
 
-const SETTINGS_VARS: ReadonlySet<string> = new Set(SETTINGS_VAR_NAMES);
+const THEME_VARS: ReadonlySet<string> = new Set(THEME_TOKEN_NAMES);
 
 /**
- * Tracks which CSS custom properties are currently set inline by the
- * theme manager so we can wipe them cleanly when the user switches
- * themes. Without this we'd leak old variables (e.g. retro's
- * `--accent-warning`) into a freshly applied custom theme.
+ * The CSS custom properties the theme manager set inline, with the value it
+ * set, so a switch wipes them cleanly (without this retro's
+ * `--accent-warning` would leak into a freshly applied custom theme). The
+ * values let a user override that sits on top (the toolbar and tab bar colour
+ * settings) be taken off again, back to the theme's own colour.
  */
-let appliedCustomProps: string[] = [];
+let appliedCustomProps = new Map<string, string>();
+/** Whether the painted values came from a custom theme file. */
+let paintedFromCustom = false;
 
 function getRootElement(): HTMLElement | null {
   if (typeof document === 'undefined') return null;
@@ -124,14 +127,36 @@ function getRootElement(): HTMLElement | null {
 
 function clearAppliedCustomProps(): void {
   const root = getRootElement();
-  if (!root) {
-    appliedCustomProps = [];
+  if (root) {
+    for (const prop of appliedCustomProps.keys()) root.style.removeProperty(prop);
+  }
+  appliedCustomProps = new Map();
+  paintedFromCustom = false;
+}
+
+/**
+ * The value a custom theme painted for `prop`, or null when the active theme
+ * is a built-in (its colours come from `style.css`) or doesn't set it.
+ */
+export function customThemeValue(prop: string): string | null {
+  return paintedFromCustom ? (appliedCustomProps.get(prop) ?? null) : null;
+}
+
+/**
+ * Puts a user setting's colour (`value`) on `prop` over the theme, or, when
+ * the setting is blank, gives `prop` back to the theme: the value the theme
+ * painted inline, else nothing, so the stylesheet's `[data-theme]` value shows.
+ */
+export function paintChromeOverride(prop: string, value: string): void {
+  const root = getRootElement();
+  if (!root) return;
+  if (value) {
+    applySafeThemeVar(root, prop, value);
     return;
   }
-  for (const prop of appliedCustomProps) {
-    root.style.removeProperty(prop);
-  }
-  appliedCustomProps = [];
+  const themed = appliedCustomProps.get(prop);
+  if (themed !== undefined) applySafeThemeVar(root, prop, themed);
+  else root.style.removeProperty(prop);
 }
 
 /**
@@ -205,9 +230,8 @@ function paintBuiltinTheme(theme: ThemeId, opts: { systemOnly?: boolean }): void
     // CSS, so they're trusted — but routing through the same sanitiser
     // keeps the sink monoculture and lets a future CSP / hash-pin
     // verify both code paths in one place.
-    if (applySafeThemeVar(root, prop, value)) {
-      appliedCustomProps.push(prop);
-    }
+    const painted = applySafeThemeVar(root, prop, value);
+    if (painted !== null) appliedCustomProps.set(prop, painted);
   }
 }
 
@@ -248,32 +272,31 @@ function paintCustomTheme(theme: ThemeFile, opts: { systemOnly?: boolean }): voi
   if (!opts.systemOnly) {
     root.setAttribute('data-theme', base);
   }
+  paintedFromCustom = true;
   for (const [prop, value] of Object.entries(theme.variables)) {
-    if (!prop.startsWith('--')) continue;
-    // A theme saved by an older version carries the user's font, size and
-    // scales; applying them would override the settings, and the next switch
-    // would clear them back to the stylesheet's.
-    if (SETTINGS_VARS.has(prop)) continue;
+    // Only theme tokens: a variable outside them is the app's own (a z-index,
+    // a layout size) or the user's settings, which an old theme file may still
+    // carry, and neither is a theme's to set.
+    if (!THEME_VARS.has(prop)) continue;
     if (opts.systemOnly && !isSystemVar(prop)) continue;
-    if (applySafeThemeVar(root, prop, value)) {
-      appliedCustomProps.push(prop);
-    }
+    const painted = applySafeThemeVar(root, prop, value);
+    if (painted !== null) appliedCustomProps.set(prop, painted);
   }
 }
 
 /**
- * The theme colours on screen now, read off `:root`: the active theme,
- * built-in or custom. A theme variable that something other than a theme set
- * inline (App.svelte writes the user's toolbar and tab bar colour settings
- * there) is read from under that override, so a new theme doesn't capture a
- * setting.
+ * The theme colours on screen now: the active theme, built-in or custom. A
+ * value the theme painted inline is taken as painted; anything else set inline
+ * (App.svelte writes the user's toolbar and tab bar colour settings there, over
+ * the theme) is read from under that override, so a new theme doesn't capture
+ * a setting.
  */
 export function snapshotThemeVariables(): ThemeVariableMap {
   const root = getRootElement();
   if (!root) return {};
   const lifted: Array<[string, string]> = [];
   for (const name of THEME_VAR_NAMES) {
-    if (appliedCustomProps.includes(name)) continue;
+    if (appliedCustomProps.has(name)) continue;
     const inline = root.style.getPropertyValue(name);
     if (!inline) continue;
     lifted.push([name, inline]);
@@ -283,7 +306,7 @@ export function snapshotThemeVariables(): ThemeVariableMap {
     const computed = getComputedStyle(root);
     const out: ThemeVariableMap = {};
     for (const name of THEME_VAR_NAMES) {
-      const v = computed.getPropertyValue(name).trim();
+      const v = appliedCustomProps.get(name) ?? computed.getPropertyValue(name).trim();
       if (v) out[name] = v;
     }
     return out;

@@ -238,14 +238,22 @@ async function reconcileThemeChange(event: ExternalChangeEvent): Promise<void> {
   // The path is `.filo/themes/<id>.json`. That theme is read again even if it
   // is cached, so a hand-edit shows.
   const match = event.filename.match(/^\.filo\/themes\/(.+)\.json$/);
+  const activeId = themeStore.activeFileId;
+  const activeName = themeStore.cache[activeId]?.name ?? activeId;
   try {
     await themeStore.refreshAvailable(vaultRoot, match?.[1] ? [match[1]] : []);
     if (!isStillSameVault(captured)) return;
     // Reapply the active theme if its file was the one that changed.
-    if (match && match[1] === themeStore.activeFileId) {
+    if (match && match[1] === activeId) {
       // Best-effort reapply. Failure already routes through `applyById`'s
       // toast pipeline, so we don't double-surface here.
-      await themeStore.applyById(vaultRoot, themeStore.activeFileId);
+      const gone = !themeStore.available.includes(activeId);
+      const result = await themeStore.applyById(vaultRoot, activeId);
+      // A deleted theme falls back to Light; say why the colours changed.
+      // `appearance.json` keeps naming it, so a copy synced back returns.
+      if (gone && !result.ok && isStillSameVault(captured)) {
+        uiStore.toast(`The theme "${activeName}" was deleted outside Filo, so Filo switched to Light.`, 'warning', 7000);
+      }
     }
   } catch (err) {
     reportError(

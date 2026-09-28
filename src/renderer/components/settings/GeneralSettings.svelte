@@ -5,7 +5,7 @@
   import { reportError } from '../../lib/utils/errorBus';
   import ColorPicker from '../shared/ColorPicker.svelte';
   import VaultSidebarSettings from './VaultSidebarSettings.svelte';
-  import { applyFontDefaultsToAllExisting as applyFontDefaultsToAllExistingLib } from '../../lib/styles/applyDefaultsToAll';
+  import { clearFontSizesOnAllExisting } from '../../lib/styles/applyDefaultsToAll';
   import { defaultProjectSettings, GeneralSettingsSchema } from '../../schema/index';
   import { numberBoundsAt, readNumberField } from '../../lib/settings/numberInput';
   import { LINE_SPACING_CHOICES, formatLineSpacing } from '../../stores/noteMeta';
@@ -168,26 +168,26 @@
   ];
 
   /**
-   * Opens a confirmation modal, then walks every existing element across
-   * every board and writes the current Default Board Font Size values as
-   * per-element overrides. See `applyDefaultsToAll.ts` for the walk.
+   * Opens a confirmation modal, then clears the font size every existing
+   * element sets for itself, across every board, so each follows the defaults.
+   * See `applyDefaultsToAll.ts` for the walk.
    */
-  function applyFontDefaultsToAllExisting() {
+  function useDefaultFontSizesEverywhere() {
     uiStore.openConfirm({
-      title: 'Apply Default Font Sizes to All Existing Items?',
+      title: 'Use the Default Font Sizes for All Existing Items?',
       body:
-        'This will override per-element font-size choices on every tile, frame, ' +
-        'connection label, Kanban column / card, and Task List task across all ' +
-        'boards in this vault. This action is not undoable.',
-      confirmLabel: 'Apply',
+        'Every tile, frame, connection label, Kanban column and card, Task List task, section and ' +
+        'title in this vault loses the font size it sets for itself, so it follows the board, the ' +
+        'Global Defaults and these sizes. This action is not undoable.',
+      confirmLabel: 'Use defaults',
       danger: true,
       onConfirm: () => {
-        const { boardsTouched, elementsTouched } = applyFontDefaultsToAllExistingLib();
+        const { boardsTouched, elementsTouched } = clearFontSizesOnAllExisting();
         if (elementsTouched === 0) {
-          uiStore.toast('No elements to update.', 'info');
+          uiStore.toast('Every item already uses the default font sizes.', 'info');
         } else {
           uiStore.toast(
-            `Applied default font sizes to ${elementsTouched} element${elementsTouched === 1 ? '' : 's'} across ${boardsTouched} board${boardsTouched === 1 ? '' : 's'}.`,
+            `${elementsTouched} item${elementsTouched === 1 ? '' : 's'} across ${boardsTouched} board${boardsTouched === 1 ? '' : 's'} now use the default font sizes.`,
             'success',
           );
         }
@@ -383,9 +383,9 @@
 
   <div class="setting-divider"></div>
 
-  <!-- Default Board Font Size — drives the default font-size for newly
-       created tiles, frames, and connection labels. Per-element overrides
-       still win through the existing style cascade. -->
+  <!-- Default Board Font Size: the bottom layer of the style cascade. An
+       element takes it when neither the element, its board nor the Global
+       Defaults set a size (effectiveStyle.ts). -->
   <div class="setting-group">
     <div class="setting-label">Default Board Font Size</div>
     {#each fontSizeControls as ctl (ctl.key)}
@@ -412,12 +412,12 @@
     {/each}
     <div class="setting-row apply-defaults-row">
       <p class="setting-helper">
-        Changing a value above only affects newly-created elements. To rewrite the font-size
-        of every existing tile, frame, connection label, column, card, and task in this
-        vault, click below.
+        These sizes apply wherever an item, its board and the Global Defaults leave the size
+        blank. An item that sets its own size keeps it; to make every existing item use the
+        defaults again, click below.
       </p>
-      <button class="btn-secondary apply-defaults-btn" type="button" onclick={applyFontDefaultsToAllExisting}>
-        Apply Font Sizes to all Existing Items
+      <button class="btn-secondary apply-defaults-btn" type="button" onclick={useDefaultFontSizesEverywhere}>
+        Use Default Font Sizes for all Existing Items
       </button>
     </div>
   </div>
@@ -450,8 +450,9 @@
 
   <!-- Toolbar Color -->
   <div class="setting-row">
-    <span class="setting-label">Toolbar Color</span>
+    <label class="setting-label" for="general-toolbar-color">Toolbar Color</label>
     <ColorPicker
+      id="general-toolbar-color"
       value={settings.toolbarColor}
       onchange={(c) => updateSetting('toolbarColor', c)}
     />
@@ -459,8 +460,9 @@
 
   <!-- Tab Bar Color -->
   <div class="setting-row">
-    <span class="setting-label">Tab Bar Color</span>
+    <label class="setting-label" for="general-tabbar-color">Tab Bar Color</label>
     <ColorPicker
+      id="general-tabbar-color"
       value={settings.tabBarColor}
       onchange={(c) => updateSetting('tabBarColor', c)}
     />

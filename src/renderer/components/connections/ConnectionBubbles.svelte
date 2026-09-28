@@ -102,9 +102,6 @@
           backgroundColor: '',
           position: 0.5,
           locked: false,
-          ...(vaultStore.project?.settings?.general?.defaultBoardFontSize?.connectionLabel !== undefined && {
-            fontSize: vaultStore.project.settings.general.defaultBoardFontSize.connectionLabel,
-          }),
         },
         createdAt: now,
         updatedAt: now,

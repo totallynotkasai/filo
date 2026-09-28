@@ -391,7 +391,7 @@
   .chip:hover { background: var(--ui-surface-hover); }
   .chip.active {
     background: var(--accent-primary);
-    color: white;
+    color: var(--text-inverse);
     border-color: var(--accent-primary);
   }
   .count-pair { font-size: 12px; color: var(--text-tertiary); }

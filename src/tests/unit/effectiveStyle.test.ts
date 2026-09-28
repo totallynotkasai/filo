@@ -304,11 +304,11 @@ describe('board-layer cascade', () => {
       expect(out.borderColor).toBe('#abcdef');
     });
 
-    it('fontSizeBody resolves to null when unset everywhere', () => {
+    it('fontSizeBody falls to General → Default Board Font Size when unset everywhere else', () => {
       const settings = ProjectSettingsSchema.parse({});
       const board = makeTaskListBoard();
       const out = effectiveTaskStyle(null, settings, board);
-      expect(out.fontSizeBody).toBeNull();
+      expect(out.fontSizeBody).toBe(settings.general.defaultBoardFontSize.taskItemBody);
     });
 
     it('per-task fontSizeBody override wins over board and global', () => {
@@ -468,10 +468,10 @@ describe('effectiveConnectionLabelStyle textColor + fontSize cascade', () => {
     expect(out.fontSize).toBe(18);
   });
 
-  it('returns null fontSize when unset everywhere (CSS fallback)', () => {
+  it('falls to General → Default Board Font Size when unset everywhere else', () => {
     const settings = ProjectSettingsSchema.parse({});
     const out = effectiveConnectionLabelStyle({}, settings);
-    expect(out.fontSize).toBeNull();
+    expect(out.fontSize).toBe(settings.general.defaultBoardFontSize.connectionLabel);
     expect(out.textColor).toBe('');
     expect(out.backgroundColor).toBe('');
   });

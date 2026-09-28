@@ -19,7 +19,7 @@
   import { flushDirtyFlagSentinel } from './lib/vault/dirtyFlagRecovery';
   import { historyStore } from './stores/history.svelte';
   import { themeVersion } from './stores/themeVersion.svelte';
-  import { applyTabBarText, applyToolbarText } from './lib/themes/chromeText';
+  import { applyBarColours } from './lib/themes/chromeText';
   import { tabStore } from './stores/tabs.svelte';
   import { workspaceStore } from './stores/workspace.svelte';
   import { registerDriftPromptHandlers } from './stores/vaultExternalDriftPrompts';
@@ -199,20 +199,13 @@
   });
 
   // Write project font-size settings onto `:root` as CSS variables.
-  // NOTE: only `--font-size-base` (system chrome) cascades globally.
-  // The Default Board Font Size values (tileTitle, tileBody,
-  // connectionLabel, frameTitle, kanbanColumnTitle, kanbanCardTitle,
-  // kanbanCardBody, taskListTitle, taskItem) are creation-time seeds
-  // — they're baked into per-element style overrides at creation by
-  // the element factories and do NOT drive a global CSS variable.
-  // Existing elements retain their per-element override (or fall
-  // through to the CSS-declared fallback in `style.css`). Users can
-  // retroactively apply current defaults via the
-  // "Apply to all Existing Items" button in General Settings.
+  // NOTE: only `--font-size-base` (system chrome) cascades globally. The
+  // Default Board Font Size values are the bottom layer of each element's
+  // style cascade (`effectiveStyle.ts`), read there, not CSS variables.
   //
-  // Runs again after every theme paint (`themeVersion`): a theme switch clears
-  // the inline variables the previous theme set, which included the toolbar
-  // and tab bar colours before themes stopped carrying settings.
+  // Runs again after every theme paint (`themeVersion`): a paint clears the
+  // inline variables the previous theme set, and the toolbar and tab bar
+  // colour settings sit over the new theme's.
   $effect(() => {
     const general = vaultStore.project?.settings?.general;
     if (!general) return;
@@ -239,20 +232,9 @@
     if (typeof general.waypointScale === 'number') {
       root.style.setProperty('--ui-waypoint-scale', `${general.waypointScale}`);
     }
-    // Toolbar / tab-bar background colours flow through CSS variables so
-    // themes (and the systemOnly switch) can override them at the :root
-    // level. Empty string clears the variable so the CSS fallback wins.
-    // Each also gets black or white text so the bar stays readable in any theme.
-    if (typeof general.toolbarColor === 'string') {
-      if (general.toolbarColor) root.style.setProperty('--toolbar-bg', general.toolbarColor);
-      else root.style.removeProperty('--toolbar-bg');
-      applyToolbarText(root, general.toolbarColor);
-    }
-    if (typeof general.tabBarColor === 'string') {
-      if (general.tabBarColor) root.style.setProperty('--tabbar-bg', general.tabBarColor);
-      else root.style.removeProperty('--tabbar-bg');
-      applyTabBarText(root, general.tabBarColor);
-    }
+    // The toolbar / tab bar colour settings sit over the theme's; blank leaves
+    // the bar to the theme (a custom theme may colour it).
+    applyBarColours(root, general.toolbarColor ?? '', general.tabBarColor ?? '');
     if (typeof general.historyLimit === 'number') {
       historyStore.setMaxHistory(general.historyLimit);
     }

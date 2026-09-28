@@ -355,6 +355,56 @@ D10, D31, D34, D39 and D40 are covered by the unit specs above; they were not dr
 
 **Real-app check:** switch through all 5 built-ins and one custom theme with toolbar and tab bar colours, and take screenshots.
 
+#### Phase 3 status: done (2026-09-28)
+
+All thirteen items are fixed. Each has a regression test, and each test was proved to bite: a script put every old behaviour back in turn (16 mutations, one per item plus a second for T2, T4 and T6) and the matching test failed every time. Decision 2 was taken as recommended, first option: General → Default Board Font Size is the bottom layer of the cascade.
+
+| Item | Fix | Tests |
+|---|---|---|
+| T1 | New `applyBarColours` (`chromeText.ts`) replaces the App.svelte block. `themeManager` now remembers the value it painted for each variable; `paintChromeOverride` puts a user colour over it, or with the setting blank gives the variable back to the theme (the painted value, else the stylesheet's). Bar text is black / white against the user's colour or a custom theme's; a built-in's bars keep their designed text. `snapshotThemeVariables` takes painted values as painted, so New Theme never captures the user's bar colour. | `themeBarColours.test.ts`: custom theme red bars stay red (System-only too); user colour wins and clearing it restores the theme's; snapshot; built-ins untouched |
+| T2 | Every factory (tile, Kanban card and column, task, section, frame, connection label, new Task List board) stops copying sizes; `defaultFontSizes.ts` is deleted. `effectiveStyle.ts` resolves each font size through `generalFontSize` as the layer under the Global Defaults, and `taskListTitleFontSize` does the same for a Task List's group headers. The General button now **clears** every element's own size ("Use Default Font Sizes for all Existing Items"). | `fontSizeCascade.test.ts`: a new tile has no size; Global title 24 renders 24 and follows a change; General-only follows a change; board / element sizes still win; every element kind has the General layer. `applyDefaultsToAll.test.ts` rewritten for clearing |
+| T3 | `readThemeFile` gives an unknown `base` Light with a note. The candidate no longer throws: the vault opens, the theme's colours paint over Light, and a warning names the file and the base. | `vaultCandidate.test.ts`, `themeStoreApplyById.test.ts`, `themeFiles.test.ts` |
+| T4 | `cleanThemeVariables` keeps only `THEME_TOKEN_NAMES`. New `readThemeFile` / `loadedTheme` put every disk read (`refreshAvailable`, `applyById`, the vault candidate) through the same shape check and filter as an import. `applyCustomTheme` paints only theme tokens. | `themeFiles.test.ts`: hostile `--z-modal` dropped on import, on read and on paint |
+| T5 | `ColorPicker` keeps the value's alpha: a picked colour takes it (`parseCssColor` / `formatCssColor` in `color.ts`), and an Opacity slider shows for a translucent value or when asked (`showAlpha`). The theme editor asks for it on the ten translucent tokens (`TRANSLUCENT_TOKENS`). | `colorPickerAlpha.test.ts` |
+| T6 | Dark's `--text-inverse` goes from `#2b2b3d` (3.8:1) to `#14141f` (5.0:1). Every hard-coded white on the accent, and every use of the undefined `--accent-on-primary`, now uses `--text-inverse`; the Template Browser's danger button uses `--text-on-danger`. | `themeContrast.test.ts` (text on accent and accent hover ≥ 4.5:1, all 5 built-ins); new `contracts/textOnAccent.test.ts` (no white on the accent, no `--accent-on-primary`) |
+| T7 | New `lib/themes/themeEditorGuard.ts`: the mounted editor registers; `settleThemeEditor` asks **Save / Discard / Keep editing**. `confirmDiscardSettings` (Escape, close button) asks it first; the Settings tabs switch through `selectTab`, which asks when leaving Themes (focus-driven switching included, without re-asking when the prompt hands focus back). | `themeEditorSave.test.ts` |
+| T8 | The editor's Save calls `selectTheme`. When the pick is cancelled (the colours prompt), the saved theme is not left painted as a preview. | `themeEditorSave.test.ts` |
+| T9 | The theme reconciler toasts *The theme "X" was deleted outside Filo, so Filo switched to Light.* | `themeActionsSession.test.ts` |
+| T10 | New `setSystemColoursOnly` repaints at once. On: the active theme's chrome over the boards. Off: back to the theme the vault opens with (`project.theme`). | `themeActionsSession.test.ts` |
+| T11 | Save refuses, naming each field, while a value box holds a non-colour. A value is now checked as a colour (`isCssColour`, the browser's parser), not only for injection, so a mistyped `#12` is flagged too. | `themeEditorSave.test.ts` |
+| T12 | `ColorPicker` takes `id` and `ariaLabel`; each theme-editor swatch is "<row> colour"; Toolbar / Tab Bar Color are `<label for>`; theme cards and custom theme rows carry `aria-pressed`. | `colorPickerAlpha.test.ts` |
+| T13 | `themePreview` reads each card's colours from the theme itself (a built-in's stylesheet block, a custom theme's file over its base); custom themes get a small preview too. The Themes tab loses its "Auto" chip and gets its own hint. The Danger zone uses theme tokens. | `themeActionsSession.test.ts` |
+
+**Verification.** `npm run ci:verify` is green: 674 test files, 6394 tests passed, 5 skipped, 69/69 gates. Tests that pinned the old behaviour were updated: `vaultCandidate` and `themeStoreApplyById` (unknown base), `effectiveStyle` (no size anywhere now resolves to the General size), `buildBoardDefaults` (no Task List title seed), `themeManager` (non-token variable), and `taskFontSizeDefaults.test.ts` was deleted with its module. The untrusted-sink contract caught a direct `setProperty` in the first draft of `paintChromeOverride`; it now goes through `applySafeThemeVar`.
+
+A real-app check (built app, Playwright `_electron`, a scratch vault whose active theme was a custom theme based on "solarized", plus a custom "Red bars" theme with red toolbar and tab bar and `--z-modal: -5`) confirmed:
+- **T3:** the vault opened, with one warning naming the theme and the base; the theme's accent showed over Light.
+- **T1 / T12:** Light, Dark, Blueprint, Retro, Nature and Red bars were each picked from Settings → Themes. Each card was `aria-pressed` once picked. Red bars painted the toolbar `rgb(204, 0, 0)` and the tab bar `#7a0000`; the built-ins painted their own bars.
+- **T4:** Settings stayed visible over the app under Red bars; `--z-modal` stayed `3001`.
+- **T6:** `--text-inverse` resolved to `#14141f` under Dark.
+- **T13:** each card showed its theme's own colours, and the custom rows their own preview.
+- **T7:** with an edited colour, clicking General and pressing Escape each asked *Save changes to the theme?*. Keep editing kept the editor; Discard closed Settings and put Red bars back.
+- No renderer or console errors.
+
+T5, T8, T9, T10 and T11 are covered by the specs above; they were not driven by hand.
+
+**Deviations from the plan**
+
+- **T1:** the bar text is recomputed only when the bar colour is the user's or a custom theme's. A built-in theme's bars keep the text colours the theme was designed with.
+- **T2:** the plan said "Apply defaults to all" already cleared sizes. It stamped the General values onto every element instead, which would hide every later default change, so it now clears them (and is renamed). The Task List title (a board setting) also moved to the cascade: a new board no longer copies it, and its group headers fall back to General → Task List Title. A Kanban card made before this change keeps a copied size on its tile definition, under the card cascade; the card cascade now always resolves a size (General at the bottom), so that copy no longer shows. It was only ever a creation-time copy: a size set in a card's Style popup lives on the placement and still wins. `buildBoardSettingsFromGlobal` keeps its settings argument (a registry API passes it), marked unused.
+- **T3:** the plan said "falls back to light". The theme is not dropped: its colours paint over Light and the warning says so. An import with an unknown base is accepted the same way instead of refused.
+- **T4:** the plan named `normaliseThemeVariables`, which doesn't exist; the filter is in `cleanThemeVariables`. A theme file that isn't a theme at all (no `variables` map) now counts as a load failure, with the same "invalid JSON" toast as a file that doesn't parse.
+- **T5:** both options: picks keep the value's alpha, and the Opacity slider shows for translucent values and for the known-translucent tokens.
+- **T6:** no new `--accent-on-primary` token. `--text-inverse` is already the theme editor's "Text on accent", used almost only on the accent, and only Dark's value failed; a second token would duplicate it. The undefined `--accent-on-primary` references are gone.
+- **T7:** the plan named `confirmDiscardSettings` for registering dirty state. The editor registers with its own small guard module instead, which `confirmDiscardSettings` and the tab switch both ask.
+- **T8:** Save with a cancelled pick keeps the saved file and repaints the active theme.
+- **T9:** `appearance.json` still names the deleted theme, so a copy Syncthing brings back returns on the next open.
+- **T10:** turning it off repaints the theme the vault opens with, not the one picked while it was on (that pick was for the session only).
+- **T11:** also added a real colour check (`isCssColour`); `asSafeThemeValue` only blocks injection, so a mistyped colour was never flagged before.
+- **T13:** "use a theme token for the Danger-zone red": red text on the dialogs of Dark, Blueprint, Retro and Nature reads at 2.2–2.5:1 even with the theme's own danger colour. The zone's heading and buttons now use the text colour, marked by a `--accent-danger` rule and borders, with the `--menu-danger-bg` tint on hover. "Relabel the Themes tab": the chip is removed rather than renamed, since neither Auto nor Apply is true of the whole tab; its hint explains both.
+- **Not in scope, noticed:** the Mind Map frame factory (`SideToolbar.svelte`) still copies the Global Defaults frame colours into each new frame, the colour version of T2.
+- **CLAUDE.md:** the new module is in the tree, `defaultFontSizes.ts` is out, and the cascade and theme sections state the new rules.
+
 ### Phase 4: sync, watcher and attachment tags (S1, D2, D4, D5, D11, D15, D16)
 
 1. **S1.**
@@ -453,6 +503,7 @@ D10, D31, D34, D39 and D40 are covered by the unit specs above; they were not dr
 
 - **Phase 1:** done 2026-09-28 (status block under Phase 1).
 - **Phase 2:** done 2026-09-28 (status block under Phase 2).
-- Phases 3–8: not started.
+- **Phase 3:** done 2026-09-28 (status block under Phase 3).
+- Phases 4–8: not started.
 
 When a phase lands, add a "Phase N status" block (fix, tests, verification, deviations) as in Audit-22. When every phase is done, move this file to `docs/archive/`.

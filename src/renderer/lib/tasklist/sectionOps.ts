@@ -28,7 +28,6 @@ import type {
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { historyStore } from '../../stores/history.svelte';
 import { createId } from '../utils/ids';
-import { defaultTaskSectionFontSizes } from '../styles/defaultFontSizes';
 import {
   AddSectionCommand,
   DeleteSectionCommand,
@@ -37,16 +36,11 @@ import {
 } from '../../commands/index';
 
 /**
- * A new section, with the Settings default for its header size baked in as
- * its own style (as a new task gets its font sizes): changing the default
- * later never rewrites existing sections.
+ * A new section. It has no style of its own, so its header size follows the
+ * section cascade down to General → Default Board Font Size.
  */
 function newSection(id: string, title: string, position: number): TaskListSection {
-  const { fontSizeTitle } = defaultTaskSectionFontSizes();
-  return {
-    id, title, position, collapsed: false,
-    ...(fontSizeTitle !== undefined && { style: { fontSizeTitle } }),
-  } as TaskListSection;
+  return { id, title, position, collapsed: false };
 }
 
 export interface SectionOpsDeps {

@@ -64,6 +64,10 @@ const PAIRS: Array<[string, string, number, string]> = [
   ['--toolbar-save-busy', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "saving" on toolbar'],
   ['--toolbar-save-error', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "failed" on toolbar'],
   ['--toolbar-save-attention', '--toolbar-bg', WCAG_AA_LARGE, 'save indicator "waiting for a decision" on toolbar'],
+  // Text on an accent button, badge or chip (`--text-inverse`, labelled "Text on
+  // accent" in the theme editor), at rest and hovered.
+  ['--text-inverse', '--accent-primary', WCAG_AA_NORMAL, 'text on accent'],
+  ['--text-inverse', '--accent-primary-hover', WCAG_AA_NORMAL, 'text on accent (hover)'],
   // The warning banner over a read-only or conflicted note.
   ['--ui-warn-text', '--ui-warn-bg', WCAG_AA_NORMAL, 'warning banner text'],
   ['--ui-warn-text', '--ui-warn-bg-hover', WCAG_AA_NORMAL, 'warning banner text (hover)'],

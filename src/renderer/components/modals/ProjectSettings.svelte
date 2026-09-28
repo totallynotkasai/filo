@@ -12,6 +12,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { settleUnappliedEdits } from '../../lib/settings/unappliedEditsPrompt';
+  import { settleThemeEditor } from '../../lib/themes/themeEditorGuard';
   import { handleListKeyNav } from '../../lib/utils/listKeyNav';
   import { reportError } from '../../lib/utils/errorBus';
 
@@ -170,6 +171,29 @@
 
   let tabListEl = $state<HTMLDivElement | null>(null);
 
+  // Leaving the Themes tab unmounts an open theme editor, so unsaved colours
+  // there are asked about first. The tabs also switch on focus (arrow keys),
+  // and the prompt hands focus back to the tab that asked: `settling` keeps
+  // that from asking again.
+  let settling = false;
+  async function selectTab(id: SettingsTab): Promise<void> {
+    if (id === activeTab || settling) return;
+    if (activeTab === 'themes') {
+      settling = true;
+      let leave = false;
+      try {
+        leave = await settleThemeEditor();
+      } finally {
+        settling = false;
+      }
+      if (!leave) {
+        tabListEl?.querySelector<HTMLElement>('#settings-tab-themes')?.focus();
+        return;
+      }
+    }
+    activeTab = id;
+  }
+
   function handleSettingsTabKeydown(e: KeyboardEvent) {
     if (!tabListEl) return;
     // Vertical tablist — settings tabs are stacked in a left rail.
@@ -181,15 +205,18 @@
   // The `saveMode` chip flags each tab's commit semantics — auto-save vs
   // explicit Apply / Revert — a user-visible cue, since the modal mixes save
   // behaviours and a small helper line isn't loud enough.
+  // Themes has no chip: a pick applies at once, but the theme editor saves
+  // only on its Save button, so neither label is true of the whole tab.
   const SAVE_MODE_HINT = {
     auto: 'Saves automatically as you change values.',
     apply: 'Changes here take effect when you click Apply.',
+    themes: 'Picking a theme applies it at once. The theme editor saves when you click Save.',
   } as const;
-  const tabs: { id: SettingsTab; label: string; icon: string; saveMode: 'auto' | 'apply' }[] = [
+  const tabs: { id: SettingsTab; label: string; icon: string; saveMode: 'auto' | 'apply' | 'themes' }[] = [
     { id: 'general', label: 'General', saveMode: 'auto', icon: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' },
     { id: 'defaults', label: 'Global Defaults', saveMode: 'apply', icon: 'M12 3v18M3 12h18M5.5 5.5l13 13M18.5 5.5l-13 13' },
     { id: 'current-board', label: 'Current Board', saveMode: 'apply', icon: 'M3 3h18v18H3zM9 3v18M3 9h18' },
-    { id: 'themes', label: 'Themes', saveMode: 'auto', icon: 'M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z' },
+    { id: 'themes', label: 'Themes', saveMode: 'themes', icon: 'M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z' },
     { id: 'trash', label: 'Trash', saveMode: 'auto', icon: 'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6' },
   ];
 
@@ -237,8 +264,8 @@
         tabindex={activeTab === tab.id ? 0 : -1}
         aria-selected={activeTab === tab.id}
         aria-controls="settings-tabpanel"
-        onclick={() => activeTab = tab.id}
-        onfocus={() => { if (!disabled) activeTab = tab.id; }}
+        onclick={() => selectTab(tab.id)}
+        onfocus={() => { if (!disabled) void selectTab(tab.id); }}
         title={disabled ? 'Open a board to edit its per-board settings' : SAVE_MODE_HINT[tab.saveMode]}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -247,11 +274,13 @@
         <span class="settings-tab-label">{tab.label}</span>
         <!-- Hidden from assistive tech so the tab is announced by its name
              alone; the tab's title carries what the chip means. -->
-        <span
-          class="settings-tab-save-mode"
-          class:apply={tab.saveMode === 'apply'}
-          aria-hidden="true"
-        >{tab.saveMode === 'auto' ? 'Auto' : 'Apply'}</span>
+        {#if tab.saveMode !== 'themes'}
+          <span
+            class="settings-tab-save-mode"
+            class:apply={tab.saveMode === 'apply'}
+            aria-hidden="true"
+          >{tab.saveMode === 'auto' ? 'Auto' : 'Apply'}</span>
+        {/if}
       </button>
     {/each}
   </div>
@@ -411,13 +440,15 @@
   .danger-zone {
     margin-top: 24px;
     padding-top: 16px;
-    border-top: 1px solid var(--ui-border);
+    /* The theme danger red marks the zone; text stays in the text colour, since
+       red on the mid-tone dialogs of the darker themes reads at about 2:1. */
+    border-top: 2px solid var(--accent-danger);
   }
 
   .danger-zone-title {
     font-size: 15px;
     font-weight: 600;
-    color: #c0392b;
+    color: var(--text-primary);
     margin: 0 0 4px;
   }
 
@@ -440,14 +471,14 @@
     font-weight: 500;
     cursor: pointer;
     background: transparent;
-    color: #c0392b;
-    border: 1px solid #c0392b;
+    color: var(--text-primary);
+    border: 1px solid var(--accent-danger);
     transition: background-color 0.1s ease, opacity 0.1s ease;
     font-family: var(--font-system);
   }
 
   .danger-btn:hover {
-    background: rgba(192, 57, 43, 0.08);
+    background: var(--menu-danger-bg);
   }
 
   .danger-btn:disabled {

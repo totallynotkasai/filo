@@ -18,7 +18,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  *   1. Theme load throws → loadVaultCandidate throws.
  *   2. Tags hydration fails → loadVaultCandidate throws.
  *   3. Vault opens cleanly → returns a fully-populated candidate.
- *   4. Hand-corrupt theme with unknown base → throws naming the file.
+ *   4. Hand-edited theme with an unknown base → opens over Light, with a warning.
  *
  * Plus warning-buffering behaviour: corrupt config sentinels and
  * settings-slice fallbacks are queued into `candidate.warnings` for
@@ -181,7 +181,7 @@ describe('loadVaultCandidate', () => {
     await expect(loadVaultCandidate('/vault')).rejects.toThrow(/tags\.json/);
   });
 
-  it('throws when active custom theme has an unknown base — audit repro', async () => {
+  it('opens over Light, with a warning, when the active custom theme has an unknown base', async () => {
     const badThemeFile = {
       id: 'broken',
       name: 'Broken',
@@ -198,7 +198,9 @@ describe('loadVaultCandidate', () => {
       }),
     );
 
-    await expect(loadVaultCandidate('/vault')).rejects.toThrow(/unknown base/);
+    const candidate = await loadVaultCandidate('/vault');
+    expect(candidate.activeThemeFile?.base).toBe('light');
+    expect(candidate.warnings.some((w) => /"nonsense", which isn't a built-in theme/.test(w.text))).toBe(true);
   });
 
   it('throws when the active custom theme file is missing AND theme:load IPC errors', async () => {

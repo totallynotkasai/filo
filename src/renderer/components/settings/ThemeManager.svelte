@@ -2,7 +2,6 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { themeStore } from '../../stores/theme.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { ACCENT_COLOR } from '../../constants/defaults';
   import { listBuiltinThemes } from '../../lib/themes/themeManager';
   import { BUILTIN_THEME_LABELS, type ThemeEditorSession } from '../../lib/themes/themeFiles';
   import {
@@ -12,18 +11,12 @@
     importThemeSession,
     newThemeSession,
     selectTheme,
+    setSystemColoursOnly,
+    themePreview,
   } from '../../lib/themes/themeActions';
   import ThemeEditor from './ThemeEditor.svelte';
-  import type { ThemeId } from '../../../shared/types';
 
   const builtInIds = listBuiltinThemes();
-  const builtInPreview: Record<ThemeId, string> = {
-    light: '#f8f9fa',
-    dark: '#1a1a2e',
-    blueprint: '#0a1929',
-    retro: '#2b1b0e',
-    nature: '#0a2a1b',
-  };
 
   let editing = $state<ThemeEditorSession | null>(null);
   let importInput = $state<HTMLInputElement | null>(null);
@@ -40,6 +33,10 @@
     themeStore.available.filter((id) => !(builtInIds as readonly string[]).includes(id)),
   );
   let activeFileId = $derived(themeStore.activeFileId);
+  // Each card shows its theme's own colours, read from the theme itself.
+  let previews = $derived(
+    Object.fromEntries([...builtInIds, ...customThemeIds].map((id) => [id, themePreview(id)])),
+  );
 
   function openEditor(session: ThemeEditorSession | null): void {
     if (session) editing = session;
@@ -83,7 +80,7 @@
     <button
       class="toggle-btn"
       class:active={themeStore.systemOnly}
-      onclick={() => themeStore.setSystemOnly(!themeStore.systemOnly)}
+      onclick={() => setSystemColoursOnly(!themeStore.systemOnly)}
       role="switch"
       aria-checked={themeStore.systemOnly}
       title="Apply themes to system chrome only"
@@ -100,19 +97,20 @@
   <div class="theme-grid">
     {#each builtInIds as themeId (themeId)}
       {@const label = BUILTIN_THEME_LABELS[themeId]}
-      {@const preview = builtInPreview[themeId]}
+      {@const preview = previews[themeId]}
       <div class="theme-card-wrap">
         <button
           class="theme-card"
           class:active={activeFileId === themeId}
           onclick={() => selectTheme(themeId)}
           aria-label="Select {label} theme"
+          aria-pressed={activeFileId === themeId}
         >
-          <div class="theme-preview" style="background: {preview};">
-            <div class="preview-bar" style="background: {preview === '#f8f9fa' ? '#e0e0e0' : 'rgba(255,255,255,0.1)'}"></div>
+          <div class="theme-preview" style:background={preview?.background}>
+            <div class="preview-bar" style:background={preview?.bar}></div>
             <div class="preview-content">
-              <div class="preview-dot" style="background: {ACCENT_COLOR}"></div>
-              <div class="preview-line" style="background: {preview === '#f8f9fa' ? '#ccc' : 'rgba(255,255,255,0.2)'}"></div>
+              <div class="preview-dot" style:background={preview?.accent}></div>
+              <div class="preview-line" style:background={preview?.text}></div>
             </div>
           </div>
           <span class="theme-name">{label}</span>
@@ -144,16 +142,25 @@
     <div class="custom-theme-list">
       {#each customThemeIds as id (id)}
         {@const name = themeStore.cache[id]?.name ?? id}
+        {@const preview = previews[id]}
         <div class="custom-theme-item">
           <button
             class="custom-theme-btn"
             class:active={activeFileId === id}
             onclick={() => selectTheme(id)}
             aria-label="Select {name} theme"
+            aria-pressed={activeFileId === id}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
-            </svg>
+            {#if preview}
+              <span class="custom-preview" style:background={preview.background} aria-hidden="true">
+                <span class="custom-preview-bar" style:background={preview.bar}></span>
+                <span class="custom-preview-dot" style:background={preview.accent}></span>
+              </span>
+            {:else}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+              </svg>
+            {/if}
             {name}
           </button>
           <button class="icon-action" onclick={() => openEditor(editThemeSession(id))} title="Edit theme" aria-label="Edit {name}">
@@ -324,6 +331,9 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-border);
+    box-sizing: border-box;
   }
 
   .preview-bar {
@@ -350,6 +360,33 @@
     flex: 1;
     height: 4px;
     border-radius: 2px;
+    opacity: 0.6;
+  }
+
+  .custom-preview {
+    position: relative;
+    display: inline-block;
+    width: 22px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid var(--ui-border);
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .custom-preview-bar {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 4px;
+  }
+
+  .custom-preview-dot {
+    position: absolute;
+    left: 4px;
+    bottom: 3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
   }
 
   .theme-name {

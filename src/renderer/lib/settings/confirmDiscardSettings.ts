@@ -1,5 +1,6 @@
 import type { uiStore as UIStore } from '../../stores/ui.svelte';
 import type { pendingSettingsStore as PendingSettingsStore } from '../../stores/pendingSettings.svelte';
+import { settleThemeEditor, themeEditorHasChanges } from '../themes/themeEditorGuard';
 
 /**
  * `Modal.beforeClose` callback for the Project Settings
@@ -21,6 +22,8 @@ export async function confirmDiscardSettings(
   pending: typeof PendingSettingsStore,
   ui: typeof UIStore,
 ): Promise<boolean> {
+  // An open theme editor with changes asks Save / Discard / Keep editing first.
+  if (themeEditorHasChanges() && !(await settleThemeEditor(ui))) return false;
   if (!pending.hasUnsavedChanges()) return true;
   return new Promise<boolean>((resolve) => {
     ui.openConfirm({

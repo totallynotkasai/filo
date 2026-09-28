@@ -316,9 +316,8 @@ const TaskListSettingsSchema = BaseBoardSettingsSchema.extend({
   groupBy: z.enum(['status', 'priority', 'tag', 'dueDate', 'category', 'none']).default('status'),
   sortBy: z.enum(['title', 'created', 'dueDate', 'priority', 'manual']).default('priority'),
   /**
-   * Board-title font-size override (px). Seeded from
-   * `settings.general.defaultBoardFontSize.taskListTitle` at board
-   * creation. Absent on legacy boards → CSS fallback.
+   * The board's own title font size (px). Absent → General → Default Board
+   * Font Size → Task List Title (`taskListTitleFontSize`).
    */
   titleFontSize: z.number().min(8).max(48).optional(),
   defaults: TaskListBoardDefaultsSchema.optional(),

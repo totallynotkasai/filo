@@ -638,7 +638,7 @@
   }
 
   .confirm-actions button.danger {
-    color: var(--accent-on-primary, white);
+    color: var(--text-on-danger);
     background: var(--accent-danger);
     border-color: var(--accent-danger);
   }

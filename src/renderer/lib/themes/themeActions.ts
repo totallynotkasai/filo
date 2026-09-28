@@ -106,6 +106,51 @@ export async function selectTheme(id: string): Promise<boolean> {
 }
 
 /**
+ * Turns "System colours only" on or off and repaints at once. On: the active
+ * theme's chrome goes over the boards' theme. Off: the whole app goes back to
+ * the theme the vault opens with (a pick made while it was on was for the
+ * session only).
+ */
+export async function setSystemColoursOnly(on: boolean): Promise<void> {
+  themeStore.setSystemOnly(on);
+  const vaultRoot = vaultStore.path;
+  if (!vaultRoot) return;
+  const id = on ? themeStore.activeFileId : (vaultStore.project?.theme || themeStore.activeFileId);
+  const result = await themeStore.applyById(vaultRoot, id);
+  if (!result.ok) {
+    reportError(
+      'themeActions.systemOnly',
+      result.error ?? `Theme "${id}" could not be applied`,
+      `Theme "${themeLabel(id)}" could not be applied${result.error ? `: ${result.error}` : ''}. Reverted to Light.`,
+    );
+  }
+}
+
+/** The colours a theme card shows. */
+export interface ThemePreview {
+  background: string;
+  bar: string;
+  accent: string;
+  text: string;
+}
+
+const PREVIEW_TOKENS = ['--ui-bg', '--toolbar-bg', '--accent-primary', '--text-secondary'] as const;
+
+/**
+ * A theme's own colours for its card: a built-in's read off its stylesheet
+ * block, a custom theme's from its file over its base. Null when they can't be
+ * read (no stylesheet, as in tests).
+ */
+export function themePreview(id: string): ThemePreview | null {
+  const file = isBuiltinTheme(id) ? null : themeStore.cache[id];
+  const base = isBuiltinTheme(id) ? id : (file?.base ?? 'dark');
+  const vars = { ...readBuiltinThemeVariables(base, PREVIEW_TOKENS), ...(file?.variables ?? {}) };
+  const [bg, bar, accent, text] = PREVIEW_TOKENS.map((name) => vars[name]);
+  if (!bg || !bar || !accent || !text) return null;
+  return { background: bg, bar, accent, text };
+}
+
+/**
  * Moves a custom theme into Filo's trash after a confirm. The active theme
  * falls back to the built-in it was based on.
  */

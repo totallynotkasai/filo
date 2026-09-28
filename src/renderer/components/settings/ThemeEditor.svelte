@@ -4,8 +4,10 @@
    *
    * Every change paints at once (`themeStore.preview`), coalesced to one
    * paint per frame while a colour wheel is dragged. Save writes the file and
-   * makes it the active theme; Cancel, closing Settings or leaving the vault
-   * paints the active theme again, so an unsaved preview never sticks.
+   * picks it the way a click on it would (`selectTheme`); Cancel, closing
+   * Settings or leaving the vault paints the active theme again, so an unsaved
+   * preview never sticks. Switching tab or closing Settings with changes asks
+   * first (`themeEditorGuard.ts`).
    */
   import { onDestroy, untrack } from 'svelte';
   import ColorPicker from '../shared/ColorPicker.svelte';
@@ -13,7 +15,9 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { reportError } from '../../lib/utils/errorBus';
-  import { THEME_TOKEN_GROUPS } from '../../lib/themes/themeTokens';
+  import { THEME_TOKEN_GROUPS, TRANSLUCENT_TOKENS } from '../../lib/themes/themeTokens';
+  import { selectTheme } from '../../lib/themes/themeActions';
+  import { registerThemeEditor } from '../../lib/themes/themeEditorGuard';
   import {
     buildThemeFile,
     themeNameProblem,
@@ -21,6 +25,7 @@
     type ThemeEditorSession,
   } from '../../lib/themes/themeFiles';
   import { asSafeThemeValue } from '../../../shared/untrusted';
+  import { isCssColour } from '../../lib/utils/color';
   import { captureVaultIdentity, isStillSameVault } from '../../lib/vault/vaultIdentity';
 
   interface Props {
@@ -65,8 +70,10 @@
   paint();
 
   function setToken(token: string, value: string): void {
+    // Every row here is a colour: a value the sanitiser passes but CSS can't
+    // read as one (a mistyped `#12`) would save and then paint nothing.
     const safe = asSafeThemeValue(value);
-    if (safe === null) {
+    if (safe === null || !isCssColour(safe)) {
       invalid = { ...invalid, [token]: value };
       return;
     }
@@ -81,32 +88,56 @@
     openGroups = { ...openGroups, [id]: !openGroups[id] };
   }
 
-  async function save(asNew: boolean): Promise<void> {
+  const TOKEN_LABELS: Record<string, string> = Object.fromEntries(
+    THEME_TOKEN_GROUPS.flatMap((g) => g.tokens.map((tk) => [tk.name, tk.label])),
+  );
+
+  /** Why the colours can't be saved yet: a value box holding a non-colour. */
+  function colourProblem(): string | null {
+    const bad = Object.keys(invalid).map((tk) => `"${TOKEN_LABELS[tk] ?? tk}"`);
+    if (bad.length === 0) return null;
+    return `${bad.join(', ')} ${bad.length === 1 ? "isn't a colour" : "aren't colours"} Filo can use. Fix ${bad.length === 1 ? 'it' : 'them'} or pick a colour before saving.`;
+  }
+
+  function isDirty(): boolean {
+    if (name !== initial.name || Object.keys(invalid).length > 0) return true;
+    const keys = new Set([...Object.keys(variables), ...Object.keys(initial.variables)]);
+    for (const key of keys) if (variables[key] !== initial.variables[key]) return true;
+    return false;
+  }
+
+  /** Saves; resolves false when nothing was saved (a problem is shown). */
+  async function save(asNew: boolean): Promise<boolean> {
     const vaultRoot = vaultStore.path;
-    if (!vaultRoot || busy) return;
+    if (!vaultRoot || busy) return false;
     const ownId = asNew ? null : initial.ownId;
-    problem = themeNameProblem(name, takenIds(), ownId);
-    if (problem) return;
+    problem = colourProblem() ?? themeNameProblem(name, takenIds(), ownId);
+    if (problem) return false;
     const file = buildThemeFile(name, initial.base, variables);
     if (ownId) file.id = ownId;
     busy = true;
     try {
       const id = await themeStore.saveTheme(vaultRoot, file);
-      if (!id || !isStillSameVault(identity)) return;
+      if (!id || !isStillSameVault(identity)) return false;
       finished = true;
-      const applied = await themeStore.applyById(vaultRoot, id);
-      if (applied.ok) {
-        vaultStore.setTheme(id);
-        await vaultStore.save();
-      }
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      // Picked as a click on it would: the Global Defaults colours prompt,
+      // and in "System colours only" a look for this session only.
+      const picked = await selectTheme(id);
+      if (!picked && isStillSameVault(identity)) await themeStore.endPreview(vaultRoot);
       uiStore.toast(`Theme "${file.name}" saved`, 'success');
       onclose();
+      return true;
     } catch (err) {
       reportError('ThemeEditor.save', err, "Couldn't save the theme");
+      return false;
     } finally {
       busy = false;
     }
   }
+
+  const unregister = registerThemeEditor({ name: () => name, isDirty, save: () => save(false) });
 
   async function cancel(): Promise<void> {
     finished = true;
@@ -118,6 +149,7 @@
   }
 
   onDestroy(() => {
+    unregister();
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
     if (finished) return;
@@ -176,6 +208,8 @@
               <ColorPicker
                 value={variables[token.name] ?? ''}
                 allowAuto={false}
+                ariaLabel="{token.label} colour"
+                showAlpha={TRANSLUCENT_TOKENS.has(token.name)}
                 onchange={(c) => setToken(token.name, c)}
               />
               <input

@@ -45,8 +45,8 @@ const FrameStyleSchema = z.object({
   shadowIntensity: z.number().min(0).max(1).optional(),
   // `null` = inherit from board/global; `true`/`false` = override at this element.
   dynamicContrastText: z.boolean().nullable().optional(),
-  // Per-frame title font-size override (px). Seeded from
-  // `settings.general.defaultBoardFontSize.frameTitle` at creation.
+  // Per-frame title font-size override (px). Absent → the frame cascade
+  // (board, Global Defaults, then General → Default Board Font Size).
   fontSizeTitle: z.number().min(8).max(48).optional(),
 }).passthrough();
 

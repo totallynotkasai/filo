@@ -27,9 +27,9 @@ import { buildBoardSettingsFromGlobal } from '../lib/styles/buildBoardDefaults';
 
 /**
  * A new board's `settings` block: no style of its own, so it follows the
- * Global Defaults (see `buildBoardDefaults.ts` for the rule). `settings`
- * supplies the one creation-time seed, the Task List title size; undefined
- * (called before a project is loaded, e.g. tests) uses the schema defaults.
+ * Global Defaults (see `buildBoardDefaults.ts` for the rule); undefined
+ * `settings` (called before a project is loaded, e.g. tests) uses the schema
+ * defaults.
  */
 function snapshotSettings(
   type: BoardType,

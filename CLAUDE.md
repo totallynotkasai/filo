@@ -431,21 +431,21 @@ filo/
 │   │   │   ├── fonts/
 │   │   │   │   └── importedFonts.ts   # `.filo/fonts/` registered with the page on every vault open
 │   │   │   ├── styles/                # Override-cascade resolver
-│   │   │   │   ├── effectiveStyle.ts  # Tile / column / card / task / document style cascade
+│   │   │   │   ├── effectiveStyle.ts  # Tile / column / card / task / document style cascade; General font sizes as its bottom layer
 │   │   │   │   ├── elementStyleTargets.ts # Per-kind fields, writer and undo command for ElementStylePopup
 │   │   │   │   ├── resolveStyle.ts
 │   │   │   │   ├── resolvedTileStyleContext.ts
 │   │   │   │   ├── buildBoardDefaults.ts
-│   │   │   │   ├── applyDefaultsToAll.ts
-│   │   │   │   ├── tileStyleSupport.ts # Which style fields each tile type renders
-│   │   │   │   └── defaultFontSizes.ts
+│   │   │   │   ├── applyDefaultsToAll.ts # "Use Default Font Sizes for all Existing Items": clears every element's own size
+│   │   │   │   └── tileStyleSupport.ts # Which style fields each tile type renders
 │   │   │   ├── themes/                # Theme loading + CSS variable injection
 │   │   │   │   ├── themeManager.ts    # Paints a built-in or custom theme onto :root; snapshotThemeVariables
 │   │   │   │   ├── themeTokens.ts     # The colours a theme holds, grouped for the editor; the settings variables it never holds
-│   │   │   │   ├── themeFiles.ts      # Custom theme names / ids (no built-in name, no overwrite), import parsing
-│   │   │   │   ├── themeActions.ts    # Pick (saved to appearance.json), delete to Filo's trash, editor sessions
+│   │   │   │   ├── themeFiles.ts      # Custom theme names / ids (no built-in name, no overwrite); import and disk reads keep only theme tokens, unknown base → Light
+│   │   │   │   ├── themeActions.ts    # Pick (saved to appearance.json), System colours only, card previews, delete to Filo's trash, editor sessions
+│   │   │   │   ├── themeEditorGuard.ts # Unsaved theme-editor changes: Save / Discard / Keep editing before a tab switch or Settings closing
 │   │   │   │   ├── defaultColours.ts  # The Global Defaults colours a theme pick hands back to the theme
-│   │   │   │   └── chromeText.ts      # Black / white text for a user toolbar or tab bar colour
+│   │   │   │   └── chromeText.ts      # Toolbar / tab bar colour settings over the theme's, and their black / white text
 │   │   │   ├── templates/             # Layout templates
 │   │   │   │   ├── templateService.ts
 │   │   │   │   ├── layoutCapture.ts
@@ -802,7 +802,9 @@ Per-element style (Tile Style popup) > Current Board Settings (.board.json) > Gl
 
 A board follows the Global Defaults, live, for every style field it leaves blank (a new board has no style of its own); a field set in its Current Board tab is its own. The Kanban, Task List and Document background and accent fall back the same way. A blank colour anywhere means the theme's colour.
 
-Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, UI scales and toolbar / tab bar colour are settings and a theme never carries them. The built-in palettes live only in `style.css` (`[data-theme='…']`); custom themes are `.filo/themes/<id>.json`, and `appearance.json` names the active one, built-in or custom. Picking a theme clears the Global Defaults colours so the theme shows, after asking when the user set any. Deleting a custom theme moves it to Filo's trash (the one `.filo/` path a trash manifest may name).
+Font sizes have one more layer, under the Global Defaults: General → Default Board Font Size (`.filo/app.json`, `generalFontSize` in `effectiveStyle.ts`). Element factories never copy a size into a new element, so a new tile, card, task, section, column, frame or connection label follows the cascade, and a later change of any default reaches it.
+
+Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, UI scales and toolbar / tab bar colour are settings and a theme never carries them. A theme may set only the theme tokens; any other variable in a theme file is dropped on import, on read from disk and on paint. Text on the accent is `--text-inverse`, 4.5:1 or better in every built-in. A blank toolbar / tab bar colour setting leaves the bar to the theme. The built-in palettes live only in `style.css` (`[data-theme='…']`); custom themes are `.filo/themes/<id>.json`, and `appearance.json` names the active one, built-in or custom. Picking a theme clears the Global Defaults colours so the theme shows, after asking when the user set any. Deleting a custom theme moves it to Filo's trash (the one `.filo/` path a trash manifest may name).
 
 ---
 

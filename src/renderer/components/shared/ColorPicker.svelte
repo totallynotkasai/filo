@@ -2,11 +2,12 @@
   import { untrack } from 'svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import {
-    parseHex,
     rgbToHex,
     isValidHex,
     rgbToHsl,
     hslToRgb,
+    parseCssColor,
+    formatCssColor,
     type HSL,
   } from '../../lib/utils/color';
 
@@ -23,9 +24,28 @@
      *  treated as "inside" by the outside-click handler. Falls back to the
      *  default below-the-swatch placement when omitted. */
     anchorTo?: HTMLElement | null;
+    /** The swatch button's id, so a `<label for>` can name it. */
+    id?: string;
+    /** What the swatch is announced as (default: the label, else "Pick color"). */
+    ariaLabel?: string;
+    /**
+     * Always show the Opacity slider. Without it the slider shows only while
+     * the value is translucent, so a picked colour keeps the value's alpha.
+     */
+    showAlpha?: boolean;
   }
 
-  let { value, onchange, label = '', allowAuto = true, expanded = false, anchorTo = null }: Props = $props();
+  let {
+    value,
+    onchange,
+    label = '',
+    allowAuto = true,
+    expanded = false,
+    anchorTo = null,
+    id = undefined,
+    ariaLabel = undefined,
+    showAlpha = false,
+  }: Props = $props();
 
   // untrack: capture only the initial value
   let showPicker = $state(untrack(() => expanded));
@@ -103,7 +123,8 @@
   }
 
   let isEmpty = $derived(value === '');
-  let nativeValue = $derived(value || '#888888');
+  let parsedValue = $derived(parseCssColor(value));
+  let nativeValue = $derived(parsedValue ? rgbToHex(parsedValue) : '#888888');
 
   // Whether the platform exposes the EyeDropper API. Chromium-based
   // browsers (which Electron uses) implement it; jsdom in tests does not.
@@ -127,17 +148,22 @@
   // slider manipulates l. We always keep all three so Auto/Hex updates
   // can rehydrate the wheel cleanly.
   let hsl = $state<HSL>({ h: 0, s: 1, l: 0.5 });
+  /** The value's opacity (0–1). Every colour picked here keeps it. */
+  let alpha = $state(1);
+  let alphaShown = $derived(showAlpha || alpha < 1);
 
   // Whenever the external value changes (Auto, preset, hex commit),
-  // re-derive the HSL state. Skip when the value is empty (Auto).
+  // re-derive the HSL state and opacity. Skip when the value is empty (Auto).
   $effect(() => {
     if (value === '') {
       hexInputValue = '';
       return;
     }
-    hexInputValue = value;
-    const rgb = parseHex(value);
-    if (rgb) hsl = rgbToHsl(rgb);
+    const parsed = parseCssColor(value);
+    hexInputValue = parsed ? rgbToHex(parsed) : value;
+    if (!parsed) return;
+    hsl = rgbToHsl(parsed);
+    alpha = parsed.a;
   });
 
   // Repaint the HS wheel whenever the canvas mounts OR brightness changes.
@@ -248,9 +274,30 @@
     if (!expanded) showPicker = false;
   }
 
+  /**
+   * An opaque colour picked while the value is translucent takes the value's
+   * opacity, so picking a hue for a tint or a backdrop doesn't make it solid.
+   * A colour that carries its own alpha (a recent rgba pick) keeps it.
+   */
+  function withAlpha(color: string): string {
+    if (alpha >= 1) return color;
+    const parsed = parseCssColor(color);
+    if (!parsed || parsed.a < 1) return color;
+    return formatCssColor({ ...parsed, a: alpha });
+  }
+
   function commit(color: string) {
-    onchange(color);
-    if (color !== '') pushRecent(color);
+    const next = color === '' ? '' : withAlpha(color);
+    onchange(next);
+    if (next !== '') pushRecent(next);
+  }
+
+  function handleAlpha(e: Event) {
+    const a = parseFloat((e.target as HTMLInputElement).value);
+    if (Number.isNaN(a)) return;
+    alpha = a;
+    const rgb = parsedValue ?? hslToRgb(hsl);
+    onchange(formatCssColor({ r: rgb.r, g: rgb.g, b: rgb.b, a }));
   }
 
   /**
@@ -332,7 +379,8 @@
       onmousedown={(e) => e.preventDefault()}
       onclick={() => showPicker = !showPicker}
       title={isEmpty ? 'Auto (Theme)' : value}
-      aria-label="Pick color"
+      {id}
+      aria-label={ariaLabel ?? (label || 'Pick color')}
     >
       {#if isEmpty}
         <span class="auto-indicator">A</span>
@@ -428,6 +476,23 @@
           />
         </div>
       </div>
+
+      {#if alphaShown}
+        <div class="alpha-row">
+          <span class="brightness-label" aria-hidden="true">Opacity</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={alpha}
+            oninput={handleAlpha}
+            class="alpha-slider"
+            aria-label="Opacity"
+          />
+          <span class="alpha-value">{Math.round(alpha * 100)}%</span>
+        </div>
+      {/if}
 
       <div class="color-custom">
         <input
@@ -678,6 +743,28 @@
     border: none;
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
     cursor: pointer;
+  }
+
+  .alpha-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .alpha-slider {
+    flex: 1;
+    min-width: 0;
+    accent-color: var(--accent-primary);
+    cursor: pointer;
+  }
+
+  .alpha-value {
+    width: 3.2em;
+    text-align: right;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
   }
 
   .color-custom {

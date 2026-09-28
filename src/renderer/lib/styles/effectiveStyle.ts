@@ -8,6 +8,12 @@
  * Cascade order (Design Doc V5 §564–626):
  *   Per-element style > Current Board Settings > Global Defaults
  *
+ * Font sizes have one more layer under the Global Defaults: General →
+ * Default Board Font Size (`generalFontSize`). An element with no size of its
+ * own, on a board with none, under Global Defaults with none, takes that.
+ * Element factories don't copy any of these into a new element, so a new
+ * element follows the cascade and a later change of a default reaches it.
+ *
  * The "current board settings" layer is the active board's
  * `settings.defaults` block. Every field is optional; unset fields defer to
  * the global defaults. A board with `defaults` undefined collapses the cascade
@@ -76,6 +82,40 @@ function boardLayer(
     : undefined;
 }
 
+// ── Font sizes: General → Default Board Font Size ──────────────────────
+
+type BoardFontSizeKey = keyof ProjectSettings['general']['defaultBoardFontSize'];
+
+/** General → Default Board Font Size for `key`, or null when it has none. */
+export function generalFontSize(
+  projectSettings: ProjectSettings | null | undefined,
+  key: BoardFontSizeKey,
+): number | null {
+  const size = projectSettings?.general?.defaultBoardFontSize?.[key];
+  return typeof size === 'number' ? size : null;
+}
+
+/** A resolved size, or the General size for `key` when the cascade set none. */
+function sizeOrGeneral(
+  resolved: unknown,
+  projectSettings: ProjectSettings | null | undefined,
+  key: BoardFontSizeKey,
+): number | null {
+  return typeof resolved === 'number' ? resolved : generalFontSize(projectSettings, key);
+}
+
+/**
+ * The Task List title size (its group headers): the board's own, else
+ * General → Default Board Font Size → Task List Title.
+ */
+export function taskListTitleFontSize(
+  board: Board | null | undefined,
+  projectSettings: ProjectSettings | null | undefined,
+): number | null {
+  const own = (board?.settings as { titleFontSize?: unknown } | undefined)?.titleFontSize;
+  return sizeOrGeneral(own, projectSettings, 'taskListTitle');
+}
+
 // ── Tile ────────────────────────────────────────────────────────────────
 
 export interface ResolvedTileStyle {
@@ -135,8 +175,8 @@ export function effectiveTileStyle(
   const shadowIntensity = (merged.shadowIntensity as number) ?? 0.3;
   const dctRaw = merged.dynamicContrastText;
   const dynamicContrastText = typeof dctRaw === 'boolean' ? dctRaw : true;
-  const fontSizeTitle = typeof merged.fontSizeTitle === 'number' ? (merged.fontSizeTitle as number) : null;
-  const fontSizeBody = typeof merged.fontSizeBody === 'number' ? (merged.fontSizeBody as number) : null;
+  const fontSizeTitle = sizeOrGeneral(merged.fontSizeTitle, projectSettings, 'tileTitle');
+  const fontSizeBody = sizeOrGeneral(merged.fontSizeBody, projectSettings, 'tileBody');
 
   let headerTextColor: string | null = null;
   let bodyTextColor: string | null = null;
@@ -293,7 +333,7 @@ export function effectiveConnectionLabelStyle(
 
   const textColor = (merged.textColor as string) ?? '';
   const backgroundColor = (merged.backgroundColor as string) ?? '';
-  const fontSize = typeof merged.fontSize === 'number' ? (merged.fontSize as number) : null;
+  const fontSize = sizeOrGeneral(merged.fontSize, projectSettings, 'connectionLabel');
   return { textColor, backgroundColor, fontSize };
 }
 
@@ -347,7 +387,7 @@ export function effectiveFrameStyle(
   const shadowIntensity = (merged.shadowIntensity as number) ?? 0.3;
   const dctRaw = merged.dynamicContrastText;
   const dynamicContrastText = typeof dctRaw === 'boolean' ? dctRaw : true;
-  const fontSizeTitle = typeof merged.fontSizeTitle === 'number' ? (merged.fontSizeTitle as number) : null;
+  const fontSizeTitle = sizeOrGeneral(merged.fontSizeTitle, projectSettings, 'frameTitle');
 
   let headerTextColor: string | null = null;
   let bodyTextColor: string | null = null;
@@ -424,7 +464,7 @@ export function effectiveColumnStyle(
   const dynamicContrastText = typeof dctRaw === 'boolean' ? dctRaw : true;
   const widthRaw = merged.width;
   const width = typeof widthRaw === 'number' && widthRaw > 0 ? widthRaw : 380;
-  const fontSizeTitle = typeof merged.fontSizeTitle === 'number' ? (merged.fontSizeTitle as number) : null;
+  const fontSizeTitle = sizeOrGeneral(merged.fontSizeTitle, projectSettings, 'kanbanColumnTitle');
   const accent = (merged.accent as string) ?? '';
 
   let headerTextColor: string | null = null;
@@ -506,8 +546,8 @@ export function effectiveCardStyle(
   const shadowIntensity = (merged.shadowIntensity as number) ?? 0.2;
   const dctRaw = merged.dynamicContrastText;
   const dynamicContrastText = typeof dctRaw === 'boolean' ? dctRaw : true;
-  const fontSizeTitle = typeof merged.fontSizeTitle === 'number' ? (merged.fontSizeTitle as number) : null;
-  const fontSizeBody = typeof merged.fontSizeBody === 'number' ? (merged.fontSizeBody as number) : null;
+  const fontSizeTitle = sizeOrGeneral(merged.fontSizeTitle, projectSettings, 'kanbanCardTitle');
+  const fontSizeBody = sizeOrGeneral(merged.fontSizeBody, projectSettings, 'kanbanCardBody');
 
   let textColor: string | null = null;
   let headerTextColor: string | null = null;
@@ -588,8 +628,8 @@ export function effectiveTaskStyle(
   const shadowIntensity = (merged.shadowIntensity as number) ?? 0.2;
   const dctRaw = merged.dynamicContrastText;
   const dynamicContrastText = typeof dctRaw === 'boolean' ? dctRaw : true;
-  const fontSizeTitle = typeof merged.fontSizeTitle === 'number' ? (merged.fontSizeTitle as number) : null;
-  const fontSizeBody = typeof merged.fontSizeBody === 'number' ? (merged.fontSizeBody as number) : null;
+  const fontSizeTitle = sizeOrGeneral(merged.fontSizeTitle, projectSettings, 'taskItem');
+  const fontSizeBody = sizeOrGeneral(merged.fontSizeBody, projectSettings, 'taskItemBody');
 
   // Two paint zones for a task row: the title strip (`.task-item`) takes
   // `headerColor`, the notes panel takes `bodyColor`. DCT emits a contrast
@@ -719,7 +759,7 @@ export function effectiveTaskSectionStyle(
   const shadowIntensity = (merged.shadowIntensity as number) ?? 0.2;
   const dctRaw = merged.dynamicContrastText;
   const dynamicContrastText = typeof dctRaw === 'boolean' ? dctRaw : true;
-  const fontSizeTitle = typeof merged.fontSizeTitle === 'number' ? (merged.fontSizeTitle as number) : null;
+  const fontSizeTitle = sizeOrGeneral(merged.fontSizeTitle, projectSettings, 'taskSectionTitle');
 
   let headerTextColor: string | null = null;
   let bodyTextColor: string | null = null;

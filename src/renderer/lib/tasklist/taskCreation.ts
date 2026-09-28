@@ -5,7 +5,6 @@ import type {
   TileDefinition,
 } from '../../schema/index';
 import { defaultTileStyleSnapshot } from '../../constants/defaults';
-import { defaultTaskFontSizes } from '../styles/defaultFontSizes';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { noteStore } from '../../stores/notes.svelte';
 import { historyStore } from '../../stores/history.svelte';
@@ -37,13 +36,9 @@ import type { TaskRow } from '../tasks/taskListModel';
  * snapshots. Mirrors `kanbanTileCreation.ts`.
  */
 
+/** A new task's tile style. No font sizes: the task follows the task cascade. */
 function buildBaseTileStyle() {
-  const fs = defaultTaskFontSizes();
-  return {
-    ...defaultTileStyleSnapshot(),
-    ...(fs.fontSizeTitle !== undefined && { fontSizeTitle: fs.fontSizeTitle }),
-    ...(fs.fontSizeBody !== undefined && { fontSizeBody: fs.fontSizeBody }),
-  };
+  return defaultTileStyleSnapshot();
 }
 
 export interface TaskCreationDeps {

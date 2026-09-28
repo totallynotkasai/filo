@@ -54,6 +54,7 @@ import type {
   ViewportEntry,
 } from '../boards/boardSaver';
 import type { ThemeFile } from '../themes/themeManager';
+import { loadedTheme } from '../themes/themeFiles';
 import type { TagsFile } from '../../schema/tagsFile';
 import { loadTagsFile } from './tagsStorage';
 import { toVaultRelative } from '../utils/path';
@@ -397,19 +398,20 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   let availableThemeIds: string[] = [];
   // Accumulate parse failures so one toast can name every bad theme.
   const themeParseFailures: string[] = [];
+  // Themes whose `base` names no built-in: they load over Light, with a note.
+  const themeProblems: string[] = [];
   try {
     const filenames = (await window.filo.invoke('theme:list', newVaultPath)) as string[];
     availableThemeIds = filenames.map((f) => f.replace(/\.json$/i, ''));
     for (const id of availableThemeIds) {
-      const data = (await window.filo.invoke('theme:load', newVaultPath, id)) as
-        | ThemeFile
-        | { ok: false; code: 'invalid-json'; name?: string }
-        | null;
-      if (data && typeof data === 'object' && 'ok' in data && (data as { ok?: boolean }).ok === false) {
+      const loaded = loadedTheme(id, await window.filo.invoke('theme:load', newVaultPath, id));
+      if (loaded === 'invalid') {
         themeParseFailures.push(id);
         continue;
       }
-      if (data) themeCache[id] = data as ThemeFile;
+      if (!loaded) continue;
+      themeCache[id] = loaded.file;
+      if (loaded.problem) themeProblems.push(loaded.problem);
     }
     if (themeParseFailures.length > 0) {
       const list = themeParseFailures.map((n) => `"${n}"`).join(', ');
@@ -439,21 +441,19 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
       // file that was deleted off-disk. Try a direct theme:load before
       // giving up — match runtime `applyById`'s fallback.
       try {
-        const loaded = (await window.filo.invoke('theme:load', newVaultPath, activeThemeId)) as
-          | ThemeFile
-          | { ok: false; code: 'invalid-json'; name?: string }
-          | null;
+        const loaded = loadedTheme(activeThemeId, await window.filo.invoke('theme:load', newVaultPath, activeThemeId));
         // Same parse-failure envelope as the bulk load above. Surface a toast
         // naming the bad theme so the user knows why it isn't applying.
-        if (loaded && typeof loaded === 'object' && 'ok' in loaded && (loaded as { ok?: boolean }).ok === false) {
+        if (loaded === 'invalid') {
           reportError(
             'theme.parse',
             new Error(`Invalid JSON in theme "${activeThemeId}"`),
             `Active theme "${activeThemeId}" has invalid JSON — falling back to Light theme.`,
           );
         } else if (loaded) {
-          activeThemeFile = loaded as ThemeFile;
-          themeCache[activeThemeId] = loaded as ThemeFile;
+          activeThemeFile = loaded.file;
+          themeCache[activeThemeId] = loaded.file;
+          if (loaded.problem) themeProblems.push(loaded.problem);
           if (!availableThemeIds.includes(activeThemeId)) {
             availableThemeIds = [...availableThemeIds, activeThemeId];
           }
@@ -464,16 +464,11 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
         );
       }
     }
-    if (activeThemeFile) {
-      const baseOk = isBuiltinId(activeThemeFile.base ?? 'dark');
-      if (!baseOk) {
-        // A custom theme's `base` names an unknown built-in. Throw here so
-        // the candidate is discarded BEFORE any global state is touched.
-        throw new Error(
-          `Active theme "${activeThemeId}" has unknown base "${activeThemeFile.base}". Fix the value in .filo/themes/${activeThemeId}.json or pick a different active theme.`,
-        );
-      }
-    }
+  }
+  // A theme is colours only: one based on a theme Filo doesn't have opens over
+  // Light rather than stopping the vault opening.
+  if (themeProblems.length > 0) {
+    warnings.push({ text: themeProblems.join(' '), type: 'warning', duration: 8000 });
   }
 
   // ── 9. Tags — load `.filo/tags.json` (no graceful fallback) ──────

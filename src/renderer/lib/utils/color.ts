@@ -52,6 +52,61 @@ export function isValidHex(value: string): boolean {
   return HEX_COLOR.test(value.trim());
 }
 
+// ── Colours with an alpha ──
+
+export interface RGBA extends RGB {
+  /** 0–1. */
+  a: number;
+}
+
+const RGB_FUNCTION = /^rgba?\(\s*([\d.]+)\s*[,\s]\s*([\d.]+)\s*[,\s]\s*([\d.]+)\s*(?:[,/]\s*([\d.]+%?)\s*)?\)$/i;
+
+/**
+ * Reads `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(…)` or `rgba(…)` (comma or space
+ * syntax, alpha as a number or a percentage). Null for anything else, such as
+ * a named colour or `color-mix(…)`.
+ */
+export function parseCssColor(value: string): RGBA | null {
+  const text = value.trim();
+  const hex8 = /^#([0-9a-f]{6})([0-9a-f]{2})$/i.exec(text);
+  if (hex8?.[1] && hex8[2]) {
+    const rgb = parseHex(hex8[1]);
+    return rgb ? { ...rgb, a: parseInt(hex8[2], 16) / 255 } : null;
+  }
+  if (isValidHex(text)) {
+    const rgb = parseHex(text);
+    return rgb ? { ...rgb, a: 1 } : null;
+  }
+  const fn = RGB_FUNCTION.exec(text);
+  if (!fn) return null;
+  const [r, g, b] = [fn[1], fn[2], fn[3]].map((n) => Number(n));
+  const rawAlpha = fn[4];
+  let a = 1;
+  if (rawAlpha !== undefined) a = rawAlpha.endsWith('%') ? Number(rawAlpha.slice(0, -1)) / 100 : Number(rawAlpha);
+  if ([r, g, b, a].some((n) => n === undefined || !Number.isFinite(n))) return null;
+  const channel = (n: number | undefined): number => Math.max(0, Math.min(255, Math.round(n ?? 0)));
+  return { r: channel(r), g: channel(g), b: channel(b), a: Math.max(0, Math.min(1, a)) };
+}
+
+/**
+ * Whether `value` is a CSS colour: the browser's own parser where there is
+ * one, else hex / rgb() / rgba(), a keyword or a colour function.
+ */
+export function isCssColour(value: string): boolean {
+  const text = value.trim();
+  if (!text) return false;
+  if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function') return CSS.supports('color', text);
+  if (parseCssColor(text)) return true;
+  return /^[a-z]+$/i.test(text) || /^(?:hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\(.+\)$/i.test(text);
+}
+
+/** `#rrggbb` when opaque, else `rgba(r, g, b, a)` with the alpha to 2 places. */
+export function formatCssColor({ r, g, b, a }: RGBA): string {
+  if (a >= 1) return rgbToHex({ r, g, b });
+  const alpha = Math.round(Math.max(0, a) * 100) / 100;
+  return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${alpha})`;
+}
+
 // ── HSL ↔ RGB ──
 
 export interface HSL {

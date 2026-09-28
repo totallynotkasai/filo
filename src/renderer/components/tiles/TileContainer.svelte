@@ -406,7 +406,7 @@
     font-size: 11px;
     font-weight: 600;
     line-height: 18px;
-    color: var(--accent-on-primary, white);
+    color: var(--text-inverse);
     background: var(--accent-primary);
     border-radius: 9px;
     text-align: center;

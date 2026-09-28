@@ -146,9 +146,6 @@
         ...(vaultStore.project?.settings?.mindmap?.frame?.borderWidth != null && {
           borderWidth: vaultStore.project.settings.mindmap.frame.borderWidth,
         }),
-        ...(vaultStore.project?.settings?.general?.defaultBoardFontSize?.frameTitle !== undefined && {
-          fontSizeTitle: vaultStore.project.settings.general.defaultBoardFontSize.frameTitle,
-        }),
       },
       collapsed: false,
       tileIds: [],

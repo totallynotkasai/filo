@@ -444,7 +444,7 @@
     height: 40px;
     border-radius: 50%;
     background: var(--accent-primary);
-    color: white;
+    color: var(--text-inverse);
     display: flex;
     align-items: center;
     justify-content: center;

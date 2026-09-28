@@ -43,10 +43,10 @@ describe('buildBoardSettingsFromGlobal', () => {
     expect(tl).toMatchObject({ groupBy: 'status', sortBy: 'priority' });
   });
 
-  it('seeds the Task List title size from the Default Board Font Size', () => {
+  it('gives a new Task List no title size of its own, so the General size reaches it', () => {
     const globals = makeGlobals();
     globals.general.defaultBoardFontSize.taskListTitle = 31;
-    expect(buildBoardSettingsFromGlobal('tasklist', globals).titleFontSize).toBe(31);
+    expect(buildBoardSettingsFromGlobal('tasklist', globals).titleFontSize).toBeUndefined();
   });
 
   it('a Global Defaults change after creation reaches the new board', () => {

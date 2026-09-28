@@ -11,6 +11,7 @@
  * background.
  */
 import { getDynamicContrastText, isValidHex } from '../utils/color';
+import { customThemeValue, paintChromeOverride } from './themeManager';
 
 export interface ChromeText {
   fg: string;
@@ -39,6 +40,23 @@ export function applyToolbarText(root: HTMLElement, background: string): void {
   root.style.setProperty('--toolbar-custom-fg', text.fg);
   root.style.setProperty('--toolbar-custom-fg-muted', text.muted);
   root.style.setProperty('--toolbar-custom-hover', text.hover);
+}
+
+/**
+ * Paints the toolbar and tab bar colour settings over the active theme. A
+ * blank setting leaves the bar to the theme, including a custom theme that
+ * colours it. The bar text is black or white against the colour the bar ends
+ * up with, whenever that is the user's or a custom theme's; a built-in theme's
+ * bars keep the text it was designed with.
+ *
+ * Runs after every theme paint as well as on a settings change, since a paint
+ * clears the variables the previous theme set.
+ */
+export function applyBarColours(root: HTMLElement, toolbarColor: string, tabBarColor: string): void {
+  paintChromeOverride('--toolbar-bg', toolbarColor);
+  applyToolbarText(root, toolbarColor || customThemeValue('--toolbar-bg') || '');
+  paintChromeOverride('--tabbar-bg', tabBarColor);
+  applyTabBarText(root, tabBarColor || customThemeValue('--tabbar-bg') || '');
 }
 
 /** Writes (or clears) the tab bar's custom text colours. */

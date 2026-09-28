@@ -58,6 +58,7 @@
   import {
     effectiveTaskStyle,
     effectiveTaskSectionStyle,
+    taskListTitleFontSize,
     type ResolvedTaskStyle,
   } from '../../lib/styles/effectiveStyle';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
@@ -136,6 +137,7 @@
     },
   );
   let accent = $derived(settings.accentColor || vaultStore.project?.settings?.tasklist?.accentColor || 'var(--accent-primary)'); // blank ⇒ Global Defaults, then theme
+  let listTitleSize = $derived(taskListTitleFontSize(board, vaultStore.project?.settings));
   // Whitelist known groupBys defensively — a hand-edited or future-version
   // .board.json could store a value we don't render; fall back to 'status'
   // instead of letting downstream `GROUP_ORDER[groupBy]` undefined-crash.
@@ -1199,7 +1201,7 @@
     accentColor={accent}
     {resolveTaskStyle}
     sectionStyle={styleForSection(section.id)}
-    titleFontSize={board?.settings?.titleFontSize}
+    titleFontSize={listTitleSize ?? undefined}
     {flatEntryByTileId}
     dndSectionsTrigger={dndSections}
     viewModel={viewModel}
@@ -1375,9 +1377,7 @@
               </button>
               <h3
                 class="group-title"
-                style={typeof board?.settings?.titleFontSize === 'number'
-                  ? `font-size: ${board.settings.titleFontSize}px;`
-                  : ''}
+                style={listTitleSize != null ? `font-size: ${listTitleSize}px;` : ''}
               >{group.label}</h3>
               <span class="group-count">{group.rows.length}</span>
             </div>

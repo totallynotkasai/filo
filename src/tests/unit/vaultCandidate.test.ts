@@ -9,6 +9,7 @@ import {
   __resetBaselinesForTests,
 } from '@renderer/lib/vault/fileBaselineRegistry';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { isBaselineUnverified } from '@renderer/lib/vault/fileBaselineRegistry';
 
 /**
  * Phase R4 — `loadVaultCandidate` is the load-side of vault-open as a
@@ -85,12 +86,12 @@ describe('loadVaultCandidate', () => {
     expect(candidate.project.theme).toBe('light');
   });
 
-  it('L18: a PERSISTENT top-level config:load-all failure pauses ALL config writes and warns once', async () => {
+  it('L18: a PERSISTENT top-level config:load-all failure leaves every config unverified and warns once', async () => {
     // The handler tags a transient whole-`.filo/` read failure (locked dir /
-    // EACCES on fs.stat) with `__loadAllFailed`. The candidate must mark every
-    // config target corrupt (so a later save can't seed defaults over the
-    // intact-but-unreadable files) and surface ONE low-key warning — not seven
-    // per-file "couldn't parse" toasts.
+    // EACCES on fs.stat) with `__loadAllFailed`. Memory then holds defaults, so
+    // no file may be written blind: each is marked unverified (its first write
+    // reads it again, and asks when it differs) rather than paused for the
+    // session, and ONE low-key warning shows — not seven per-file toasts.
     //
     // Audit-7 L3 — the read is now retried with backoff before giving up, so a
     // PERSISTENT failure (mock fails every call) only reaches the pause path
@@ -117,15 +118,10 @@ describe('loadVaultCandidate', () => {
 
       // Initial read + three backoff retries all failed.
       expect(calls).toBe(4);
-      expect([...candidate.corruptionTargets].sort()).toEqual([
-        'app.json',
-        'appearance.json',
-        'config:save-workspace',
-        'defaults.json',
-        'hotkeys.json',
-        'sidebar-order.json',
-        'viewports.json',
-      ]);
+      expect(candidate.corruptionTargets).toEqual([]);
+      for (const rel of ['app.json', 'appearance.json', 'defaults.json', 'workspace.json', 'viewports.json', 'sidebar-order.json']) {
+        expect(isBaselineUnverified(`.filo/${rel}`)).toBe(true);
+      }
       expect(candidate.warnings).toHaveLength(1);
       expect(candidate.warnings[0].text).toMatch(/couldn't read your \.filo\/ settings/i);
     } finally {

@@ -6,6 +6,7 @@
  *  - `config-tags`     → `tagsJsonReconciler`
  *  - `config-theme`    → `themeJsonReconciler`
  *  - `config-template` → `templateReconciler`
+ *  - `config`          → `reconcileConfigFileChange` (configFileReconciler.ts)
  *
  * The `document` / `attachment` reconcilers live on the `vaultStore` mixin
  * (`handleExternalMarkdownChanges` / `handleExternalAttachmentChanges`)
@@ -51,6 +52,7 @@ import { adoptBoardAtRuntime } from './boardDiscovery';
 import { findBoardIdForPath, reloadBoardFromDisk, resolveBoardDrift } from './boardDrift';
 import { selfWriteDivergedFromBaseline } from './vaultExternalChanges';
 import { getBaseline, hasBaselineDrifted } from '../lib/vault/fileBaselineRegistry';
+import { reconcileConfigFileChange } from './configFileReconciler';
 
 // ── Board JSON reconciler ─────────────────────────────────────────────
 
@@ -348,6 +350,7 @@ export function registerExternalChangeReconcilers(): void {
   registerReconciler({ kind: 'config-tags', handle: reconcileTagsJsonChange });
   registerReconciler({ kind: 'config-theme', handle: reconcileThemeChange });
   registerReconciler({ kind: 'config-template', handle: reconcileTemplateChange });
+  registerReconciler({ kind: 'config', handle: reconcileConfigFileChange });
   registerBatchedReconciler(documentBatchedReconciler);
   registerBatchedReconciler(attachmentBatchedReconciler);
 }

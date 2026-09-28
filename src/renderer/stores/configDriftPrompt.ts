@@ -9,10 +9,10 @@ import { themeStore } from './theme.svelte';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
 import { parseSettingsSlices, type SalvagedSettingsFile, type VaultCandidateWarning } from '../lib/vault/vaultCandidate';
 import { markSalvagedSettingsFile } from '../lib/boards/configWriteScheduler';
-import type { BundledConfigFile, ConfigDriftChoice, ConfigExternalHandlers } from '../lib/boards/configDrift';
+import type { BundledConfigFile, ConfigDriftChoice, ConfigExternalHandlers, PromptedConfigFile } from '../lib/boards/configDrift';
 
 /** One prompt per file at a time: a burst of saves shares its answer. */
-const openPrompts = new Map<BundledConfigFile, Promise<ConfigDriftChoice>>();
+const openPrompts = new Map<PromptedConfigFile, Promise<ConfigDriftChoice>>();
 /** Notice keys already shown this vault session. */
 const shownNotices = new Set<string>();
 vaultSwapResettable('configDriftPrompt', () => {
@@ -20,13 +20,13 @@ vaultSwapResettable('configDriftPrompt', () => {
   shownNotices.clear();
 });
 
-function promptConfigExternalEdit(file: BundledConfigFile): Promise<ConfigDriftChoice> {
+function promptConfigExternalEdit(file: PromptedConfigFile): Promise<ConfigDriftChoice> {
   const existing = openPrompts.get(file);
   if (existing) return existing;
   const promise = new Promise<ConfigDriftChoice>((resolve) => {
     uiStore.pushToast({
       text:
-        `.filo/${file} was changed outside Filo. Reload to use its settings, or keep Filo's settings ` +
+        `.filo/${file} was changed outside Filo. Reload to use its ${file === 'hotkeys.json' ? 'shortcuts' : 'settings'}, or keep Filo's ` +
         '(the other version is copied to .filo/recovery/ first).',
       type: 'warning',
       duration: 0,
@@ -73,6 +73,8 @@ function reloadConfigIntoMemory(file: BundledConfigFile, disk: Record<string, un
     for (const f of salvaged) markSalvagedSettingsFile(f);
     if (file === 'app.json') {
       project.settings.general = parsed.general;
+      // The vault name lives on the project; the next save writes it back.
+      if (typeof disk.name === 'string' && disk.name.trim()) project.name = disk.name.trim();
     } else {
       project.settings.mindmap = parsed.mindmap;
       project.settings.kanban = parsed.kanban;

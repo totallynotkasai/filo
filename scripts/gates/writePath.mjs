@@ -31,6 +31,8 @@ const BOUNDED_FILES = [
       { token: /drainPriorInFlight\(key\)/, why: 'the debounce-timer fire drains an older in-flight write first (newest lands last)' },
       { token: /drainPriorInFlight\(entry\.key\)/, why: 'flushAll drains an older in-flight write per key first' },
       { token: /clearFailedPathAfterLateSuccess\s*\(/, why: 'a timed-out write that later succeeds clears its failed mark' },
+      { token: /trackOverdue\s*\(\s*key\b/, why: "a timed-out write keeps its place in its key's order (it can still land)" },
+      { token: /await\s+drainOverdue\s*\(\s*key\s*\)/, why: 'the next write of a key waits for its overdue writes first' },
     ],
   },
   { file: NOTE_WRITER, required: [TIMEOUT_FINITE], forbidden: [TIMEOUT_UNBOUNDED] },
@@ -764,6 +766,68 @@ export const checks = [
         if (call && !/\badoptLoadedBoardBaseline\s*\(/.test(code)) {
           out.push(fail(rel, lineAt(code, call.index), 'loads a board but never adopts its baseline (adoptLoadedBoardBaseline)'));
         }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'config-writes-drift-checked',
+    title: "a .filo/ config's baseline names the version read, and every config write checks the file first",
+    hint:
+      'Write a config through writeConfigs (the settings bundle) or saveMiscConfig after readOutsideVersion (viewports, ' +
+      'sidebar order, hotkeys). Seed its baseline at load with statConfigsBeforeRead + seedConfigBaselines, never from a ' +
+      "stat taken after the read: another program's version written in between would be overwritten without a prompt.",
+    run(ctx) {
+      const out = [];
+      const WRITERS = new Set(['src/renderer/lib/boards/configWriteScheduler.ts', 'src/renderer/lib/boards/miscConfigDrift.ts']);
+      for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
+        if (WRITERS.has(rel)) continue;
+        const raw = ctx.read(rel);
+        if (!raw.includes('config:save') && !raw.includes('saveMiscConfig(')) continue;
+        const code = stripCommentsKeepLines(raw);
+        for (const m of code.matchAll(/\binvoke(?:Ok)?\s*\(\s*['"`]config:save['"`]/g)) {
+          out.push(fail(rel, lineAt(code, m.index), 'writes a .filo/ config without its drift check (use saveMiscConfig / writeConfigs)'));
+        }
+        const save = code.match(/\bsaveMiscConfig\s*\(/);
+        if (save && !/\breadOutsideVersion\s*\(/.test(code)) {
+          out.push(fail(rel, lineAt(code, save.index), 'saveMiscConfig without readOutsideVersion first'));
+        }
+      }
+      for (const rel of ['src/renderer/lib/vault/vaultCandidate.ts', 'src/renderer/core/hotkeys.ts']) {
+        const raw = ctx.read(rel);
+        if (raw === null) { out.push(fail(rel, undefined, 'file missing')); continue; }
+        out.push(...tokenChecks(rel, stripCommentsStateful(raw), {
+          required: [
+            { token: /\bstatConfigsBeforeRead\s*\(/, why: 'the stat before the read' },
+            { token: /\bseedConfigBaselines\s*\(/, why: 'the stamp only for a file that did not change across the read' },
+          ],
+          forbidden: [{ token: /\bnoteBaseline\s*\(/, why: 'a config baseline stamped from one stat after the read' }],
+        }));
+      }
+      return out;
+    },
+  },
+  {
+    id: 'unloaded-board-catches-up',
+    title: 'a board that loads after failing gets the renames made meanwhile before it joins the cache',
+    hint:
+      'A load that fails calls markBoardUnloaded(path); a later load calls catchUpLoadedBoard(path, data) before the data ' +
+      'goes in the cache, and marks the board dirty when it rewrote a link (stores/unloadedBoards.ts).',
+    run(ctx) {
+      const out = [];
+      for (const rel of ['src/renderer/stores/boardDiscovery.ts', 'src/renderer/stores/boardCache.svelte.ts']) {
+        const raw = ctx.read(rel);
+        if (raw === null) { out.push(fail(rel, undefined, 'file missing')); continue; }
+        out.push(...tokenChecks(rel, stripComments(raw), {
+          required: [
+            { token: /\bmarkBoardUnloaded\s*\(\s*relPath\s*\)/, why: 'a failed load is recorded' },
+            { token: /\bcatchUpLoadedBoard\s*\(\s*relPath\s*,/, why: 'a later load replays the renames it missed' },
+          ],
+        }));
+      }
+      const vault = ctx.read('src/renderer/stores/vault.svelte.ts') ?? '';
+      if (!/\bmarkBoardUnloaded\s*\(/.test(stripComments(vault))) {
+        out.push(fail('src/renderer/stores/vault.svelte.ts', undefined, "the open doesn't record the boards that failed to load"));
       }
       return out;
     },

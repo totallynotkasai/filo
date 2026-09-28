@@ -346,8 +346,12 @@ async function runExternalRenameCascade(
   await boardCacheStore.ensureAllLoaded();
   // A vault swap during the drain or `ensureAllLoaded` would make the
   // synchronous cache mutations below corrupt the new vault's cache with the
-  // old vault's rename paths. Bail if the vault changed.
-  if (captured && !isStillSameVault(captured)) return;
+  // old vault's rename paths. Bail if the vault changed, leaving the rename
+  // for the next open of the vault it happened in.
+  if (captured && !isStillSameVault(captured)) {
+    await keepSkippedRenameBreadcrumb(captured.path, oldRel, newRel);
+    return;
+  }
   const vaultRoot = ctx.getVaultPath();
   const general = ctx.getProject()?.settings.general;
   // A folder rename can reach Filo as one rename per file (the watcher's
@@ -357,7 +361,10 @@ async function runExternalRenameCascade(
   const folderMove = vaultRoot
     ? await confirmedFolderMove(vaultRoot, oldRel, newRel, allPins(general))
     : null;
-  if (captured && !isStillSameVault(captured)) return;
+  if (captured && !isStillSameVault(captured)) {
+    await keepSkippedRenameBreadcrumb(captured.path, oldRel, newRel);
+    return;
+  }
   // The board paths and the path-keyed sweeps (`renameAllPathKeys`) already
   // moved in `handleExternalRename`, before the drain.
   const changedBoardIds = boardStore.propagateRename(oldRel, newRel);
@@ -488,6 +495,21 @@ async function runExternalRenameCascade(
         );
       });
     }
+  }
+}
+
+/**
+ * An external rename whose cascade never ran, because the vault was being let
+ * go: recorded in the rename-cascade sentinel of the vault it happened in
+ * (still open until `vault:close`), so its next open replays it. Best
+ * effort: once that vault is closed there is nowhere to write it.
+ */
+export async function keepSkippedRenameBreadcrumb(vaultRoot: string, oldRel: string, newRel: string): Promise<void> {
+  if (!vaultRoot || !oldRel || !newRel) return;
+  try {
+    await writePendingRenameCascade(vaultRoot, { oldPath: oldRel, newPath: newRel, affectedBoardIds: [] });
+  } catch (err) {
+    console.warn(`[vault] couldn't record the skipped rename "${oldRel}" → "${newRel}" for the next open:`, err);
   }
 }
 

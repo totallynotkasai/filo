@@ -48,7 +48,7 @@ import { boardLoadRetryToast } from '../boards/boardLoadRetryPrompt';
 import { boardLoadFailedToast } from '../boards/boardLoadFailedNotice';
 import { syncConflictToast, groupByCanonical } from './syncConflictNotices';
 import { invokeOk } from '../utils/invokeOk';
-import { IpcEnvelopeError, assertIpcOk } from '@shared/ipcEnvelope';
+import { assertIpcOk } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
 import type {
   BoardFileData,
@@ -59,7 +59,8 @@ import { loadedTheme } from '../themes/themeFiles';
 import type { TagsFile } from '../../schema/tagsFile';
 import { loadTagsFile } from './tagsStorage';
 import { toVaultRelative } from '../utils/path';
-import { baselineSeq, noteBaseline } from './fileBaselineRegistry';
+import { markBaselineUnverified } from './fileBaselineRegistry';
+import { seedConfigBaselines, statConfigsBeforeRead } from './configBaselineSeed';
 import { stashRecoveryStatusBeforeCommit } from './dirtyFlagRecovery';
 import { loadMachineIdentity } from './machineIdentity';
 
@@ -157,20 +158,27 @@ export interface VaultCandidate {
    * skipped: the writer's drift check no-ops without a baseline.
    */
   seededConfigBaselinePaths: string[];
+  /** Board files that failed to load (not a duplicate id): a later load catches up on renames. */
+  unloadedBoardPaths: string[];
 }
 
 /**
- * The four bundled config files the writer scheduler (`configWriteScheduler`)
- * protects with a pre-write drift check. Their baselines are seeded on vault
- * open so the ENOENT-resurrection guard is live from the first write. Listed
- * once so the load-side seed and the dev tripwire stay in lockstep.
+ * The `config:load-all` files whose writers check for drift before writing:
+ * the four the config bundle writes (`configWriteScheduler`) and the two view
+ * state files the misc writer saves (`miscConfigDrift`). `hotkeys.json` is
+ * read, and seeded, by `loadHotkeyOverrides`.
  */
-const CONFIG_SENTINEL_PATHS = [
+const CONFIG_BASELINE_PATHS = [
   '.filo/defaults.json',
   '.filo/app.json',
   '.filo/appearance.json',
   '.filo/workspace.json',
+  '.filo/viewports.json',
+  '.filo/sidebar-order.json',
 ] as const;
+
+/** The view state files' names on disk, for their load notices. */
+const VIEW_STATE_FILE_NAMES = { viewports: 'viewports.json', sidebarOrder: 'sidebar-order.json' } as const;
 
 /**
  * Backoff schedule (ms) for retrying a transient `config:load-all`
@@ -213,7 +221,10 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   // read IPC is gated on the armed registry). Never throws.
   await stashRecoveryStatusBeforeCommit(newVaultPath);
 
-  // ── 1. Read & classify `.filo/*.json` configs ────────────────────
+  // ── 1. Read & classify `.filo/` config files ────────────────────
+  // Stat each file before the read too: step 10 stamps a baseline only for a
+  // file that didn't change while it was read.
+  const configStatsBefore = await statConfigsBeforeRead(newVaultPath, CONFIG_BASELINE_PATHS);
   // A transient whole-folder read failure (OneDrive/AV lock) pauses EVERY
   // config write for the session (see `__loadAllFailed` below), so retry the
   // pure read with short backoff first. This must happen at LOAD time:
@@ -242,18 +253,16 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     viewports: 'viewports.json',
     sidebarOrder: 'sidebar-order.json',
   };
-  // A TOP-LEVEL `config:load-all` failure (the whole `.filo/`
-  // read rejected — locked dir / transient IO, not a per-file parse error) tags
-  // the bag with `__loadAllFailed`. Pause EVERY config write so we don't seed
-  // bootstrap defaults over the intact-but-unreadable files, and warn ONCE
-  // (rather than the seven per-file toasts a blanket `__corrupt` would emit).
-  // Reopening the vault re-attempts the read.
-  if (typeof (configs as { __loadAllFailed?: unknown }).__loadAllFailed === 'string') {
-    for (const target of Object.values(corruptionMap)) {
-      if (target) corruptionTargets.push(target);
-    }
+  // A TOP-LEVEL `config:load-all` failure (the whole `.filo/` read rejected:
+  // a locked folder or transient IO, not a per-file parse error) tags the bag
+  // with `__loadAllFailed`. Memory then holds defaults, so no file may be
+  // written blind: each is marked unverified, and its first save reads it
+  // again (settings changed from what Filo shows ask Reload / Keep local).
+  // `hotkeys.json` has its own load (`loadHotkeyOverrides`).
+  const loadAllFailed = typeof (configs as { __loadAllFailed?: unknown }).__loadAllFailed === 'string';
+  if (loadAllFailed) {
     warnings.push({
-      text: "Filo couldn't read your .filo/ settings (the folder may be locked or mid-sync). Settings changes are paused to protect the files on disk — reopen the vault to retry.",
+      text: "Filo couldn't read your .filo/ settings (the folder may be locked or mid-sync), so it shows defaults for now. Before it saves a settings change, it reads the file again.",
       type: 'warning',
       duration: 0,
     });
@@ -265,7 +274,9 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     const detail = typeof v.error === 'string' ? v.error : 'parse error';
     if (target) corruptionTargets.push(target);
     warnings.push({
-      text: `Filo couldn't parse .filo/${key}.json (${detail}). Edits to that file are paused to protect it — fix the JSON and reopen the vault to resume.`,
+      text: key === 'viewports' || key === 'sidebarOrder'
+        ? `Filo couldn't read .filo/${VIEW_STATE_FILE_NAMES[key]} (${detail}). Filo won't save over it until it reads again.`
+        : `Filo couldn't parse .filo/${key}.json (${detail}). Edits to that file are paused to protect it. Fix the JSON and Filo saves again.`,
       type: 'error',
       duration: 0,
     });
@@ -324,6 +335,9 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     }
     if (!duplicate) warnings.push(boardLoadFailedToast(newVaultPath, failed, snapshotAbs));
   }
+  const unloadedBoardPaths = failedBoards
+    .filter((b) => b.errorKind !== 'duplicate-board-id' && b.errorKind !== 'sync-conflict-copy')
+    .map((b) => b.path);
 
   // Board files a sync client forked
   // (`Plan.board-HOST.json`) never appear in `board:list`; surface them once,
@@ -501,43 +515,12 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
 
   // ── 10. Seed drift baselines for `.filo/` configs ────────────────
   //
-  // The ENOENT-skip guard inside `writeConfigs` only runs when a baseline
-  // exists, so stamp each existing config's mtime + size here — otherwise the
-  // first save after open would skip the drift check entirely.
-  //
-  // ENOENT is the common case for a fresh vault; skip silently. Other stat
-  // failures (EACCES, NO_ACTIVE_VAULT after a fast swap) are non-fatal.
-  const seededConfigBaselinePaths: string[] = [];
-  for (const sentinelPath of CONFIG_SENTINEL_PATHS) {
-    // No write to the new vault's configs can run before it commits, so a
-    // ticket taken here, before the stat, is as good as one taken before the
-    // reads above.
-    const seq = baselineSeq(sentinelPath);
-    try {
-      const stat = await invokeOk('vault:stat', newVaultPath, sentinelPath);
-      // Defensive: a bare-result IPC mock (test fixture that doesn't
-      // route `vault:stat`) returns `undefined`; `invokeOk`'s envelope
-      // check passes that through. Without baseline data, the load
-      // continues unguarded for this file.
-      if (!stat || typeof stat.mtimeMs !== 'number' || typeof stat.size !== 'number') {
-        continue;
-      }
-      noteBaseline(sentinelPath, stat.mtimeMs, stat.size, { ifUnchangedSince: seq });
-      seededConfigBaselinePaths.push(sentinelPath);
-    } catch (err) {
-      if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
-        continue;
-      }
-      // Non-ENOENT envelope failure: surface via the bus so a permissions
-      // / share hiccup is visible. Doesn't block the load — a missing
-      // baseline degrades to an unguarded write.
-      reportError(
-        'vault.config-baseline-seed',
-        err,
-        `Couldn't seed drift baseline for ${sentinelPath} — config-write drift detection is inert for it until the next successful self-write.`,
-      );
-    }
-  }
+  // Only a file whose stat is the same now as before the read in step 1 is
+  // stamped; any other file that exists is left unverified, so its first
+  // write reads it again (see configBaselineSeed.ts). ENOENT, the common case
+  // for a fresh vault, stamps nothing.
+  const seededConfigBaselinePaths = await seedConfigBaselines(newVaultPath, configStatsBefore);
+  if (loadAllFailed) for (const rel of CONFIG_BASELINE_PATHS) markBaselineUnverified(rel);
 
   return {
     path: newVaultPath,
@@ -563,6 +546,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     corruptionTargets,
     salvagedSettings,
     seededConfigBaselinePaths,
+    unloadedBoardPaths,
   };
 }
 

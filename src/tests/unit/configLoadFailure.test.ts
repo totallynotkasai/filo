@@ -156,7 +156,7 @@ describe('loadHotkeyOverrides — a failed read keeps overrides and stops hotkey
 
     locked = false;
     expect((await retryAllFailedWrites()).failed).toEqual([]);
-    expect(saved).toEqual([{ 'tile:add': 'Ctrl+Shift+A', 'tile:lock': 'Ctrl+L', 'tile:delete': 'Ctrl+D' }]);
+    expect(saved.map((p) => JSON.parse(String(p)))).toEqual([{ 'tile:add': 'Ctrl+Shift+A', 'tile:lock': 'Ctrl+L', 'tile:delete': 'Ctrl+D' }]);
     expect(Object.keys(getHotkeyOverrides()).sort()).toEqual(['tile:add', 'tile:delete', 'tile:lock']);
   });
 

@@ -116,6 +116,7 @@ export function renameBaselinePath(oldRel: string, newRel: string): void {
   // began before the move must still yield to a write made after it.
   rekey(baselines, oldKey, newKey);
   rekey(writeSeqs, oldKey, newKey);
+  if (unverified.delete(oldKey)) unverified.add(newKey);
 }
 
 function rekey<V>(map: Map<string, V>, oldKey: string, newKey: string): void {
@@ -182,6 +183,24 @@ export function noteBaseline(
   if (!key) return;
   if (opts.ifUnchangedSince !== undefined && (writeSeqs.get(key) ?? swapFloor) !== opts.ifUnchangedSince) return;
   baselines.set(key, { mtimeMs, size });
+  unverified.delete(key);
+}
+
+/**
+ * Paths whose version on disk no load pinned: the file changed while it was
+ * read, or couldn't be read at all. A writer reads such a file before it
+ * writes over it, as if its baseline had drifted. A stamp clears the mark.
+ */
+// allow-module-state: reset on vault swap (resetAllBaselines, registered below)
+const unverified = new Set<string>();
+
+export function markBaselineUnverified(path: string): void {
+  const key = path ? normaliseKey(path) : '';
+  if (key) unverified.add(key);
+}
+
+export function isBaselineUnverified(path: string): boolean {
+  return !!path && unverified.has(normaliseKey(path));
 }
 
 /**
@@ -255,6 +274,7 @@ export function refreshBaselineAfterWrite(
 export function resetAllBaselines(): void {
   baselines.clear();
   writeSeqs.clear();
+  unverified.clear();
   swapFloor = ++writeCounter;
 }
 
@@ -303,5 +323,6 @@ registerPathRenamable('fileBaselineRegistry', renameBaselinePath);
 export function __resetBaselinesForTests(): void {
   baselines.clear();
   writeSeqs.clear();
+  unverified.clear();
   swapFloor = ++writeCounter;
 }

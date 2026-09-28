@@ -146,6 +146,25 @@ describe('FileWatcher.reconcileNow', () => {
     await vi.waitFor(() => expect(renames()).toEqual([{ oldPath: 'Draft.md', newPath: 'Moved.md' }]), { timeout: 5000 });
   });
 
+  it("a same-size write by another program right after Filo's own is still reported", async () => {
+    const target = join(dir, 'Plan.board.json');
+    await fs.writeFile(target, '{"v":"original"}', 'utf-8');
+    await watcher.reconcileNow({ seedOnly: true });
+    // Filo writes its bytes, and before its post-write bookkeeping runs,
+    // another program puts different bytes of the same size there, with the
+    // old modification time it carried from elsewhere (a sync client keeps
+    // the source's), so the walk would trust the stat and not re-read it.
+    const ours = Buffer.from('{"v":"filo-a"}', 'utf-8');
+    const theirs = '{"v":"sync-b"}';
+    expect(Buffer.byteLength(theirs)).toBe(ours.length);
+    await fs.writeFile(target, theirs, 'utf-8');
+    const old = new Date(Date.now() - 60_000);
+    await fs.utimes(target, old, old);
+    watcher.recordOwnWrite('Plan.board.json', ours);
+    await watcher.reconcileNow();
+    await vi.waitFor(() => expect(changedNames()).toContain('Plan.board.json'), { timeout: 5000 });
+  });
+
   it('synthesises a change event when mtime+size differs', async () => {
     const target = join(dir, 'Edited.md');
     await fs.writeFile(target, 'first version', 'utf-8');

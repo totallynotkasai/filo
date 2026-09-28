@@ -265,7 +265,7 @@ describe('crash recovery replays the pin moves', () => {
 
   it("re-points a board's folder pin and counts the board as repaired", async () => {
     boardCacheStore.hydrate({ a: boardWithPin('a', 'Old/Sub') }, { a: 'a.board.json' });
-    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue(undefined);
+    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue([]);
     vi.spyOn(boardCacheStore, 'flushAllDirty').mockResolvedValue({ failed: [] });
     vi.spyOn(fileTagsStore, 'flushPendingSave').mockResolvedValue({ ok: true });
     const entries: RenameCascadeEntry[] = [

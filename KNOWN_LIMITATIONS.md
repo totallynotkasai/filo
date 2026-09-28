@@ -494,7 +494,13 @@ the read-back cheaply; whole-file board writes do not.
 **Impact:** In the (extraordinarily narrow) case above, a foreign edit could be
 adopted as Filo's own baseline and overwritten without a drift prompt on the next
 save. The main-process watcher's **content-hash** reconcile pass (which compares
-hashes, not just mtime/size) remains the backstop and re-surfaces such an edit.
+hashes, not just mtime/size) remains the backstop and re-surfaces such an edit:
+after Filo's own write it moves its snapshot on only when the file holds the
+bytes Filo wrote (`advanceReconcileSnapshot` in
+[src/main/services/fileWatcher.ts](src/main/services/fileWatcher.ts)), so a
+foreign write in the gap, even one carrying an old modification time as a sync
+client's does, is still reported. Above the watcher's 10 MB hash ceiling the
+snapshot compares size only.
 Upgrade to a size-gated or hashed read-back if this ever bites in practice.
 
 **Board encoding:** boards are plain JSON objects (main writes the renderer's
@@ -1021,9 +1027,15 @@ changes couldn't be saved, and choose **Close anyway**, **Open anyway** or
 - Filo's own `.filo/` state that wasn't saved (the tag registry, settings,
   layout, viewports, hotkeys, sidebar order) as `_filo__<name>.json`.
 
+A board deleted while its last save fails is copied there too, as it was in
+memory, before its file moves to Filo's trash (with no copy, the board isn't
+deleted).
+
 These are the only copy of that text. The same goes for the other version a
-**Keep mine** / **Keep local** writes over, and a file's original bytes before
-**Convert to UTF-8**: they go in `.filo/recovery/<timestamp>-keep/`. The
+**Keep mine** / **Keep local** writes over, a file's original bytes before
+**Convert to UTF-8**, and a board's file before a load repair drops unknown
+tile types or broken references from it: they go in
+`.filo/recovery/<timestamp>-keep/`. The
 ordinary recovery snapshots (boards that failed to load, copies taken before a
 repair) are pruned to 20 per name and 100 in total, but both prunes skip any
 folder ending in `-unsaved` or `-keep`, so Filo never deletes a rescue copy or
@@ -1134,3 +1146,53 @@ some SMB shares 1 s), another program's save of a note over 2 MB that keeps its
 size and lands within one timestamp tick of Filo's read could be overwritten.
 Keep large notes on NTFS / APFS / ext4, or close them in other editors while
 Filo has them open.
+
+## 37. A board that can't load catches up only on the renames made in the same session
+
+**What:** A board that fails to load (a newer format, a lock, a broken file)
+isn't in memory, so a rename or move of a file it links to can't rewrite its
+links. Filo keeps a list of every rename made while it is unloaded, and if the
+board loads later in the same session (Retry, the file changing, the sidebar),
+those renames are applied to it before it opens, and it is saved. A notice
+names the boards a rename or delete didn't reach, once per board.
+
+**Where:** [src/renderer/stores/unloadedBoards.ts](src/renderer/stores/unloadedBoards.ts),
+`adoptBoardAtRuntime` in [src/renderer/stores/boardDiscovery.ts](src/renderer/stores/boardDiscovery.ts),
+`ensureAllLoaded` in [src/renderer/stores/boardCache.svelte.ts](src/renderer/stores/boardCache.svelte.ts).
+
+**Why accepted:** The list lives in memory. Keeping it across sessions would
+mean a new `.filo/` journal replayed on every open, against boards that other
+machines may have edited meanwhile.
+
+**Impact:**
+- A board that loads only after the vault is closed and reopened keeps its
+  old links; its tiles show as missing, where **Re-link** points them at the
+  moved files.
+- Links to files deleted meanwhile are left as they are (never removed
+  unseen): the tiles show as missing once the board loads.
+
+## 38. Camera positions and the sidebar order are saved on a best-effort basis
+
+**What:** `.filo/viewports.json` (each Mind Map's camera) and
+`.filo/sidebar-order.json` (the manual sidebar order) are view state. When one
+can't be saved (Filo can't read the file on disk, so it won't write over it; a
+lock), the change is dropped with one notice, instead of being counted as
+unsaved work that holds up a close or quit. The next change tries again, and a
+file that reads again is saved again (merged with what it holds). Another
+program's version of either file is merged in, not asked about: per board the
+camera saved last wins, and a folder reordered in this session keeps its order.
+
+**Where:** `droppable` in
+[src/renderer/lib/boards/miscWriteScheduler.ts](src/renderer/lib/boards/miscWriteScheduler.ts),
+[src/renderer/lib/boards/miscConfigDrift.ts](src/renderer/lib/boards/miscConfigDrift.ts),
+[src/renderer/lib/boards/viewportCache.ts](src/renderer/lib/boards/viewportCache.ts),
+[src/renderer/stores/sidebarOrder.svelte.ts](src/renderer/stores/sidebarOrder.svelte.ts).
+
+**Why accepted:** Losing a camera position or a drag costs a moment to redo;
+a "couldn't be saved" dialog on every close for it would teach users to click
+past the dialog that guards their notes.
+
+**Impact:** While either file stays unreadable, the latest camera positions or
+sidebar order are lost at quit. Shortcuts (`hotkeys.json`) and the settings
+files are not treated this way: they count as unsaved and ask before an
+outside version is overwritten.

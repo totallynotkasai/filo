@@ -108,7 +108,7 @@ describe('boardStore.applyGlobalDefaultsToAllBoards', () => {
   });
 
   it('clears cached boards\' own style and names boards it could not load', async () => {
-    const ensure = vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue();
+    const ensure = vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue([]);
 
     const result = await boardStore.applyGlobalDefaultsToAllBoards();
 

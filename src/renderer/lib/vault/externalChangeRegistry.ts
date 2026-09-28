@@ -85,18 +85,11 @@ const reconcilers: Record<FileChangeType, ExternalChangeReconciler> = {
   // generic channel; the no-op reflects that the tree refresh runs in
   // the dedicated handler.
   tree: { kind: 'tree', handle: () => {} },
-  // Generic `.filo/` config files (anything without a granular subtype)
-  // have no per-kind reconciler. We log the event at debug level so a
-  // mystery `.filo/foo.json` external edit isn't completely invisible,
-  // but skip any state mutation — the typical case is files Filo writes
-  // itself but doesn't react to (e.g. `appearance.json`, `workspace.json`,
-  // which are only re-read on next vault open).
-  config: {
-    kind: 'config',
-    handle: () => {
-      // No-op. See block comment above for rationale.
-    },
-  },
+  // Generic `.filo/` config files (anything without a granular subtype).
+  // The store registers `reconcileConfigFileChange` over this no-op; until
+  // then, and for files it doesn't handle, an outside change is only
+  // checked by the next write.
+  config: { kind: 'config', handle: () => {} },
   // The remaining entries below are placeholder no-ops until the store-
   // owned reconcilers register themselves at module-load time. A future
   // sweep that adds a new watcher kind without a reconciler still
@@ -223,8 +216,8 @@ export async function dispatchExternalChangeBatch(
  */
 export function _resetRegistryForTests(): void {
   for (const kind of Object.keys(reconcilers) as FileChangeType[]) {
-    if (kind === 'tree' || kind === 'config') continue;
-    reconcilers[kind] = makePlaceholder(kind);
+    if (kind === 'tree') continue;
+    reconcilers[kind] = kind === 'config' ? { kind: 'config', handle: () => {} } : makePlaceholder(kind);
   }
   for (const kind of Object.keys(batchedReconcilers) as FileChangeType[]) {
     delete batchedReconcilers[kind];

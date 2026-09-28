@@ -24,6 +24,7 @@ import {
 } from './writeStateTracking';
 import { isConfigPathCorrupt } from './configWriteScheduler';
 import { createScheduler } from './writeScheduler';
+import { noticeConfig } from './configDrift';
 
 export interface MiscWriteArgs {
   vaultRoot: string;
@@ -31,6 +32,12 @@ export interface MiscWriteArgs {
   write: () => Promise<void>;
   /** The whole file the write puts on disk, for a rescue copy when it can't. */
   json?: string;
+  /**
+   * View state (camera positions, sidebar order): the write checks an
+   * unreadable file again itself, and when it still can't be read the change
+   * is dropped with one notice rather than counted as unsaved work.
+   */
+  droppable?: boolean;
 }
 
 /** Each key's latest args getter, read for rescue copies. */
@@ -45,11 +52,12 @@ const miscScheduler = createScheduler<MiscWriteArgs>({
   name: 'miscWriteScheduler',
   debounceMs: BOARD_WRITE_DEBOUNCE_MS,
   performWrite: async (args) => {
-    // Loaded a `.filo/viewports.json` or `.filo/hotkeys.json` in a corrupt
-    // state? Don't write over the user's file with in-memory defaults. The
-    // change isn't on disk, though, so it counts as failed (save() says so,
-    // leaving keeps a rescue copy) rather than as saved; a retry can't fix it.
-    if (isConfigPathCorrupt(args.path)) {
+    // Loaded `.filo/hotkeys.json` in a corrupt state? Don't write over the
+    // user's file with in-memory defaults. The change isn't on disk, though,
+    // so it counts as failed (save() says so, leaving keeps a rescue copy)
+    // rather than as saved; a retry can't fix it. View state reads the file
+    // again in its own write (see miscConfigDrift.ts).
+    if (isConfigPathCorrupt(args.path) && !args.droppable) {
       const error = Object.assign(
         new Error(`${args.path} is unreadable on disk; changes to it are not being saved so it isn't overwritten.`),
         { code: 'CONFIG_CORRUPT' },
@@ -63,6 +71,18 @@ const miscScheduler = createScheduler<MiscWriteArgs>({
     try {
       await args.write();
     } catch (err) {
+      if (args.droppable) {
+        // Losing a camera position or a sidebar order costs a drag, so it
+        // never holds up a close or quit; the next change tries again.
+        console.warn(`[boardSaver] view state not saved for ${args.path}:`, err);
+        noticeConfig(
+          `view-state-unsaved:${args.path}`,
+          (err as { code?: unknown } | null)?.code === 'CONFIG_CORRUPT'
+            ? `Filo can't read ${args.path}, so it isn't saving over it. Filo saves it again once the file reads.`
+            : `Filo couldn't save ${args.path} just now. It tries again at your next change.`,
+        );
+        return;
+      }
       console.error(`[boardSaver] misc write failed for ${args.path}:`, err);
       notifyWriteError({ kind: 'config', path: args.path, error: err });
       throw err;

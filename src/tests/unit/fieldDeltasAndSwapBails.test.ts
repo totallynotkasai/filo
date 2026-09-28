@@ -129,7 +129,7 @@ describe('repairRenameCascade bails on a vault swap', () => {
     vaultStore.setPath('/vaultA');
     // Capture the identity the recovery sequencer threads (vaultA's generation).
     const captured = captureVaultIdentity();
-    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue(undefined);
+    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue([]);
     const renameSpy = vi.spyOn(boardCacheStore, 'renameBoardPath').mockReturnValue(['b1']);
     const flushSpy = vi.spyOn(boardCacheStore, 'flushAllDirty').mockResolvedValue({ failed: [] });
 

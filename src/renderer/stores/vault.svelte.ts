@@ -48,13 +48,13 @@ import {
   captureVaultIdentity,
   isStillSameVault,
   retireVaultGeneration,
+  type VaultIdentity,
 } from '../lib/vault/vaultIdentity';
 import { isRenameInFlight } from '../lib/vault/renameInFlight';
 import { markBoardProvisionallyMissing } from './boardProvisionalMissing';
 import { adoptUntrackedTreeBoards } from './boardDiscovery';
 import {
   scheduleConfigWrite,
-  scheduleMiscWrite,
   flushAll,
   flushAllMisc,
   seedConfigSnapshots,
@@ -76,6 +76,8 @@ import {
 // the circular dependency between this module and vaultExternalReconcilers.
 import './vaultExternalReconcilers';
 import { noteStore } from './notes.svelte';
+import { sidebarOrderStore } from './sidebarOrder.svelte';
+import { markBoardUnloaded } from './unloadedBoards';
 import { setActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
@@ -90,7 +92,7 @@ import { makeProjectSlice } from './vaultProject';
 import { makeRecoverySlice } from './vaultRecovery';
 import { makeRootFolderSlice } from './vaultRootFolder';
 import { makeFolderOpsSlice } from './vaultFolderOps';
-import { makeExternalChangesSlice } from './vaultExternalChanges';
+import { keepSkippedRenameBreadcrumb, makeExternalChangesSlice } from './vaultExternalChanges';
 import { saveBeforeLeaving, type LeaveOutcome } from './vaultLeaveGuard';
 import { awaitConfirm } from './awaitConfirm';
 import { exclusiveVaultLifecycle, vaultLifecycleBusy } from './vaultLifecycleGuard.svelte';
@@ -115,20 +117,6 @@ let searchQuery = $state<string>('');
 let isLoading = $state<boolean>(false);
 let expandedFolders = $state<Set<string>>(new Set());
 let selectedPaths = $state<Set<string>>(new Set());
-
-// ── Manual sidebar order (used when sortField === 'none') ──
-//
-// Keyed by parent folder absolute path (vault root = ''). Each value is the
-// ordered list of child node absolute paths the user has dragged into place.
-// Loaded from `.filo/sidebar-order.json` on vault open and persisted with a
-// 300ms idle debounce on every reorder.
-let manualOrder = $state<Record<string, string[]>>({});
-
-// The sidebar-order write goes through `scheduleMiscWrite` so it joins the
-// inflight / sentinel / failed-path pipeline — a failed config:save surfaces
-// instead of silently dropping a manual drag.
-const SIDEBAR_ORDER_KEY = 'config:.filo/sidebar-order.json';
-const SIDEBAR_ORDER_PATH = '.filo/sidebar-order.json';
 
 // Non-null while a vault swap is mid-flight (between `vault:close` and
 // `commitVaultCandidate`). `save()` awaits it before draining so a quit in that
@@ -201,28 +189,8 @@ function readSortConfig(): SortConfig {
     sortDirection: (g?.sidebarSortDirection as VaultSortDirection) ?? 'asc',
     groupField: (g?.sidebarGroupField as VaultGroupField) ?? 'none',
     groupDirection: (g?.sidebarGroupDirection as VaultSortDirection) ?? 'asc',
-    manualOrder,
+    manualOrder: sidebarOrderStore.order,
   };
-}
-
-function scheduleSidebarOrderWrite(): void {
-  if (!vaultPath) return;
-  // Route through `scheduleMiscWrite` for sentinel tracking, the envelope
-  // check, the Ctrl+S / quit drain and the corruption gate. The getter
-  // re-reads `manualOrder` + `vaultPath` at fire time (the latest drag).
-  scheduleMiscWrite(SIDEBAR_ORDER_KEY, () => {
-    if (!vaultPath) return null;
-    const vaultRoot = vaultPath;
-    const snapshot = JSON.parse(JSON.stringify(manualOrder)) as Record<string, string[]>;
-    return {
-      vaultRoot,
-      path: SIDEBAR_ORDER_PATH,
-      json: JSON.stringify(snapshot, null, 2),
-      write: async () => {
-        await invokeOk('config:save', vaultRoot, 'sidebar-order.json', snapshot);
-      },
-    };
-  });
 }
 
 // Memoised sort/filter result. Without it, `get tree()` would allocate a fresh
@@ -297,6 +265,7 @@ function commitVaultCandidate(
   // to .filo/recovery/ before its next write.
   for (const target of candidate.corruptionTargets) markCorruptConfigTarget(target);
   for (const file of candidate.salvagedSettings) markSalvagedSettingsFile(file);
+  for (const rel of candidate.unloadedBoardPaths) markBoardUnloaded(rel);
   // Drain warning toasts the candidate buffered. We surface them
   // post-commit so a candidate that ultimately FAILS doesn't leave the
   // user staring at warning toasts for a vault they never opened.
@@ -311,7 +280,7 @@ function commitVaultCandidate(
   // that captured the OUTGOING vault's identity reads as stale when it resumes
   // (close→reopen of the same path still bumps the generation).
   beginVaultGeneration(candidate.path);
-  manualOrder = candidate.manualOrder;
+  sidebarOrderStore.seed(candidate.manualOrder);
   fileTree = candidate.tree;
 
   // ── Hydrate dependent stores (each method accepts data directly) ──
@@ -858,14 +827,10 @@ export const vaultStore = {
 
   // ── Manual sidebar order (Sort By 'None') ──
   //
-  // Reassigns the whole record so Svelte's reactive tracking fires. The
-  // write is debounced (300ms idle) so a rapid sequence of drags collapses
-  // into a single `.filo/sidebar-order.json` write.
-  get manualOrder() { return manualOrder; },
+  // Saved in `.filo/sidebar-order.json` (see sidebarOrder.svelte.ts).
+  get manualOrder() { return sidebarOrderStore.order; },
   setManualOrder(parentAbs: string, orderedChildPaths: string[]) {
-    const key = normalizePath(parentAbs);
-    manualOrder = { ...manualOrder, [key]: orderedChildPaths.slice() };
-    scheduleSidebarOrderWrite();
+    if (vaultPath) sidebarOrderStore.set(vaultPath, parentAbs, orderedChildPaths);
   },
 
   markMetaDirty,
@@ -1308,8 +1273,9 @@ export const vaultStore = {
   enqueueRenameQueueWork<T>(
     task: () => Promise<T>,
     errorContext?: { label: string; message: string },
+    onSkipped?: (captured: VaultIdentity) => Promise<void>,
   ): Promise<T | undefined> {
-    return enqueueRenameQueueWork(task, errorContext);
+    return enqueueRenameQueueWork(task, errorContext, onSkipped);
   },
 
   listenForChanges(): () => void {
@@ -1384,6 +1350,7 @@ export const vaultStore = {
           label: 'vault.handleRename',
           message: `Failed to propagate external rename "${oldRel}" → "${newRel}"`,
         },
+        (captured) => keepSkippedRenameBreadcrumb(captured.path, oldRel, newRel),
       ).catch(() => undefined);
     });
 

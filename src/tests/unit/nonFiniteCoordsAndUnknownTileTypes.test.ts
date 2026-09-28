@@ -321,9 +321,13 @@ describe('schema type safety', () => {
       // snapshot so the load proceeds to the prune. Envelope contract —
       // `src/main/ipc/board.ipc.ts:360-371` returns
       // `{ ok: true, path }` / `{ ok: false, code?, error }`.
+      const snapshots: unknown[][] = [];
       installFiloStub({
         'board:load': () => JSON.parse(JSON.stringify(file)),
-        'recovery:snapshot': () => ({ ok: true, path: '.filo/recovery/cal.board.json' }),
+        'recovery:snapshot': (...args: unknown[]) => {
+          snapshots.push(args);
+          return { ok: true, path: '.filo/recovery/cal.board.json' };
+        },
       });
 
       const reported: ReportedError[] = [];
@@ -331,6 +335,9 @@ describe('schema type safety', () => {
       try {
         const result = await loadBoard('/vault', 'cal.board.json');
         expect(result.ok).toBe(true);
+        // The copy is the only one of what the prune dropped: it goes in a
+        // `-keep` folder, which the recovery prunes never remove.
+        expect(snapshots).toEqual([['/vault', 'cal.board.json', 'keep']]);
         if (result.ok) {
           expect(result.droppedTileTypes).toEqual(['calendar']);
           expect(result.data.tileDefs.tile_cal).toBeUndefined();

@@ -30,6 +30,7 @@ import { boardCacheStore } from './boardCache.svelte';
 import { vaultStore } from './vault.svelte';
 import { uiStore } from './ui.svelte';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
+import { catchUpLoadedBoard, markBoardUnloaded } from './unloadedBoards';
 
 export type AdoptOutcome = 'adopted' | 'already' | 'duplicate' | 'renamed' | 'failed';
 
@@ -85,6 +86,7 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
   if (!result.ok) {
     const transient = isTransientBoardLoadError(result.error);
     lastFailure.set(vaultPath(relPath), { message: result.message, transient });
+    markBoardUnloaded(relPath);
     // A transient failure is re-offered by the caller's Retry prompt; anything
     // else (parse / schema / version) is surfaced once here.
     if (!transient && !opts.quiet) {
@@ -131,6 +133,8 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
     return 'duplicate';
   }
 
+  // Renames made while it couldn't load are applied before it joins the cache.
+  const caughtUp = catchUpLoadedBoard(relPath, data) > 0;
   boardCacheStore.replaceCache({ ...boardCacheStore.cache, [id]: data });
   boardCacheStore.replacePaths({ ...boardCacheStore.paths, [id]: relPath });
   adoptLoadedBoardBaseline(relPath, result.baseline);
@@ -140,8 +144,9 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
     Object.assign(project.connections, data.connections);
     project.frames.push(...data.frames);
   }
-  // Mirror commitVaultCandidate: loader repairs are persisted on the next write.
-  if (result.orphansPruned || result.boardIdsNormalized) {
+  // Mirror commitVaultCandidate: loader repairs (and caught-up renames) are
+  // persisted on the next write.
+  if (result.orphansPruned || result.boardIdsNormalized || caughtUp) {
     boardCacheStore.markDirty(id);
   }
   vaultStore.recomputeBrokenRefsNow();

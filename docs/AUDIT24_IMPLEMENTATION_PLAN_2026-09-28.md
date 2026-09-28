@@ -502,6 +502,48 @@ Wire the `config` reconciler for these files so an outside change re-reads them 
 
 **Test.** Main unit: a different same-size file at stat time; the snapshot isn't moved.
 
+### Phase 5 outcome
+
+All ten items are fixed. The regression tests are:
+- the new unit file `configMiscDrift` (A24-26, A24-27, A24-28; 8 tests);
+- the new unit file `configFileReconciler` (the watcher side of A24-27 and A24-28, and A24-29; 7 tests);
+- two new cases in `boardCacheDeleteBoardCancelPending` (A24-30);
+- a new assertion in `nonFiniteCoordsAndUnknownTileTypes` (A24-31);
+- the new unit file `unloadedBoardsCatchUp` (A24-32; 3 tests);
+- the new unit file `overdueWritesAndSkippedRenames` (A24-33 and A24-34; 4 tests);
+- a new case in `fileWatcherReconcile` (A24-35).
+
+Each new test file was run against the pre-fix source and failed there (23 failures; the passing cases are controls). Three gates were added or extended, each proven to bite:
+- `writePath/config-writes-drift-checked` (new): no renderer code invokes `config:save` except the two drift-checked writers; `saveMiscConfig` is only called after `readOutsideVersion`; `vaultCandidate.ts` and `hotkeys.ts` seed config baselines with `statConfigsBeforeRead` + `seedConfigBaselines` and never `noteBaseline`.
+- `writePath/unloaded-board-catches-up` (new): `boardDiscovery.ts` and `boardCache.svelte.ts` record a failed load and replay missed renames on a later one; the open records the boards that failed.
+- `writePath/awaited-writes-bounded` (extended): the timeout branch tracks the overdue write, and the drain waits for it.
+
+**Deviations from the plan**
+
+- **A general "unverified" baseline mark.** A24-26 says to leave a moved file unstamped "so the first write checks the disk bytes", but a file with no baseline was written blind. `fileBaselineRegistry` gained `markBaselineUnverified` / `isBaselineUnverified`: a writer reads such a file before writing over it, as if its baseline had drifted, and any stamp clears the mark. A24-26, A24-27 and A24-28 all use it. The seed lives in a new `lib/vault/configBaselineSeed.ts`, and it also covers `viewports.json` and `sidebar-order.json`; `hotkeys.json` is seeded the same way by `loadHotkeyOverrides`, which reads it separately.
+- **A24-27.**
+  - The check lives in a new `lib/boards/miscConfigDrift.ts` (`readOutsideVersion`, `saveMiscConfig`, `settleOutsideVersion`), called from each writer's `write`, not inside `miscWriteScheduler.performWrite`: only the writer knows how to merge its own state.
+  - The sidebar order moved out of `vault.svelte.ts` into a new `stores/sidebarOrder.svelte.ts`. `vault.svelte.ts` was at its 1500-line ceiling; it is now 1467, and its allowlist row was lowered to match.
+  - A viewport merge keeps the entry with the later `updatedAt` (ties keep this session's), and a board removed this session stays removed.
+  - The watcher side is a new `stores/configFileReconciler.ts`, registered for the `config` kind (until now a no-op). It reads the vault root from `activeVaultPath`, not the vault store.
+  - The Reload / Keep local prompt names "shortcuts" for `hotkeys.json`. A file that already holds what Filo would write is taken silently.
+- **A24-28.**
+  - View state (viewports, sidebar order) is `droppable`: any failure to save it, not only a corrupt mark, is dropped with one notice per file per session and never counted in `unsavedWork().failed`. A lock at quit would otherwise still hold up the close. KNOWN_LIMITATIONS #38 records this.
+  - A droppable write re-reads a file marked unreadable each time, so a view state file fixed by hand saves again without the watcher.
+  - On `__loadAllFailed`, nothing is paused any more: every loaded config is marked unverified. The first settings save reads the file; if it now differs from the defaults Filo shows, it asks Reload / Keep local (Keep local copies it first). The warning says so. The prompt's wording is the "changed outside Filo" one.
+  - `clearCorruptConfigTarget` is wired to the watcher. A settings file that reads again is un-paused and marked unverified, and a held-back change is rescheduled (`rescheduleConfigWrite`), so its next write asks. It is not reloaded silently: memory may hold changes made while it was paused. `hotkeys.json` is reloaded silently when no shortcut change is waiting, and rescheduled (so it asks) when one is.
+  - The CONFIG_CORRUPT toast no longer offers "Use defaults", which has no button.
+- **A24-29.** `writeConfigs` gained an optional `live` getter; the scheduler passes the latest args getter, and tests keep the old signature.
+- **A24-30.** If the rescue copy can't be written either, the board is not deleted (reported), rather than trashed without its last changes. The toast names the rescue folder.
+- **A24-32.**
+  - The journal is a new `stores/unloadedBoards.ts`. It records renames through a `renameAllPathKeys` sweep, so external renames are replayed too, and it replays only renames made after the board failed, so a board delivered later is not rewritten by an older rename.
+  - Deleted files are not replayed through the cascade planner. Their tiles stay and show as missing once the board loads, where Re-link or Remove is offered, rather than being removed unseen. KNOWN_LIMITATIONS #37 records this and the session-only journal.
+  - Each unloaded board is named once per session per kind of change, since a board broken for the whole session would otherwise raise the notice on every rename. The notice covers the boards that failed at open too, not only those `ensureAllLoaded` couldn't load (a board that failed at open isn't in `project.boards`, so `ensureAllLoaded` never sees it).
+- **A24-33.** The zombie wait is bounded by one more `writeTimeoutMs`, so a write that never settles can't hang a flush or quit. A zombie still out after that is marked `overtaken`. If it later lands, the key's newest write fires again, so the newest bytes are last on disk. A late write that fails fires nothing. The existing `writeGenerationPruning` case (A times out, B and C follow, A lands) now settles its re-fire before it ends; otherwise that re-fire timed out during the next test.
+- **A24-34.** `enqueueRenameQueueWork` gained an `onSkipped` callback. It runs only for a task skipped because its vault is being let go, with the identity captured at enqueue. `runExternalRenameCascade` leaves the breadcrumb at its two pre-mutation bails. The helper is `keepSkippedRenameBreadcrumb`; a failure to write it is logged, not toasted, since the vault may already be closed.
+- **A24-35.** Compares the bytes (`Buffer.equals`) rather than hashing both, and only up to the watcher's 10 MB hash ceiling; above it the size check stays. The walk already re-reads a file younger than 5 s, so the gap is open only when the foreign write carries an old modification time (Syncthing keeps the source's). The test sets one. KNOWN_LIMITATIONS #14 now describes the backstop as it is.
+- **Also changed.** The step-1 comment in `vaultCandidate.ts` read `` `.filo/*.json` ``. The gates' simple comment stripper took the `/*` inside it as the start of a block comment and dropped half the file from every scan of it; it was reworded.
+
 ---
 
 ## Phase 6: Messaging, settings on leave, path security
@@ -566,6 +608,6 @@ Wire the `config` reconciler for these files so an outside change re-reads them 
 | 2 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 2"` |
 | 3 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 3"` |
 | 4 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 4"` |
-| 5 | Not started | |
+| 5 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 5"` |
 | 6 | Not started | |
 | 7 | Not started | |

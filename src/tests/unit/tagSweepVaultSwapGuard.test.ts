@@ -142,6 +142,7 @@ describe('Audit-12 H3 — vault-wide tag rename/remove swap guard', () => {
     vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockImplementation(async () => {
       beginVaultGeneration('/vault-B');
       vaultStore.setPath('/vault-B');
+      return [];
     });
 
     await fileTagsStore.renameTagEverywhere('urgent', 'important');
@@ -184,6 +185,7 @@ describe('Audit-12 H3 — vault-wide tag rename/remove swap guard', () => {
     vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockImplementation(async () => {
       beginVaultGeneration('/vault-B');
       vaultStore.setPath('/vault-B');
+      return [];
     });
 
     await fileTagsStore.removeTagEverywhere('urgent');

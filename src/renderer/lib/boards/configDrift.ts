@@ -16,18 +16,21 @@
  */
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
-import { baselineSeq, getBaseline, hasBaselineDrifted, noteBaseline } from '../vault/fileBaselineRegistry';
+import { baselineSeq, getBaseline, hasBaselineDrifted, isBaselineUnverified, noteBaseline } from '../vault/fileBaselineRegistry';
 import { ENOENT_RESTAT_DELAY_MS } from './boardWriteDebounce';
 
 /** The config files the bundle writes, by their name in `.filo/`. */
 export type BundledConfigFile = 'workspace.json' | 'defaults.json' | 'app.json' | 'appearance.json';
+
+/** The config files a change outside Filo asks about: the settings, and the shortcuts. */
+export type PromptedConfigFile = BundledConfigFile | 'hotkeys.json';
 
 export type ConfigDriftChoice = 'reload' | 'keep-local' | 'defer';
 
 /** Store-side answers the lib layer can't give itself (toasts, settings). */
 export interface ConfigExternalHandlers {
   /** Ask Reload / Keep local for a settings file changed outside Filo. */
-  prompt(file: BundledConfigFile): Promise<ConfigDriftChoice>;
+  prompt(file: PromptedConfigFile): Promise<ConfigDriftChoice>;
   /** Take the file's settings into memory. False when they can't be applied. */
   reload(file: BundledConfigFile, disk: Record<string, unknown>): boolean;
   /** One info toast per `key` per vault session. */
@@ -39,6 +42,11 @@ let handlers: ConfigExternalHandlers | null = null;
 
 export function setConfigExternalHandlers(next: ConfigExternalHandlers | null): void {
   handlers = next;
+}
+
+/** Ask Reload / Keep local for `file` (`defer` before the handlers are set). */
+export function promptConfigDrift(file: PromptedConfigFile): Promise<ConfigDriftChoice> {
+  return handlers ? handlers.prompt(file) : Promise.resolve('defer');
 }
 
 /** One info toast per `key` per vault session (none before the handlers are set). */
@@ -115,8 +123,11 @@ export async function checkConfigDisk(args: {
   const { vaultRoot, file, payload, lastWritten } = args;
   const rel = `.filo/${file}`;
   const baseline = getBaseline(rel);
+  // A file the open couldn't pin (it changed while being read, or couldn't be
+  // read) is checked as if it had drifted.
+  const unverified = isBaselineUnverified(rel);
   // No baseline: the file was never seen on disk (a first write).
-  if (baseline === undefined) return { kind: 'write' };
+  if (baseline === undefined && !unverified) return { kind: 'write' };
   const seq = baselineSeq(rel);
 
   let stat = await statConfig(vaultRoot, rel);
@@ -130,9 +141,13 @@ export async function checkConfigDisk(args: {
     if (stat === 'missing') return { kind: 'recreate' };
     cameBack = true;
   }
-  // Another stat error: let the save report the real IO problem.
-  if (stat === 'error') return { kind: 'write' };
-  const drifted = hasBaselineDrifted(baseline, stat);
+  if (stat === 'error') {
+    // Kept for a retry: an unverified file may hold settings Filo never read.
+    if (unverified) return { kind: 'fail', error: codedError(`Couldn't check ${rel} before saving.`, 'EBUSY') };
+    // Another stat error: let the save report the real IO problem.
+    return { kind: 'write' };
+  }
+  const drifted = baseline === undefined || unverified || hasBaselineDrifted(baseline, stat);
   if (!drifted && !cameBack) return { kind: 'write' };
 
   const disk = await readConfig(vaultRoot, file);

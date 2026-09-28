@@ -206,7 +206,7 @@ describe('A9-L9 — repairRenameCascade re-applies the moved board path key', ()
   });
 
   it('calls renameBoardPath, marks the moved board dirty, and counts it as repaired', async () => {
-    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue(undefined);
+    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue([]);
     const renameSpy = vi.spyOn(boardCacheStore, 'renameBoardPath').mockReturnValue(['b1']);
     const markDirtySpy = vi.spyOn(boardCacheStore, 'markDirty').mockImplementation(() => {});
     vi.spyOn(boardStore, 'propagateRename').mockReturnValue([]);
@@ -236,7 +236,7 @@ describe('A9-L9 — repairRenameCascade re-applies the moved board path key', ()
   });
 
   it('re-asserts the media-tag keys in tags.json for every entry and keeps the sentinel if that flush fails', async () => {
-    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue(undefined);
+    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue([]);
     vi.spyOn(boardCacheStore, 'flushAllDirty').mockResolvedValue({ failed: [] });
     const renameFile = vi.spyOn(fileTagsStore, 'renameFile').mockImplementation(() => {});
     const renameFolder = vi.spyOn(fileTagsStore, 'renameFolder').mockImplementation(() => {});

@@ -144,10 +144,10 @@ export async function purgeExpiredTrash(vaultRoot: string, identity: VaultIdenti
  * stack holds (a board file, whose history goes with it; a sidebar delete with
  * no board open). `undo` puts it back.
  */
-export function toastMovedToTrash(label: string, undo: () => Promise<void>): void {
+export function toastMovedToTrash(label: string, undo: () => Promise<void>, note?: string): void {
   const identity = captureVaultIdentity();
   uiStore.pushToast({
-    text: `"${label}" was moved to Filo's trash.`,
+    text: note ? `"${label}" was moved to Filo's trash. ${note}` : `"${label}" was moved to Filo's trash.`,
     type: 'info',
     duration: 10000,
     actions: [

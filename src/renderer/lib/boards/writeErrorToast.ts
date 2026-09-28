@@ -130,7 +130,7 @@ export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec 
       context: 'Settings not saving',
       message:
         `Filo isn't saving changes${where} — its on-disk copy is unreadable, so it's left untouched to avoid clobbering it. ` +
-        'Your edits stay in memory but won\'t persist. Fix or replace the file (or choose "Use defaults"), then reopen the vault.',
+        'Your edits stay in memory but aren\'t saved. Fix or replace the file, and Filo saves again once it reads.',
       coalesceKey: `config-corrupt::${info.path ?? ''}`,
       retryable: false,
     };

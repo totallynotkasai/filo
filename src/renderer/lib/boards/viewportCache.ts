@@ -12,12 +12,16 @@
  *   - `seedViewportsCache` (vault open) populates the map from disk.
  *   - `setViewport` / `removeViewport` mutate the map and queue a debounced flush.
  *   - `clearViewportsCache` (vault swap) drops the map and cancels the pending flush.
+ *
+ * Another copy of the file (a sync client, another machine) is merged in, not
+ * written over: per board, the camera saved last wins (`updatedAt`), and a
+ * board removed here stays removed.
  */
 
 import { scheduleMiscWrite } from './miscWriteScheduler';
 import { registerResetCallback, registerTestResetCallback } from './writeStateTracking';
-import { invokeOk } from '../utils/invokeOk';
 import { setActiveVaultPath } from '../vault/activeVaultPath';
+import { objectEntries, readOutsideVersion, saveMiscConfig } from './miscConfigDrift';
 
 export interface ViewportEntry {
   x: number;
@@ -33,6 +37,9 @@ const VIEWPORTS_PATH = '.filo/viewports.json';
 // allow-module-state: cleared via registerResetCallback below (fires on vault swap and per-test)
 const viewportsCache = new Map<string, ViewportEntry>();
 let viewportsVaultRoot: string | null = null;
+/** Boards whose camera was removed this session: a merge doesn't bring them back. */
+// allow-module-state: cleared via registerResetCallback below (fires on vault swap and per-test)
+const removedBoardIds = new Set<string>();
 
 // Vault-swap and test resets clear the cache.
 registerResetCallback(() => clearViewportsCache());
@@ -43,30 +50,40 @@ export function seedViewportsCache(
   map: Record<string, ViewportEntry>,
 ): void {
   viewportsCache.clear();
+  removedBoardIds.clear();
   viewportsVaultRoot = vaultRoot;
   // Publish the committed vault root for cross-vault guards. This
   // is the single commit-time call that receives the candidate path, so it
   // doubles as the renderer's "active vault" signal for stores that must not
   // import vaultStore (would form an import cycle).
   setActiveVaultPath(vaultRoot);
-  for (const [boardId, vp] of Object.entries(map ?? {})) {
-    if (!vp || typeof vp !== 'object') continue;
-    if (
-      typeof vp.x !== 'number' ||
-      typeof vp.y !== 'number' ||
-      typeof vp.scale !== 'number' ||
-      !Number.isFinite(vp.x) ||
-      !Number.isFinite(vp.y) ||
-      !Number.isFinite(vp.scale)
-    ) {
-      continue;
-    }
+  for (const [boardId, vp] of objectEntries(map, isViewportEntry)) {
+    viewportsCache.set(boardId, { x: vp.x, y: vp.y, scale: vp.scale, updatedAt: vp.updatedAt });
+  }
+}
+
+function isViewportEntry(vp: unknown): vp is ViewportEntry {
+  if (!vp || typeof vp !== 'object') return false;
+  const { x, y, scale } = vp as Partial<ViewportEntry>;
+  return [x, y, scale].every((n) => typeof n === 'number' && Number.isFinite(n));
+}
+
+/**
+ * Takes another copy of `viewports.json` into the cache: per board, the entry
+ * saved last wins (ties keep this session's), and removed boards stay removed.
+ */
+export function mergeViewportsFromDisk(disk: unknown): void {
+  for (const [boardId, vp] of objectEntries(disk, isViewportEntry)) {
+    if (removedBoardIds.has(boardId)) continue;
+    const local = viewportsCache.get(boardId);
+    if (local && (local.updatedAt ?? 0) >= (vp.updatedAt ?? 0)) continue;
     viewportsCache.set(boardId, { x: vp.x, y: vp.y, scale: vp.scale, updatedAt: vp.updatedAt });
   }
 }
 
 export function clearViewportsCache(): void {
   viewportsCache.clear();
+  removedBoardIds.clear();
   viewportsVaultRoot = null;
   // Swap/close drops the active-vault signal too, so a cross-vault guard sees
   // no committed vault during the swap window.
@@ -84,6 +101,7 @@ export function getViewportFromCache(boardId: string): ViewportEntry | null {
  */
 export function setViewport(boardId: string, vp: ViewportEntry): void {
   viewportsCache.set(boardId, { ...vp, updatedAt: Date.now() });
+  removedBoardIds.delete(boardId);
   scheduleViewportsWrite();
 }
 
@@ -94,6 +112,7 @@ export function setViewport(boardId: string, vp: ViewportEntry): void {
 export function removeViewport(boardId: string): void {
   if (!viewportsCache.has(boardId)) return;
   viewportsCache.delete(boardId);
+  removedBoardIds.add(boardId);
   scheduleViewportsWrite();
 }
 
@@ -119,8 +138,12 @@ function scheduleViewportsWrite(): void {
         vaultRoot,
         path: VIEWPORTS_PATH,
         json: payload,
+        droppable: true,
         write: async () => {
-          await invokeOk('config:save', vaultRoot, 'viewports.json', payload);
+          const outside = await readOutsideVersion(vaultRoot, 'viewports.json');
+          if (outside.kind === 'changed') mergeViewportsFromDisk(outside.disk);
+          if (viewportsVaultRoot !== vaultRoot) return;
+          await saveMiscConfig(vaultRoot, 'viewports.json', JSON.stringify(Object.fromEntries(viewportsCache), null, 2));
         },
       };
     },

@@ -349,8 +349,10 @@ export async function writeBoardFile(
         // DELIBERATELY size-only (no content read-back, unlike the markdown
         // gateway / config scheduler): a `.board.json` can be multi-MB and is
         // rewritten every 300 ms during drags. The residual (a same-size
-        // foreign write in the ~ms gap) is documented in KNOWN_LIMITATIONS; the
-        // watcher's content-hash reconcile is the backstop.
+        // foreign write in the ~ms gap) is documented in KNOWN_LIMITATIONS. The
+        // watcher's reconcile scan is the backstop: it moves its snapshot past
+        // Filo's write only when the file holds the bytes written, so such a
+        // write is still reported to the board reconciler.
         if (postStat.size === writtenByteLength(payload)) {
           refreshBaselineAfterWrite(boardPath, postStat.mtimeMs, postStat.size);
         } else {

@@ -116,6 +116,50 @@ describe('boardCacheStore.deleteBoard cancels pending write', () => {
     expect(moves.map((c) => c.args)).toEqual([['/vault', 'tasks.board.json']]);
   });
 
+  it('a last save that fails keeps a rescue copy before the move, and the result names it', async () => {
+    const { calls } = installFiloStub({
+      'board:save': async () => ({ success: false, code: 'EACCES', error: 'denied' }),
+      'recovery:keep-unsaved': async (...args: unknown[]) => {
+        const items = args[1] as Array<{ relPath: string }>;
+        return { ok: true, dir: '.filo/recovery/2026-unsaved', kept: items.map((i) => i.relPath), failed: [] };
+      },
+      'vault:trash-move': async () => ({ success: true, trashId: 'tid', kind: 'file' }),
+    });
+    boardCacheStore.hydrate({ kb: makeKanbanFixture() }, { kb: 'tasks.board.json' });
+    scheduleBoardWrite('kb', (): BoardWriteArgs | null => ({
+      vaultRoot: '/vault',
+      boardPath: 'tasks.board.json',
+      cached: boardCacheStore.cache.kb,
+    }));
+
+    const deleted = await boardCacheStore.deleteBoard('kb');
+
+    expect(deleted).toMatchObject({ trashId: 'tid', rescueDir: '.filo/recovery/2026-unsaved' });
+    const order = calls.map((c) => c.channel).filter((c) => c === 'recovery:keep-unsaved' || c === 'vault:trash-move');
+    expect(order).toEqual(['recovery:keep-unsaved', 'vault:trash-move']);
+    const kept = calls.find((c) => c.channel === 'recovery:keep-unsaved')!.args[1] as Array<{ relPath: string; text: string }>;
+    expect(kept[0]!.relPath).toBe('tasks.board.json');
+    expect(JSON.parse(kept[0]!.text).board.id).toBe('kb');
+  });
+
+  it('a last save that fails with no rescue copy either: the board is not deleted', async () => {
+    const { calls } = installFiloStub({
+      'board:save': async () => ({ success: false, code: 'EACCES', error: 'denied' }),
+      'recovery:keep-unsaved': async () => ({ ok: false, code: 'EACCES', error: 'denied' }),
+      'vault:trash-move': async () => ({ success: true, trashId: 'tid', kind: 'file' }),
+    });
+    boardCacheStore.hydrate({ kb: makeKanbanFixture() }, { kb: 'tasks.board.json' });
+    scheduleBoardWrite('kb', (): BoardWriteArgs | null => ({
+      vaultRoot: '/vault',
+      boardPath: 'tasks.board.json',
+      cached: boardCacheStore.cache.kb,
+    }));
+
+    expect(await boardCacheStore.deleteBoard('kb')).toBeNull();
+    expect(calls.some((c) => c.channel === 'vault:trash-move')).toBe(false);
+    expect(boardCacheStore.cache.kb).toBeDefined();
+  });
+
   it('a move that fails leaves the board with a write armed for its changes', async () => {
     const { calls } = installFiloStub({
       'board:save': async () => ({ success: true }),

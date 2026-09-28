@@ -559,8 +559,10 @@ export async function loadBoard(
   if (prunedAny) {
     try {
       // `invokeOk` throws on the `{ ok: false }` envelope so a snapshot
-      // failure keeps `snapshotPath` null and trips the abort below.
-      const snap = await invokeOk('recovery:snapshot', vaultRoot, relPath);
+      // failure keeps `snapshotPath` null and trips the abort below. The copy
+      // is the only one of what the prune dropped, so it goes in a `-keep`
+      // folder, which the recovery prunes never remove.
+      const snap = await invokeOk('recovery:snapshot', vaultRoot, relPath, 'keep');
       snapshotPath = snap.path;
     } catch (err) {
       const detail = err instanceof IpcEnvelopeError ? `${err.code ?? '?'}: ${err.message}` : String(err);

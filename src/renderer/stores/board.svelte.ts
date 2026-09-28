@@ -479,9 +479,15 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       const trashed = await boardCacheStore.deleteBoard(boardId);
       if (!trashed) return false;
       await cleanupAfterBoardRemoved(boardId);
-      toastMovedToTrash(name, async () => {
-        if (await restoreTrashedItem(name, trashed.boardPath, trashed.trashId)) boardCacheStore.putBackBoardView(boardId, trashed.view);
-      });
+      toastMovedToTrash(
+        name,
+        async () => {
+          if (await restoreTrashedItem(name, trashed.boardPath, trashed.trashId)) boardCacheStore.putBackBoardView(boardId, trashed.view);
+        },
+        trashed.rescueDir
+          ? `Its last changes couldn't be saved to the board file first; a copy with them is in ${trashed.rescueDir}.`
+          : undefined,
+      );
       return true;
     },
 

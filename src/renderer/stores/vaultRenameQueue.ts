@@ -14,7 +14,7 @@
  */
 import { reportError } from '../lib/utils/errorBus';
 import { isVaultTearingDown } from '../core/vaultLifecycle';
-import { captureVaultIdentity, isStillSameVault, isVaultRetired } from '../lib/vault/vaultIdentity';
+import { captureVaultIdentity, isStillSameVault, isVaultRetired, type VaultIdentity } from '../lib/vault/vaultIdentity';
 
 // allow-module-state: the vault store resets it at every swap, and it can't subscribe to the swap it fires
 let renameQueue: Promise<unknown> = Promise.resolve();
@@ -24,19 +24,26 @@ let renameQueue: Promise<unknown> = Promise.resolve();
  * `reportError` so listener-driven tasks (which can't await) still surface
  * failures; the returned promise rejects either way. A rejection doesn't
  * break the chain: each task re-reads authoritative state at start.
+ *
+ * `onSkipped` runs instead of a task skipped because its vault is being let
+ * go (still open until `vault:close`), with the vault it was enqueued for:
+ * a rename leaves its breadcrumb there, so the next open replays it.
  */
 export function enqueueRenameQueueWork<T>(
   task: () => Promise<T>,
   errorContext?: { label: string; message: string },
+  onSkipped?: (captured: VaultIdentity) => Promise<void>,
 ): Promise<T | undefined> {
   // Captured at enqueue: resetting the chain head on swap doesn't cancel work
   // already chained on the prior tail, so an outgoing-vault task could
   // otherwise resume against the new vault's cache. Skipping resolves
   // `undefined`, which keeps the chain alive without an error toast.
   const captured = captureVaultIdentity();
-  const guardedTask = (): Promise<T | undefined> => {
-    if (isVaultRetired() || isVaultTearingDown() || !isStillSameVault(captured)) return Promise.resolve(undefined);
-    return task();
+  const guardedTask = async (): Promise<T | undefined> => {
+    const leaving = isVaultRetired() || isVaultTearingDown();
+    if (!leaving && isStillSameVault(captured)) return task();
+    if (onSkipped && captured.path) await onSkipped(captured).catch(() => undefined);
+    return undefined;
   };
   const next = renameQueue.then(guardedTask, guardedTask);
   renameQueue = next.catch(() => undefined);

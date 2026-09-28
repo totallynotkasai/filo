@@ -11,6 +11,7 @@ import {
 import { markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
 import { trashVaultPath } from '../lib/vault/vaultOperations';
 import { reportError } from '../lib/utils/errorBus';
+import { invokeOk } from '../lib/utils/invokeOk';
 import { workspaceStore, type BoardToolbarState } from './workspace.svelte';
 
 /** The board cache's own state, handed to this slice. */
@@ -37,6 +38,24 @@ export interface TrashedBoard {
   trashId: string;
   /** Put back by the delete's Undo; kept only for this session. */
   view: BoardView;
+  /**
+   * The `.filo/recovery/` folder holding the board as it was in memory, when
+   * its last changes couldn't be written to the file before the move.
+   */
+  rescueDir?: string;
+}
+
+/** Copies the board as it is in memory to `.filo/recovery/<ts>-unsaved/`. The folder, or null. */
+async function keepBoardRescueCopy(vaultRoot: string, boardPath: string, data: BoardFileData | undefined): Promise<string | null> {
+  if (!data) return null;
+  try {
+    const result = await invokeOk('recovery:keep-unsaved', vaultRoot, [{ relPath: boardPath, text: `${JSON.stringify(data, null, 2)}
+` }]);
+    return result.kept.length > 0 ? result.dir : null;
+  } catch (err) {
+    console.error('[boardCache] keeping a copy of the board before delete failed:', err);
+    return null;
+  }
 }
 
 /**
@@ -92,9 +111,22 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
 
       const view: BoardView = { viewport: getViewportFromCache(boardId), toolbar: workspaceStore.boardToolbar(boardId) };
       // The trashed copy is what Undo and Settings → Trash bring back, so the
-      // last edits (up to 300 ms old) are written first. A failed write has
-      // already said so; the delete still goes ahead.
-      await ctx.flushWrite(boardId);
+      // last edits (up to 300 ms old) are written first. If they can't be,
+      // the board as it is in memory is kept in .filo/recovery/ before the
+      // move; with neither, the board stays.
+      let rescueDir: string | undefined;
+      if (!(await ctx.flushWrite(boardId)).ok) {
+        const dir = await keepBoardRescueCopy(vaultRoot, boardPath, ctx.getCache()[boardId]);
+        if (!dir) {
+          reportError(
+            'boardCache.delete',
+            null,
+            `Couldn't save the last changes to ${boardPath} or keep a copy of them, so the board was not deleted.`,
+          );
+          return null;
+        }
+        rescueDir = dir;
+      }
       // Then cancel anything armed since, else a timer fires after the move
       // and recreates the file.
       cancelBoardWrite(boardId, boardPath);
@@ -115,7 +147,7 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
         // Drain the in-flight write (neutralised by the mark above), then
         // clear — fire-and-forget so the delete returns promptly.
         void flushBoardWrite(boardId, () => null).finally(() => clearBoardPathDeleting(boardPath));
-        return { boardPath, trashId: result.trashId, view };
+        return { boardPath, trashId: result.trashId, view, ...(rescueDir ? { rescueDir } : {}) };
       } catch (err) {
         clearBoardPathDeleting(boardPath); // the move failed — re-enable writes
         // The board stays, so its changes stay tracked for the next save.

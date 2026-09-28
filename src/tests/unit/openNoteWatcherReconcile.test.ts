@@ -231,7 +231,7 @@ describe('Audit-7 L17 — rename-cascade sentinel laid before the tag-flush bail
   it('writes the breadcrumb for the OUTGOING vault even when a swap lands mid tag-flush', async () => {
     // propagateRename touched a board → cache mutated → an interrupted cascade
     // must leave a recovery trail.
-    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue(undefined);
+    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue([]);
     vi.spyOn(boardStore, 'propagateRename').mockReturnValue(['b1']);
     vi.spyOn(boardCacheStore, 'renameBoardPath').mockReturnValue([]);
     // The swap lands DURING the synchronous tag flush — exactly the L17 window.

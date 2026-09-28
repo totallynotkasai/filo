@@ -2,6 +2,7 @@ import { boardStore } from './board.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { fileTagsStore } from './fileTags.svelte';
 import { uiStore } from './ui.svelte';
+import { noticeUnloadedBoards } from './unloadedBoards';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { computeMoveIntoFolderTarget } from '../lib/vault/moveIntoFolder';
 import { cancelBoardWrite } from '../lib/boards/boardSaver';
@@ -248,13 +249,14 @@ async function runRename(
       // revert the renameBoardPath mutation on IPC failure.
       let boardPathsSnapshot: Record<string, string> | null = null;
       let renamedBoardIds: string[] = [];
+      let notLoaded: string[] = [];
       if (oldRel && newRel) {
         try {
           // Hydrate every board before the cascade so a lazy-loaded (or
           // partial-load-failed) entry isn't silently skipped. Under normal
           // operation the cache is already fully hydrated at vault open, so
           // this is effectively free.
-          await boardCacheStore.ensureAllLoaded();
+          notLoaded = await boardCacheStore.ensureAllLoaded();
           cacheSnapshot = JSON.parse(
             JSON.stringify(boardCacheStore.cache),
           ) as Record<string, BoardFileData>;
@@ -431,6 +433,7 @@ async function runRename(
         // file-rename case; the folder-rename case rebinds every indexed
         // descendant whose key sits under the moved prefix.
         renameVaultIndexUnderPrefix(oldRel, newRel);
+        noticeUnloadedBoards('moved', notLoaded);
         // Open documents were re-keyed to the new path by the
         // renameAllPathKeys sweep above.
 

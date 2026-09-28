@@ -218,6 +218,7 @@ describe('vaultStore.delete — open notes and Document Boards under the deleted
       .spyOn(boardCacheStore, 'ensureAllLoaded')
       .mockImplementation(async () => {
         ensureLoadedDone = true;
+        return [];
       });
     const origFlush = boardCacheStore.flushAllDirty.bind(boardCacheStore);
     const flushSpy = vi

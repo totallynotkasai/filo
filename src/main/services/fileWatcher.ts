@@ -274,9 +274,10 @@ export class FileWatcher {
    * program (for a board: a false drift prompt, or a silent reload).
    *
    * Only an entry the snapshot already holds moves (a new file is reported by
-   * the scan as before), and only when the file's size is still the size
-   * written: a different size means another program wrote in the gap, and the
-   * scan must still see it.
+   * the scan as before), and only when the file still holds the bytes written:
+   * other bytes, even of the same size, mean another program wrote in the gap,
+   * and the scan must still see it. A file over the hash ceiling is compared
+   * by size only.
    */
   private advanceReconcileSnapshot(key: VaultPath, bytes: Buffer): void {
     const snapshot = this.reconcileSnapshot;
@@ -296,6 +297,13 @@ export class FileWatcher {
       return;
     }
     if (!stat.isFile() || stat.size !== bytes.length) return;
+    if (bytes.length <= WATCHER_HASH_MAX_BYTES) {
+      try {
+        if (!readFileSync(join(this.vaultPath, onDisk)).equals(bytes)) return;
+      } catch {
+        return;
+      }
+    }
     snapshot.set(onDisk, {
       mtimeMs: stat.mtimeMs,
       size: stat.size,

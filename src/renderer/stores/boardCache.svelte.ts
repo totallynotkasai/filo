@@ -39,6 +39,7 @@ import { onVaultSwap } from '../core/vaultLifecycle';
 import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { boardDefaults } from '../core/boardDefaults';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import { catchUpLoadedBoard, markBoardUnloaded } from './unloadedBoards';
 
 /**
  * Board cache store — owns the per-board on-disk snapshot used to schedule
@@ -469,18 +470,22 @@ export const boardCacheStore = {
    * future feature that lazy-loads boards, a partial-hydrate fallback
    * after a load failure, or a project mutation that adds boards from
    * outside the open flow won't silently skip uncached entries.
+   *
+   * Returns the paths of the boards it couldn't load, so a sweep can say
+   * which boards it didn't reach.
    */
-  async ensureAllLoaded(): Promise<void> {
+  async ensureAllLoaded(): Promise<string[]> {
     const vaultRoot = vaultStore.path;
     const project = vaultStore.project;
-    if (!vaultRoot || !project) return;
+    if (!vaultRoot || !project) return [];
     // A vault swap (or close → reopen) mid-loop must NOT inject the OUTGOING
     // vault's `.board.json` into the NEW vault's cache: the read is anchored to
     // the captured `vaultRoot` but the cache is live. Re-check after each await.
     const identity = captureVaultIdentity();
 
     const missing = project.boards.filter((b) => !boardCache[b.id]);
-    if (missing.length === 0) return;
+    const failed: string[] = [];
+    if (missing.length === 0) return failed;
 
     for (const board of missing) {
       const relPath = boardPaths[board.id];
@@ -491,16 +496,22 @@ export const boardCacheStore = {
         continue;
       }
       const result = await loadBoard(vaultRoot, relPath);
-      if (!isStillSameVault(identity)) return;
+      if (!isStillSameVault(identity)) return failed;
       if (!result.ok) {
         console.warn(
           `[boardCache.ensureAllLoaded] Failed to load ${relPath}: ${result.error} — ${result.message}`,
         );
+        markBoardUnloaded(relPath);
+        failed.push(relPath);
         continue;
       }
+      // Renames made while it was unloaded are applied, then saved.
+      const caughtUp = catchUpLoadedBoard(relPath, result.data) > 0;
       boardCache = { ...boardCache, [board.id]: result.data };
       adoptLoadedBoardBaseline(relPath, result.baseline);
+      if (caughtUp) markDirty(board.id);
     }
+    return failed;
   },
 
   // ── Cache lookups ──

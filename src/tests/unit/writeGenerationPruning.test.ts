@@ -133,6 +133,11 @@ describe('Audit-16 4.1 — a pruned-then-reminted generation cannot heal across 
     deferreds[0]!();
     await new Promise((r) => setTimeout(r, 20));
     expect(hasFailedWrites()).toBe(true);
+    // A landed after C was fired, so the newest write fires again once C is
+    // settled. Let both land here rather than time out in the next test.
+    mode = 'resolve';
+    deferreds[1]!();
+    await scheduler.flushAll();
   });
 
   it("positive control (Audit-12 M2): with no interim writes, A's late landing still heals", async () => {

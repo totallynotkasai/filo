@@ -12,6 +12,7 @@ import { boardCacheStore } from './boardCache.svelte';
 import { noteStore } from './notes.svelte';
 import { fileTagsStore } from './fileTags.svelte';
 import { uiStore } from './ui.svelte';
+import { noticeUnloadedBoards } from './unloadedBoards';
 import { historyStore } from './history.svelte';
 import { reindexUnder, toastMovedToTrash } from './trash.svelte';
 import { markRecentSelfWrite } from '../lib/boards/writeStateTracking';
@@ -125,10 +126,11 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
 
       // Hydrate every board before the cascade walks the cache, so a board
       // that failed to hydrate at vault open doesn't keep stale references.
-      await boardCacheStore.ensureAllLoaded();
+      const notLoaded = await boardCacheStore.ensureAllLoaded();
       // Vault swapped during the awaits: the move landed in the correct (old)
       // vault, so report success and skip the cross-vault in-memory cascade.
       if (!isStillSameVault(deleteIdentity)) return true;
+      noticeUnloadedBoards('deleted', notLoaded);
       // Boards whose `.board.json` went with the item: drop their cache,
       // project entry, viewport, open tabs and undo history now, rather than
       // leaving a phantom tab until the watcher reconcile.

@@ -84,9 +84,9 @@ const lastWrittenConfigs = new Map<ConfigTarget, string>();
  * parse-error are distinguished in `configOps.loadConfig`). Writes to any
  * target in this set are suppressed: the in-memory store would otherwise
  * stamp its bootstrap-default shape on top of a user-edited file that's
- * just temporarily unparseable. Cleared per vault swap; the renderer
- * clears specific entries via `clearCorruptConfigTarget` once the user
- * resolves the issue (e.g. picks "Use defaults" in the modal).
+ * just temporarily unparseable. Cleared per vault swap, and per target by
+ * `clearCorruptConfigTarget` once the file reads again (the watcher's
+ * `configFileReconciler`, or a view state write's own re-read).
  */
 // allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
 const corruptConfigTargets = new Set<ConfigTarget>();
@@ -296,6 +296,10 @@ export function seedConfigSnapshots(
  * the chain. Returns the list of target identifiers that failed so callers
  * (notably the scheduler's `performWrite` → `flushAll` → `vaultStore.save()`)
  * can surface an honest failure status to the Ctrl+S toast.
+ *
+ * `live` reads the settings in memory now. A Reload on the drift prompt
+ * changes them mid-loop (`appearance.json` also carries the font, `app.json`
+ * the vault name), so the files still to write are rebuilt from it.
  */
 export async function writeConfigs(
   vaultRoot: string,
@@ -304,21 +308,22 @@ export async function writeConfigs(
   workspace: WorkspaceState,
   layout?: WorkspaceLayout,
   name?: string,
+  live?: () => ConfigWriteArgs | null,
 ): Promise<{ failed: string[]; error?: unknown }> {
-  const payloads = buildConfigPayloads(settings, theme, workspace, layout, name);
+  let payloads = buildConfigPayloads(settings, theme, workspace, layout, name);
 
   const failed: string[] = [];
   // The first failure a re-fire could fix, and whether any failure can't be
   // fixed that way; they decide whether the scheduler keeps the write.
   let retryError: unknown;
   let notRetryable = false;
-  for (const [target, payload] of Object.entries(payloads) as [BundledConfigTarget, string][]) {
+  for (const target of Object.keys(payloads) as BundledConfigTarget[]) {
+    const payload = payloads[target];
     if (lastWrittenConfigs.get(target) === payload) continue;
     if (corruptConfigTargets.has(target)) {
       // Loaded as corrupt — skip the write to preserve whatever the user
-      // has on disk. Resolution happens externally (user fixes the file
-      // and reopens the vault, or picks "Use defaults" which calls
-      // clearCorruptConfigTarget and re-arms the write).
+      // has on disk. Once the file reads again, the watcher clears the mark
+      // (configFileReconciler.ts) and the next write checks it first.
       //
       // But DON'T resolve it as a clean no-op, or every change is silently
       // dropped while Ctrl+S flashes "Saved". Report it honestly:
@@ -349,6 +354,8 @@ export async function writeConfigs(
     const verdict = await checkConfigDisk({ vaultRoot, file, payload, lastWritten: lastWrittenConfigs.get(target) });
     if (verdict.kind === 'adopted') {
       lastWrittenConfigs.set(target, verdict.json);
+      const now = live?.();
+      if (now) payloads = buildConfigPayloads(now.settings, now.theme, now.workspace, now.layout, now.name);
       continue;
     }
     if (verdict.kind === 'fail') {
@@ -462,7 +469,7 @@ const configScheduler = createScheduler<ConfigWriteArgs>({
   name: 'configWriteScheduler',
   debounceMs: BOARD_WRITE_DEBOUNCE_MS,
   performWrite: async (args) => {
-    return writeConfigs(args.vaultRoot, args.settings, args.theme, args.workspace, args.layout, args.name);
+    return writeConfigs(args.vaultRoot, args.settings, args.theme, args.workspace, args.layout, args.name, () => latestConfigArgs?.() ?? null);
   },
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: CONFIG_SENTINEL_PATH }),
   getFailureId: () => CONFIG_SENTINEL_PATH,
@@ -484,6 +491,15 @@ export function scheduleConfigWrite(
 ): void {
   latestConfigArgs = getWriteArgs;
   configScheduler.schedule(CONFIG_KEY, getWriteArgs);
+}
+
+/**
+ * Schedules the config bundle again from the latest settings, when a write
+ * was ever scheduled: a file that reads again after a pause then gets the
+ * change the pause held back (each file is written only if it differs).
+ */
+export function rescheduleConfigWrite(): void {
+  if (latestConfigArgs) configScheduler.schedule(CONFIG_KEY, latestConfigArgs);
 }
 
 /**

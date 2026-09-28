@@ -21,7 +21,7 @@ describe('Tags browser confirms', () => {
     vi.stubGlobal('confirm', nativeConfirm);
     remove = vi.spyOn(fileTagsStore, 'removeTagEverywhere').mockResolvedValue({ committed: true, writtenPaths: [] });
     rename = vi.spyOn(fileTagsStore, 'renameTagEverywhere').mockResolvedValue({ committed: true, writtenPaths: [] });
-    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue(undefined);
+    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue([]);
     vi.spyOn(fileTagsStore, 'filesForTag').mockReturnValue(['a.md', 'b.md', 'c.png']);
     vi.spyOn(fileTagsStore, 'getTilesWithTag').mockReturnValue([
       { id: 't1', boardId: 'b1', type: 'link', title: 'x', tags: ['work'], path: null },

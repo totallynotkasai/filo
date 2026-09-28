@@ -91,7 +91,9 @@ describe('buildWriteErrorToast (M5)', () => {
     const { context, message, coalesceKey } = buildWriteErrorToast(info);
     expect(context).toBe('Settings not saving');
     expect(message).toContain('(defaults.json)');
-    expect(message).toContain('Use defaults');
+    // Only actions that exist: there is no "Use defaults" button.
+    expect(message).not.toContain('Use defaults');
+    expect(message).toContain('Filo saves again once it reads');
     // Must NOT reuse the misleading "check disk space / permissions" copy.
     expect(message).not.toContain('check disk space');
     expect(coalesceKey).toBe('config-corrupt::defaults.json');

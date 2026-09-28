@@ -83,6 +83,42 @@ export function createScheduler<TArgs>(
    * `cancelled` flag so `cancel(key)` can reach a parked fire.
    */
   const parked = new Map<string, Set<ParkedEntry>>();
+  /**
+   * Writes that outlived `writeTimeoutMs`, per key. They were reported as
+   * failed, but they can still land, so the next write of the key waits for
+   * them too (up to another `writeTimeoutMs`). One still out after that is
+   * `overtaken`: if it lands, the key's newest write fires again, so the
+   * newest bytes are the last on disk.
+   */
+  const overdue = new Map<string, Set<{ settled: Promise<boolean>; overtaken: boolean }>>();
+
+  const trackOverdue = (key: string, write: Promise<string[]>, getArgs?: () => TArgs | null): void => {
+    const generation = schedulerGeneration;
+    const item = { settled: write.then((failures) => failures.length === 0, () => false), overtaken: false };
+    let set = overdue.get(key);
+    if (!set) overdue.set(key, (set = new Set()));
+    set.add(item);
+    void item.settled.then((landed) => {
+      const current = overdue.get(key);
+      current?.delete(item);
+      if (current?.size === 0) overdue.delete(key);
+      if (landed && item.overtaken && getArgs && schedulerGeneration === generation && !pending.has(key) && getArgs()) {
+        schedule(key, getArgs, 0);
+      }
+    });
+  };
+
+  async function drainOverdue(key: string): Promise<void> {
+    const late = overdue.get(key);
+    if (!late || late.size === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<void>((resolve) => { timer = setTimeout(resolve, opts.writeTimeoutMs ?? 0); });
+    await Promise.race([Promise.all([...late].map((item) => item.settled)), bound]);
+    if (timer !== undefined) clearTimeout(timer);
+    for (const item of overdue.get(key) ?? []) item.overtaken = true;
+  }
+
+  const hasPriorWrite = (key: string): boolean => !!inFlight.get(key)?.size || !!overdue.get(key)?.size;
 
   const addParked = (key: string, entry: ParkedEntry): void => {
     let set = parked.get(key);
@@ -240,6 +276,7 @@ export function createScheduler<TArgs>(
           // path and let `syncSentinelIfIdle` mark clean — losing the recovery
           // flag for a write that never landed). Then attribute the failure.
           failError = { code: 'WRITE_TIMEOUT' };
+          trackOverdue(key, writePromise, retainGetArgs);
           if (sentinel.path) {
             markPathFailed(sentinel.vaultRoot, sentinel.path);
             // The underlying write keeps running; we only stopped awaiting it.
@@ -352,14 +389,15 @@ export function createScheduler<TArgs>(
    * land the older write last, clobbering the newer payload and anchoring the
    * drift baseline to stale bytes.
    *
-   * Each awaited entry is the timeout-bounded tracker, so a wedged prior can't
-   * block past its `writeTimeoutMs`. The bucket is snapshotted because entries
-   * self-remove as they settle.
+   * Each awaited entry is the timeout-bounded tracker, and an overdue write is
+   * waited for at most one more `writeTimeoutMs`, so a wedged prior can't
+   * block for ever. The bucket is snapshotted because entries self-remove as
+   * they settle.
    */
   async function drainPriorInFlight(key: string): Promise<void> {
     const bucket = inFlight.get(key);
-    if (!bucket || bucket.size === 0) return;
-    for (const priorEntry of Array.from(bucket)) await priorEntry.promise;
+    for (const priorEntry of bucket ? Array.from(bucket) : []) await priorEntry.promise;
+    await drainOverdue(key);
   }
 
   function schedule(
@@ -435,13 +473,12 @@ export function createScheduler<TArgs>(
       pending.delete(key);
       // Serialize the timer fire behind any write still in flight for this key
       // so the newest write lands LAST (see `drainPriorInFlight`).
-      const priorBucket = inFlight.get(key);
-      if (priorBucket && priorBucket.size > 0) {
+      if (hasPriorWrite(key)) {
         // A prior write is in flight — drain it first, THEN fire (re-reading args
         // for the freshest state). A reschedule landing during the drain arms its
         // own timer; both fires serialize via this same drain and last-wins, so
-        // the extra write is benign. The drain awaits the timeout-bounded
-        // tracker, so a wedged prior can't block past its `writeTimeoutMs`.
+        // the extra write is benign. The drain is time-bounded, so a wedged
+        // prior can't block it for ever (see `drainPriorInFlight`).
         //
         // Register a PARKED promise BEFORE awaiting the drain so
         // this deferred fire is visible to `flush()` / `flushAll()` while it
@@ -581,6 +618,7 @@ export function createScheduler<TArgs>(
       if (priorBucket && priorBucket.size > 0) {
         for (const priorEntry of Array.from(priorBucket)) await consumeInflight(priorEntry);
       }
+      await drainOverdue(key);
 
       // Fire the pending write. Args are read NOW (after the drain) so a
       // live-cache getter captures the freshest state; the just-disarmed timer
@@ -719,8 +757,7 @@ export function createScheduler<TArgs>(
       // when nothing is in flight, deferring `fireWrite`'s synchronous IPC
       // dispatch — callers that fire-and-don't-await `flushAll()` rely on the
       // write having begun synchronously.
-      const prior = inFlight.get(entry.key);
-      if (prior && prior.size > 0) await drainPriorInFlight(entry.key);
+      if (hasPriorWrite(entry.key)) await drainPriorInFlight(entry.key);
       const sentinel = opts.getSentinelInfo(entry.args);
       if (sentinel.vaultRoot) trackedVault = sentinel.vaultRoot;
       const failureList = await fireWrite(entry.key, entry.args, entry.getArgs);
@@ -820,6 +857,7 @@ export function createScheduler<TArgs>(
       }
     }
     inFlight.clear();
+    overdue.clear();
     schedulerGeneration += 1;
     ledger.clear(); // attribution ids, per-key records AND retained re-fires (outgoing vault)
     // Drop per-path generations so a stale late-success continuation from the

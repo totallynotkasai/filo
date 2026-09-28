@@ -14,7 +14,8 @@ import { isConfigLoadFailed } from '../lib/boards/configWriteScheduler';
 import { CONFIG_LOAD_RETRY_DELAYS_MS } from '../lib/vault/vaultCandidate';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { reportError } from '../lib/utils/errorBus';
-import { invokeOk } from '../lib/utils/invokeOk';
+import { readOutsideVersion, saveMiscConfig, settleOutsideVersion } from '../lib/boards/miscConfigDrift';
+import { seedConfigBaselines, statConfigsBeforeRead } from '../lib/vault/configBaselineSeed';
 
 /** Shape of `.filo/hotkeys.json` — a flat command-id → shortcut-string map. */
 type HotkeysConfig = Record<string, string>;
@@ -76,6 +77,8 @@ let overrides: Record<string, ShortcutBinding> = {};
 let unreadHotkeysVault: string | null = null;
 // allow-module-state: replaced by loadHotkeyOverrides on every vault open
 const unreadChanges = new Map<string, ShortcutBinding | null>();
+
+const HOTKEYS_PATH = '.filo/hotkeys.json';
 
 // ── Key event matching ──
 
@@ -186,6 +189,16 @@ export function getDefaultBinding(commandId: string): ShortcutBinding | null {
 export function setHotkeyOverrides(next: Record<string, ShortcutBinding>): void {
   overrides = { ...next };
   for (const s of shortcuts) applyOverrideTo(s);
+}
+
+/** True while `vaultRoot`'s `hotkeys.json` waits to be read (a lock at open). */
+export function hotkeysUnreadFor(vaultRoot: string): boolean {
+  return unreadHotkeysVault === vaultRoot;
+}
+
+/** Takes the bindings of a `hotkeys.json` read from disk. */
+export function applyHotkeysFromDisk(disk: Record<string, unknown>): void {
+  setHotkeyOverrides(deserializeOverrides(disk as HotkeysConfig));
 }
 
 /**
@@ -314,6 +327,9 @@ export async function loadHotkeyOverrides(
 ): Promise<void> {
   const identity = captureVaultIdentity();
   try {
+    // Stat'ed before the read too, so the baseline names the version read.
+    const statsBefore = await statConfigsBeforeRead(vaultRoot, [HOTKEYS_PATH]);
+    if (!isStillSameVault(identity)) return;
     // A transient lock (OneDrive, antivirus) usually clears within a second.
     let loaded = await window.filo.invoke('config:load', vaultRoot, 'hotkeys.json');
     for (const delay of CONFIG_LOAD_RETRY_DELAYS_MS) {
@@ -351,6 +367,7 @@ export async function loadHotkeyOverrides(
       return;
     }
     setHotkeyOverrides(deserializeOverrides((loaded ?? {}) as HotkeysConfig));
+    await seedConfigBaselines(vaultRoot, statsBefore);
   } catch (err) {
     reportError(
       'hotkeys.load-overrides',
@@ -375,15 +392,26 @@ export function saveHotkeyOverrides(vaultRoot: string): void {
     const payload = serializeOverrides(overrides);
     return {
       vaultRoot,
-      path: '.filo/hotkeys.json',
+      path: HOTKEYS_PATH,
       json: JSON.stringify(payload, null, 2),
       write: async () => {
         if (unreadHotkeysVault === vaultRoot) {
           await readHotkeysBeforeWrite(vaultRoot);
-          await invokeOk('config:save', vaultRoot, 'hotkeys.json', serializeOverrides(overrides));
-          return;
+        } else {
+          // Changed outside Filo since it was read: Reload / Keep local.
+          const outside = await readOutsideVersion(vaultRoot, 'hotkeys.json');
+          if (outside.kind === 'changed') {
+            const verdict = await settleOutsideVersion({
+              vaultRoot,
+              file: 'hotkeys.json',
+              outside,
+              json: JSON.stringify(serializeOverrides(overrides), null, 2),
+              reload: applyHotkeysFromDisk,
+            });
+            if (verdict === 'adopted') return;
+          }
         }
-        await invokeOk('config:save', vaultRoot, 'hotkeys.json', payload);
+        await saveMiscConfig(vaultRoot, 'hotkeys.json', JSON.stringify(serializeOverrides(overrides), null, 2));
       },
     };
   });

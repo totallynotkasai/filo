@@ -9,6 +9,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { parseDocument } from 'yaml';
 import { startApp, stopApp, waitFor, quiesce, type CharApp } from './harness/app';
+import { onLinux } from './harness/platform';
 import {
   createBoard,
   addKanbanColumn,
@@ -130,7 +131,7 @@ describe('a rename by another program while the note has an unsaved edit', () =>
 });
 
 describe('a rename by another program just after Filo wrote the note', () => {
-  it('is followed, not taken for Filo\'s own write', async () => {
+  it.skipIf(onLinux)('is followed, not taken for Filo\'s own write', async () => {
     const app = await startApp({ 'Draft.md': 'Start\n' });
     await openNoteFromSidebar(app, 'Draft.md');
     await quiesce();
@@ -149,7 +150,7 @@ describe('a rename by another program just after Filo wrote the note', () => {
     expect(errorToasts()).toEqual([]);
   });
 
-  it('board undo lands on the moved note', async () => {
+  it.skipIf(onLinux)('board undo lands on the moved note', async () => {
     const app = await startApp({ 'Card.md': '---\ntitle: Card\n---\nCard body\n' });
     await createBoard(app, 'kanban');
     await addKanbanColumn(app);

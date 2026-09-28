@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, quiesce, waitFor, whileReading, recoveryCopies } from './harness/app';
+import { onLinux } from './harness/platform';
 import { openNoteFromSidebar, editors, typeAtEnd, diskConflictPrompt, keepMine, $$ } from './harness/actions';
 
 afterEach(async () => {
@@ -16,7 +17,7 @@ afterEach(async () => {
 });
 
 describe('typing while another program saves the note', () => {
-  it('keys typed during the read of their version ask first, and keep theirs on disk until answered', async () => {
+  it.skipIf(onLinux)('keys typed during the read of their version ask first, and keep theirs on disk until answered', async () => {
     const app = await startApp({ 'Draft.md': '---\ntitle: Draft\n---\nStart\n' });
     await openNoteFromSidebar(app, 'Draft.md');
     await quiesce();

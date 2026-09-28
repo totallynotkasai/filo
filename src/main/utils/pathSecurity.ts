@@ -6,6 +6,28 @@ import { getMachineIdentity } from '../services/machineIdentity';
 import { RESERVED_WINDOWS_NAMES } from '../../shared/fileNames';
 
 /**
+ * `p` (already resolved) with its deepest existing ancestor canonicalised by
+ * realpath and the not-yet-existing rest appended, or null when an ancestor
+ * can't be canonicalised for a reason other than not existing.
+ */
+function canonicalPath(p: string): string | null {
+  const rest: string[] = [];
+  let probe = p;
+  for (;;) {
+    try {
+      const real = fs.realpathSync.native ? fs.realpathSync.native(probe) : fs.realpathSync(probe);
+      return rest.length ? path.join(real, ...rest.reverse()) : real;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return null;
+      const parent = path.dirname(probe);
+      if (parent === probe) return null;
+      rest.push(path.basename(probe));
+      probe = parent;
+    }
+  }
+}
+
+/**
  * Throws if targetPath resolves to a location outside vaultRoot. Protects
  * against path-traversal attacks from untrusted renderer input.
  *
@@ -25,6 +47,22 @@ export function assertWithinVault(vaultRoot: string, targetPath: string): void {
   const sep = isWindows ? '\\' : path.sep;
 
   if (targetCompare !== rootCompare && !targetCompare.startsWith(rootCompare + sep)) {
+    // The two may name the same place in different spellings: the root is
+    // registered canonical (realpath: long names, junctions resolved) while a
+    // renderer path can carry the spelling the vault was opened with (an 8.3
+    // short name such as `RUNNER~1`, a junction). Containment is decided on
+    // the canonical forms, then every check below runs again on them.
+    const canonicalRoot = canonicalPath(resolvedRoot);
+    const canonicalTarget = canonicalPath(resolvedTarget);
+    if (canonicalRoot !== null && canonicalTarget !== null
+      && (canonicalRoot !== resolvedRoot || canonicalTarget !== resolvedTarget)) {
+      const cRoot = isWindows ? canonicalRoot.toLowerCase() : canonicalRoot;
+      const cTarget = isWindows ? canonicalTarget.toLowerCase() : canonicalTarget;
+      if (cTarget === cRoot || cTarget.startsWith(cRoot + sep)) {
+        assertWithinVault(canonicalRoot, canonicalTarget);
+        return;
+      }
+    }
     throw new Error(`Path traversal denied: target is outside vault`);
   }
   // Resolve symlinks/junctions for the deepest existing ancestor. If any

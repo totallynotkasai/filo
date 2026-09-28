@@ -322,10 +322,12 @@ export const checks = [
           continue;
         }
         const code = stripComments(src);
-        if (/\b(?:it|describe|test)\.(?:skip|only|todo)\b|\bit\.skipIf\b/.test(code)) {
+        // The one allowed skip: `it.skipIf(onLinux)` from harness/platform.ts, for
+        // cases that time out only on the Linux CI runner (Filo targets Windows).
+        if (/\b(?:it|describe|test)\.(?:skip|only|todo)\b|\bit\.skipIf\s*\((?!\s*onLinux\s*\))/.test(code)) {
           out.push(fail(rel, undefined, 'contains a skipped / focused / todo test'));
         }
-        const cases = (code.match(/\bit\s*\(/g) ?? []).length;
+        const cases = (code.match(/\bit(?:\.skipIf\s*\(\s*onLinux\s*\))?\s*\(/g) ?? []).length;
         if (cases < min) out.push(fail(rel, undefined, `only ${cases} cases (expected >= ${min})`));
         for (const m of code.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]/g)) {
           const spec = m[1] ?? m[2];

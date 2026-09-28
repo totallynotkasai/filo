@@ -100,9 +100,9 @@ describe('FileWatcher.reconcileNow', () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     await fs.writeFile(join(dir, 'New.md'), 'the same small note', 'utf-8');
     await watcher.reconcileNow();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    expect(renames()).toEqual([{ oldPath: 'Old.md', newPath: 'New.md' }]);
+    // The pairing runs after the watcher's debounce; under load that takes
+    // longer than any fixed sleep, so wait for it.
+    await vi.waitFor(() => expect(renames()).toEqual([{ oldPath: 'Old.md', newPath: 'New.md' }]), { timeout: 5000 });
     await new Promise((resolve) => setTimeout(resolve, MISSING_NOTE_HOLD_MS));
     expect(changedNames()).not.toContain('Old.md');
   });
@@ -127,9 +127,9 @@ describe('FileWatcher.reconcileNow', () => {
     await watcher.reconcileNow({ seedOnly: true });
     await fs.rename(join(dir, 'Draft.md'), join(dir, 'draft.md'));
     await watcher.reconcileNow();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    expect(renames()).toEqual([{ oldPath: 'Draft.md', newPath: 'draft.md' }]);
+    // The pairing runs after the watcher's debounce; under load that takes
+    // longer than any fixed sleep, so wait for it.
+    await vi.waitFor(() => expect(renames()).toEqual([{ oldPath: 'Draft.md', newPath: 'draft.md' }]), { timeout: 5000 });
   });
 
   it('a rename straight after an own write pairs, using the bytes that write left', async () => {
@@ -141,9 +141,9 @@ describe('FileWatcher.reconcileNow', () => {
     watcher.recordOwnWrite('Draft.md', Buffer.from(after, 'utf-8'));
     await fs.rename(join(dir, 'Draft.md'), join(dir, 'Moved.md'));
     await watcher.reconcileNow();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    expect(renames()).toEqual([{ oldPath: 'Draft.md', newPath: 'Moved.md' }]);
+    // The pairing runs after the watcher's debounce; under load that takes
+    // longer than any fixed sleep, so wait for it.
+    await vi.waitFor(() => expect(renames()).toEqual([{ oldPath: 'Draft.md', newPath: 'Moved.md' }]), { timeout: 5000 });
   });
 
   it('synthesises a change event when mtime+size differs', async () => {

@@ -52,15 +52,17 @@ export interface KanbanDragControllerDeps {
 /**
  * Drag controller for the Kanban board.
  *
- * Owns the drag-state shared between card-move (HTML5 drag/drop) and
- * column-reorder (svelte-dnd-action). The host keeps the `dndColumns`
- * sync `$effect` because effects fired from external class constructors
- * do not unwrap reliably — the controller exposes `syncColumns(c)` for
- * the host to call.
+ * Owns the drag-state shared between card-move and column-reorder, both
+ * svelte-dnd-action zones. The host keeps the `dndColumns` sync `$effect`
+ * because effects fired from external class constructors do not unwrap
+ * reliably — the controller exposes `syncColumns(c)` for the host to call.
  *
- * Card drag is HTML5 native because the column-internal placement order
- * is the source of truth; dnd-action's items-array contract would fight
- * the filtered+sorted view.
+ * Each column's card zone is fed only the cards it shows, in the order it
+ * shows them (`syncCards`): dnd-action maps its `items` onto the zone's
+ * rendered children one to one, so a hidden (filtered) card in `items`
+ * would shift every index and the drag would pick the wrong card. A drop
+ * is then translated back into the column's full placement order, where
+ * the hidden cards keep their places.
  */
 export class KanbanDragController {
   dragTileId = $state<string | null>(null);

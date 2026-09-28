@@ -453,8 +453,8 @@ export function registerVaultHandlers(): void {
    * renderer opens a new vault via `vault:watch`. Idempotent — calling
    * with no active vault is a no-op success.
    *
-   * Pairs with the renderer-side "Close vault" sidebar action so the user
-   * can swap to a different vault without restarting the app.
+   * The renderer's `vault:close` command (Ctrl+Shift+W) calls it, so the
+   * user can swap to a different vault without restarting the app.
    */
   ipcMain.handle('vault:close', async () => {
     try {
@@ -570,8 +570,8 @@ export function registerVaultHandlers(): void {
 
   /**
    * Returns the file's mtime + size so callers can detect external edits
-   * between a read and a write (e.g. `syncTileMarkdown` refuses to clobber
-   * one that landed in the gap).
+   * between a read and a write (the drift baselines in
+   * `fileBaselineRegistry` are stamped from it).
    *
    * On any failure (missing file, EACCES, NO_ACTIVE_VAULT) returns
    * `{ success: false }`; the renderer treats this as "no baseline".

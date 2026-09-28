@@ -19,7 +19,7 @@ describe('snapshotForRecovery', () => {
   });
 
   afterEach(async () => {
-    await fs.rm(vaultRoot, { recursive: true, force: true });
+    await fs.rm(vaultRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('copies the file bytes into .filo/recovery/<ts>/<basename>', async () => {
@@ -264,7 +264,7 @@ describe('snapshotForRecovery', () => {
       const subdir = join(recoveryRoot, `2025-06-01T00-00-${String(i).padStart(3, '0')}`);
       await fs.access(subdir);
     }
-  });
+  }, 30_000); // pins the real cap: 110 planted snapshots, slow under the full suite's disk load
 
   it('does NOT log when readdir(.filo/recovery) fails with ENOENT (benign)', async () => {
     // No `.filo/recovery` exists in this vault yet; the first snapshot

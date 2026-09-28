@@ -72,25 +72,35 @@ const IFRAME_BLOCKED_SCHEMES = new Set([
 const IFRAME_ALLOWED_SCHEMES = new Set(['http:', 'https:']);
 
 /**
+ * Why `raw` can't be an `<iframe src>`, or `null` when it can. The one
+ * iframe URL rule: `asSafeIframeSrc` and the tile's user-facing reason
+ * (`isSafeIframeUrl`) both read it, so they can never disagree.
+ */
+export function iframeSrcProblem(raw: unknown): string | null {
+  if (typeof raw !== 'string') return 'URL must be a string';
+  const trimmed = raw.trim();
+  if (!trimmed) return 'URL is empty';
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return 'Malformed URL';
+  }
+  const scheme = parsed.protocol.toLowerCase();
+  if (IFRAME_BLOCKED_SCHEMES.has(scheme)) return `Scheme "${scheme}" is not allowed`;
+  if (!IFRAME_ALLOWED_SCHEMES.has(scheme)) return `Only http(s) URLs are allowed (got "${scheme}")`;
+  return null;
+}
+
+/**
  * Wraps a vault-shipped URL for use as an `<iframe src>`. Returns `null`
  * for empty / malformed / unsafe input. The sandboxed iframe in
  * `IframeTile.svelte` still applies `sandbox="allow-scripts allow-popups"`
  * as defence-in-depth — this validator is the first line.
  */
 export function asSafeIframeSrc(raw: string | null | undefined): SanitisedSrc | null {
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return null;
-  }
-  const scheme = parsed.protocol.toLowerCase();
-  if (IFRAME_BLOCKED_SCHEMES.has(scheme)) return null;
-  if (!IFRAME_ALLOWED_SCHEMES.has(scheme)) return null;
-  return trimmed as SanitisedSrc;
+  if (iframeSrcProblem(raw) !== null) return null;
+  return (raw as string).trim() as SanitisedSrc;
 }
 
 // ── theme CSS variable value ──────────────────────────────────────────

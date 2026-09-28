@@ -53,22 +53,6 @@ export function snapshotTaskListSlice(boardId: string): {
   };
 }
 
-export function restoreTaskListSlice(
-  boardId: string,
-  snapshot: { sections: TaskListSection[]; tasks: TaskPlacement[]; defs: Record<string, TileDefinition> },
-): void {
-  // Replace tileDefs first so persistTaskListStructure's task array refers
-  // to defs that exist. updateEntry replaces the map wholesale, so a def
-  // that was removed by execute() comes back here. Clone on the way back in
-  // too so the retained snapshot stays pristine for a redo→undo cycle.
-  boardCacheStore.updateEntry(boardId, { tileDefs: cloneForSnapshot(snapshot.defs) });
-  boardCacheStore.persistTaskListStructure(
-    boardId,
-    cloneForSnapshot(snapshot.sections),
-    cloneForSnapshot(snapshot.tasks),
-  );
-}
-
 /** What a create-exclusive seed actually created. */
 export interface SeededFile {
   relPath: string;

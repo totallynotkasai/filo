@@ -19,7 +19,7 @@ const FILE_SIZE_ALLOWLIST = {
   'src/renderer/components/boards/TaskItem.svelte': 1481,
   'src/renderer/components/boards/KanbanBoard.svelte': 1437,
   'src/renderer/components/boards/KanbanColumn.svelte': 1170,
-  'src/renderer/stores/vault.svelte.ts': 1573,
+  'src/renderer/stores/vault.svelte.ts': 1572,
 };
 
 // The refactor characterisation suite: user-visible behaviour the file-model
@@ -144,6 +144,28 @@ export const checks = [
         }
       }
       for (const rel of remaining.keys()) out.push(fail(rel, undefined, 'allowlist entry no longer exists — remove it'));
+      return out;
+    },
+  },
+  {
+    id: 'no-audit-narration',
+    title: 'app source carries no audit ids (Audit-N, Phase N / N.N, P0-N)',
+    hint: 'Say the invariant or the hazard the code guards against; audit ids and phases go in the commit message.',
+    run(ctx) {
+      const out = [];
+      // An audit's own name, a numbered fix phase ("Phase 40 / 40.6"), or a
+      // finding id ("P0-12"). A plain "Phase 1" naming the steps of an
+      // algorithm is not narration and stays allowed.
+      const patterns = [/\bAudit[- ]?\d+/i, /\bPhase \d+\s*\/\s*\d+\.\d+/, /\bP\d-\d+\b/];
+      const dirs = ['src/main', 'src/renderer', 'src/shared'];
+      const extra = ['vitest.config.mts', 'electron.vite.config.mts', 'playwright.config.ts'];
+      for (const rel of [...ctx.files(dirs, { ext: [...SRC_EXT, '.css'] }), ...extra]) {
+        const text = ctx.read(rel);
+        if (text === null) continue;
+        text.split('\n').forEach((line, i) => {
+          if (patterns.some((re) => re.test(line))) out.push(fail(rel, i + 1, line.trim()));
+        });
+      }
       return out;
     },
   },

@@ -394,7 +394,9 @@
           No Markdown templates. Create <code>.md</code> files inside the
           <code>Templates/</code> folder of your vault to use them here.
           Supports <code>{`{{title}}`}</code>, <code>{`{{date}}`}</code>,
-          <code>{`{{time}}`}</code> placeholders.
+          <code>{`{{time}}`}</code>, <code>{`{{datetime}}`}</code>,
+          <code>{`{{year}}`}</code>, <code>{`{{month}}`}</code> and
+          <code>{`{{day}}`}</code> placeholders.
         </p>
       {:else if filteredMdRefs.length === 0}
         <p class="empty-hint">No Markdown templates match "{query}".</p>

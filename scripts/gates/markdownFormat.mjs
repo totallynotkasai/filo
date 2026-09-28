@@ -221,7 +221,7 @@ export const checks = [
       else {
         const code = blank(ops);
         const text = blank(ops, { strings: false });
-        for (const fn of ['readFileWithCoherentStat', 'readFileContents']) {
+        for (const fn of ['readFileWithCoherentStat']) {
           const b = functionBody(code, fn, { fnKeyword: true });
           if (!b) { out.push(fail(OPS, undefined, `${fn}() not found`)); continue; }
           const body = text.slice(b.start, b.end);

@@ -439,7 +439,7 @@ const configScheduler = createScheduler<ConfigWriteArgs>({
   // `writeConfigs` awaits `vault:stat` + `config:save`
   // IPCs with no interactive prompt, but a stalled network volume (OneDrive /
   // SMB) can still wedge those IPCs and hang `flushAll` / quit. Bound for
-  // uniformity with the board / frontmatter schedulers.
+  // uniformity with the board scheduler and the note writer.
   writeTimeoutMs: WRITE_TIMEOUT_MS,
   retainIoError: true,
 });

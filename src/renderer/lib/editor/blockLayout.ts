@@ -14,7 +14,7 @@
  * `parseHTML`).
  *
  * DECISION: the user chose to keep the alignment and indent buttons, accepting
- * that those paragraphs are HTML in the file (Audit-20 M4).
+ * that those paragraphs are HTML in the file (KNOWN_LIMITATIONS #17).
  */
 import { getHTMLFromFragment } from '@tiptap/core';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';

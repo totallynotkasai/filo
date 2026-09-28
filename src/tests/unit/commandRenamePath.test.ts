@@ -120,6 +120,25 @@ describe('history follows renames', () => {
     expect(vault.read('Card.md')).toBeUndefined();
   });
 
+  it('an undo right after another program deleted an open note queues nothing', async () => {
+    // The model still holds the note's frontmatter: the watcher hasn't
+    // reported the delete yet.
+    const m = noteStore.acquire('Renamed.md', 'text-tile:t1');
+    await m.loaded;
+    historyStore.setActiveBoard('kb');
+    historyStore.pushWithoutExecute(
+      new UpdateCardFieldCommand('kb', 'Renamed.md', { dueDate: '2026-11-05' }, { dueDate: '' }),
+    );
+    vault.remove('Renamed.md');
+
+    await historyStore.undo();
+
+    expect(noteStore.hasPendingWrites('Renamed.md')).toBe(false);
+    expect(historyStore.canUndo).toBe(true);
+    expect(uiStore.toasts.some((t) => t.text === `Couldn't undo: "Renamed.md" no longer exists.`)).toBe(true);
+    noteStore.release('Renamed.md', 'text-tile:t1');
+  });
+
   it('an undo whose note is gone queues nothing, says so, and stays on the stack', async () => {
     historyStore.setActiveBoard('kb');
     const cmd = new UpdateCardFieldCommand('kb', 'Gone.md', { dueDate: '2026-11-05' }, { dueDate: '' });

@@ -40,7 +40,7 @@ function resolveDroppedFilePath(file: File): string | undefined {
 /**
  * Drag-and-drop action — handles OS file drops onto the canvas.
  * Converts drop position to canvas coordinates and creates tiles.
- * Media files are copied to the vault's attachments folder.
+ * Media files are copied into the board's content folder (getActiveContentFolder).
  * Markdown files become text tile wrappers (document is the source of truth).
  *
  * Takes the pane's `BoardScope` (mirrors

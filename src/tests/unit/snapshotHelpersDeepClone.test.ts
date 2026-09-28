@@ -18,7 +18,6 @@ import { historyStore } from '@renderer/stores/history.svelte';
 import { DeleteColumnCommand } from '@renderer/commands/index';
 import {
   snapshotTaskListSlice,
-  restoreTaskListSlice,
 } from '@renderer/commands/taskCommands';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, TaskListBoard, TileDefinition } from '@renderer/schema/index';
@@ -122,7 +121,7 @@ describe('snapshot helpers — deep clone (M3)', () => {
     expect(restored.style?.headerColor).toBe('#aaaaaa');
   });
 
-  it('restoreTaskListSlice restores the snapshot-time nested task style, not a later mutation', () => {
+  it('snapshotTaskListSlice keeps the snapshot-time nested task style, not a later mutation', () => {
     boardCacheStore.hydrate({ tl: makeTaskListWithStyledTask() }, { tl: 'tasks.board.json' });
 
     const snap = snapshotTaskListSlice('tl');
@@ -132,11 +131,7 @@ describe('snapshot helpers — deep clone (M3)', () => {
     const liveTl = boardCacheStore.cache.tl!.board as TaskListBoard;
     (liveTl.tasks![0] as { style: { headerColor: string } }).style.headerColor = '#000000';
 
-    restoreTaskListSlice('tl', snap!);
-
-    const restored = (boardCacheStore.cache.tl!.board as TaskListBoard).tasks![0] as {
-      style?: { headerColor?: string };
-    };
-    expect(restored.style?.headerColor).toBe('#aaaaaa');
+    const kept = snap!.tasks[0] as { style?: { headerColor?: string } };
+    expect(kept.style?.headerColor).toBe('#aaaaaa');
   });
 });

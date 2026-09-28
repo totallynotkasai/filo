@@ -230,23 +230,3 @@ export function parseQuery(raw: string): ParsedQuery {
 export function isEmptyQuery(q: ParsedQuery): boolean {
   return q.operators.length === 0 && q.freeText === '' && q.regex === null;
 }
-
-/**
- * Returns a stable identifier for a structured operator. Used to dedupe
- * operator filters (e.g. user types `tag:alpha tag:alpha` — only count once)
- * without writing custom equality at each callsite.
- */
-export function operatorKey(op: OperatorFilter): string {
-  switch (op.kind) {
-    case 'tag':
-      return `tag:${op.value.toLowerCase()}`;
-    case 'board':
-      return `board:${op.value.toLowerCase()}`;
-    case 'has-connections':
-      return 'has:connections';
-    case 'property':
-      return `property:${op.key.toLowerCase()}=${op.value}`;
-    case 'type':
-      return `type:${op.value}`;
-  }
-}

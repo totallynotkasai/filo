@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   parseQuery,
   isEmptyQuery,
-  operatorKey,
   type ParsedQuery,
 } from '@renderer/lib/search/queryParser';
 
@@ -153,19 +152,6 @@ describe('parseQuery — multi-operator queries', () => {
     const q = parseQuery('tag:urgent meeting notes');
     expect(opsOnly(q)).toEqual([{ kind: 'tag', value: 'urgent' }]);
     expect(q.freeText).toBe('meeting notes');
-  });
-});
-
-describe('operatorKey', () => {
-  it('produces a stable key per operator', () => {
-    expect(operatorKey({ kind: 'tag', value: 'urgent' })).toBe('tag:urgent');
-    expect(operatorKey({ kind: 'tag', value: 'URGENT' })).toBe('tag:urgent');
-    expect(operatorKey({ kind: 'board', value: 'Planning' })).toBe('board:planning');
-    expect(operatorKey({ kind: 'has-connections' })).toBe('has:connections');
-    expect(operatorKey({ kind: 'property', key: 'STATUS', value: 'Active' })).toBe(
-      'property:status=Active',
-    );
-    expect(operatorKey({ kind: 'type', value: 'image' })).toBe('type:image');
   });
 });
 

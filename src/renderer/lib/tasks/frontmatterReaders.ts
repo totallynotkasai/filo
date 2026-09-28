@@ -103,5 +103,3 @@ export const FIELD_READERS = {
     return [];
   },
 } as const;
-
-export type FieldName = keyof typeof FIELD_READERS;

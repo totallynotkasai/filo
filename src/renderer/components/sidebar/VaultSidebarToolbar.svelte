@@ -398,9 +398,8 @@
   {/if}
 
   <!-- Hide Vault: hides the sidebar (docked or floating); the global
-       toolbar's sidebar toggle brings it back. Closing the vault lives in
-       the vault name dropdown and on Ctrl+Shift+W. The door's arrow points
-       the way the sidebar will go. -->
+       toolbar's sidebar toggle brings it back. Closing the vault is
+       Ctrl+Shift+W. The door's arrow points the way the sidebar will go. -->
   <button
     class="sidebar-btn"
     onclick={() => uiStore.setSidebarOpen(!uiStore.sidebarOpen)}

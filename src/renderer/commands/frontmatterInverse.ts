@@ -186,15 +186,19 @@ export async function applyDeltaChecked(args: ApplyDeltaArgs): Promise<void> {
 
   const current = await noteStore.currentFrontmatter(relPath);
   if (!isStillSameVault(identity)) return;
+  // Asked even when the note's model answered: for a second or two after
+  // another program deletes the file (the watcher's missing-file hold, then
+  // the model's own check), the model still holds its last frontmatter, and a
+  // delta queued then can only fail as a write to a file that's gone.
+  const vaultRoot = getActiveVaultPath();
+  const exists = vaultRoot
+    ? await window.filo.invoke('vault:file-exists', vaultRoot, relPath).catch(() => true)
+    : true;
+  if (!isStillSameVault(identity)) return;
+  // Only a definite "not there" counts as gone; an unanswered probe is
+  // treated as present, the side that never drops the change.
+  if (exists === false) throw new NoteGoneError(relPath);
   if (current === null) {
-    const vaultRoot = getActiveVaultPath();
-    const exists = vaultRoot
-      ? await window.filo.invoke('vault:file-exists', vaultRoot, relPath).catch(() => true)
-      : true;
-    if (!isStillSameVault(identity)) return;
-    // Only a definite "not there" counts as gone; an unanswered probe is
-    // treated as present, the side that never drops the change.
-    if (exists === false) throw new NoteGoneError(relPath);
     if (args.whenUnreadable === 'throw') {
       throw new Error(`Could not read ${relPath} to apply the change.`);
     }

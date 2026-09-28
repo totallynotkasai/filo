@@ -118,7 +118,7 @@ export function writePendingRewrite(
     // Failures throw an IpcEnvelopeError (callers like
     // fileTagsStore.renameTagEverywhere abort on throw).
     //
-    // Deliberately bypasses the markdown gateway's hydrate/drift discipline:
+    // Deliberately bypasses the note writer's fresh-read discipline:
     // that guards user-owned `.md` files; this is a Filo-owned, single-writer
     // crash-recovery sentinel no editor hydrates from.
     // allow-direct-write: `.filo/tag-rewrite-pending.json` is a one-shot

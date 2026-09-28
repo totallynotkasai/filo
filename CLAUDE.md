@@ -26,7 +26,7 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: 68 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: 69 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
@@ -36,7 +36,7 @@ Package:        npm run package
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; Task List section positions are clamped. |
 | `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, and a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts. |
-| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box. |
+| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; app source and build config carry no audit ids (`Audit-N`, `P0-N`, `Phase N / N.N`). |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// allow-direct-write: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
 
@@ -44,7 +44,7 @@ Package:        npm run package
 
 `test:unit:strict` ([scripts/test-unit-strict.mjs](scripts/test-unit-strict.mjs)) runs vitest and also fails on known noise patterns in its output: a missing `window.filo` mock, a duplicate object key, the `yaml` collection-key warning, and Svelte effect-loop / unsafe-mutation warnings.
 
-The a11y axe-core scan and full Electron E2E are manual-only (Actions tab → CI → Run workflow).
+The `coverage` job (the vitest coverage ratchet) runs on pushes to `main` and on PRs. The a11y axe-core scan and full Electron E2E run weekly (Monday 06:00 UTC) and on demand (Actions tab → CI → Run workflow).
 
 **Comments:** explain *why* (the invariant, the hazard a guard prevents), never history. No audit IDs, phases, dates or "used to…" in code: that belongs in commit messages. Plans and audit reports live in `docs/` (active) and `docs/archive/` (done), not the repo root.
 
@@ -162,6 +162,7 @@ filo/
 │   │   │   ├── tileRegistry.ts        # Tile-type metadata + creation defaults (getTileDefaults); tile bodies render via board snippets, not a component map
 │   │   │   ├── boardRegistry.ts       # Board-type registration; `component` is a lazy () => import() loader so boards code-split out of the Home preload
 │   │   │   ├── boardDefaults.ts       # Per-type default board factories
+│   │   │   ├── boardModules.ts        # A board type's loaded component module (or its one pending import)
 │   │   │   ├── boardTileOps/          # Per-board-type tile-op registries (mindmap/kanban/tasklist/document)
 │   │   │   ├── vaultLifecycle.ts      # onVaultSwap pre/post-swap hook registry
 │   │   │   └── hotkeys.ts             # Keyboard shortcut binding
@@ -356,6 +357,7 @@ filo/
 │   │   │   │   ├── toggleLockSelection.ts # Ctrl+L rule (lock all if any unlocked), one undo step
 │   │   │   │   ├── boardToolbar.svelte.ts # A board's floating side toolbar: drag, pin, right-click dock (per board, `.filo/workspace.json`)
 │   │   │   │   ├── componentFlush.ts  # registerComponentFlush: what a mounted view holds, handed over by a save or a leave
+│   │   │   │   ├── boardModulePreload.ts # Loads every board type's code while idle after a vault opens
 │   │   │   │   └── writeStateTracking.ts # trackComponentWrite + counters
 │   │   │   ├── canvas/                # Canvas engine (custom pointer events)
 │   │   │   │   ├── coordinates.ts     # screenToCanvas, getCanvasPointFromEvent
@@ -385,6 +387,8 @@ filo/
 │   │   │   │   ├── linkClicks.ts      # Link clicks: plain click edits in a focused editor, Ctrl/Cmd+click opens
 │   │   │   │   ├── blockTextStyle.ts  # Heading / Normal text clears the blocks' inline font size, family, colour
 │   │   │   │   ├── keepSpaces.ts      # Load keeps runs of spaces; soft breaks still join with one space
+│   │   │   │   ├── tabNode.ts         # A typed tab: one inline item, saved as a tab character
+│   │   │   │   ├── tabKeys.ts         # Tab / Shift+Tab / Backspace in a note, as in a word processor
 │   │   │   │   └── textEscapes.ts     # The text node: a typed `&amp;` / `&copy;` is saved so it reopens as typed
 │   │   │   ├── tags/                  # Tag editing helpers
 │   │   │   │   ├── noteTagWriter.ts   # Tile/path tag add/remove on a note (fresh-read rewrite)
@@ -403,6 +407,7 @@ filo/
 │   │   │   │   ├── taskContextMenus.ts
 │   │   │   │   ├── frontmatterWriter.ts # Task field edits → note frontmatter deltas
 │   │   │   │   ├── indentRules.ts     # indentProblem: one indent rule for drag and Tab (section, cycle, 3 levels)
+│   │   │   │   ├── tocPlacement.ts    # Where the Table of Contents first opens (beside the list when there is room)
 │   │   │   │   ├── taskCreation.ts, taskDeletion.ts, sectionOps.ts, sectionMath.ts, blockMove.ts
 │   │   │   │   ├── taskDragController.svelte.ts, multiSelectController.svelte.ts, indentGesture.ts
 │   │   │   │   └── filtersAndViews.svelte.ts, taskListViewModel.svelte.ts, taskListKeyboardNav.svelte.ts
@@ -414,7 +419,13 @@ filo/
 │   │   │   ├── mindmap/               # Mind-map keyboard + selection
 │   │   │   │   ├── mindMapContextMenus.ts # Tile / frame / canvas menus ("N tiles selected" group)
 │   │   │   │   └── selectionActions.ts # Lock / Tags / Style / Delete on the selection (the Delete key too)
-│   │   │   ├── settings/              # Settings cascade helpers
+│   │   │   ├── settings/              # Settings dialog helpers
+│   │   │   │   ├── currentBoardHelpers.ts # Current Board fields: dotted-path read / write, boolean selects
+│   │   │   │   ├── numberInput.ts     # Number fields: clamp to the schema range, blank = inherit
+│   │   │   │   ├── unappliedEditsPrompt.ts # settleUnappliedEdits: Apply / Discard / Cancel before a bulk action
+│   │   │   │   └── confirmDiscardSettings.ts # Closing Settings with unapplied edits asks first
+│   │   │   ├── fonts/
+│   │   │   │   └── importedFonts.ts   # `.filo/fonts/` registered with the page on every vault open
 │   │   │   ├── styles/                # Override-cascade resolver
 │   │   │   │   ├── effectiveStyle.ts  # Tile / column / card / task / document style cascade
 │   │   │   │   ├── elementStyleTargets.ts # Per-kind fields, writer and undo command for ElementStylePopup
@@ -467,7 +478,8 @@ filo/
 │   │       │   ├── Toast.svelte
 │   │       │   ├── ColorPicker.svelte
 │   │       │   ├── EmojiPicker.svelte
-│   │       │   └── IconButton.svelte
+│   │       │   ├── IconButton.svelte
+│   │       │   └── PinIcon.svelte     # The floating toolbars' pin glyph
 │   │       ├── home/                  # Home / vault picker screen
 │   │       │   └── HomeScreen.svelte
 │   │       ├── layout/                # App shell layout
@@ -530,6 +542,7 @@ filo/
 │   │       │   ├── CurrentBoardSettings.svelte
 │   │       │   ├── BoardDefaults.svelte
 │   │       │   ├── LivePreview.svelte
+│   │       │   ├── SettingsActionBar.svelte # A tab's Apply / Revert bar, above its scrolling page
 │   │       │   ├── ThemeManager.svelte # Settings → Themes: pick, New / Import, Edit / Duplicate / Delete
 │   │       │   ├── ThemeEditor.svelte # Grouped colour pickers with a live preview; Save / Save as new / Cancel
 │   │       │   ├── TrashSettings.svelte # Settings → Trash: Restore / Empty trash
@@ -564,10 +577,12 @@ filo/
 │   │   ├── conflictCopy.ts            # The one sync-client conflict-copy detector
 │   │   ├── vaultColor.ts              # safeVaultColor: only #rgb / #rrggbb (app.json, recent-vaults.json, inline styles)
 │   │   ├── pathUtils.ts               # toPosix / stripLeadingSlash / normalizePath / toVaultRelative (main + renderer)
+│   │   ├── fontStack.ts               # A picked font's CSS stack, and the family the pickers show
+│   │   ├── generalSettingsDefaults.ts # The General settings defaults (schema + a new vault's app.json)
 │   │   ├── systemLocale.ts            # OS regional-format locale, passed to the preload as a process argument
 │   │   ├── ipcSchemas.ts              # Per-channel Zod payload validation
 │   │   ├── ipcContracts.ts            # Per-channel arg/result TYPE contracts (ChannelResult<C>, etc.)
-│   │   ├── untrusted.ts               # Branded `Untrusted<T>` + asSafe* validators (untrusted-sink discipline)
+│   │   ├── untrusted.ts               # Branded `Untrusted<T>` + asSafe* validators (untrusted-sink discipline); iframeSrcProblem is the one iframe URL rule
 │   │   └── ipcEnvelope.ts             # IPC ok/error envelope + IpcEnvelopeError
 │   │
 │   └── tests/

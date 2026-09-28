@@ -4,13 +4,12 @@ import { normalizePath, stripLeadingSlash, toPosix } from '../utils/path';
 import { splitFrontmatterSource, parseFrontmatterObject } from '../vault/frontmatterRead';
 
 /**
- * Templates live as plain Markdown files in a designated vault folder
- * (default: `Templates/`, configurable via the general settings panel).
+ * Templates live as plain Markdown files in the vault's `Templates/` folder.
  *
- * A template's body is interpolated against a small variable registry —
- * `{{title}}`, `{{date}}`, `{{time}}` ship today; the registry is a plain
- * record so future variables (e.g. `{{vault.name}}`) can plug in without
- * touching call sites.
+ * A template's body is interpolated against a small variable registry:
+ * `{{title}}`, `{{date}}`, `{{time}}`, `{{datetime}}`, `{{year}}`,
+ * `{{month}}` and `{{day}}`. The registry is a plain record, so a caller's
+ * `extras` plug in without touching the call sites.
  *
  * A template can also embed a fenced ```filo-board``` code block carrying
  * a `.board.json` skeleton. When a board template is instantiated, the

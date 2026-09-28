@@ -33,13 +33,13 @@ let busy = $state(false);
 
 /** Vault-relative paths of every file in `tree` at or under `rel`. */
 function filesUnder(tree: FileTreeNode[], vaultRoot: string, rel: string): string[] {
-  const key = rel.toLowerCase();
+  const key: string = vaultPath(rel);
   const out: string[] = [];
   const walk = (nodes: FileTreeNode[]): void => {
     for (const n of nodes) {
       const nodeRel = toVaultRelative(n.path, vaultRoot);
       if (!nodeRel) continue;
-      const lower = nodeRel.toLowerCase();
+      const lower: string = vaultPath(nodeRel);
       if (!n.isDirectory && (lower === key || lower.startsWith(`${key}/`))) out.push(nodeRel);
       if (n.children && (lower === key || key.startsWith(`${lower}/`) || lower.startsWith(`${key}/`))) walk(n.children);
     }
@@ -60,7 +60,7 @@ export async function syncAfterRestore(rels: string[], identity: VaultIdentity):
   if (!isStillSameVault(identity)) return;
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return;
-  if (rels.some((rel) => rel.toLowerCase().startsWith('.filo/themes/'))) {
+  if (rels.some((rel) => vaultPath(rel).startsWith('.filo/themes/'))) {
     await themeStore.refreshAvailable(vaultRoot);
     if (!isStillSameVault(identity)) return;
   }
@@ -75,11 +75,14 @@ export async function syncAfterRestore(rels: string[], identity: VaultIdentity):
  * whose files just went to the trash. The watcher doesn't report our own moves.
  */
 export async function reindexUnder(rel: string): Promise<void> {
-  const key = rel.toLowerCase();
+  const key: string = vaultPath(rel);
   const paths = vaultIndexStore
     .allMetadata()
     .map((m) => m.path)
-    .filter((p) => p.toLowerCase() === key || p.toLowerCase().startsWith(`${key}/`));
+    .filter((p) => {
+      const k: string = vaultPath(p);
+      return k === key || k.startsWith(`${key}/`);
+    });
   await vaultIndexStore.applyChanges(paths);
 }
 

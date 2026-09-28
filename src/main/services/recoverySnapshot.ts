@@ -55,6 +55,7 @@ function isSentinelSnapshotName(name: string): boolean {
  * editing without growing unbounded.
  */
 const MAX_SNAPSHOTS_PER_BASENAME = 20;
+let perBasenameCap = MAX_SNAPSHOTS_PER_BASENAME;
 
 /**
  * Global cap across every basename. Even with per-basename pruning, a vault
@@ -66,6 +67,16 @@ const MAX_SNAPSHOTS_PER_BASENAME = 20;
  * corruption window while bounding the worst-case disk footprint.
  */
 const MAX_SNAPSHOTS_TOTAL = 100;
+let totalCap = MAX_SNAPSHOTS_TOTAL;
+
+/**
+ * Lowers the two retention caps so a test can cross them with a handful of
+ * snapshots instead of hundreds of disk writes; `null` restores the real caps.
+ */
+export function __setSnapshotCapsForTests(caps: { perBasename: number; total: number } | null): void {
+  perBasenameCap = caps?.perBasename ?? MAX_SNAPSHOTS_PER_BASENAME;
+  totalCap = caps?.total ?? MAX_SNAPSHOTS_TOTAL;
+}
 
 /**
  * Per-snapshot byte cap, so a misbehaving caller can't fill the disk with
@@ -229,7 +240,7 @@ async function pruneOldSnapshotsForBasename(
       // No matching file in this subdir, or stat failed — skip.
     }
   }
-  if (matches.length <= MAX_SNAPSHOTS_PER_BASENAME) return;
+  if (matches.length <= perBasenameCap) return;
 
   // Lexicographic tiebreak when mtimes collide on the millisecond
   // (e.g. two snapshots taken in the same ms when the filesystem only
@@ -240,7 +251,7 @@ async function pruneOldSnapshotsForBasename(
     if (a.mtime !== b.mtime) return a.mtime - b.mtime;
     return a.subdirPath < b.subdirPath ? -1 : a.subdirPath > b.subdirPath ? 1 : 0;
   });
-  const overflow = matches.length - MAX_SNAPSHOTS_PER_BASENAME;
+  const overflow = matches.length - perBasenameCap;
   const toRemove = matches.slice(0, overflow);
 
   for (const { filePath, subdirPath } of toRemove) {
@@ -304,13 +315,13 @@ async function pruneOldSnapshotsGlobal(vaultRoot: string): Promise<void> {
       }
     }
   }
-  if (allFiles.length <= MAX_SNAPSHOTS_TOTAL) return;
+  if (allFiles.length <= totalCap) return;
 
   allFiles.sort((a, b) => {
     if (a.mtime !== b.mtime) return a.mtime - b.mtime;
     return a.subdirPath < b.subdirPath ? -1 : a.subdirPath > b.subdirPath ? 1 : 0;
   });
-  const overflow = allFiles.length - MAX_SNAPSHOTS_TOTAL;
+  const overflow = allFiles.length - totalCap;
   const toRemove = allFiles.slice(0, overflow);
 
   const touchedSubdirs = new Set<string>();

@@ -538,7 +538,8 @@ serializer can't preserve cheaply):
 - hard-wrapped paragraphs (soft line breaks are joined onto one line);
 - multi-line blockquotes (joined);
 - `<` / `&` written raw (re-emitted as entities);
-- tab characters;
+- a tab at the start of a heading or list item, or directly before a hard
+  line break (a tab inside a line, or inside inline code, round-trips);
 - `[[wiki links]]` (brackets escaped);
 - HTML comments and block HTML (`<div>`), Obsidian callouts;
 - GFM tables whose columns carry **alignment** (`:--`, `--:`) — alignment is dropped.

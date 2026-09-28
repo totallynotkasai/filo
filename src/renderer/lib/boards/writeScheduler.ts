@@ -122,9 +122,7 @@ export function createScheduler<TArgs>(
    */
   let schedulerGeneration = 0;
 
-  // Back-compat: `manageSentinel: false` → 'none'; default → 'full'.
-  const sentinelMode: 'full' | 'none' | 'pending-path' =
-    opts.sentinelMode ?? (opts.manageSentinel === false ? 'none' : 'full');
+  const sentinelMode: 'full' | 'none' | 'pending-path' = opts.sentinelMode ?? 'full';
 
   const failureIdFor = (args: TArgs): string => {
     if (opts.getFailureId) return opts.getFailureId(args);

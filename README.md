@@ -65,7 +65,9 @@ because the file system is the single source of truth.
 Text, Image, Video, Audio, File, Link, Iframe, Timer.
 
 Drag any file from your OS into the canvas — Filo picks the right tile
-type, copies the file into `vault/attachments/`, and creates a tile.
+type, copies the file into the vault (the board's own folder, else the
+Root Directory you picked in the sidebar, else the vault root), and
+creates a tile.
 
 ## Keyboard
 
@@ -74,8 +76,10 @@ Defaults:
 
 - `Ctrl+Z` / `Ctrl+Shift+Z` — Undo / Redo (per board)
 - `Ctrl+T` — Insert from template
-- `Ctrl+F` — Find & Replace (with `tag:`, `type:`, `board:`, `/regex/` operators)
+- `Ctrl+Shift+F` — Find & Replace (with `tag:`, `type:`, `board:`, `/regex/` operators)
 - `Ctrl+N` — New tile
+- `Ctrl+Shift+T` — Tags Browser
+- `Ctrl+Shift+W` — Close the vault
 
 ## Tech
 

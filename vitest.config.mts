@@ -12,10 +12,10 @@ export default defineConfig({
     exclude: ['src/tests/e2e/**'],
     globals: true,
     setupFiles: ['src/tests/setup.ts'],
-    // Audit-19 0.1 (T0): two projects. `unit` is the historical config,
-    // unchanged. `component` mounts real `.svelte` components in jsdom, which
-    // needs the `browser` export condition (the bare `svelte` import otherwise
-    // resolves to the server entry and `mount()` throws
+    // Three projects. `unit` runs the plain unit tests. `component` mounts
+    // real `.svelte` components in jsdom, which needs the `browser` export
+    // condition (the bare `svelte` import otherwise resolves to the server
+    // entry and `mount()` throws
     // `lifecycle_outside_component`). The condition is scoped to the
     // component project so the unit suite keeps its resolution.
     projects: [

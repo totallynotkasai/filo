@@ -232,11 +232,6 @@ function tagFileOfTile(tile: Tile): string | null {
   return resolveTileMediaPath(tile);
 }
 
-/**
- * What a vault-wide tag rename or removal did. `committed` is false when it
- * stopped before changing the registry and boards (a failed flush or sweep,
- * which offers its own retry); `writtenPaths` are the notes it rewrote.
- */
 /** A tile carrying a tag, with the board it sits on (so a click can go there). */
 export interface TaggedTile {
   id: string;
@@ -247,6 +242,11 @@ export interface TaggedTile {
   path: string | null;
 }
 
+/**
+ * What a vault-wide tag rename or removal did. `committed` is false when it
+ * stopped before changing the registry and boards (a failed flush or sweep,
+ * which offers its own retry); `writtenPaths` are the notes it rewrote.
+ */
 export interface TagSweepOutcome {
   committed: boolean;
   writtenPaths: string[];

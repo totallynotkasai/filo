@@ -21,7 +21,7 @@ import {
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import {
-  registerPendingProbe,
+  noteAdditionalPendingPath,
   markRecentSelfWrite,
   __resetDirtyTrackingForTests,
   __clearRecentSelfWritesForTests,
@@ -70,8 +70,6 @@ function installRoutes(routes: Record<string, (...args: unknown[]) => unknown>):
 }
 
 describe('board reconciler — silent reload guards a write that lands during the read (6.4.M18)', () => {
-  let pendingDuringRead = false;
-
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     _resetRegistryForTests();
@@ -79,8 +77,6 @@ describe('board reconciler — silent reload guards a write that lands during th
     registerExternalChangeReconcilers();
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
-    pendingDuringRead = false;
-    registerPendingProbe((p) => pendingDuringRead && p === REL);
   });
 
   afterEach(() => {
@@ -102,7 +98,7 @@ describe('board reconciler — silent reload guards a write that lands during th
     installRoutes({
       'board:load': () => {
         // A local edit lands during the async read → pending flips true.
-        pendingDuringRead = true;
+        noteAdditionalPendingPath(undefined, REL);
         return makeBoard('from-disk');
       },
       'vault:stat': () => ({ ok: true, mtimeMs: 1, size: 1 }),
@@ -146,7 +142,6 @@ describe('board reconciler — P2.4 self-write divergence tiebreak', () => {
     registerExternalChangeReconcilers();
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
-    registerPendingProbe(() => false); // nothing pending in these cases
   });
 
   afterEach(() => {

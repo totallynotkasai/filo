@@ -327,7 +327,7 @@ describe('frontmatter data-loss invariant — fuzz (1.7)', () => {
       }),
       { numRuns: 300 },
     );
-  });
+  }, 30_000); // 300 generated notes; well past 5 s under coverage instrumentation
 });
 
 /**
@@ -984,7 +984,7 @@ describe('frontmatter object-patch invariant — fuzz set/delete/add (Audit-6 Ph
       }),
       { numRuns: 400 },
     );
-  });
+  }, 30_000);
 });
 
 /**
@@ -1208,7 +1208,7 @@ describe('frontmatter DELTA-write invariant — fresh-read delta across hostile 
       }),
       { numRuns: 400 },
     );
-  });
+  }, 30_000);
 
   // The untested shape the plan calls out: a delta-SET of a key whose disk value
   // is an unresolvable alias / `<<` merge. The engine refuses (toJS throws), the

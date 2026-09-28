@@ -100,19 +100,6 @@ export interface CreateSchedulerOptions<TArgs> {
    */
   missingSourceMessage?: (key: string) => string | undefined;
   /**
-   * Whether the primitive should call `beginWrite` at schedule time and
-   * `endWrite` at fire/flush time. Defaults to `true`.
-   *
-   * Set `false` when the consumer's `performWrite` already wraps the IPC
-   * in a `trackComponentWrite` (the note writer does this), so the
-   * primitive doesn't double-increment the inflight counter. The
-   * consumer remains responsible for its own sentinel coverage.
-   *
-   * @deprecated Prefer `sentinelMode`. `manageSentinel: false` maps to
-   *   `sentinelMode: 'none'`; the default maps to `'full'`.
-   */
-  manageSentinel?: boolean;
-  /**
    * How the primitive keeps the `.filo/.dirty` sentinel and the
    * `pendingVaultPaths` ledger in sync across the debounce → write window:
    *  - `'full'` (default): `beginWrite` at schedule, `endWrite` at outcome —
@@ -122,13 +109,11 @@ export interface CreateSchedulerOptions<TArgs> {
    *  - `'pending-path'`: track ONLY the pending PATH during the armed window
    *    (`noteAdditionalPendingPath` at schedule, `dropPendingPath` +
    *    `syncSentinelIfIdle` at fire-handoff / cancel / reschedule / reset),
-   *    WITHOUT bumping inflight. Used by the markdown gateway, whose
+   *    WITHOUT bumping inflight. Used by the note writer, whose
    *    `performWrite` wraps its own `trackComponentWrite` (inflight) at fire
    *    time — this closes the body-edit crash window (no sentinel during the
    *    300 ms debounce) and lets the save indicator read "saving", without
    *    double-counting inflight.
-   *
-   * Defaults derived from `manageSentinel` for back-compat.
    */
   sentinelMode?: 'full' | 'none' | 'pending-path';
   /**
@@ -150,7 +135,7 @@ export interface CreateSchedulerOptions<TArgs> {
    * `trackComponentWrite` `endWrite`. Omit to await indefinitely (correct for
    * schedulers whose writes can't wedge on user input).
    * Set ONLY high enough to exceed any legitimate in-write await (e.g. the
-   * markdown gateway's interactive drift prompt); it is a wedged-write backstop,
+   * note writer's conflict prompt); it is a wedged-write backstop,
    * not a latency budget.
    */
   writeTimeoutMs?: number;
@@ -300,10 +285,9 @@ export interface Scheduler<TArgs> {
   reset(): void;
   /**
    * True when any armed (pending, not-yet-fired) timer's args satisfy
-   * `predicate` (a `manageSentinel:false` scheduler's probe into
-   * `isPathPending`). ONLY armed timers, never `parked`/`inFlight` (no args;
+   * `predicate`. ONLY armed timers, never `parked`/`inFlight` (no args;
    * `markClean` needs "is a NEWER timer armed"). Durability checks use the
-   * sentinel ledger (`isPathPending`/`hasPendingWrite`), which tracks parked +
+   * sentinel ledger (`isPathPending`), which tracks parked +
    * in-flight.
    */
   hasPendingTimer(predicate: (args: TArgs) => boolean): boolean;

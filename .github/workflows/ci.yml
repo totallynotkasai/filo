@@ -4,14 +4,18 @@ name: CI
 # type-check, strict unit tests, build, every gate) on Linux. `verify-windows`
 # runs the parts that behave differently on Windows: the unit tests (the
 # `itOnWindows` cases and case-insensitive path handling) and the main-process
-# type-check. The a11y axe scan and full Electron E2E are manual-only
-# (Actions tab -> CI -> Run workflow).
+# type-check. `coverage` enforces the coverage ratchet on pushes to main
+# (work lands there directly, without PRs) and on PRs. The a11y axe scan and
+# the full Electron E2E run weekly, and on demand (Actions tab -> CI -> Run
+# workflow): they drive the real Electron shell, which nothing else exercises.
 
 on:
   push:
     branches: ['**']
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -48,14 +52,18 @@ jobs:
       - run: npm run typecheck:main
 
   coverage:
-    # PR-only because v8 coverage instrumentation roughly doubles the
-    # vitest runtime — `verify` stays fast for branch pushes. Thresholds
-    # live in vitest.config.mts under `test.coverage.thresholds`; raise
-    # them whenever new tests push the floor up (ratchet, never lower).
-    name: Coverage (PR only)
+    # Its own job because v8 coverage instrumentation roughly doubles the
+    # vitest runtime, so `verify` stays fast; other branch pushes skip it.
+    # Thresholds live in vitest.config.mts under `test.coverage.thresholds`;
+    # raise them whenever new tests push the floor up (ratchet, never lower).
+    # `test:unit:coverage` passes --disableConsoleIntercept: under the
+    # instrumented suite's load, a worker could close while a captured console
+    # line was still in flight, an unhandled error that fails the run with
+    # every test green. The strict runner, which reads that output, is `verify`.
+    name: Coverage (main and PRs)
     runs-on: ubuntu-latest
     needs: verify
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -72,10 +80,10 @@ jobs:
           retention-days: 7
 
   a11y:
-    name: a11y (axe-core E2E subset, manual)
+    name: a11y (axe-core E2E subset, weekly and manual)
     runs-on: ubuntu-latest
     needs: verify
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -96,10 +104,10 @@ jobs:
           retention-days: 7
 
   e2e:
-    name: Full E2E (manual)
+    name: Full E2E (weekly and manual)
     runs-on: ubuntu-latest
     needs: verify
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

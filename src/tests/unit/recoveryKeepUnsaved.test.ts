@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { keepUnsavedCopies, snapshotForRecovery, listRecoverySnapshots } from '../../main/services/recoverySnapshot';
+import {
+  keepUnsavedCopies,
+  snapshotForRecovery,
+  listRecoverySnapshots,
+  __setSnapshotCapsForTests,
+} from '../../main/services/recoverySnapshot';
 
 /**
  * Rescue copies for "Close anyway" / "Quit anyway": the text the renderer
@@ -18,7 +23,7 @@ describe('keepUnsavedCopies', () => {
   });
 
   afterEach(async () => {
-    await fs.rm(vaultRoot, { recursive: true, force: true });
+    await fs.rm(vaultRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('writes each text under one -unsaved folder, named by its flattened path', async () => {
@@ -55,10 +60,15 @@ describe('keepUnsavedCopies', () => {
   it('the per-file snapshot prune leaves rescue copies alone', async () => {
     await keepUnsavedCopies(vaultRoot, [{ relPath: 'A.md', text: 'rescued' }]);
     await fs.writeFile(join(vaultRoot, 'A.md'), 'on disk', 'utf-8');
-    // Past the per-name cap (20): the prune removes the oldest snapshots only.
-    for (let i = 0; i < 22; i++) {
-      await snapshotForRecovery(vaultRoot, 'A.md');
-      await new Promise((r) => setTimeout(r, 2));
+    // Past the per-name cap: the prune removes the oldest snapshots only.
+    __setSnapshotCapsForTests({ perBasename: 3, total: 100 });
+    try {
+      for (let i = 0; i < 5; i++) {
+        await snapshotForRecovery(vaultRoot, 'A.md');
+        await new Promise((r) => setTimeout(r, 2));
+      }
+    } finally {
+      __setSnapshotCapsForTests(null);
     }
     const listed = await listRecoverySnapshots(vaultRoot);
     const rescue = listed.filter((e) => e.timestamp.endsWith('-unsaved'));

@@ -207,8 +207,8 @@ export async function withOnDiskSpelling(fullPath: string): Promise<string> {
  * for seconds, not milliseconds.
  *
  * Nonce-suffixed tmp filename: two concurrent atomic writes to the same
- * destination (the body and frontmatter schedulers can both target the
- * same `.md` if their debounces fire on the same tick) would otherwise
+ * destination (a lock backoff can hold one for seconds while the next
+ * save of the same file starts) would otherwise
  * race on a shared `<path>.tmp`. With per-call nonces each write owns
  * its own tmp file, so the cleanup `unlink` on failure can't accidentally
  * delete the other call's buffer mid-rename.

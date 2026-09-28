@@ -17,11 +17,10 @@
   let loadFailed = $state(false);
 
   const safety = $derived(tile.url ? isSafeIframeUrl(tile.url) : { ok: true });
-  // `asSafeIframeSrc` is the canonical security gate; the
-  // `safety.ok` check above keeps the existing user-facing reason string,
-  // but `safeSrc` is the value actually bound to the embed below. The two
-  // MUST agree on rejection (both allowlist http(s) only); the CI gate
-  // `scripts/gates:untrusted-sinks` enforces that the tag goes
+  // `asSafeIframeSrc` is the canonical security gate; `safety` carries
+  // the user-facing reason. Both read `iframeSrcProblem`, so they agree on
+  // rejection. `safeSrc` is the value actually bound to the embed below;
+  // the CI gate `scripts/gates:untrusted-sinks` enforces that the tag goes
   // through this validator.
   const safeSrc = $derived(asSafeIframeSrc(tile.url));
 

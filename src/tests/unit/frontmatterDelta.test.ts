@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   type FrontmatterDelta,
-  emptyFrontmatterDelta,
   isEmptyFrontmatterDelta,
   patchToFrontmatterDelta,
   applyFrontmatterDelta,
@@ -55,7 +54,7 @@ describe('frontmatterDelta — applyFrontmatterDelta', () => {
 
   it('an empty delta is a no-op identity (preserves disk FM verbatim)', () => {
     const base = { a: 1, comment: 'x' };
-    expect(applyFrontmatterDelta(base, emptyFrontmatterDelta())).toEqual(base);
+    expect(applyFrontmatterDelta(base, { set: {}, unset: [] })).toEqual(base);
   });
 });
 
@@ -99,8 +98,8 @@ describe('frontmatterDelta — mergeFrontmatterDelta (coalesced edits)', () => {
 });
 
 describe('frontmatterDelta — isEmpty / empty', () => {
-  it('emptyFrontmatterDelta is empty', () => {
-    expect(isEmptyFrontmatterDelta(emptyFrontmatterDelta())).toBe(true);
+  it('a delta with no set and no unset is empty', () => {
+    expect(isEmptyFrontmatterDelta({ set: {}, unset: [] })).toBe(true);
   });
   it('any set or unset is non-empty', () => {
     expect(isEmptyFrontmatterDelta({ set: { a: 1 }, unset: [] })).toBe(false);

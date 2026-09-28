@@ -125,8 +125,9 @@ export interface IpcChannelMap {
   };
   /**
    * Closes the active vault: stops the watcher, drops the
-   * registry pointer. Idempotent. The renderer-side "Close vault" action
-   * pairs this with its own `fireVaultSwap` so per-vault stores reset.
+   * registry pointer. Idempotent. The renderer's `vault:close` command
+   * (Ctrl+Shift+W) pairs this with its own `fireVaultSwap` so per-vault
+   * stores reset.
    */
   'vault:close': {
     args: [];

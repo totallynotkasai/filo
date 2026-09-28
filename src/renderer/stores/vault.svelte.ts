@@ -1145,9 +1145,9 @@ export const vaultStore = {
    * `.md` / `.board.json` / `.filo/` write was actually rejected. The
    * individual writes already surface a toast via `trackComponentWrite` /
    * `notifyWriteError`; the boolean here just lets the outer Ctrl+S path
-   * drop its own success toast. Board-JSON, config, misc and frontmatter
-   * failures all fold into it; the frontmatter scheduler drains before the
-   * board JSON write that references its edits.
+   * drop its own success toast. Board-JSON, config, misc and note
+   * failures all fold into it; the note writer drains before the board JSON
+   * write that references its edits.
    */
   async save(): Promise<boolean> {
     // Run all flushers unconditionally — no `!currentProject` short-circuit, so
@@ -1216,18 +1216,17 @@ export const vaultStore = {
     const isInitialLoad = fileTree.length === 0;
     if (isInitialLoad) isLoading = true;
     try {
-      // `vault:read-tree` returns `{ ok, tree | code }` so a scan failure
-      // (NO_ACTIVE_VAULT after a fast swap, EACCES, too-large) isn't mistaken
-      // for an empty vault: toast and leave the existing `fileTree` alone.
-      const envelope = await window.filo.invoke('vault:read-tree', vaultPath);
+      // A scan failure isn't an empty vault: toast and keep `fileTree`.
+      const root = vaultPath;
+      const identity = captureVaultIdentity();
+      const envelope = await window.filo.invoke('vault:read-tree', root);
       if (envelope.ok === false) {
-        // Skip toast for `too-large` — the dedicated `vault:tree-too-large`
-        // push event already surfaces a context-rich message via the
-        // existing main→renderer channel. Other codes (NO_ACTIVE_VAULT,
-        // EACCES, IO_ERROR) get a generic toast so the user knows the
-        // sidebar isn't trustworthy.
+        // No toast for `too-large` (`vault:tree-too-large` says it better), nor
+        // for a read of the vault being left, refused once main released it:
+        // the sidebar on screen is fine. Other codes mean it may be stale.
         const code = envelope.code ?? 'unknown';
-        if (code !== 'too-large') {
+        const leaving = swapInProgress !== null || !isStillSameVault(identity) || root !== vaultPath;
+        if (code !== 'too-large' && !(code === 'NO_ACTIVE_VAULT' && leaving)) {
           reportError(
             'vault.read-tree',
             new Error(envelope.error ?? code),

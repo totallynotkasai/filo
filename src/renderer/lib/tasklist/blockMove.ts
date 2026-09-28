@@ -85,48 +85,6 @@ export function resolveDragBlockIds(
 }
 
 /**
- * Same-section block reorder: extracts every placement whose `tileId` is in
- * `blockIds` and reinserts the block contiguously next to `targetTileId`.
- *
- * `dropBelow` mirrors the user-visible drop indicator: when `true` the block
- * lands just after the target row; when `false` it lands just before.
- *
- * `fallbackTargetIdx` is used only when the target tile can't be found in
- * the remaining (post-extraction) array — clamped into range.
- *
- * Returns a freshly renumbered placement array (`position: 0..n-1`).
- * Returns the input untouched if no block tiles are found.
- */
-export function spliceBlockMove(args: {
-  placements: TaskPlacement[];
-  blockIds: string[];
-  targetTileId: string;
-  dropBelow: boolean;
-  fallbackTargetIdx: number;
-}): TaskPlacement[] {
-  const { placements, blockIds, targetTileId, dropBelow, fallbackTargetIdx } = args;
-  const blockSet = new Set(blockIds);
-  const remaining: TaskPlacement[] = [];
-  const block: TaskPlacement[] = [];
-  for (const p of placements) {
-    if (blockSet.has(p.tileId)) block.push(p);
-    else remaining.push(p);
-  }
-  if (block.length === 0) return placements;
-  const targetIdxInRemaining = remaining.findIndex((p) => p.tileId === targetTileId);
-  const baseIdx = targetIdxInRemaining >= 0
-    ? targetIdxInRemaining
-    : Math.min(Math.max(fallbackTargetIdx, 0), remaining.length);
-  const insertAt = dropBelow ? baseIdx + 1 : baseIdx;
-  const reordered = [
-    ...remaining.slice(0, insertAt),
-    ...block,
-    ...remaining.slice(insertAt),
-  ];
-  return reordered.map((p, i) => ({ ...p, position: i }));
-}
-
-/**
  * Per-section svelte-dnd-action items array shape. The library identifies
  * each item by `id`; we keep it minimal so the items mirror is cheap to
  * shallow-compare on every drag-tick.
@@ -134,23 +92,6 @@ export function spliceBlockMove(args: {
 export interface RowDndItem {
   id: string;
 }
-
-/**
- * Result of classifying a drag-and-drop finalize against the prior placements
- * snapshot. The component branches on `kind` and routes each branch through
- * its existing undo command (frontmatter merge for indent/outdent; structural
- * persist for reorder).
- */
-export type DndFinalizeResult =
-  | { kind: 'noop' }
-  | { kind: 'indent'; tileId: string; parent: string }
-  | { kind: 'outdent'; tileId: string }
-  | {
-      kind: 'reorder';
-      placements: TaskPlacement[];
-      sections: TaskListSection[];
-      crossSection: boolean;
-    };
 
 /**
  * Build the post-drop placements array from svelte-dnd-action's per-section

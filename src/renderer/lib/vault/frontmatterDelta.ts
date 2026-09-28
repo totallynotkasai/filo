@@ -31,11 +31,6 @@ export interface FrontmatterDelta {
   unset: string[];
 }
 
-/** A delta that changes nothing — the write then preserves disk FM verbatim. */
-export function emptyFrontmatterDelta(): FrontmatterDelta {
-  return { set: {}, unset: [] };
-}
-
 /** True iff the delta touches no keys. */
 export function isEmptyFrontmatterDelta(delta: FrontmatterDelta): boolean {
   return Object.keys(delta.set).length === 0 && delta.unset.length === 0;
@@ -80,8 +75,8 @@ export function applyFrontmatterDelta(
  * Folds delta `b` ON TOP OF delta `a` (b applied after a), so coalesced field
  * edits to one path accumulate into a single delta. A key set in `b` overrides
  * any prior set/unset for it in `a`, and vice-versa, so the result never lists a
- * key in both `set` and `unset`. Used by the frontmatter scheduler's per-path
- * accumulator when several debounced field edits collapse into one write.
+ * key in both `set` and `unset`. Used by the note writer's per-path queue
+ * when several debounced field edits collapse into one write.
  */
 export function mergeFrontmatterDelta(a: FrontmatterDelta, b: FrontmatterDelta): FrontmatterDelta {
   const set: Record<string, unknown> = { ...a.set };

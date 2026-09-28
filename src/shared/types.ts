@@ -224,11 +224,6 @@ export type ThemeId = 'light' | 'dark' | 'blueprint' | 'retro' | 'nature';
 export type TimerMode = 'hms' | 'ms' | 's' | 'clock';
 
 /**
- * Connection visibility states.
- */
-export type ConnectionVisibility = 'visible' | 'visible-locked' | 'hidden' | 'hidden-locked';
-
-/**
  * Sort & group settings for the vault sidebar. Sort and group each have a
  * field (the attribute) and a direction (ascending / descending). Folders
  * always sort by name regardless of the active field (mtime/size are
@@ -237,11 +232,6 @@ export type ConnectionVisibility = 'visible' | 'visible-locked' | 'hidden' | 'hi
 export type VaultSortField = 'none' | 'name' | 'modified' | 'type' | 'size';
 export type VaultSortDirection = 'asc' | 'desc';
 export type VaultGroupField = 'none' | 'name' | 'modified' | 'type' | 'size';
-
-/**
- * Toolbar size options.
- */
-export type ToolbarSize = 'small' | 'medium' | 'large';
 
 /**
  * Window API exposed to the renderer via contextBridge.

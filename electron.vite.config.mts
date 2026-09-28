@@ -32,12 +32,11 @@ function editorDepsToPrebundle(): string[] {
 
 export default defineConfig({
   main: {
-    // Audit-14 6.3 — bundle `zod` INTO dist/main rather than leaving it an
+    // Bundle `zod` INTO dist/main rather than leaving it an
     // external runtime `require('zod')`. Packaging then carries no runtime
     // node_modules dependency for it (electron-builder 26's module collector
     // *should* find an externalized zod, but bundling removes that reliance
-    // entirely — zod is tiny). `nanoid` was the previous exclude but it is
-    // never imported in the main process, so excluding it was a no-op.
+    // entirely — zod is tiny).
     plugins: [externalizeDepsPlugin({ exclude: ['zod'] })],
     build: {
       outDir: 'dist/main',
@@ -92,7 +91,7 @@ export default defineConfig({
           index: resolve(__dirname, 'index.html'),
         },
         output: {
-          // Phase 40 / 40.6 — split heavy third-party deps into their own
+          // Split heavy third-party deps into their own
           // chunks so the main app bundle drops from a ~4.9 MB monolith
           // toward something the V8 parser can chew through faster on
           // initial paint. Each chunk is cacheable independently of app

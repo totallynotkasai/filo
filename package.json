@@ -10,7 +10,7 @@
     "preview": "node scripts/dev.mjs --preview",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
-    "test:unit:coverage": "vitest run --coverage",
+    "test:unit:coverage": "vitest run --coverage --disableConsoleIntercept",
     "test:unit:strict": "node scripts/test-unit-strict.mjs",
     "test:e2e": "playwright test",
     "check": "svelte-check --tsconfig ./tsconfig.json",

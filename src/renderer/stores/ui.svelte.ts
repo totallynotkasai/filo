@@ -402,7 +402,7 @@ export const uiStore = {
     let sticky = opts.sticky === true;
     if (sticky && opts.onDismiss) {
       if (import.meta.env.DEV) {
-        console.warn('[Toast] sticky ignored on a promise-backed toast (onDismiss set); the Audit5 R3 cap applies.');
+        console.warn('[Toast] sticky ignored on a promise-backed toast (onDismiss set); the lifetime cap applies.');
       }
       sticky = false;
     }

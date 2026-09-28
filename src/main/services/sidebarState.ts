@@ -31,7 +31,6 @@ const SidebarStateSchema = z.object({
 });
 
 export type SidebarState = z.infer<typeof SidebarStateSchema>;
-export type SidebarFloatingBounds = z.infer<typeof FloatingBoundsSchema>;
 
 /**
  * Patch shape accepted by `updateSidebarState` over IPC. All fields are
@@ -45,7 +44,6 @@ export const SidebarPatchSchema = z
     floatingBounds: FloatingBoundsSchema.optional(),
   })
   .strict();
-export type SidebarPatch = z.infer<typeof SidebarPatchSchema>;
 
 const DEFAULT_STATE: SidebarState = { open: true, width: 240, floating: false };
 

@@ -3,8 +3,8 @@
  * module state.
  *
  * Prevents "X is stranded after rename": a relPath-keyed map that no rename
- * cascade remembers to update (e.g. the markdown gateway's hydrate state,
- * after which every keystroke throws "not hydrated" against the new path).
+ * cascade remembers to update (e.g. the note store's models, after which
+ * every keystroke would be queued against the old path).
  *
  * Each owner of relPath-keyed state subscribes a sweep
  * `(oldRel, newRel) => void` at module init.

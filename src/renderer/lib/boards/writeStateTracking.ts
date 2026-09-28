@@ -369,7 +369,7 @@ export function noteAdditionalPendingPath(vaultRoot: string | undefined, path: s
   trimSetIfOverflowing(pendingVaultPaths, 'pendingVaultPaths');
   refreshSentinel(vaultRoot);
   // Surface the new pending path to the save indicator so a
-  // debounced-but-not-inflight write (markdown gateway) reads "saving".
+  // debounced-but-not-inflight write (the note writer) reads "saving".
   notifyWriteState();
 }
 
@@ -388,31 +388,6 @@ export function dropPendingPath(vaultRoot: string | undefined, path: string): vo
 }
 
 /**
- * Extra pending-write probes. Most schedulers
- * (board / frontmatter / config / misc) call `beginWrite` at SCHEDULE time
- * (`manageSentinel: true`), so a debounced-but-not-yet-fired write already
- * shows up in `pendingVaultPaths`. The markdown-file gateway is the
- * exception: it opts out (`manageSentinel: false`) because its
- * `trackComponentWrite` wrapper does begin/endWrite around the disk I/O,
- * so its SCHEDULED writes don't enter the ledger until they fire. Such a
- * scheduler registers a probe here so `isPathPending` can still answer
- * "yes" for its armed-but-not-fired writes, so the authority covers *every*
- * scheduler.
- */
-const pendingProbes: Array<(path: string) => boolean> = [];
-
-/**
- * Registers an additional "is a write armed for this path?" probe consulted
- * by {@link isPathPending}. Used by the markdown gateway (which manages its
- * own sentinel) so its scheduled writes participate in the single
- * pending-write authority. Idempotent registration is the caller's concern
- * (register once at module load).
- */
-export function registerPendingProbe(probe: (path: string) => boolean): void {
-  pendingProbes.push(probe);
-}
-
-/**
  * THE single authority for "does any scheduler have a pending or in-flight
  * write for this vault-relative path?". Gives both external-change reconcilers
  * (the `.md` classifier in `vaultExternalChanges` and the `.board.json`
@@ -424,9 +399,11 @@ export function registerPendingProbe(probe: (path: string) => boolean): void {
  *  - in-flight (a `trackComponentWrite` IPC is mid-write — also in
  *    `pendingVaultPaths` for its duration),
  *  - failed (last write threw and hasn't been retried — keeps the file
- *    out-of-sync flag live),
- *  - OR flagged by a registered probe (the markdown gateway's
- *    `manageSentinel: false` scheduled writes).
+ *    out-of-sync flag live).
+ *
+ * Every scheduler enters its armed writes in `pendingVaultPaths` at schedule
+ * time: board / config / misc through `beginWrite` (`sentinelMode: 'full'`),
+ * the note writer through `noteAdditionalPendingPath` (`'pending-path'`).
  *
  * Conservative on the narrow "flush resolved but the next schedule hasn't
  * armed yet" window — a false "clean" there just means a borderline-race
@@ -435,20 +412,7 @@ export function registerPendingProbe(probe: (path: string) => boolean): void {
  */
 export function isPathPending(path: string): boolean {
   const key = vaultPath(path);
-  if (pendingVaultPaths.has(key) || failedVaultPaths.has(key)) return true;
-  for (const probe of pendingProbes) {
-    if (probe(path)) return true;
-  }
-  return false;
-}
-
-/**
- * Back-compat alias for {@link isPathPending}, retained so existing call
- * sites / tests keep working. Prefer
- * `isPathPending` in new code — it's the named single authority.
- */
-export function hasPendingWrite(path: string): boolean {
-  return isPathPending(path);
+  return pendingVaultPaths.has(key) || failedVaultPaths.has(key);
 }
 
 /**
@@ -464,12 +428,7 @@ export function hasPendingWrite(path: string): boolean {
  * whose last write failed.
  */
 export function isPathQueuedOrInFlight(path: string): boolean {
-  const key = vaultPath(path);
-  if (pendingVaultPaths.has(key)) return true;
-  for (const probe of pendingProbes) {
-    if (probe(path)) return true;
-  }
-  return false;
+  return pendingVaultPaths.has(vaultPath(path));
 }
 
 /**
@@ -582,7 +541,7 @@ export function reportedFailedPaths(): VaultPath[] {
  * the scheduler's `writeTimeoutMs` (so the path was marked failed) but then
  * actually LANDED on disk.
  *
- * The markdown gateway + frontmatter scheduler self-heal via
+ * The note writer self-heals via
  * `trackComponentWrite`'s late `endWrite(true)`. Board / config / misc call
  * their IPC directly, so without this their phantom "failed" mark would stick
  * for the session (save() false, `.filo/.dirty` set, recovery prompt next

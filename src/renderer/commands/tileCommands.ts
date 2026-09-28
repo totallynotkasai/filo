@@ -7,6 +7,8 @@ import { uiStore } from '../stores/ui.svelte';
 import { framesStore } from '../stores/frames.svelte';
 import type { Tile, Connection } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
+import { samePath } from '../lib/utils/path';
+import { vaultPath } from '../../shared/vaultPath';
 import { DeleteCardCommand } from './kanbanCommands';
 import { restoreFiles, retargetPath, stillTrashed, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
@@ -166,7 +168,7 @@ export function textTileNotePaths(tiles: Tile[]): string[] {
   const out: string[] = [];
   for (const tile of tiles) {
     if (tile.type !== 'text' || !tile.filePath) continue;
-    const key = tile.filePath.toLowerCase();
+    const key = vaultPath(tile.filePath);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(tile.filePath);
@@ -303,7 +305,7 @@ export class DeleteTilesCommand extends Command {
         // A redo must trash the restored copy, not a newer file that took
         // the old name meanwhile.
         this.filePaths = this.filePaths.map((p) => {
-          const r = restored.find((x) => x.rel.toLowerCase() === p.toLowerCase());
+          const r = restored.find((x) => samePath(x.rel, p));
           return r ? r.restoredPath : p;
         });
       }

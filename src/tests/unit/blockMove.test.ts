@@ -3,7 +3,6 @@ import {
   collectDescendantIds,
   getTaskDepth,
   resolveDragBlockIds,
-  spliceBlockMove,
   spliceBlockContiguous,
   rebuildPlacementsFromDndItems,
   type RowLike,
@@ -99,82 +98,6 @@ describe('resolveDragBlockIds', () => {
 
   it('returns empty list when seeds are absent from placements', () => {
     expect(resolveDragBlockIds([], [], ['missing'])).toEqual([]);
-  });
-});
-
-describe('spliceBlockMove', () => {
-  it('moves a block above the target when dropBelow=false', () => {
-    const placements = [p('a'), p('b'), p('c'), p('d')];
-    const out = spliceBlockMove({
-      placements,
-      blockIds: ['d'],
-      targetTileId: 'b',
-      dropBelow: false,
-      fallbackTargetIdx: 0,
-    });
-    expect(out.map((x) => x.tileId)).toEqual(['a', 'd', 'b', 'c']);
-    expect(out.map((x) => x.position)).toEqual([0, 1, 2, 3]); // renumbered
-  });
-
-  it('moves a block below the target when dropBelow=true', () => {
-    const placements = [p('a'), p('b'), p('c'), p('d')];
-    const out = spliceBlockMove({
-      placements,
-      blockIds: ['d'],
-      targetTileId: 'b',
-      dropBelow: true,
-      fallbackTargetIdx: 0,
-    });
-    expect(out.map((x) => x.tileId)).toEqual(['a', 'b', 'd', 'c']);
-  });
-
-  it('keeps the block contiguous (parent + descendants in order)', () => {
-    const placements = [p('a'), p('b'), p('c'), p('d')];
-    const out = spliceBlockMove({
-      placements,
-      blockIds: ['c', 'd'],
-      targetTileId: 'a',
-      dropBelow: true,
-      fallbackTargetIdx: 0,
-    });
-    expect(out.map((x) => x.tileId)).toEqual(['a', 'c', 'd', 'b']);
-  });
-
-  it('uses fallbackTargetIdx when targetTileId is missing from the remaining array', () => {
-    const placements = [p('a'), p('b'), p('c')];
-    const out = spliceBlockMove({
-      placements,
-      blockIds: ['a'],
-      targetTileId: 'a', // becomes missing once extracted
-      dropBelow: false,
-      fallbackTargetIdx: 1,
-    });
-    // remaining = [b, c]; fallbackTargetIdx=1 → insert before idx 1
-    expect(out.map((x) => x.tileId)).toEqual(['b', 'a', 'c']);
-  });
-
-  it('clamps fallbackTargetIdx into [0, remaining.length]', () => {
-    const placements = [p('a'), p('b'), p('c')];
-    const out = spliceBlockMove({
-      placements,
-      blockIds: ['a'],
-      targetTileId: 'a',
-      dropBelow: false,
-      fallbackTargetIdx: 99,
-    });
-    expect(out.map((x) => x.tileId)).toEqual(['b', 'c', 'a']);
-  });
-
-  it('returns input unchanged when no block tile is found', () => {
-    const placements = [p('a'), p('b')];
-    const out = spliceBlockMove({
-      placements,
-      blockIds: ['missing'],
-      targetTileId: 'a',
-      dropBelow: false,
-      fallbackTargetIdx: 0,
-    });
-    expect(out).toBe(placements);
   });
 });
 

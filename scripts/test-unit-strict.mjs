@@ -17,6 +17,8 @@
  * developers see all output without a failing gate.
  */
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 
 const NOISE_PATTERNS = [
   /TypeError: Cannot read properties of undefined \(reading 'invoke'\)/,
@@ -30,10 +32,15 @@ const NOISE_PATTERNS = [
 const ANSI = /\x1b\[[0-9;]*m/g;
 const RESULT_LINE = /^\s*[✓✗×↓]\s/u;
 
-const child = spawn('npx', ['vitest', 'run'], {
+// vitest's own bin under this Node, with no shell: `shell: true` with an
+// argument array is deprecated (DEP0190) and its warning is noise here.
+const require = createRequire(import.meta.url);
+const vitestPkg = require.resolve('vitest/package.json');
+const vitestBin = join(dirname(vitestPkg), require(vitestPkg).bin.vitest);
+
+const child = spawn(process.execPath, [vitestBin, 'run'], {
   stdio: ['inherit', 'pipe', 'pipe'],
   env: process.env,
-  shell: true,
 });
 
 const stderrBuf = [];

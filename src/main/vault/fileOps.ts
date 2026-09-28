@@ -610,16 +610,6 @@ export async function copyFileToVault(
 }
 
 /**
- * Reads a file and returns its contents as a UTF-8 string.
- */
-export async function readFileContents(filePath: string): Promise<string> {
-  // Read bytes and decode explicitly (never the lossy
-  // `readFile(p, 'utf-8')` shortcut); callers that must know whether the bytes
-  // were valid UTF-8 use `readFileWithCoherentStat`.
-  return (await fs.readFile(filePath)).toString('utf8');
-}
-
-/**
  * Outcome of {@link readFileWithCoherentStat}. `content` is always present
  * on success; `mtimeMs` and `size` are present only when the pre-read stat
  * and post-read stat agree (i.e. no external write landed in the gap).

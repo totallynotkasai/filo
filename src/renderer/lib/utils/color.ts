@@ -8,6 +8,7 @@
  */
 
 import { themeVersion } from '../../stores/themeVersion.svelte';
+import { HEX_COLOR } from '../../../shared/vaultColor';
 
 // ── Hex parsing ──
 
@@ -48,7 +49,7 @@ export function rgbToHex({ r, g, b }: RGB): string {
 
 /** True iff the value matches `#rgb` or `#rrggbb`. */
 export function isValidHex(value: string): boolean {
-  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value.trim());
+  return HEX_COLOR.test(value.trim());
 }
 
 // ── HSL ↔ RGB ──

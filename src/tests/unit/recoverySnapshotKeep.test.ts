@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { snapshotForRecovery } from '../../main/services/recoverySnapshot';
+import { snapshotForRecovery, __setSnapshotCapsForTests } from '../../main/services/recoverySnapshot';
 
 async function allSnapshots(vaultRoot: string): Promise<string[]> {
   const root = join(vaultRoot, '.filo', 'recovery');
@@ -25,17 +25,20 @@ describe('recovery snapshots: kept copies and repeated load failures', () => {
   beforeEach(async () => {
     vaultRoot = await fs.mkdtemp(join(tmpdir(), 'filo-recovery-keep-'));
     await fs.mkdir(join(vaultRoot, '.filo'), { recursive: true });
+    // Small caps: the prunes run exactly as at 20 / 100, with a few writes.
+    __setSnapshotCapsForTests({ perBasename: 3, total: 10 });
   });
   afterEach(async () => {
-    await fs.rm(vaultRoot, { recursive: true, force: true });
+    __setSnapshotCapsForTests(null);
+    await fs.rm(vaultRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  it('a Keep-mine copy survives 150 later load-failure snapshots', async () => {
+  it('a Keep-mine copy survives more load-failure snapshots than the global cap', async () => {
     await fs.writeFile(join(vaultRoot, 'Note.md'), 'their version', 'utf-8');
     const kept = await snapshotForRecovery(vaultRoot, 'Note.md', 'keep');
     expect(kept).toMatch(/-keep[\\/]Note\.md$/);
 
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 15; i++) {
       const rel = `broken-${i}.board.json`;
       await fs.writeFile(join(vaultRoot, rel), `{ broken ${i}`, 'utf-8');
       await snapshotForRecovery(vaultRoot, rel, 'load-failure');
@@ -44,18 +47,18 @@ describe('recovery snapshots: kept copies and repeated load failures', () => {
     expect(await fs.readFile(kept, 'utf-8')).toBe('their version');
     const all = await allSnapshots(vaultRoot);
     // The global cap still bounds the prunable copies.
-    expect(all.filter((p) => !p.includes('-keep/')).length).toBeLessThanOrEqual(100);
-  }, 120_000); // 150 snapshot writes; under the full suite's disk load they took over 60 s
+    expect(all.filter((p) => !p.includes('-keep/')).length).toBeLessThanOrEqual(10);
+  });
 
   it('a Keep-mine copy is not pruned by the per-file cap either', async () => {
     await fs.writeFile(join(vaultRoot, 'Note.md'), 'first other version', 'utf-8');
     const kept = await snapshotForRecovery(vaultRoot, 'Note.md', 'keep');
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 6; i++) {
       await fs.writeFile(join(vaultRoot, 'Note.md'), `later ${i}`, 'utf-8');
       await snapshotForRecovery(vaultRoot, 'Note.md');
     }
     expect(await fs.readFile(kept, 'utf-8')).toBe('first other version');
-  }, 30_000);
+  });
 
   it('opening twice with the same failed board takes one snapshot; a changed board takes another', async () => {
     await fs.writeFile(join(vaultRoot, 'Plan.board.json'), '{ not json', 'utf-8');

@@ -67,6 +67,11 @@ const ELEMENT: Record<ElementStyleKind, { boardId: string; elementId: string }> 
   taskSection: { boardId: 'tl', elementId: 'sec-1' },
 };
 
+// Popups still mounted when a test ends (it failed or timed out before its
+// close). afterEach unmounts them before resetting the stores: a popup left
+// mounted would push its session's undo step into the next test's history.
+const mounted = new Set<ReturnType<typeof mount>>();
+
 async function open(kind: ElementStyleKind): Promise<{ close(): Promise<void> }> {
   const { boardId, elementId } = ELEMENT[kind];
   historyStore.setActiveBoard(boardId);
@@ -78,6 +83,7 @@ async function open(kind: ElementStyleKind): Promise<{ close(): Promise<void> }>
     props: { kind, boardId, elementId, style, x: 10, y: 10, onclose: () => {} },
     context: new Map<unknown, unknown>([[BOARD_SCOPE_KEY, getActiveScope()]]),
   });
+  mounted.add(component);
   await settle();
   return {
     close: async () => {
@@ -85,6 +91,7 @@ async function open(kind: ElementStyleKind): Promise<{ close(): Promise<void> }>
       // same flush as a pick would let the teardown read the style from
       // before that flush, so let the picks settle first.
       await settle();
+      mounted.delete(component);
       await unmount(component);
       await settle();
     },
@@ -118,7 +125,10 @@ beforeEach(() => {
   historyStore.clear();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  for (const component of mounted) await unmount(component);
+  mounted.clear();
+  await settle();
   historyStore.clear();
   historyStore.setActiveBoard(null);
   boardCacheStore.clear();
@@ -162,7 +172,7 @@ describe('ElementStylePopup rows per kind', () => {
     popup = await open('task');
     expect(document.getElementById('ti-font-body')).not.toBeNull();
     await popup.close();
-  });
+  }, 20_000); // four mounts in one test
 });
 
 describe('ElementStylePopup writes and undo', () => {

@@ -61,6 +61,11 @@ export async function saveBoardFile(filePath: string, data: unknown): Promise<st
  * a taken name is refused (code `EEXIST`) rather than bumped to ` (2)`,
  * which would leave the board named differently from its file.
  */
+/** Where `createBoardFile` puts a board named `name` (in `subfolder` when given). */
+export function boardFilePath(vaultRoot: string, name: string, subfolder?: string): string {
+  return join(subfolder ? join(vaultRoot, subfolder) : vaultRoot, `${name}${BOARD_EXTENSION}`);
+}
+
 export async function createBoardFile(
   vaultRoot: string,
   name: string,
@@ -70,7 +75,7 @@ export async function createBoardFile(
   const targetDir = subfolder ? join(vaultRoot, subfolder) : vaultRoot;
   const json = serializeBoardPayload(data);
   await ensureDir(targetDir);
-  const filePath = join(targetDir, `${name}${BOARD_EXTENSION}`);
+  const filePath = boardFilePath(vaultRoot, name, subfolder);
   await createExclusiveFile(filePath, json);
   return filePath;
 }

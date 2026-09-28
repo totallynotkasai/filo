@@ -6,12 +6,15 @@
  * externally" when the create's echo arrives.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import { promises as fs } from 'fs';
+import { existsSync, promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown | Promise<unknown>>();
 const suppressed: Array<{ path: string; ms: number }> = [];
+/** Each own-bytes window board:create opens, and whether the file existed yet. */
+const ownWrites: Array<{ path: string; content: string | undefined; fileExisted: boolean }> = [];
+let watchedVault = '';
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -27,6 +30,9 @@ vi.mock('electron', () => ({
 vi.mock('../../main/ipc/vault.ipc', () => ({
   getActiveWatcher: () => ({
     suppress: (path: string, ms: number) => suppressed.push({ path, ms }),
+    suppressWrite: (path: string, _ms: number, content?: string) => {
+      ownWrites.push({ path, content, fileExisted: existsSync(join(watchedVault, path)) });
+    },
     recordOwnWrite: () => {},
   }),
 }));
@@ -47,7 +53,9 @@ describe('board:create (main)', () => {
   beforeEach(async () => {
     vaultDir = await fs.mkdtemp(join(tmpdir(), 'filo-board-create-stat-'));
     vaultRegistry.setCurrentVault(vaultDir);
+    watchedVault = vaultDir;
     suppressed.length = 0;
+    ownWrites.length = 0;
   });
 
   afterEach(async () => {
@@ -70,6 +78,40 @@ describe('board:create (main)', () => {
     expect(res.mtimeMs).toBe(stat.mtimeMs);
     expect(res.size).toBe(stat.size);
     expect(suppressed.map((s) => s.path)).toEqual(['Plan.board.json']);
+  });
+
+  // The create reserves an empty placeholder, then writes the JSON over it. A
+  // slow disk lets the watcher's debounce fire in between, and the renderer
+  // then read the empty file as a broken board ("Unexpected end of JSON
+  // input"). The echo is hidden before anything lands, for just those two
+  // contents, so another program's file at the name still gets through.
+  it('hides the placeholder and the JSON before the file exists, in a subfolder too', async () => {
+    const create = handlers.get('board:create');
+    if (!create) throw new Error('board:create handler not registered');
+    const data = { version: 8 };
+    const res = (await create({}, vaultDir, 'Plan', data, 'Boards')) as { ok: boolean; path: string };
+    expect(res.ok).toBe(true);
+    expect(ownWrites.map((w) => w.path)).toEqual(['Boards/Plan.board.json', 'Boards/Plan.board.json']);
+    expect(ownWrites.every((w) => !w.fileExisted)).toBe(true);
+    const onDisk = await fs.readFile(join(vaultDir, 'Boards', 'Plan.board.json'), 'utf8');
+    expect(ownWrites.map((w) => w.content)).toEqual(['', onDisk]);
+  });
+});
+
+describe('the pre-create window (watcher suppression)', () => {
+  it('drops events while the file is empty or holds the new board, not for other bytes', async () => {
+    const { SuppressionWindows, ownBytesOf } = await import('../../main/services/watcherSuppression');
+    const json = '{\n  "version": 8\n}';
+    const w = new SuppressionWindows();
+    w.suppressWrite('Plan.board.json', 5000, '');
+    w.suppressWrite('Plan.board.json', 5000, json);
+    const holding = (text: string) => () => {
+      const own = ownBytesOf(text);
+      return { size: own.size, sha1: () => own.sha1 };
+    };
+    expect(w.isSuppressed('Plan.board.json', true, holding(''))).toBe(true);
+    expect(w.isSuppressed('Plan.board.json', true, holding(json))).toBe(true);
+    expect(w.isSuppressed('Plan.board.json', true, holding('{"version":8,"board":{"id":"theirs"}}'))).toBe(false);
   });
 });
 

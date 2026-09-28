@@ -25,7 +25,7 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../../main/ipc/vault.ipc', () => ({
-  getActiveWatcher: () => ({ suppress: () => {}, recordOwnWrite: () => {} }),
+  getActiveWatcher: () => ({ suppress: () => {}, suppressWrite: () => {}, recordOwnWrite: () => {} }),
 }));
 
 const { registerBoardHandlers } = await import('../../main/ipc/board.ipc');

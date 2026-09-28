@@ -6,6 +6,7 @@ import {
   loadBoardFile,
   saveBoardFile,
   createBoardFile,
+  boardFilePath,
   scanBoardFiles,
   resolveBoardPath,
   scanBoardConflicts,
@@ -309,6 +310,14 @@ export function registerBoardHandlers(): void {
       assertSafeFilename(name, { forCreation: true });
       assertSafeFilename(`${name}.board.json`, { forCreation: true });
       assertPayloadByteSize(jsonPayloadByteSize(data), PAYLOAD_LIMITS.BOARD, 'board:create');
+      // The create reserves a 0-byte placeholder, then writes the JSON over it.
+      // On a slow disk the watcher's debounce can fire in between, and the
+      // renderer would read the empty file as a broken board from another
+      // program. Hide the path up front, but only while it holds one of those
+      // two contents: another program's file at the name still gets through.
+      const plannedRel = relativePosix(vaultRoot, boardFilePath(vaultRoot, name, subfolder));
+      getActiveWatcher()?.suppressWrite(plannedRel, LOCK_AWARE_SUPPRESS_MS, '');
+      getActiveWatcher()?.suppressWrite(plannedRel, LOCK_AWARE_SUPPRESS_MS, serializeBoardPayload(data));
       // A taken name fails here with EEXIST (`TARGET_EXISTS` to the renderer),
       // before anything is written.
       const fullPath = await createBoardFile(vaultRoot, name, data, subfolder);

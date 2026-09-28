@@ -15,6 +15,8 @@
 import { markDirty, markClean } from '../vault/dirtyFlagRecovery';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 import { rebasePath, registerPathRenamable } from '../vault/renamePathKeys';
+import { clearComponentRetries, releaseComponentWrite, retainComponentWrite } from './componentWriteRetry';
+import { isRetainableWriteError } from './writeSchedulerFailures';
 
 // ── Recent self-write registry ──
 //
@@ -146,8 +148,8 @@ const pendingVaultPaths = new Set<VaultPath>();
  * These keep the sentinel dirty even after `inflightWriteCount` drains so
  * a crash recovery flag survives a string of failed writes.
  *
- * Same insertion-order invariant as `pendingVaultPaths` — overflow trim
- * removes the oldest failures first.
+ * Unlike `pendingVaultPaths` it is never trimmed: every entry is a change
+ * that isn't on disk, and forgetting one would report it saved.
  */
 // allow-module-state: reset via resetWriteTracking called from boardSaver's pre-swap handler
 const failedVaultPaths = new Set<VaultPath>();
@@ -223,7 +225,8 @@ function bumpComponentWriteGen(path: string): number {
 }
 
 /**
- * Defensive ceiling — if either tracking set grows beyond this it indicates
+ * Defensive ceiling for the pending and reported sets (never the failed one) —
+ * if one grows beyond this it indicates
  * a leak (e.g. rename-mid-debounce that didn't drop the old path). We trim
  * oldest entries (FIFO by insertion order) and warn so the user-visible
  * sentinel doesn't bloat.
@@ -509,8 +512,9 @@ export function markPathFailed(vaultRoot: string | undefined, path: string): voi
   if (!path) return;
   const key = track(path);
   pendingVaultPaths.delete(key);
+  // Never trimmed: each entry is a change not on disk, and dropping one would
+  // let save() and the leave check report it saved.
   failedVaultPaths.add(key);
-  trimSetIfOverflowing(failedVaultPaths, 'failedVaultPaths');
   refreshSentinel(vaultRoot);
   notifyWriteState();
 }
@@ -641,8 +645,7 @@ export function endWrite(
       // out of sync with memory. Move it from "pending" to "failed" so a
       // later successful retry can drop it.
       pendingVaultPaths.delete(key);
-      failedVaultPaths.add(key);
-      trimSetIfOverflowing(failedVaultPaths, 'failedVaultPaths');
+      failedVaultPaths.add(key); // never trimmed (see markPathFailed)
     }
   }
   if (inflightWriteCount === 0 && vaultRoot) {
@@ -700,6 +703,7 @@ export function resetWriteTracking(oldVaultRoot?: string): void {
   // Drop per-path component write generations so a stale late self-heal from
   // the outgoing vault can't match and clear.
   componentWriteGenByPath.clear();
+  clearComponentRetries();
   inflightWriteCount = 0;
   for (const cb of resetCallbacks) cb();
   notifyWriteState();
@@ -717,6 +721,7 @@ export function __resetDirtyTrackingForTests(): void {
   spellings.clear();
   recentSelfWrites.clear();
   componentWriteGenByPath.clear();
+  clearComponentRetries();
   writeErrorListener = null;
   writeStateListener = null;
   for (const cb of testResetCallbacks) cb();
@@ -755,6 +760,19 @@ export function __componentWriteGenSizeForTests(): number {
 export interface TrackComponentWriteOptions {
   kind?: WriteErrorInfo['kind'];
   notifyOnError?: boolean;
+  /**
+   * What a failure leaves behind, for a write no scheduler retries:
+   *  - `retry`: a transient failure is kept for Retry (`componentWriteRetry.ts`),
+   *    with `rescueText` as the file for a rescue copy and `onSuccess` run
+   *    after a retry lands; any other failure is reported, since firing it
+   *    again can't help.
+   *  - `'report'`: the failure's toast is the whole story (a delete or rename
+   *    that didn't happen leaves nothing unsaved), so the path is reported,
+   *    not left failed.
+   * Omitted: the path stays failed until a later write of it succeeds (the
+   * note writer, which keeps the change queued itself).
+   */
+  onFailure?: { retry: { rescueText?: () => string; onSuccess?: () => void } } | 'report';
 }
 
 export async function trackComponentWrite<T>(
@@ -771,6 +789,8 @@ export async function trackComponentWrite<T>(
   // Capture this write's per-path generation BEFORE beginWrite so a late
   // `endWrite(true)` self-heal can be gated on still being the newest.
   const writeGen = bumpComponentWriteGen(path);
+  // This write supersedes a failed one of the same path kept for Retry.
+  releaseComponentWrite(path);
   beginWrite(vaultRoot, path);
   // Register suppression BEFORE awaiting the IPC: the watcher event for our
   // own write can reach the renderer before the IPC resolves and would be
@@ -789,6 +809,23 @@ export async function trackComponentWrite<T>(
     dropRecentSelfWrite(path);
     if (notifyOnError) notifyWriteError({ kind, path, error: err });
     endWrite(vaultRoot, path, false);
+    const onFailure = options.onFailure;
+    if (onFailure !== undefined && componentWriteGenByPath.get(vaultPath(path)) === writeGen) {
+      if (onFailure !== 'report' && isRetainableWriteError(err, true)) {
+        const { rescueText, onSuccess } = onFailure.retry;
+        retainComponentWrite({
+          relPath: path,
+          rescueText,
+          run: async () => {
+            await trackComponentWrite(vaultRoot, path, writeFn, options);
+            onSuccess?.();
+          },
+        });
+      } else {
+        // Nothing a retry could fix, and the toast above said so.
+        markPathReported(vaultRoot, path);
+      }
+    }
     throw err;
   }
 }

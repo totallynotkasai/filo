@@ -37,10 +37,29 @@ export interface MiscWriteArgs {
 // allow-module-state: cleared by the registerResetCallback below (vault swap)
 const latestMiscArgs = new Map<string, () => MiscWriteArgs | null>();
 
+/** Paths whose "not saving" notice has shown this vault session. */
+// allow-module-state: cleared by the registerResetCallback below (vault swap)
+const corruptNoticeShown = new Set<string>();
+
 const miscScheduler = createScheduler<MiscWriteArgs>({
   name: 'miscWriteScheduler',
   debounceMs: BOARD_WRITE_DEBOUNCE_MS,
   performWrite: async (args) => {
+    // Loaded a `.filo/viewports.json` or `.filo/hotkeys.json` in a corrupt
+    // state? Don't write over the user's file with in-memory defaults. The
+    // change isn't on disk, though, so it counts as failed (save() says so,
+    // leaving keeps a rescue copy) rather than as saved; a retry can't fix it.
+    if (isConfigPathCorrupt(args.path)) {
+      const error = Object.assign(
+        new Error(`${args.path} is unreadable on disk; changes to it are not being saved so it isn't overwritten.`),
+        { code: 'CONFIG_CORRUPT' },
+      );
+      if (!corruptNoticeShown.has(args.path)) {
+        corruptNoticeShown.add(args.path);
+        notifyWriteError({ kind: 'config', path: args.path, error });
+      }
+      throw error;
+    }
     try {
       await args.write();
     } catch (err) {
@@ -51,11 +70,6 @@ const miscScheduler = createScheduler<MiscWriteArgs>({
   },
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: args.path }),
   getFailureId: (args) => args.path,
-  // Gate the write against the corruption sentinel. Loaded
-  // a `.filo/viewports.json` or `.filo/hotkeys.json` in a corrupt state?
-  // Skip the write so the user's hand-edited file isn't silently
-  // overwritten with in-memory defaults.
-  shouldSkipWrite: (args) => isConfigPathCorrupt(args.path),
   missingSourceMessage: () =>
     "Filo couldn't save a pending change (tags / theme / template / viewport). Re-apply if needed.",
   // The per-key `args.write()` closure is an IPC write
@@ -74,10 +88,12 @@ const miscScheduler = createScheduler<MiscWriteArgs>({
 registerResetCallback(() => {
   miscScheduler.reset();
   latestMiscArgs.clear();
+  corruptNoticeShown.clear();
 });
 registerTestResetCallback(() => {
   miscScheduler.reset();
   latestMiscArgs.clear();
+  corruptNoticeShown.clear();
 });
 
 /**

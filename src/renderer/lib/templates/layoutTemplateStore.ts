@@ -4,6 +4,7 @@ import {
   CURRENT_LAYOUT_TEMPLATE_VERSION,
 } from '../../schema/layoutTemplate';
 import { trackComponentWrite } from '../boards/boardSaver';
+import type { TrackComponentWriteOptions } from '../boards/writeStateTracking';
 import { reportError } from '../utils/errorBus';
 import { invokeOk } from '../utils/invokeOk';
 import { loadVersionedFile } from '../vault/loadVersionedFile';
@@ -91,10 +92,18 @@ export async function saveLayoutTemplate(
     async () => {
       await invokeOk('templates:layout:write', vaultRoot, filename, template);
     },
-    'config',
+    savedWithRetry(template),
   );
   return { filename };
 }
+
+/** A template write that a lock failed is kept for Retry, and for a rescue copy. */
+function savedWithRetry(template: LayoutTemplate): TrackComponentWriteOptions {
+  return { kind: 'config', onFailure: { retry: { rescueText: () => `${JSON.stringify(template, null, 2)}\n` } } };
+}
+
+/** A rename or delete that didn't happen leaves the template as it was: nothing unsaved. */
+const REPORT_ONLY: TrackComponentWriteOptions = { kind: 'config', onFailure: 'report' };
 
 export async function renameLayoutTemplate(
   vaultRoot: string,
@@ -109,7 +118,7 @@ export async function renameLayoutTemplate(
       async () => {
         await invokeOk('templates:layout:rename', vaultRoot, oldFilename, newFilename);
       },
-      'config',
+      REPORT_ONLY,
     );
   }
   await trackComponentWrite(
@@ -118,7 +127,7 @@ export async function renameLayoutTemplate(
     async () => {
       await invokeOk('templates:layout:write', vaultRoot, newFilename, next);
     },
-    'config',
+    savedWithRetry(next),
   );
   return { filename: newFilename };
 }
@@ -133,6 +142,6 @@ export async function deleteLayoutTemplate(
     async () => {
       await invokeOk('templates:layout:delete', vaultRoot, filename);
     },
-    'config',
+    REPORT_ONLY,
   );
 }

@@ -18,6 +18,11 @@ export interface ReportedError {
   error: unknown;
   /** Optional human-readable detail. Toast subscribers prefer this to `error.message`. */
   message?: string;
+  /**
+   * The file the report is about, when it is about one. Reports about
+   * different files keep separate toasts, so one never replaces another's name.
+   */
+  path?: string;
 }
 
 type Handler = (err: ReportedError) => void;
@@ -33,12 +38,13 @@ export function reportError(
   context: string,
   error: unknown,
   message?: string,
+  path?: string,
 ): void {
   // Preserve the console.error breadcrumb so the devtools call-stack
   // remains intact for triaging — the UI surface is additive, not a
   // replacement for the log.
   console.error(`[${context}]`, message ?? '', error);
-  const payload: ReportedError = { context, error, message };
+  const payload: ReportedError = path === undefined ? { context, error, message } : { context, error, message, path };
   for (const handler of handlers) {
     try {
       handler(payload);

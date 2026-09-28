@@ -7,7 +7,8 @@ import { uiStore } from './ui.svelte';
 import { vaultStore } from './vault.svelte';
 import { themeStore } from './theme.svelte';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
-import { parseSettingsSlices, type VaultCandidateWarning } from '../lib/vault/vaultCandidate';
+import { parseSettingsSlices, type SalvagedSettingsFile, type VaultCandidateWarning } from '../lib/vault/vaultCandidate';
+import { markSalvagedSettingsFile } from '../lib/boards/configWriteScheduler';
 import type { BundledConfigFile, ConfigDriftChoice, ConfigExternalHandlers } from '../lib/boards/configDrift';
 
 /** One prompt per file at a time: a burst of saves shares its answer. */
@@ -57,14 +58,19 @@ function reloadConfigIntoMemory(file: BundledConfigFile, disk: Record<string, un
   const current = project.settings;
   if (file === 'app.json' || file === 'defaults.json') {
     const warnings: VaultCandidateWarning[] = [];
+    const salvaged: SalvagedSettingsFile[] = [];
     const parsed = parseSettingsSlices(
       file === 'app.json' ? disk : { ...current.general },
       file === 'defaults.json'
         ? disk
         : { mindmap: current.mindmap, kanban: current.kanban, tasklist: current.tasklist, document: current.document },
       warnings,
+      salvaged,
     );
-    if (warnings.length > 0) return false;
+    // A field that isn't valid takes its default, as at open; the file is
+    // copied to .filo/recovery/ before Filo next writes over it.
+    for (const w of warnings) uiStore.pushToast(w);
+    for (const f of salvaged) markSalvagedSettingsFile(f);
     if (file === 'app.json') {
       project.settings.general = parsed.general;
     } else {

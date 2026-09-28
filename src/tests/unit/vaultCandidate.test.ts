@@ -285,12 +285,14 @@ describe('loadVaultCandidate', () => {
     );
 
     const candidate = await loadVaultCandidate('/vault');
-    // mindmap is a non-object → schema rejects → fallback + warning.
+    // mindmap is a non-object → that slice takes its defaults, with a warning naming it.
     const sliceWarning = candidate.warnings.find((w) =>
-      w.text.includes('Settings slice'),
+      w.text.includes('.filo/defaults.json'),
     );
     expect(sliceWarning).toBeDefined();
+    expect(sliceWarning?.text).toContain('mindmap');
     expect(sliceWarning?.type).toBe('warning');
+    expect(candidate.salvagedSettings).toEqual(['defaults.json']);
   });
 
   it('preserves built-in active theme without IPC ping for theme:load', async () => {

@@ -109,6 +109,11 @@ const WRITE_HANDLER_CHANNELS = [
   'templates:layout:write',
   'templates:layout:rename',
   'templates:layout:delete',
+  // Note writes: a lock (EBUSY) must reach the note writer as itself, so the
+  // change is kept for Retry instead of folded into IO_ERROR.
+  'vault:write-file-text',
+  'vault:create-file-text',
+  'vault:write-existing-file-text',
 ];
 
 const VERSIONED_SCHEMAS = ['BoardFileDataSchema', 'TagsFileSchema', 'LayoutTemplateSchema'];

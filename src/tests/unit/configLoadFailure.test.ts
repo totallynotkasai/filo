@@ -27,11 +27,18 @@ vi.mock('../../main/ipc/vault.ipc', () => ({
 
 const { registerBoardHandlers } = await import('../../main/ipc/board.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
-const { loadHotkeyOverrides, getHotkeyOverrides, setHotkeyOverrides, _resetForTests } = await import(
-  '@renderer/core/hotkeys'
-);
+const {
+  loadHotkeyOverrides,
+  getHotkeyOverrides,
+  setHotkeyOverrides,
+  setHotkeyOverride,
+  saveHotkeyOverrides,
+  _resetForTests,
+} = await import('@renderer/core/hotkeys');
 const { isConfigPathCorrupt } = await import('@renderer/lib/boards/configWriteScheduler');
 const { __resetDirtyTrackingForTests } = await import('@renderer/lib/boards/boardSaver');
+const { flushAllMisc } = await import('@renderer/lib/boards/miscWriteScheduler');
+const { hasFailedWrites, retryAllFailedWrites } = await import('@renderer/lib/boards/writeStateTracking');
 const { vaultStore } = await import('@renderer/stores/vault.svelte');
 const { installFiloMock, restoreFiloDefault } = await import('../helpers/filoBridge');
 
@@ -115,7 +122,7 @@ describe('loadHotkeyOverrides — a failed read keeps overrides and stops hotkey
     expect(isConfigPathCorrupt('.filo/hotkeys.json')).toBe(false);
   });
 
-  it('still failing after the retries → overrides untouched, hotkeys.json marked corrupt', async () => {
+  it('still locked after the retries → overrides untouched, and not marked corrupt (a lock passes)', async () => {
     setHotkeyOverrides({ 'tile:add': { key: 'a', ctrl: true, shift: true } });
     let calls = 0;
     installFiloMock((channel: string) => {
@@ -126,18 +133,52 @@ describe('loadHotkeyOverrides — a failed read keeps overrides and stops hotkey
     await loadHotkeyOverrides(VAULT, noSleep);
     expect(calls).toBe(4);
     expect(Object.keys(getHotkeyOverrides())).toEqual(['tile:add']);
-    // miscWriteScheduler.shouldSkipWrite gates on this, so the next rebind
-    // can't write a one-entry file over the unread bindings.
-    expect(isConfigPathCorrupt('.filo/hotkeys.json')).toBe(true);
+    // The next rebind reads the file again before it writes (below).
+    expect(isConfigPathCorrupt('.filo/hotkeys.json')).toBe(false);
   });
 
-  it('a corrupt file is treated the same way', async () => {
+  it('a rebind after a locked load reads the file first: kept for Retry while locked, then merged over what it holds', async () => {
+    let locked = true;
+    const saved: unknown[] = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'config:load') return locked ? { __loadFailed: true, error: 'EBUSY' } : { 'tile:add': 'Ctrl+Shift+A', 'tile:lock': 'Ctrl+L' };
+      if (channel === 'config:save') {
+        saved.push(args[2]);
+        return { ok: true };
+      }
+      return null;
+    });
+    await loadHotkeyOverrides(VAULT, noSleep);
+    setHotkeyOverride('tile:delete', { key: 'd', ctrl: true });
+    saveHotkeyOverrides(VAULT);
+    expect((await flushAllMisc()).failed).toEqual(['.filo/hotkeys.json']);
+    expect(saved).toEqual([]);
+
+    locked = false;
+    expect((await retryAllFailedWrites()).failed).toEqual([]);
+    expect(saved).toEqual([{ 'tile:add': 'Ctrl+Shift+A', 'tile:lock': 'Ctrl+L', 'tile:delete': 'Ctrl+D' }]);
+    expect(Object.keys(getHotkeyOverrides()).sort()).toEqual(['tile:add', 'tile:delete', 'tile:lock']);
+  });
+
+  it('a corrupt file keeps the overrides and stops hotkey writes, which report failed rather than saved', async () => {
     setHotkeyOverrides({ 'tile:add': { key: 'a', ctrl: true, shift: true } });
-    installFiloMock((channel: string) =>
-      channel === 'config:load' ? { __corrupt: true, raw: '{', error: 'SyntaxError' } : null,
-    );
+    const saved: unknown[] = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'config:load') return { __corrupt: true, raw: '{', error: 'SyntaxError' };
+      if (channel === 'config:save') saved.push(args[2]);
+      return null;
+    });
     await loadHotkeyOverrides(VAULT, noSleep);
     expect(Object.keys(getHotkeyOverrides())).toEqual(['tile:add']);
     expect(isConfigPathCorrupt('.filo/hotkeys.json')).toBe(true);
+
+    setHotkeyOverride('tile:delete', { key: 'd', ctrl: true });
+    saveHotkeyOverrides(VAULT);
+    expect((await flushAllMisc()).failed).toEqual(['.filo/hotkeys.json']);
+    expect(saved).toEqual([]);
+    expect(hasFailedWrites()).toBe(true);
+    // A retry can't fix an unreadable file, so nothing is kept for it.
+    expect((await retryAllFailedWrites()).failed).toEqual([]);
+    expect(saved).toEqual([]);
   });
 });

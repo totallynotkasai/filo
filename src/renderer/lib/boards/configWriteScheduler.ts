@@ -30,7 +30,7 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
 import { isRetainableWriteError } from './writeSchedulerFailures';
 import { refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
-import { checkConfigDisk, noticeConfig, type BundledConfigFile } from './configDrift';
+import { backupConfig, checkConfigDisk, noticeConfig, type BundledConfigFile } from './configDrift';
 
 export interface ConfigWriteArgs {
   vaultRoot: string;
@@ -55,7 +55,8 @@ export interface ConfigWriteArgs {
  *      `writeConfigs` here, or `miscWriteScheduler.scheduleMiscWrite` /
  *      `vault.svelte.ts:scheduleSidebarOrderWrite` for the misc-bucket
  *      configs). The consumer must call `isConfigTargetCorrupt(target)`
- *      before its disk write and skip silently when true.
+ *      before its disk write and, when true, skip the write and report it as
+ *      failed (`CONFIG_CORRUPT`, not retried), never as saved.
  *
  * hotkeys.json, viewports.json, and sidebar-order.json are included so a
  * hand-edited corruption in any one of them isn't silently overwritten by the next debounced flush of in-memory defaults.
@@ -100,6 +101,19 @@ const corruptConfigTargets = new Set<ConfigTarget>();
  */
 // allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
 const corruptSuppressToastShown = new Set<ConfigTarget>();
+
+/**
+ * Settings files that loaded with some fields reset to their defaults (see
+ * `parseSettingsSlices`). The first write over one copies the file as it is
+ * on disk to `.filo/recovery/` first, so the values Filo couldn't read are
+ * never lost with it. Cleared per vault swap and once the copy is made.
+ */
+// allow-module-state: reset via resetConfigWriteScheduler called from boardSaver's pre-swap handler
+const salvagedSettingsFiles = new Set<'app.json' | 'defaults.json'>();
+
+export function markSalvagedSettingsFile(file: 'app.json' | 'defaults.json'): void {
+  salvagedSettingsFiles.add(file);
+}
 
 /**
  * True for `config:load`'s `{ __loadFailed }` marker: the file could not be
@@ -159,6 +173,7 @@ registerResetCallback(() => {
   lastWrittenConfigs.clear();
   corruptConfigTargets.clear();
   corruptSuppressToastShown.clear();
+  salvagedSettingsFiles.clear();
   configScheduler.reset();
 });
 registerTestResetCallback(() => {
@@ -166,6 +181,7 @@ registerTestResetCallback(() => {
   lastWrittenConfigs.clear();
   corruptConfigTargets.clear();
   corruptSuppressToastShown.clear();
+  salvagedSettingsFiles.clear();
   configScheduler.reset();
 });
 
@@ -346,6 +362,22 @@ export async function writeConfigs(
       continue;
     }
     const recreate = verdict.kind === 'recreate';
+    if (!recreate && (target === 'app.json' || target === 'defaults.json') && salvagedSettingsFiles.has(target)) {
+      // Some of this file's values couldn't be read at open; keep the file
+      // as it is before this write replaces them with defaults.
+      if (!(await backupConfig(vaultRoot, sentinelPath))) {
+        const error = Object.assign(
+          new Error(`Filo couldn't copy ${sentinelPath} to .filo/recovery/ before saving over it, so your change wasn't saved yet.`),
+          { code: 'EBUSY' },
+        );
+        notifyWriteError({ kind: 'config', path: target, error });
+        failed.push(target);
+        retryError ??= error;
+        lastWrittenConfigs.delete(target);
+        continue;
+      }
+      salvagedSettingsFiles.delete(target);
+    }
     try {
       // Mark suppression BEFORE the IPC; the OS watcher echo
       // can reach the renderer before the IPC promise resolves. Re-marked

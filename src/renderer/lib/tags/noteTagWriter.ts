@@ -23,6 +23,6 @@ export async function writeTagChangeToMarkdownPath(
   } catch (err) {
     // A note deleted meanwhile has no tags to change.
     if (isMissingFileError(err)) return;
-    reportError('fileTagsStore', err, `Failed to write tag change to ${relPath}`);
+    reportError('fileTagsStore', err, `Failed to write tag change to ${relPath}`, relPath);
   }
 }

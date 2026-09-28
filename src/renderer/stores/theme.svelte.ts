@@ -331,6 +331,12 @@ export const themeStore = {
   async saveTheme(vaultRoot: string, file: ThemeFile): Promise<string | null> {
     if (!vaultRoot || !file.name.trim()) return null;
     const id = file.id;
+    const saved = (): void => {
+      themeCache = { ...themeCache, [id]: file };
+      if (!availableThemeIds.includes(id)) {
+        availableThemeIds = [...availableThemeIds, id].sort();
+      }
+    };
     try {
       await trackComponentWrite(
         vaultRoot,
@@ -338,12 +344,10 @@ export const themeStore = {
         async () => {
           await invokeOk('theme:save', vaultRoot, id, file);
         },
-        'config',
+        // A locked file: Retry saves it again, and leaving keeps a copy.
+        { kind: 'config', onFailure: { retry: { rescueText: () => `${JSON.stringify(file, null, 2)}\n`, onSuccess: saved } } },
       );
-      themeCache = { ...themeCache, [id]: file };
-      if (!availableThemeIds.includes(id)) {
-        availableThemeIds = [...availableThemeIds, id].sort();
-      }
+      saved();
       return id;
     } catch (err) {
       // trackComponentWrite already surfaced the failure via the
@@ -368,7 +372,8 @@ export const themeStore = {
         async () => {
           await invokeOk('theme:delete', vaultRoot, themeId);
         },
-        'config',
+        // A delete that didn't happen leaves the theme as it was: nothing unsaved.
+        { kind: 'config', onFailure: 'report' },
       );
       const { [themeId]: _removed, ...rest } = themeCache;
       void _removed;

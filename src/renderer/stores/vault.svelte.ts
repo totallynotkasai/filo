@@ -62,7 +62,7 @@ import {
   hasFailedWrites,
   type BoardFileData,
 } from '../lib/boards/boardSaver';
-import type { ConfigWriteArgs } from '../lib/boards/configWriteScheduler';
+import { markSalvagedSettingsFile, type ConfigWriteArgs } from '../lib/boards/configWriteScheduler';
 import {
   dispatchExternalChangeBatch,
   type ExternalChangeEvent,
@@ -335,10 +335,10 @@ function commitVaultCandidate(
 ): void {
   // Drain corruption sentinels into the writer scheduler so the next
   // debounced write won't overwrite a hand-edited bad file with our
-  // in-memory defaults.
-  for (const target of candidate.corruptionTargets) {
-    markCorruptConfigTarget(target);
-  }
+  // in-memory defaults. A settings file read with some fields reset is copied
+  // to .filo/recovery/ before its next write.
+  for (const target of candidate.corruptionTargets) markCorruptConfigTarget(target);
+  for (const file of candidate.salvagedSettings) markSalvagedSettingsFile(file);
   // Drain warning toasts the candidate buffered. We surface them
   // post-commit so a candidate that ultimately FAILS doesn't leave the
   // user staring at warning toasts for a vault they never opened.

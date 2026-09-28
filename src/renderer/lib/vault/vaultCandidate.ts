@@ -34,7 +34,6 @@ import type {
   WorkspaceState,
 } from '../../schema/index';
 import {
-  defaultProjectSettings,
   GeneralSettingsSchema,
   MindMapDefaultsSchema,
   KanbanDefaultsSchema,
@@ -42,6 +41,7 @@ import {
   DocumentDefaultsSchema,
 } from '../../schema/settings';
 import { ProjectSchema } from '../../schema/project';
+import { salvageSlice } from '../settings/settingsSalvage';
 import { loadAllBoards, isTransientBoardLoadError } from '../boards/boardLoader';
 import { boardLoadRetryToast } from '../boards/boardLoadRetryPrompt';
 import { boardLoadFailedToast } from '../boards/boardLoadFailedNotice';
@@ -107,6 +107,9 @@ export type CorruptionTarget =
   | 'sidebar-order.json'
   | 'config:save-workspace';
 
+/** A settings file some of whose fields fell back to their defaults at load. */
+export type SalvagedSettingsFile = 'app.json' | 'defaults.json';
+
 export interface VaultCandidate {
   path: string;
   project: Project;
@@ -143,6 +146,8 @@ export interface VaultCandidate {
   workspaceState: WorkspaceState;
   warnings: VaultCandidateWarning[];
   corruptionTargets: CorruptionTarget[];
+  /** Settings files that loaded with fields reset; backed up before their next write. */
+  salvagedSettings: SalvagedSettingsFile[];
   /**
    * Vault-relative paths of `.filo/` config files whose drift baseline was
    * seeded during load (the file existed and `vault:stat` succeeded). Used by
@@ -326,7 +331,8 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   }
 
   // ── 3. Parse settings slices (per-slice fallback) ────────────────
-  const settings = parseSettingsSlices(raw.app, raw.defaults, warnings);
+  const salvagedSettings: SalvagedSettingsFile[] = [];
+  const settings = parseSettingsSlices(raw.app, raw.defaults, warnings, salvagedSettings);
 
   // ── 4. Construct & validate the virtual Project ──────────────────
   const now = Date.now();
@@ -354,8 +360,10 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
   // we still proceed with the unvalidated object so the user isn't
   // locked out of their vault, but a warning toast surfaces the issue.
   const parsed = ProjectSchema.safeParse(virtualProjectInput);
+  // The settings slices were parsed above, keeping keys a newer Filo wrote;
+  // the project schema would strip those again.
   const project: Project = parsed.success
-    ? (parsed.data as Project)
+    ? ({ ...(parsed.data as Project), settings } as Project)
     : (virtualProjectInput as Project);
   if (!parsed.success) {
     warnings.push({
@@ -553,6 +561,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     workspaceState,
     warnings,
     corruptionTargets,
+    salvagedSettings,
     seededConfigBaselinePaths,
   };
 }
@@ -603,10 +612,17 @@ function pickObject(configs: Record<string, unknown>, key: string): Record<strin
   return v as Record<string, unknown>;
 }
 
+/**
+ * The settings slices from `app.json` / `defaults.json`. A field that fails
+ * its schema falls back alone with a warning naming it, and the file it came
+ * from is pushed onto `salvaged` (the writer copies that file to
+ * `.filo/recovery/` before it next writes over it).
+ */
 export function parseSettingsSlices(
   appConfig: Record<string, unknown>,
   defaultsConfig: Record<string, unknown>,
   warnings: VaultCandidateWarning[],
+  salvaged?: SalvagedSettingsFile[],
 ): ProjectSettings {
   // Spread the raw config first so keys this build doesn't recognise
   // (forward-compat fields, the vault `name`) survive `GeneralSettingsSchema`'s
@@ -639,31 +655,31 @@ export function parseSettingsSlices(
     hoverButtons: appConfig.hoverButtons ?? {},
     historyLimit: appConfig.historyLimit,
   };
-  const fallback = defaultProjectSettings();
-  const sliceResults = {
-    general: GeneralSettingsSchema.safeParse(generalInput),
-    mindmap: MindMapDefaultsSchema.safeParse(defaultsConfig.mindmap ?? {}),
-    kanban: KanbanDefaultsSchema.safeParse(defaultsConfig.kanban ?? {}),
-    tasklist: TaskListDefaultsSchema.safeParse(defaultsConfig.tasklist ?? {}),
-    document: DocumentDefaultsSchema.safeParse(defaultsConfig.document ?? {}),
-  } as const;
-  const failedSlices: string[] = [];
-  for (const [name, res] of Object.entries(sliceResults)) {
-    if (!res.success) failedSlices.push(name);
-  }
-  if (failedSlices.length > 0) {
+  // Each field that fails falls back alone (see settingsSalvage.ts): the next
+  // settings save writes these slices back over the files.
+  const general = salvageSlice(GeneralSettingsSchema, generalInput);
+  const mindmap = salvageSlice(MindMapDefaultsSchema, defaultsConfig.mindmap ?? {}, 'mindmap');
+  const kanban = salvageSlice(KanbanDefaultsSchema, defaultsConfig.kanban ?? {}, 'kanban');
+  const tasklist = salvageSlice(TaskListDefaultsSchema, defaultsConfig.tasklist ?? {}, 'tasklist');
+  const document = salvageSlice(DocumentDefaultsSchema, defaultsConfig.document ?? {}, 'document');
+  const defaultsReset = [...mindmap.reset, ...kanban.reset, ...tasklist.reset, ...document.reset];
+  for (const [file, reset] of [['app.json', general.reset], ['defaults.json', defaultsReset]] as const) {
+    if (reset.length === 0) continue;
+    salvaged?.push(file);
     warnings.push({
-      text: `Settings slice(s) reset to defaults due to parse errors: ${failedSlices.join(', ')}.`,
+      text:
+        `Some settings in .filo/${file} weren't valid and were reset to their defaults: ${reset.join(', ')}. ` +
+        'Your other settings were kept. Before Filo next saves that file, it keeps a copy of it in .filo/recovery/.',
       type: 'warning',
       duration: 0,
     });
   }
   return {
-    general: sliceResults.general.success ? sliceResults.general.data : fallback.general,
-    mindmap: sliceResults.mindmap.success ? sliceResults.mindmap.data : fallback.mindmap,
-    kanban: sliceResults.kanban.success ? sliceResults.kanban.data : fallback.kanban,
-    tasklist: sliceResults.tasklist.success ? sliceResults.tasklist.data : fallback.tasklist,
-    document: sliceResults.document.success ? sliceResults.document.data : fallback.document,
+    general: general.data,
+    mindmap: mindmap.data,
+    kanban: kanban.data,
+    tasklist: tasklist.data,
+    document: document.data,
   };
 }
 

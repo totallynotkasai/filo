@@ -25,6 +25,7 @@ import type { RescueResult, UnsavedCause, UnsavedItem } from '../lib/vault/unsav
 import { rawViewInConflict, takeRawRescueItems } from '../lib/notes/rawViews';
 import { unsavedConfigPayloads } from '../lib/boards/configWriteScheduler';
 import { unsavedMiscPayloads } from '../lib/boards/miscWriteScheduler';
+import { unsavedComponentPayloads } from '../lib/boards/componentWriteRetry';
 
 /** A `.filo/` file's rescue copy name: `.filo/tags.json` → `_filo__tags.json`. */
 export function filoRescueName(relPath: string): string {
@@ -42,6 +43,11 @@ function filoRescueItems(unsaved: Set<VaultPath>): { items: Array<{ relPath: str
     if (configs.length > 0) covers.push(vaultPath('.filo/'));
     for (const { relPath, json } of unsavedMiscPayloads((p) => unsaved.has(vaultPath(p)))) {
       items.push({ relPath: filoRescueName(relPath), text: `${json}\n` });
+      covers.push(vaultPath(relPath));
+    }
+    // A theme or template save kept for Retry.
+    for (const { relPath, text } of unsavedComponentPayloads()) {
+      items.push({ relPath: filoRescueName(relPath), text });
       covers.push(vaultPath(relPath));
     }
   } catch (err) {

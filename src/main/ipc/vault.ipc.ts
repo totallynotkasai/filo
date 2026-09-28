@@ -45,7 +45,7 @@ import {
 } from '../services/recentVaults';
 import { vaultRegistry } from '../services/vaultRegistry';
 import { safeVaultColor } from '../../shared/vaultColor';
-import { ipcErrorCode } from './ipcErrorCode';
+import { errorResult, ipcErrorCode } from './ipcErrorCode';
 import { noteReadEncoding, isRegisteredNonUtf8, renameNonUtf8 } from '../services/nonUtf8Registry';
 
 let activeWatcher: FileWatcher | null = null;
@@ -641,7 +641,8 @@ export function registerVaultHandlers(): void {
         return { success: true, path: fullPath };
       } catch (err) {
         logMainError('vault:write-file-text', err);
-        return { success: false, code: ipcErrorCode(err), error: String(err) };
+        // The errno as-is (EBUSY…), so the renderer keeps a locked write for Retry.
+        return errorResult(err);
       }
     },
   );
@@ -681,7 +682,7 @@ export function registerVaultHandlers(): void {
         } catch (createErr) {
           if ((createErr as NodeJS.ErrnoException).code === 'EEXIST') {
             // Expected outcome (the renderer bumps the name) — not an error log.
-            return { success: false, code: 'EEXIST', error: 'file already exists' };
+            return errorResult(createErr);
           }
           throw createErr;
         }
@@ -689,7 +690,7 @@ export function registerVaultHandlers(): void {
         return { success: true, path: fullPath };
       } catch (err) {
         logMainError('vault:create-file-text', err);
-        return { success: false, code: ipcErrorCode(err), error: String(err) };
+        return errorResult(err);
       }
     },
   );
@@ -727,15 +728,9 @@ export function registerVaultHandlers(): void {
         );
         const fullPath = join(vaultRoot, relativePath);
         assertWithinVault(vaultRoot, fullPath);
-        try {
-          await fsPromises.stat(fullPath);
-        } catch (statErr) {
-          const code = ipcErrorCode(statErr);
-          if (code === 'ENOENT') {
-            return { success: false, code: 'ENOENT', error: 'file no longer exists' };
-          }
-          throw statErr;
-        }
+        // A missing file answers ENOENT (the renderer's "deleted" path); any
+        // other stat failure is reported below with its own errno.
+        await fsPromises.stat(fullPath);
         // Never overwrite a file whose bytes aren't UTF-8 with text decoded
         // from them (every non-ASCII byte would become U+FFFD).
         if (isRegisteredNonUtf8(fullPath)) return notUtf8Refusal(relativePath);
@@ -755,8 +750,9 @@ export function registerVaultHandlers(): void {
         noteOwnWrite(relativePath, content);
         return { success: true, path: fullPath };
       } catch (err) {
-        logMainError('vault:write-existing-file-text', err);
-        return { success: false, code: ipcErrorCode(err), error: String(err) };
+        // A file already gone is the renderer's to handle, not a main error.
+        if ((err as NodeJS.ErrnoException | null)?.code !== 'ENOENT') logMainError('vault:write-existing-file-text', err);
+        return errorResult(err);
       }
     },
   );

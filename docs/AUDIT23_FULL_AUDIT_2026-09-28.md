@@ -291,6 +291,35 @@ D6 / D17, D8, D29, D30 and D44 are covered by the characterisation and unit spec
 5. **D39.** Stop trimming `failedVaultPaths`, or trim only entries whose path also has no retained ledger args.
 6. **D40.** `reportError` accepts an optional path, and the aggregator keys on context + path. Show a readable label instead of the raw context id.
 
+#### Phase 2 status: done (2026-09-28)
+
+All six items are fixed. Each has a regression test that was run against the unfixed code, failed there, and passes with the fix. Decision 5 was taken as recommended: salvage plus a backup, never a paused file.
+
+| Item | Fix | Tests |
+|---|---|---|
+| D9 | New `lib/settings/settingsSalvage.ts`: `salvageSlice` parses a slice, drops each field an issue points at (a bad item in a list drops the list) so its default applies, and copies back every key the schema doesn't know. `parseSettingsSlices` uses it for all five slices and names the reset fields in one warning per file. The candidate lists the salvaged files; the commit marks them in `configWriteScheduler`, whose first write over such a file copies it to `.filo/recovery/<ts>-keep/` first (`backupConfig`). No copy, no write: the change fails as `EBUSY`, kept for Retry. | `settingsSalvage.test.ts`: out-of-range size, unknown enum, unknown keys in both files, a bad list item; the first write copies first and changes only the bad and the edited field; a second write doesn't copy again; a failed copy blocks the write |
+| D10 | `trackComponentWrite` takes `onFailure`. `{ retry }`: a transient failure is kept in the new `lib/boards/componentWriteRetry.ts` (a retry hook, so the toast's Retry and quit's "Retry now" fire it; its file goes into a rescue copy); any other failure is reported (`markPathReported`). `'report'`: always reported. Theme and template saves pass `retry`; theme and template deletes and template renames pass `'report'`. `createExclusive` no longer marks the path failed. | `componentWriteRetry.test.ts`: Retry re-fires a locked theme save and updates the theme list; fails again → kept again; unfixable → reported; deletes leave nothing unsaved; template save retried; a failed exclusive create leaves no mark |
+| D31 | The misc scheduler no longer skips a corrupt file's write as saved: `performWrite` throws `CONFIG_CORRUPT` (not retained; one notice per file per session), so save() reports it and a leave keeps a rescue copy. `hotkeys.json` locked at open is no longer marked corrupt: the shortcut changes made meanwhile are recorded, the first write reads the file again (still locked → `EBUSY`, kept for Retry; unreadable → corrupt), and writes those changes over what it holds. | `configLoadFailure.test.ts`: a lock isn't corrupt; locked write kept, then Retry merges; a corrupt file's write reports failed and isn't retried |
+| D34 | The three note write channels (`vault:write-file-text`, `vault:create-file-text`, `vault:write-existing-file-text`) answer every failure through `errorResult`, so EBUSY / EPERM reach the note writer as themselves and the write is kept for Retry. The channels are in the `ipc-errors-carry-code` gate (proved to bite on the old handlers). | `noteWriteLockedRetry.test.ts`: EBUSY not IO_ERROR; ENOENT and EEXIST unchanged; the note writer's Retry lands a locked change |
+| D39 | `failedVaultPaths` is never trimmed. | `failureReporting.test.ts`: 300 failed paths stay unsaved |
+| D40 | `reportError(context, error, message, path?)`. The error bus's aggregator runs `readable`: it keys on context + path, shows the message (or, without one, `readableContext` of the id, e.g. "Board cache: disk full"), and counts repeats of the same file. The note writer, the tag writer and the text-tile seed pass the file. | `failureReporting.test.ts`: two files, two toasts; a repeat counts; no raw ids |
+
+**Verification.** `npm run ci:verify` is green: 669 test files, 6350 tests passed, 5 skipped, 69/69 gates. `vaultCandidate.test.ts` pinned the old whole-slice warning text and now checks the new one. A real-app check (built app, Playwright `_electron`, a scratch vault whose `app.json` had `globalFontSize: 99`, a custom `tabBarScale`, `radarEnabled: false` and an unknown key) confirmed D9:
+- At open, one toast named only `globalFontSize`, and nothing was written or copied.
+- Picking Sort by → Name first copied the untouched file to `.filo/recovery/<ts>-keep/`, then wrote `app.json` with `globalFontSize` at its default, the new sort, and every other value and the unknown key kept.
+- No renderer or console errors.
+
+D10, D31, D34, D39 and D40 are covered by the unit specs above; they were not driven by hand. The new `componentWriteRetry.ts` map carries `allow-no-rename-transfer` (it holds only `.filo/` theme and template paths, which vault renames never move).
+
+**Deviations from the plan**
+
+- **D9:** the backup is taken lazily, at the first write over the file, not at load, so a vault opened repeatedly without a settings change doesn't pile up copies (`-keep` folders are never pruned). Unknown keys are now carried inside all five slices (`defaults.json`'s slices were stripped before too), and the virtual project keeps the salvaged settings rather than re-parsing them with the stripping project schema. Keys at the top level of `defaults.json`, outside the four board slices, are still not kept: no Filo writes any today. The Reload answer of the settings drift prompt now takes a file with an invalid field the same way (salvage, toast, backup before the next write) instead of refusing the reload.
+- **D10:** the plan offered "retain or report" as alternatives; both are used, chosen by the caller: saves are retained, deletes and renames (where nothing is left unsaved) are reported. A kept write is fired by Retry (and quit's "Retry now"), not by every Ctrl+S. `createExclusive` doesn't mark or report the path at all: the note it serves (a recreate) keeps its change queued, which already counts as unsaved.
+- **D31:** instead of re-trying the hotkeys load on the next write only, a locked load also stops the file being treated as corrupt, and shortcut removals made while it was unread are applied as removals on the re-read file. `createScheduler`'s `shouldSkipWrite` option keeps its unit test but has no production caller now.
+- **D34:** no new `LOCKED` code: `errorResult` keeps the errno (EBUSY, EPERM), which the schedulers already treat as retainable. `vault:write-existing-file-text` reports a missing file through the same path (code `ENOENT`, message now the fs error) and no longer logs it as a main-process error.
+- **D39:** stopped trimming outright rather than trimming only entries without retained args: every failed path is unsaved work.
+- **D40:** the path is passed at the note writer, tag writer and text-tile seed sites, not all 166 `reportError` calls; a report without a path still coalesces by context (latest message, with a count). The write-error aggregator is unchanged (it already names every file).
+
 ### Phase 3: themes and theme-related settings (T1–T13, T2)
 
 1. **T1.** The App.svelte effect only sets the variables when the user chose a toolbar / tab bar colour. With the setting blank it must not `removeProperty` what the active theme set. Paint order: theme → user override. Recompute the black / white bar text from the effective colour. **Component test:** a custom theme with a red toolbar paints red, and System-only does too.
@@ -423,6 +452,7 @@ D6 / D17, D8, D29, D30 and D44 are covered by the characterisation and unit spec
 ## Status
 
 - **Phase 1:** done 2026-09-28 (status block under Phase 1).
-- Phases 2–8: not started.
+- **Phase 2:** done 2026-09-28 (status block under Phase 2).
+- Phases 3–8: not started.
 
 When a phase lands, add a "Phase N status" block (fix, tests, verification, deviations) as in Audit-22. When every phase is done, move this file to `docs/archive/`.

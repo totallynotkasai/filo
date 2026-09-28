@@ -23,6 +23,9 @@
  * which re-fires every failed write) stay, and `details` adds a Details
  * button that opens the full list.
  *
+ * The error bus's aggregator runs `readable` (see the option): one toast per
+ * context and file, showing the message rather than the context id.
+ *
  * Separated from the `App.svelte` wiring so the aggregation behaviour can be
  * unit-tested without mounting the component.
  */
@@ -89,6 +92,20 @@ export interface ErrorToastAggregatorOptions {
   windowMs?: number;
   /** Opens the full list; offered once a toast covers more than one file. */
   details?: () => void;
+  /**
+   * For the error bus, whose contexts are ids (`boardCache.persist`), not
+   * labels: a report with a message shows just the message, one without
+   * shows a readable label before the error, and reports coalesce by
+   * context and file, so a second file's report never replaces the first's.
+   */
+  readable?: boolean;
+}
+
+/** `boardCache.create-text-md` → `Board cache`: the subsystem of an error-bus context id. */
+export function readableContext(context: string): string {
+  const head = context.split('.')[0] ?? context;
+  const words = head.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[-_]+/g, ' ').trim().toLowerCase();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : context;
 }
 
 /** How many file names a toast spells out before "…". */
@@ -110,16 +127,20 @@ export function createErrorToastAggregator(
     // Coalesce by `coalesceKey` when supplied, else by `context`. The
     // display prefix below always stays `context`, so the count badge reads per
     // write KIND while distinct recovery locations keep separate toasts.
-    const key = coalesceKey ?? context;
+    const key = coalesceKey ?? (options.readable ? `${context}::${path ?? ''}` : context);
     const detail = message ?? (error instanceof Error ? error.message : String(error));
+    const readableText = message ?? `${readableContext(context)}: ${detail}`;
     const existing = recent.get(key);
 
     if (existing) {
-      const newFile = path !== undefined && !existing.paths.includes(path);
+      // A readable toast is about one file (its key names it), so it only counts.
+      const newFile = !options.readable && path !== undefined && !existing.paths.includes(path);
       const paths = newFile ? [...existing.paths, path] : existing.paths;
-      const text = paths.length > 1
-        ? `${context}: ${paths.length} files couldn't be saved: ${fileList(paths)}`
-        : `${context} (${existing.count + 1}×): ${detail}`;
+      const text = options.readable
+        ? `${readableText} (${existing.count + 1}×)`
+        : paths.length > 1
+          ? `${context}: ${paths.length} files couldn't be saved: ${fileList(paths)}`
+          : `${context} (${existing.count + 1}×): ${detail}`;
       const updated = api.updateToastText(existing.toastId, text);
       if (updated) {
         existing.count++;
@@ -140,7 +161,7 @@ export function createErrorToastAggregator(
 
     const buttons = [...(actions ?? []), ...(sharedActions ?? [])];
     const toastId = api.pushToast({
-      text: `${context}: ${detail}`,
+      text: options.readable ? readableText : `${context}: ${detail}`,
       type: 'error',
       duration: 0,
       ...(buttons.length > 0 ? { actions: buttons } : {}),
@@ -153,6 +174,6 @@ export function createErrorToastAggregator(
       },
     });
     const expiryTimer = setTimeout(() => recent.delete(key), windowMs);
-    recent.set(key, { toastId, count: 1, expiryTimer, paths: path !== undefined ? [path] : [] });
+    recent.set(key, { toastId, count: 1, expiryTimer, paths: path !== undefined && !options.readable ? [path] : [] });
   };
 }

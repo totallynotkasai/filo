@@ -118,11 +118,16 @@
   // that fails 30 .md writes) are coalesced by the aggregator into a
   // single toast with a count badge so bulk failures don't spam the
   // stack. See `createErrorToastAggregator` for the policy.
+  // Readable: a context is an id, so the toast shows the message (or a label),
+  // and a report about another file opens its own toast.
   onError(
-    createErrorToastAggregator({
-      pushToast: (opts) => uiStore.pushToast(opts),
-      updateToastText: (id, text) => uiStore.updateToastText(id, text),
-    }),
+    createErrorToastAggregator(
+      {
+        pushToast: (opts) => uiStore.pushToast(opts),
+        updateToastText: (id, text) => uiStore.updateToastText(id, text),
+      },
+      { readable: true },
+    ),
   );
 
   // Drain pending writes when the main process is about to quit.

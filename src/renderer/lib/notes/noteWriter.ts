@@ -426,7 +426,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
         if (isMissingFileError(err)) {
           if (isStillSameVault(identity)) host.onTargetMissing(path, relPath, entry.body !== undefined);
         } else {
-          reportError('note.unreadable', err, `Couldn't save changes to "${relPath}": the file couldn't be read.`);
+          reportError('note.unreadable', err, `Couldn't save changes to "${relPath}": the file couldn't be read.`, relPath);
         }
         throw err;
       }
@@ -438,6 +438,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
           'note.nonUtf8',
           null,
           `Couldn't save "${relPath}": it isn't UTF-8 text, so Filo won't overwrite it. Use "Convert to UTF-8" first.`,
+          relPath,
         );
         markPathFailed(vaultRoot, relPath);
         throw new Error(`noteWriter: "${relPath}" is not UTF-8`);
@@ -447,6 +448,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
           'note.link',
           null,
           `Couldn't save "${relPath}": it is a link to another file, so Filo won't replace it. Edit the original.`,
+          relPath,
         );
         markPathFailed(vaultRoot, relPath);
         throw new Error(`noteWriter: "${relPath}" is a link`);
@@ -484,6 +486,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
           reason === 'not-properties'
             ? `"${relPath}" starts with a --- block Filo can't read as properties, so this change wasn't saved.`
             : `Couldn't update metadata for "${relPath}": its YAML frontmatter is malformed, so the change wasn't saved. Fix the frontmatter in that file to re-enable metadata edits.`,
+          relPath,
         );
       });
       if (breaksFrontmatter(fresh.text, text)) refuseFrontmatterBreak(vaultRoot, relPath);
@@ -563,7 +566,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
   /** Keeps the change queued as failed and says why, rather than write it. */
   function refuseFrontmatterBreak(vaultRoot: string, relPath: string): never {
     const err = new FrontmatterBreakError(relPath);
-    reportError('frontmatter.wouldBreak', err, `${err.message}, so it wasn't saved.`);
+    reportError('frontmatter.wouldBreak', err, `${err.message}, so it wasn't saved.`, relPath);
     markPathFailed(vaultRoot, relPath);
     throw err;
   }
@@ -600,7 +603,9 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
     const error =
       result.thrown ?? new IpcEnvelopeError('vault:create-file-text', result.error ?? 'create failed', result.code);
     notifyWriteError({ kind: 'component', path: relPath, error });
-    markPathFailed(vaultRoot, relPath);
+    // No path mark: nothing was ever at this path to be out of date, and a
+    // failed mark would outlive the error. A change that still needs this
+    // file (a recreate) stays queued on its note, which keeps it unsaved.
     endWrite(vaultRoot, undefined, false);
     throw error;
   }
@@ -721,7 +726,7 @@ export function createNoteWriter(host: NoteWriterHost): NoteWriter {
           if (next === null || next === fresh.text.raw) return null;
           if (!options?.userAuthored && breaksFrontmatter(fresh.text, next)) {
             const err = new FrontmatterBreakError(relPath);
-            reportError('frontmatter.wouldBreak', err, `${err.message}, so it wasn't saved.`);
+            reportError('frontmatter.wouldBreak', err, `${err.message}, so it wasn't saved.`, relPath);
             throw err;
           }
           rememberOwnWrite(path, noteTextHash(next));

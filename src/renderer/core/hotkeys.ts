@@ -66,6 +66,17 @@ let initialized = false;
 /** Map of `commandId` → user override binding. Loaded from `.filo/hotkeys.json`. */
 let overrides: Record<string, ShortcutBinding> = {};
 
+/**
+ * The vault whose `hotkeys.json` couldn't be read at open (a lock), and the
+ * shortcut changes made since. The file is read again before the first
+ * write, and those changes go on top of what it holds, so a write never
+ * replaces bindings Filo hasn't read. Set and cleared by each vault's load.
+ */
+// allow-module-state: replaced by loadHotkeyOverrides on every vault open
+let unreadHotkeysVault: string | null = null;
+// allow-module-state: replaced by loadHotkeyOverrides on every vault open
+const unreadChanges = new Map<string, ShortcutBinding | null>();
+
 // ── Key event matching ──
 
 function bindingMatches(binding: ShortcutBinding, e: KeyboardEvent): boolean {
@@ -194,6 +205,7 @@ export function setHotkeyOverride(commandId: string, binding: ShortcutBinding | 
   } else {
     delete overrides[commandId];
   }
+  if (unreadHotkeysVault !== null) unreadChanges.set(commandId, binding ? { ...binding } : null);
   for (const s of shortcuts) {
     if (s.commandId === commandId) applyOverrideTo(s);
   }
@@ -311,16 +323,30 @@ export async function loadHotkeyOverrides(
       loaded = await window.filo.invoke('config:load', vaultRoot, 'hotkeys.json');
     }
     if (!isStillSameVault(identity)) return;
+    unreadHotkeysVault = null;
+    unreadChanges.clear();
     const corrupt = !!loaded && typeof loaded === 'object' && '__corrupt' in loaded;
-    if (isConfigLoadFailed(loaded) || corrupt) {
-      // Installing empty overrides here would let the next rebind write a
-      // one-entry hotkeys.json over every other custom binding. Keep what is
-      // in memory and stop hotkey writes for this session instead.
+    // Installing empty overrides here would let the next rebind write a
+    // one-entry hotkeys.json over every other custom binding. Keep what is in
+    // memory instead.
+    if (corrupt) {
+      // Unreadable JSON stays unreadable: stop hotkey writes for this session.
       markCorruptConfigTarget('hotkeys.json');
       reportError(
         'hotkeys.load-overrides',
         null,
         "Couldn't read .filo/hotkeys.json — shortcut changes won't be saved this session",
+      );
+      return;
+    }
+    if (isConfigLoadFailed(loaded)) {
+      // Locked (a sync client, antivirus): the next shortcut change reads it
+      // again before it writes, and waits for Retry while it stays locked.
+      unreadHotkeysVault = vaultRoot;
+      reportError(
+        'hotkeys.load-overrides',
+        null,
+        "Couldn't read .filo/hotkeys.json (it may be locked). Filo reads it again before saving a shortcut change.",
       );
       return;
     }
@@ -352,16 +378,55 @@ export function saveHotkeyOverrides(vaultRoot: string): void {
       path: '.filo/hotkeys.json',
       json: JSON.stringify(payload, null, 2),
       write: async () => {
+        if (unreadHotkeysVault === vaultRoot) {
+          await readHotkeysBeforeWrite(vaultRoot);
+          await invokeOk('config:save', vaultRoot, 'hotkeys.json', serializeOverrides(overrides));
+          return;
+        }
         await invokeOk('config:save', vaultRoot, 'hotkeys.json', payload);
       },
     };
   });
 }
 
+/**
+ * Reads the `hotkeys.json` a lock kept from the open, and puts this session's
+ * shortcut changes on top of it. Throws (EBUSY, kept for Retry) while it is
+ * still locked, and CONFIG_CORRUPT when it turns out unreadable.
+ */
+async function readHotkeysBeforeWrite(vaultRoot: string): Promise<void> {
+  const loaded = await window.filo.invoke('config:load', vaultRoot, 'hotkeys.json');
+  if (unreadHotkeysVault !== vaultRoot) return;
+  if (isConfigLoadFailed(loaded)) {
+    throw Object.assign(
+      new Error("Couldn't read .filo/hotkeys.json before saving your shortcut change (it may be locked)."),
+      { code: 'EBUSY' },
+    );
+  }
+  if (!!loaded && typeof loaded === 'object' && '__corrupt' in loaded) {
+    unreadHotkeysVault = null;
+    unreadChanges.clear();
+    markCorruptConfigTarget('hotkeys.json');
+    throw Object.assign(new Error('.filo/hotkeys.json is unreadable, so shortcut changes are not being saved.'), {
+      code: 'CONFIG_CORRUPT',
+    });
+  }
+  const merged = deserializeOverrides((loaded ?? {}) as HotkeysConfig);
+  for (const [commandId, binding] of unreadChanges) {
+    if (binding) merged[commandId] = binding;
+    else delete merged[commandId];
+  }
+  unreadHotkeysVault = null;
+  unreadChanges.clear();
+  setHotkeyOverrides(merged);
+}
+
 /** Internal — for tests only. Resets the registry to a clean state. */
 export function _resetForTests(): void {
   shortcuts.length = 0;
   overrides = {};
+  unreadHotkeysVault = null;
+  unreadChanges.clear();
   if (initialized && typeof window !== 'undefined') {
     window.removeEventListener('keydown', handleKeyDown);
   }

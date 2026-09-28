@@ -358,6 +358,7 @@ filo/
 │   │   │   │   ├── toggleLockSelection.ts # Ctrl+L rule (lock all if any unlocked), one undo step
 │   │   │   │   ├── boardToolbar.svelte.ts # A board's floating side toolbar: drag, pin, right-click dock (per board, `.filo/workspace.json`)
 │   │   │   │   ├── componentFlush.ts  # registerComponentFlush: what a mounted view holds, handed over by a save or a leave
+│   │   │   │   ├── componentWriteRetry.ts # A locked theme / template save kept for Retry and for a rescue copy
 │   │   │   │   ├── boardModulePreload.ts # Loads every board type's code while idle after a vault opens
 │   │   │   │   └── writeStateTracking.ts # trackComponentWrite + counters
 │   │   │   ├── canvas/                # Canvas engine (custom pointer events)
@@ -422,6 +423,7 @@ filo/
 │   │   │   │   ├── mindMapContextMenus.ts # Tile / frame / canvas menus ("N tiles selected" group)
 │   │   │   │   └── selectionActions.ts # Lock / Tags / Style / Delete on the selection (the Delete key too)
 │   │   │   ├── settings/              # Settings dialog helpers
+│   │   │   │   ├── settingsSalvage.ts # app.json / defaults.json load: a bad field resets alone, unknown keys kept
 │   │   │   │   ├── currentBoardHelpers.ts # Current Board fields: dotted-path read / write, boolean selects
 │   │   │   │   ├── numberInput.ts     # Number fields: clamp to the schema range, blank = inherit
 │   │   │   │   ├── unappliedEditsPrompt.ts # settleUnappliedEdits: Apply / Discard / Cancel before a bulk action

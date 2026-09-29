@@ -107,6 +107,8 @@ const LIFECYCLE_EXEMPT = new Map([
   ['src/renderer/lib/tasklist/datePickerViewState.svelte.ts', 'per-popover state'],
   ['src/renderer/lib/tasklist/notesBox.svelte.ts', 'per-row notes box, dies with the row'],
   ['src/renderer/lib/utils/ariaAnnouncer.svelte.ts', 'per-instance announcer, disposed on unmount'],
+  ['src/renderer/lib/utils/keyedReactivity.svelte.ts', 'classes only; each instance belongs to the store that makes it'],
+  ['src/renderer/lib/utils/progressiveCount.svelte.ts', 'per-folder row count, dies with the folder row'],
   ['src/renderer/stores/themeVersion.svelte.ts', 'a count of theme applications, no vault data; a vault open applies its theme'],
   ['src/renderer/stores/vaultLifecycleGuard.svelte.ts', 'true only while an open or close runs; that call clears it in its finally'],
   ['src/renderer/stores/noteModel.svelte.ts', 'the NoteModel class: per-instance fields; notes.svelte.ts drops every model on a vault swap'],

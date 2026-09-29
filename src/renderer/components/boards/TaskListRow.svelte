@@ -25,12 +25,11 @@
    * they're the per-render args — there's one row per call, and the
    * bundles are reused across rows.
    */
+  import { untrack } from 'svelte';
   import TaskItem from './TaskItem.svelte';
+  import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+  import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { ACCENT_COLOR } from '../../constants/defaults';
-  import {
-    getTaskDepth,
-    type RowLike,
-  } from '../../lib/tasklist/blockMove';
   import { sectionIdForPlacementIndex } from '../../lib/tasklist/sectionMath';
   import type { TaskRow } from '../../lib/tasks/taskListModel';
   import type { Priority } from '../../lib/tasks/frontmatterReaders';
@@ -94,7 +93,13 @@
       boardCtx.placements.findIndex((p) => p.tileId === row.tile.id),
     ),
   );
-  let canAddSubtask = $derived(getTaskDepth(viewModel.rows as RowLike[], row.tile.id) < 2);
+  // Shown before the vault-open read reached its note: ask for it next.
+  $effect(() => {
+    if (!row.fieldsPending) return;
+    const path = resolveTextTileVaultPath(row.tile);
+    if (path) untrack(() => vaultIndexStore.prioritize([path]));
+  });
+  let canAddSubtask = $derived((viewModel.taskDepths.get(row.tile.id) ?? 0) < 2);
   let isDragging = $derived(
     controllers.drag.dragTileId === row.tile.id
       || (controllers.drag.dragTileId !== null
@@ -115,6 +120,7 @@
   <TaskItem
     tile={row.tile}
     completed={row.completed}
+    fieldsPending={row.fieldsPending === true}
     priority={row.priority}
     dueDate={row.dueDate}
     dueTime={row.dueTime}

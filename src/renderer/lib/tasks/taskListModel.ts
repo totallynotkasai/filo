@@ -40,6 +40,11 @@ export interface TaskRow {
   recurrenceMode: RecurrenceMode;
   recurrenceAnchor?: string;
   category: string;
+  /**
+   * The note's fields haven't arrived yet (the vault is still being read at
+   * open): the fields above are blanks, not "not done / no priority".
+   */
+  fieldsPending?: boolean;
 }
 
 export interface GroupKey {
@@ -192,7 +197,11 @@ export function filterTaskRows(
   inputs: TaskFilterInputs,
 ): TaskRow[] {
   const wantTags = inputs.tags.map((t) => t.replace(/^#/, ''));
+  const byFields = inputs.smartList !== 'all' || !inputs.showCompleted || !!inputs.priority || !!inputs.status || wantTags.length > 0;
   return rows.filter((r) => {
+    // A filter on fields waits for them: a row whose note hasn't been read
+    // would pass "not completed" / "no date" on blanks.
+    if (r.fieldsPending && byFields) return false;
     if (inputs.smartList === 'completed') {
       if (!r.completed) return false;
     } else if (!inputs.showCompleted && r.completed) {

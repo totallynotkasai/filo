@@ -19,10 +19,11 @@
  *   to a `$state` variable — the closures are evaluated inside the class's
  *   own `$derived.by` callbacks, so reactivity flows through naturally.
  *
- * Why `void vaultIndexStore.version` inside `rows`:
- *   `readFrontmatter` already reads vault index data, but the version touch
- *   keeps the derivation explicitly reactive to file-watcher-driven index
- *   updates (the row data depends on frontmatter on disk).
+ * Reactivity of `rows`: `readFrontmatter` reads each task's note through the
+ *   note selectors, which track that note alone (its model, or its vault
+ *   index entry). A save of one note re-runs `rows` once; it never reads the
+ *   index's vault-wide `version`, which would re-run it on every save of any
+ *   note.
  */
 
 // The row/group/section derivations below build their date,
@@ -33,7 +34,6 @@
 // `SvelteSet`) add proxy overhead with no observable benefit (mirrors the
 // `spatial.svelte.ts` non-reactive caches). Plain built-ins are used, each marked
 // with the lint escape the project reserves for exactly this case.
-import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import {
   GROUP_ORDER,
   compareRows,
@@ -46,6 +46,10 @@ import {
   type TaskRow,
 } from '../tasks/taskListModel';
 import type { Priority } from '../tasks/frontmatterReaders';
+import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+import { noteFieldsKnown } from '../../stores/noteMeta';
+import { resolveTextTileVaultPath } from '../boards/textTilePath';
+import { buildTaskDepths } from './blockMove';
 import { FIELD_READERS } from '../tasks/frontmatterReaders';
 import type {
   TaskListSection,
@@ -105,22 +109,53 @@ export interface TaskListViewModelDeps {
   getDefaultSectionId: () => string;
 }
 
+/** Equal values, one level deep (arrays element by element): a row or a tile. */
+function sameShallow(a: object, b: object): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  return ka.every((k) => {
+    const x = ra[k];
+    const y = rb[k];
+    if (x === y) return true;
+    return Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((v, i) => v === y[i]);
+  });
+}
+
+function sameRow(a: TaskRow, b: TaskRow): boolean {
+  const { tile: ta, ...fa } = a;
+  const { tile: tb, ...fb } = b;
+  return (ta === tb || sameShallow(ta, tb)) && sameShallow(fa, fb);
+}
+
 export class TaskListViewModel {
   constructor(private deps: TaskListViewModelDeps) {}
+
+  /**
+   * The rows of the last derivation, by tile id. A row whose values didn't
+   * change keeps its object, so its view doesn't re-render when another
+   * task's note is saved (or arrives while the vault is read at open).
+   */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a memo of the last derivation, not reactive state
+  #lastRows = new Map<string, TaskRow>();
 
   // ── Build the row list (filtered + sorted, then grouped) ──
   rows = $derived.by<TaskRow[]>(() => {
     void this.deps.getCacheVersion();
-    void vaultIndexStore.version;
 
     const placements = this.deps.getPlacements();
     const tilesById = this.deps.getTilesById();
+    // While the vault is read at open, a note not yet reached has no fields.
+    const indexing = vaultIndexStore.isBuilding;
     const out: TaskRow[] = [];
     for (const placement of placements) {
       const tile = tilesById[placement.tileId];
       if (!tile) continue;
       const fm = this.deps.readFrontmatter(tile);
-      out.push({
+      const path = indexing ? resolveTextTileVaultPath(tile) : null;
+      const row: TaskRow = {
+        fieldsPending: path ? !noteFieldsKnown(path) : false,
         placement,
         tile,
         completed: FIELD_READERS.completed(fm),
@@ -135,8 +170,12 @@ export class TaskListViewModel {
         recurrenceMode: FIELD_READERS.recurrenceMode(fm),
         recurrenceAnchor: FIELD_READERS.recurrenceAnchor(fm),
         category: FIELD_READERS.category(fm),
-      });
+      };
+      const last = this.#lastRows.get(tile.id);
+      out.push(last && sameRow(last, row) ? last : row);
     }
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- the memo above
+    this.#lastRows = new Map(out.map((r) => [r.tile.id, r]));
     return out;
   });
 
@@ -146,7 +185,6 @@ export class TaskListViewModel {
   // current date — relevant when the app stays open across midnight.
   smartListCounts = $derived.by<Record<SmartListId, number>>(() => {
     void this.deps.getCacheVersion();
-    void vaultIndexStore.version;
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -221,6 +259,8 @@ export class TaskListViewModel {
 
   topLevelRows = $derived(this.nestedView.top);
   childrenByParent = $derived(this.nestedView.children);
+  /** Each task's depth in the subtask hierarchy (0-2), all rows in one pass. */
+  taskDepths = $derived(buildTaskDepths(this.rows));
 
   // ── Grouping ──
   //

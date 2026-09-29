@@ -416,7 +416,7 @@ export const fileTagsStore = {
     const has = (tags: readonly string[]): boolean =>
       anyCase ? tags.some((t) => sameTag(t, tagName)) : tags.includes(tagName);
     // Path order: the index holds notes in the order their reads finished.
-    const notes = vaultIndexStore.allMetadata()
+    const notes = vaultIndexStore.listMetadata()
       .filter((m) => has(noteTags(m.path)))
       .map((m) => m.path)
       .sort((a, b) => normalizeVaultRelative(a).localeCompare(normalizeVaultRelative(b)));
@@ -479,7 +479,7 @@ export const fileTagsStore = {
    * boards — the per-tag `filesForTag` / `getTilesWithTag` each walk them all.
    */
   tagUsageCounts(): Map<string, TagCounts> {
-    const files: Array<{ tags: readonly string[] }> = vaultIndexStore.allMetadata().map((m) => ({ tags: noteTags(m.path) }));
+    const files: Array<{ tags: readonly string[] }> = vaultIndexStore.listMetadata().map((m) => ({ tags: noteTags(m.path) }));
     for (const [path, tags] of Object.entries(file.fileTags)) {
       if (!isNotePath(path)) files.push({ tags });
     }

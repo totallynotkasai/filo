@@ -66,10 +66,8 @@ function seedVaultIndexWithTaggedFile(path: string, tag: string): void {
   const metadata: FileMetadata = {
     path,
     title: path.replace(/\.md$/i, ''),
-    headings: [],
     tags: [tag],
     frontmatter: { tags: [tag] },
-    links: [],
     content: 'body',
     lastModified: 0,
     rawFrontmatter: `tags: [${tag}]`,

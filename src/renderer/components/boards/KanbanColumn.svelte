@@ -626,7 +626,7 @@
   {#if !column.collapsed}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
-      class="column-body"
+      class="column-body" data-lazy-mount-root
       ondragover={(e) => {
         // File-drag visual cue only. Card drags are owned by the inner
         // dndzone (cross-column moves land via dnd-action's shared

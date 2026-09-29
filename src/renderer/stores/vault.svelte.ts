@@ -10,7 +10,7 @@ import { vaultIndexStore } from './vaultIndex.svelte';
 import { tabStore } from './tabs.svelte';
 import { uiStore } from './ui.svelte';
 import { boardStore } from './board.svelte';
-import { boardCacheStore } from './boardCache.svelte';
+import { boardCacheStore, notesOnBoards } from './boardCache.svelte';
 import { historyStore } from './history.svelte';
 import { workspaceStore } from './workspace.svelte';
 import { themeStore } from './theme.svelte';
@@ -401,7 +401,7 @@ function runPostCommitTasks(
     .catch((err) => {
       reportError('vault.recovery', err, 'Failed to check for unfinished work from the last session');
     });
-  const rebuilt = vaultIndexStore.rebuild(fileTree);
+  const rebuilt = vaultIndexStore.rebuild(fileTree, notesOnBoards());
   void tidyTagsAfterOpen({
     identity,
     vaultRoot: newVaultPath,

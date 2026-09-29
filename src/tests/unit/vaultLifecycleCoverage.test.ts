@@ -56,6 +56,11 @@ const EXEMPT_MODULES = new Set([
   'src/renderer/lib/tasklist/taskDragController.svelte.ts',
   'src/renderer/lib/tasklist/datePickerViewState.svelte.ts',
   'src/renderer/lib/tasklist/notesBox.svelte.ts',
+  // Classes only: each KeyedVersions / KeyedSvelteMap belongs to the store that
+  // makes it (and is reset by that store's own swap handler).
+  'src/renderer/lib/utils/keyedReactivity.svelte.ts',
+  // A per-folder row count, owned by a sidebar row and gone with it.
+  'src/renderer/lib/utils/progressiveCount.svelte.ts',
   // Audit 5.3 — per-instance aria-live announcer created by each board and
   // disposed on unmount; its $state is function-local (per createAriaAnnouncer
   // call), never module-level, so nothing survives a vault swap.

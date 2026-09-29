@@ -418,8 +418,9 @@ export class UpdateTaskFieldCommand extends NoteFieldCommand {
     inversePatch: Record<string, unknown>,
     description?: string,
     atomic = false,
+    forwardFrom: ((fm: Readonly<Record<string, unknown>>) => Record<string, unknown>) | null = null,
   ) {
-    super(boardId, relPath, patch, inversePatch, description ?? `Update task ${Object.keys(patch).join(', ')}`, atomic);
+    super(boardId, relPath, patch, inversePatch, description ?? `Update task ${Object.keys(patch).join(', ')}`, atomic, forwardFrom);
   }
 }
 

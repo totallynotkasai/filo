@@ -43,7 +43,7 @@ describe('tag rewrite sweep skips non-UTF-8 notes', () => {
 
   it('rewrites the UTF-8 note, leaves the non-UTF-8 one untouched, and names it in a toast', async () => {
     const metadata = ['Fine.md', 'Legacy.md'].map(
-      (path): FileMetadata => ({ path, title: path, headings: [], tags: ['draft'], frontmatter: {}, links: [], content: '', lastModified: 0, rawFrontmatter: '' }),
+      (path): FileMetadata => ({ path, title: path, tags: ['draft'], frontmatter: {}, content: '', lastModified: 0, rawFrontmatter: '' }),
     );
     const result = await rewriteTagInAllMarkdown({
       vaultRoot: '/vault',

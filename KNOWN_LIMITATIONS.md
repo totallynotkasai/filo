@@ -1241,3 +1241,42 @@ past the dialog that guards their notes.
 sidebar order are lost at quit. Shortcuts (`hotkeys.json`) and the settings
 files are not treated this way: they count as unsaved and ask before an
 outside version is overwritten.
+
+## 39. A Kanban card shows a static preview until its editor mounts
+
+**What:** A text card doesn't build its editor when the board opens. Until the
+card is within about a screen of the column's visible area, its body is the
+note rendered as static HTML (markdown-it, laid out with the editor's styles);
+near the viewport the real editor mounts in idle time, and a press or Tab onto
+the preview mounts it at once. Once mounted, an editor stays until the board
+closes.
+
+**Where:** [src/renderer/components/tiles/LazyTextTileBody.svelte](src/renderer/components/tiles/LazyTextTileBody.svelte),
+[src/renderer/lib/editor/staticPreview.ts](src/renderer/lib/editor/staticPreview.ts),
+[src/renderer/lib/editor/editorMountQueue.ts](src/renderer/lib/editor/editorMountQueue.ts);
+gate `components/kanban-cards-mount-lazily`.
+
+**Why accepted:** An editor per card, all at once, froze a 300-card board for
+about 20 s on every open and tab switch.
+
+**Impact:** The preview is read-only and approximate: Filo's own editor
+extensions (a typed tab, the lead-space mark, aligned blocks, highlight
+colours) may look slightly different until the editor mounts, and a note that
+would open read-only shows its banner only then. The preview never writes.
+
+## 40. A large sidebar folder fills in over about a second
+
+**What:** Expanding a folder renders its first 150 rows at once and the rest
+in idle time, 150 at a time. Until every row is there, dragging to reorder
+that folder is paused (as it is while a search or a tag filter is on), and
+arrow-key navigation reaches only the rows rendered so far.
+
+**Where:** [src/renderer/lib/utils/progressiveCount.svelte.ts](src/renderer/lib/utils/progressiveCount.svelte.ts),
+`VaultFileItem.svelte`.
+
+**Why accepted:** Mounting 2,000 rows in one go held the window for about half
+a second. Windowing the tree would also need a new drag-to-reorder, since each
+folder's reorder zone needs all its rows in the page.
+
+**Impact:** For about a second after expanding a folder of thousands of notes,
+its last rows aren't in the list yet and it can't be reordered.

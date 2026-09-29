@@ -488,6 +488,20 @@ export async function toggleTask(row: HTMLElement): Promise<void> {
   await quiesce(600);
 }
 
+/**
+ * Tick a task at the first moment its checkbox takes a click (it waits while
+ * the task's note hasn't been read yet). Doesn't wait for the save.
+ */
+export async function tickTaskWhenReady(row: HTMLElement): Promise<void> {
+  await waitFor(() => !($(row, '.task-checkbox') as HTMLButtonElement).disabled, 'the task checkbox to take a click', 10000);
+  click($(row, '.task-checkbox'));
+}
+
+/** Whether a task row shows its fields as still loading (not as blanks). */
+export function taskFieldsPending(row: HTMLElement): boolean {
+  return row.querySelector('.task-item-wrap.fields-pending') !== null;
+}
+
 /** The fill colour a ticked task's checkbox is painted with ('' when none). */
 export function taskCheckboxFill(row: HTMLElement): string {
   return $(row, '.task-checkbox').style.backgroundColor;

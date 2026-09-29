@@ -25,7 +25,7 @@ const collapsedFolders = new SvelteSet<string>();
 
 /** Every tagged file: notes by frontmatter, media by `.filo/tags.json`. */
 function taggedFiles(): TaggedFile[] {
-  const out: TaggedFile[] = vaultIndexStore.allMetadata().map((m) => ({ path: m.path, tags: noteTags(m.path) }));
+  const out: TaggedFile[] = vaultIndexStore.listMetadata().map((m) => ({ path: m.path, tags: noteTags(m.path) }));
   for (const [path, tags] of Object.entries(fileTagsStore.file.fileTags)) {
     // A note's tags live only in its frontmatter; a stray tags.json entry for one is ignored.
     const dot = path.lastIndexOf('.');

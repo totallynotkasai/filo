@@ -388,6 +388,58 @@ It must restore the window and turn off background throttling first. Record the 
 - `ci:verify` green.
 - Docs: CLAUDE.md for the index store's reactivity, the Kanban lazy mount and the new gate names.
 
+### Phase 2 outcome (2026-09-29)
+
+**Done.** A25-06, A25-07 and A25-08, the 2.0 measurement script, and two new gates (82 in all). D3 and D5 taken at their defaults; D6 measured over its threshold and resolved differently (deviation 9).
+
+**Measurements** (built app, `scripts/perf/measure.mjs` on a 5,021-note vault from `scripts/perf/genVault.mjs`; window restored, background throttling off; the machine's display runs at 240 Hz, so an idle frame is 4 ms). "Before" is `cc24ee5` (Phase 1), "after" is this phase's final build. Launch-to-launch noise is about ±150 ms.
+
+| Measure | Budget | Before | After |
+|---|---|---|---|
+| Kanban 300: open | < 1 s | 21,582 ms (300 editors) | 305–411 ms (0 editors at first paint) |
+| Kanban 300: switch back to its tab | < 0.5 s | 24,886 ms | 208–268 ms |
+| Kanban 300: long tasks in the 3 s after open | | (the open itself) | 2–9, total 0.5–0.8 s, the longest (0.3–0.4 s) the open itself; 13–14 editors mounted in idle time |
+| Kanban 102: open / switch back | | 1,367 / 1,156 ms | 73–114 / 104–109 ms |
+| Task List 400: open / switch back | | 493 / 720 ms | 254–334 / 284–438 ms |
+| Mind Map 400: open | | 456 ms | 319–412 ms |
+| Task List fields right after the rows appear (5,000-note vault open) | < 1 s | 3,489 ms | 749–939 ms |
+| Typing in a note beside Task List 400, then its autosave | frames < 16 ms | 1 long task (94 ms) | no long task, longest frame 8–13 ms |
+| The same, typing in one of the list's own tasks (`typingtask`, added after the baseline) | frames < 16 ms | not measured | no long task; one 46 ms frame at the autosave |
+| Sidebar: expand a folder of 2,000 notes | D6: 300 ms | 585 ms, in one task | first rows 51–81 ms; all 2,000 in 1.25–1.85 s, at most one 55 ms task |
+| Search ("dragon castle") | | 89 ms | 74 ms |
+| Vault open → sidebar | | 944 ms | 873–955 ms (one run 1,787 ms) |
+| JS heap after the board run | | 290 MB | 117–133 MB |
+
+**What changed, by item.**
+
+| Item | Where | Tests |
+|---|---|---|
+| 2.0 | `scripts/perf/genVault.mjs` (deterministic vault: 5,000 notes, a 2,000-note folder, Kanban 300 / 102, Task List 400, Mind Map 400), `scripts/perf/measure.mjs` (scenarios `boards`, `fields`, `typing`, `typingtask`, `profile`); the old `scripts/gen-perf-vault.mjs` is removed | (not in CI) |
+| A25-06 | `components/tiles/LazyTextTileBody.svelte`, `lib/editor/staticPreview.ts` (`renderNotePreviewHtml`, `sanitizeNoteHtml` in `sanitizeHtml.ts`), `lib/editor/editorMountQueue.ts`, `KanbanCard.svelte` (preview body; checklist badge from `noteBody`), `TextTile.svelte` (`onEditorReady`), `KanbanColumn.svelte` (`data-lazy-mount-root`); `lib/utils/keyedReactivity.svelte.ts` (`KeyedSvelteMap`) for the note store's `models` / `overlays` | unit `staticPreview.test.ts`; component `lazyTextTileBody.test.ts` (no editor or read off screen; a press mounts it and typing saves to the note; focus mounts it; at most `MOUNTS_PER_IDLE` per idle batch; an unmounted card leaves nothing queued), `keyedReactivity.test.ts`; gate `components/kanban-cards-mount-lazily` (proved to bite: importing `TextTile.svelte` in `KanbanCard` fails it) |
+| A25-07 | `stores/vaultIndex.svelte.ts` (batched publishing every 150 ms while building, `isBuilding`, `prioritize`, board notes read first via `notesOnBoards()` in `boardCache.svelte.ts`), `lib/vault/vaultIndex.ts` (no remark parse, MiniSearch built on first `query()`), `commands/noteFieldCommand.ts` (`forwardFrom`), `lib/tasklist/frontmatterWriter.ts` (`completionPatchForFrontmatter`, every completion decided from the note), loading state in `TaskItem.svelte` / `taskListModel.ts` / `taskListViewModel.svelte.ts` (`fieldsPending`, `noteFieldsKnown`) | unit `recurringCompleteFreshRead.test.ts` (fails with the decision taken from the row, as on `cc24ee5`: the blank row completes the task for good; checked by switching `forwardFrom` off, since `cc24ee5` no longer runs against the uninstalled remark packages), `vaultIndex.test.ts` updated; component `vaultIndexPublishing.test.ts` (a rebuild publishes before it finishes); characterisation `taskFieldsAtOpen.test.ts` |
+| A25-08 | `KeyedVersions` per note in `vaultIndexStore.getMetadata`, `listVersion` / `listMetadata()` / `allTags()` for notes and tags; `TaskItem` body via `noteBody`; the view model drops `vaultIndexStore.version` and reuses unchanged row objects; tag counts and the sidebar tag filter on `listMetadata()`; `buildTaskDepths` / `viewModel.taskDepths` for `TaskListRow`; cached `Intl.DateTimeFormat` in `dueDateFormat.ts`; `lib/utils/progressiveCount.svelte.ts` in `VaultFileItem.svelte` | component `vaultIndexPublishing.test.ts` (an autosave of A re-runs A's readers only, not tag readers; with 400 rows showing, one save re-runs one row; a note arriving later reaches its reader; a rename tells both paths); unit `taskDepthMap.test.ts` (fast-check, 300 runs); gate `components/no-global-index-version` (proved to bite: a `void vaultIndexStore.version` in the view model fails it) |
+
+**Deviations from the plan.**
+
+1. **The Kanban freeze wasn't mostly TipTap.** Profiling after the lazy mount showed each editor mount re-running every card on the board: `SvelteMap.get` of a key that isn't in the map subscribes to the whole map, so opening one note (a new `NoteModel`) re-ran every card that had asked about its own not-yet-open note. That made mounting cards one by one quadratic. `KeyedSvelteMap` / `KeyedVersions` (`lib/utils/keyedReactivity.svelte.ts`) give each key its own signal: keys are put into the `SvelteMap`'s underlying `Map` without a reactive write, so `SvelteMap.get` creates a per-key source the reader tracks. `keyedReactivity.test.ts` pins both the Svelte behaviour it works around and the fix. The note store's `models` and `overlays` use it, and so does the vault index (A25-08).
+2. **The mount queue runs in idle time, not N editors per animation frame.** Even after deviation 1 an editor mount on a 300-card page costs 20–60 ms, so a per-frame batch still made every frame a long task. The preview already shows the text and a press mounts at once, so a queued mount is never urgent: `requestIdleCallback` (timeout 1 s), at most `MOUNTS_PER_IDLE` (4) per idle period, stopping when under 8 ms remain. "On screen" comes from a second IntersectionObserver with no margin; the scroll root is the column body, marked `data-lazy-mount-root`. `content-visibility` on cards was tried and measured no gain, so it isn't used.
+3. **The preview is a `.tiptap` element, not `.ProseMirror`,** so nothing that looks for editors finds it (the editor styles are scoped to `.tiptap`). It is marked `data-note-preview`, is a focusable `role="textbox"`, and joins soft breaks, wraps list-item text in paragraphs and builds TipTap's task-list structure so the swap doesn't move anything. Its limits are KNOWN_LIMITATIONS #39.
+4. **A card's checklist badge reads `noteBody(path)`** (the model when open, else the vault index). It read the open model only, which every card had while every card built an editor.
+5. **The completion decision lives in the command, not in a new writer API.** `NoteFieldCommand` already reads the note as it stands on its first execute (the model when loaded, else a fresh read of the file) to build its inverse; a command given `forwardFrom` now also decides its change from that read. `buildTaskFieldCommand` gives every completing patch (plain complete or roll-forward) `completionPatchForFrontmatter`, so the single-row and bulk paths both read recurrence from the file. The plan's `noteStore.patchFrontmatterFrom` (deciding inside the writer's queue) would narrow the window further, to the flush itself; the gap between the read and the queued write is milliseconds. The Kanban done-column move doesn't apply recurrence, so it needed nothing.
+6. **Publishing is batched, and big batches tell every reader at once.** Per-note publishing as each note was read made a Task List re-derive once per arriving note (fields took 50 s to fill in during the first try). While building, changed notes collect for 150 ms and publish together; a batch of more than 32 notes bumps one shared epoch that every per-note reader also tracks, because Svelte walks everything downstream of each bumped source (300 bumps feeding one list cost 750 ms).
+7. **The rebuild reads notes on boards first, and views ask for theirs** (`notesOnBoards()`, `vaultIndexStore.prioritize`): a Task List row or Kanban card whose note isn't read yet asks for it, and the next chunk reads it. Without this the task notes came last in the tree walk and fields lagged 1.9 s.
+8. **Row objects are reused when unchanged** (`TaskListViewModel.#lastRows`), so a save, or a batch of notes arriving, re-renders only the rows it changed. `vault.svelte.ts` and `TaskItem.svelte` are at their allowlisted line ceilings (1,467 and 1,481), so their changes were kept line-neutral.
+9. **D6: progressive rendering, not windowing.** Expanding 2,000 notes measured 443–585 ms, over the 300 ms threshold. Each folder's drag-to-reorder zone (svelte-dnd-action) needs every row in the page, so windowing would mean a new reorder. A folder instead renders its first 150 rows at once and the rest 150 per idle period (`ProgressiveCount`); reorder waits until all are rendered, as it already does under a search or tag filter. First rows in 51–81 ms, all 2,000 in 1.25–1.85 s, at most one 55 ms task. KNOWN_LIMITATIONS #40.
+10. **D5: the remark parse is gone and so are its packages.** Nothing read a note's headings or links, and nothing calls `VaultIndex.query()`. `parseMarkdown` now reads frontmatter with the shared fence parser and the `yaml` package (the note writer's path), and keeps the body as text; `headings` and `links` left `FileMetadata`. `unified`, `remark-parse`, `remark-frontmatter` and `@types/mdast` are uninstalled; MiniSearch stays and is built on the first `query()`. CLAUDE.md's stack table says so.
+11. **Found by profiling, fixed on the way:** `formatDueDateAbsolute` built an `Intl.DateTimeFormat` per call (and `chipLocale` ran `supportedLocalesOf` per call); both are cached now.
+12. **"Autosave re-derive count" is counted in tests, not in the built app.** The app has no counter hook; `vaultIndexPublishing.test.ts` counts derived runs, and the real-app script records frame gaps and long tasks around the autosave.
+
+**New findings (for later phases).**
+
+- **N5** — `electron.vite.config.mts`'s `manualChunks` still names gray-matter, js-yaml, remark, micromark and unified for a `markdown-tools` chunk; none is in the app now. Phase 6.
+- **N6** — typing in the note of a task that is on an open 400-task list still gives one ~46 ms frame at the autosave (the list re-sorts and lays out); no long task. Worth a look if lists grow past a few hundred tasks.
+- **N7** — a board's tile projection (`getFullTilesForBoard`) is one derived per board, so a change to one card's note re-projects every card on that board (about 5 ms at 300 cards). Fine now; per-tile projection would be the next step for boards in the thousands.
+
 ---
 
 ## Phase 3: Metadata correctness
@@ -761,6 +813,8 @@ No behaviour changes. Each commit is small, and `ci:verify` stays green.
 
 Taken in Phase 1, all at their defaults: D1 (with the differences in deviation 1), D2 (a loose mixed list now opens editable, deviation 3), D4 (implemented textually, deviation 7), D10, D11.
 
+Taken in Phase 2: D3 at its default (the queue runs in idle time, Phase 2 deviation 2); D5 at its default, with the remark packages uninstalled (deviation 10); D6 measured over its threshold (443–585 ms) and resolved by progressive rendering instead of windowing (deviation 9).
+
 ## Not included
 
 - **Keeping boards mounted while their tab is hidden** (memory cost). A25-06 makes remounting cheap instead.
@@ -773,4 +827,5 @@ Taken in Phase 1, all at their defaults: D1 (with the differences in deviation 1
 Plan written 2026-09-29.
 
 - **Phase 1: done** 2026-09-29 (see "Phase 1 outcome" for the deviations and four new findings, N1–N4). The report and this plan are committed with it.
-- Phases 2–8: not started.
+- **Phase 2: done** 2026-09-29 (see "Phase 2 outcome": before / after numbers, 12 deviations, new findings N5–N7).
+- Phases 3–8: not started.

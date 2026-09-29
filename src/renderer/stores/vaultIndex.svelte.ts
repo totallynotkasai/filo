@@ -15,16 +15,91 @@ import { hasHiddenSegment, stripLeadingSlash, toPosix } from '../lib/utils/path'
 import type { FileTreeNode } from '../../shared/types';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { vaultPath, type VaultPath } from '../../shared/vaultPath';
+import { KeyedVersions } from '../lib/utils/keyedReactivity.svelte';
 
 /**
  * Reactive wrapper around the VaultIndex. Rebuilds the index on vault open,
  * updates it incrementally from file watcher events, and exposes Svelte 5
  * rune-backed getters that components can read from.
+ *
+ * Three grains of reactivity, so a save re-runs only what it changed:
+ * - `getMetadata(path)` depends on that note's entry alone;
+ * - `allTags()` / `listMetadata()` depend on `listVersion`: the set of notes
+ *   or some note's tags changed;
+ * - `allMetadata()` / `version` depend on every change (search over bodies).
+ *
+ * A rebuild publishes what it has read every `PUBLISH_THROTTLE_MS`, so the
+ * first views fill in while the rest of a large vault is still being read.
+ * Batched, not per note: a view of 400 tasks re-derives once per batch, not
+ * once for each of its notes as it arrives.
  */
 
 const index = new VaultIndex();
 let version = $state(0);
+let listVersion = $state(0);
 let isBuilding = $state(false);
+const entries = new KeyedVersions<VaultPath>();
+
+/** While a rebuild runs, what it has read is published at most this often. */
+export const PUBLISH_THROTTLE_MS = 150;
+/** A batch of more notes than this tells every reader at once (see `KeyedVersions.bumpAll`). */
+const BULK_PUBLISH_KEYS = 32;
+let publishTimer: ReturnType<typeof setTimeout> | null = null;
+// allow-module-state: notes changed since the last publish; emptied by each flush and the pre-swap clear
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const pendingKeys = new Set<VaultPath>();
+let pendingAny = false;
+let pendingList = false;
+
+function flushPublish(): void {
+  if (publishTimer) clearTimeout(publishTimer);
+  publishTimer = null;
+  if (pendingKeys.size > BULK_PUBLISH_KEYS) entries.bumpAll();
+  else for (const key of pendingKeys) entries.bump(key);
+  pendingKeys.clear();
+  if (pendingAny) version += 1;
+  if (pendingList) listVersion += 1;
+  pendingAny = false;
+  pendingList = false;
+}
+
+/** One note's entry changed; `listChanged`: it came, went, or its tags changed. */
+function publish(relativePath: string, listChanged: boolean): void {
+  pendingKeys.add(vaultPath(relativePath));
+  pendingAny = true;
+  if (listChanged) pendingList = true;
+  if (!isBuilding) {
+    flushPublish();
+    return;
+  }
+  publishTimer ??= setTimeout(flushPublish, PUBLISH_THROTTLE_MS);
+}
+
+/** Every entry may have changed (a clear). */
+function publishAll(): void {
+  pendingKeys.clear();
+  entries.reset();
+  pendingAny = true;
+  pendingList = true;
+  flushPublish();
+}
+
+function sameTags(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((t, i) => t === b[i]);
+}
+
+/** Puts `metadata` in the index and tells its readers. */
+function upsertAndPublish(metadata: FileMetadata): void {
+  const prev = index.get(metadata.path);
+  index.upsert(metadata);
+  publish(metadata.path, !prev || !sameTags(prev.tags, metadata.tags));
+}
+
+function removeAndPublish(relativePath: string): void {
+  const had = index.has(relativePath);
+  index.remove(relativePath);
+  if (had) publish(relativePath, true);
+}
 
 /**
  * Monotonic rebuild generation. A fast A→B vault swap can start a second
@@ -41,10 +116,6 @@ let buildGeneration = 0;
  * `finally`. See `whenBuildComplete()`.
  */
 const buildCompleteResolvers: Array<() => void> = [];
-
-function bump(): void {
-  version += 1;
-}
 
 function normaliseRel(relativePath: string): string {
   return stripLeadingSlash(toPosix(relativePath));
@@ -128,7 +199,7 @@ async function indexOnePath(relativePath: string): Promise<void> {
     // partial-read window always true, forcing every settled external
     // truncation through the retry path.
     const metadata = parseMarkdown(relativePath, res.content, res.mtimeMs ?? Date.now());
-    index.upsert(metadata);
+    upsertAndPublish(metadata);
     bumpEntry(rel);
     noteReadEncoding(rel, res.encoding); // a non-UTF-8 note opens non-editable
     noteReadLink(rel, res.link); // so does a symbolic link
@@ -140,7 +211,7 @@ async function indexOnePath(relativePath: string): Promise<void> {
   const code = res.code ?? 'ENOENT';
   if (code === 'ENOENT') {
     cancelRetry(relativePath);
-    index.remove(relativePath);
+    removeAndPublish(relativePath);
     bumpEntry(rel);
     return;
   }
@@ -190,14 +261,68 @@ async function indexPathsChunked(
   }
 }
 
+/**
+ * Notes a view on screen is waiting for (`prioritize`); the rebuild reads
+ * them next. Emptied when a rebuild starts and ends.
+ */
+// allow-module-state: requests for the running rebuild; cleared at its start and end and by the pre-swap clear
+const urgent: string[] = [];
+
+/**
+ * The vault-open read: `ordered` in turn, but a note a view asked for
+ * (`urgent`) goes in the next chunk. Stops once a newer rebuild supersedes it.
+ */
+async function rebuildChunked(ordered: string[], isCurrent: () => boolean): Promise<void> {
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local bookkeeping for this rebuild
+  const remaining = new Map(ordered.map((p) => [vaultPath(p), p]));
+  let next = 0;
+  const take = (key: VaultPath): string | null => {
+    const p = remaining.get(key);
+    if (p === undefined) return null;
+    remaining.delete(key);
+    return p;
+  };
+  while (remaining.size > 0) {
+    if (!isCurrent()) return;
+    const chunk: string[] = [];
+    while (chunk.length < REBUILD_CHUNK_SIZE && urgent.length > 0) {
+      const p = take(vaultPath(urgent.shift() as string));
+      if (p !== null) chunk.push(p);
+    }
+    while (chunk.length < REBUILD_CHUNK_SIZE && next < ordered.length) {
+      const p = take(vaultPath(ordered[next++] as string));
+      if (p !== null) chunk.push(p);
+    }
+    await Promise.all(chunk.map((rel) => indexOnePath(rel)));
+  }
+}
+
 
 export const vaultIndexStore = {
-  /** Read-only reactive cursor — any getter that depends on this will refresh. */
+  /**
+   * Bumps on every change to any note. Reading it re-runs on every autosave
+   * anywhere in the vault: read `getMetadata(path)` for the notes you show,
+   * or `listVersion` for the set of notes and their tags. Components and lib
+   * need an `// allow-global-index-version: <reason>` marker (gate).
+   */
   get version() { void version; return version; },
+  /** Bumps when a note comes or goes or a note's tags change. */
+  get listVersion() { void listVersion; return listVersion; },
+  /** True while the vault is being read at open: entries are still arriving. */
   get isBuilding() { return isBuilding; },
 
+  /**
+   * A view is showing these notes before the vault-open read reached them:
+   * read them next. A no-op once the read is done.
+   */
+  prioritize(paths: readonly string[]): void {
+    if (!isBuilding) return;
+    urgent.push(...paths);
+  },
+
+  /** The note's entry; the reader re-runs when this note's entry changes. */
   getMetadata(path: string): FileMetadata | null {
-    void version;
+    entries.track(vaultPath(path));
     return index.get(path);
   },
 
@@ -208,13 +333,24 @@ export const vaultIndexStore = {
     return { size: meta.rawByteSize ?? meta.content.length, bodyEmpty: meta.content.trim() === '' };
   },
 
+  /** Every entry; the reader re-runs on any change to any note. */
   allMetadata(): FileMetadata[] {
     void version;
     return index.allMetadata();
   },
 
+  /**
+   * Every entry; the reader re-runs when a note comes or goes or its tags
+   * change, not on a body edit. Read a note's other fields through
+   * `getMetadata` / the note selectors, which track that note.
+   */
+  listMetadata(): FileMetadata[] {
+    void listVersion;
+    return index.allMetadata();
+  },
+
   allTags(): Map<string, number> {
-    void version;
+    void listVersion;
     // SvelteMap (rather than plain Map) so this reactive accessor stays on
     // the proxy path Svelte's reactivity prefers — matches the project's
     // svelte/prefer-svelte-reactivity rule.
@@ -233,11 +369,12 @@ export const vaultIndexStore = {
   /**
    * Rebuilds the entire index from the current vault tree. Called when the
    * user opens a vault, or after a change that bulk-invalidates the index.
+   * `first`: notes to read before the rest (the ones open boards show).
    */
-  async rebuild(tree?: FileTreeNode[]): Promise<void> {
+  async rebuild(tree?: FileTreeNode[], first: readonly string[] = []): Promise<void> {
     if (!vaultStore.path) {
       index.clear();
-      bump();
+      publishAll();
       return;
     }
     // Claim a generation up-front. `isCurrent()` is false the moment
@@ -246,11 +383,17 @@ export const vaultIndexStore = {
     const isCurrent = (): boolean => myGeneration === buildGeneration;
     const capturedRoot = vaultStore.path;
     isBuilding = true;
+    urgent.length = 0;
     try {
       index.clear();
+      publishAll();
       const source = tree ?? vaultStore.rawTree;
       const paths = collectMarkdownPaths(source, capturedRoot);
-      await indexPathsChunked(paths, isCurrent);
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local lookup for this rebuild
+      const wanted = new Set(first.map((p) => vaultPath(p)));
+      const early = paths.filter((p) => wanted.has(vaultPath(p)));
+      const late = paths.filter((p) => !wanted.has(vaultPath(p)));
+      await rebuildChunked([...early, ...late], isCurrent);
     } catch (err) {
       reportError('vaultIndex.rebuild', err, 'Failed to rebuild file index — search and tag lookups may be stale');
     } finally {
@@ -259,7 +402,8 @@ export const vaultIndexStore = {
       // when it completes.
       if (isCurrent()) {
         isBuilding = false;
-        bump();
+        urgent.length = 0;
+        flushPublish();
         // Cleared in one batch so a resolver that re-enqueues itself doesn't
         // loop on a half-drained list.
         const resolvers = buildCompleteResolvers.splice(0);
@@ -309,7 +453,6 @@ export const vaultIndexStore = {
       toIndex.push(rel);
     }
     await indexPathsChunked(toIndex);
-    bump();
   },
 
   /**
@@ -320,17 +463,13 @@ export const vaultIndexStore = {
    * against the pre-shrink content (preventing classification of the
    * GROWN-back size as another shrink).
    *
-   * Bumps `version` so reactive consumers re-render. Pass `null` to drop
-   * the entry (mirrors `removePath`).
+   * Tells that note's readers (and tag readers when its tags changed). Pass
+   * `null` to drop the entry.
    */
   restoreMetadata(relativePath: string, metadata: FileMetadata | null): void {
     bumpEntry(normaliseRel(relativePath));
-    if (metadata === null) {
-      index.remove(relativePath);
-    } else {
-      index.upsert(metadata);
-    }
-    bump();
+    if (metadata === null) removeAndPublish(relativePath);
+    else upsertAndPublish(metadata);
   },
 
   /**
@@ -341,14 +480,16 @@ export const vaultIndexStore = {
    * indexed (the file was never markdown, or hasn't been read yet).
    */
   renameKey(oldPath: string, newPath: string): void {
+    if (!index.has(oldPath)) return;
     index.renameKey(oldPath, newPath);
-    bump();
+    publish(oldPath, true);
+    publish(newPath, true);
   },
 
   /** Clears the index entirely (e.g. on vault close). */
   clear(): void {
     index.clear();
-    bump();
+    publishAll();
   },
 };
 
@@ -362,6 +503,7 @@ onVaultSwap('pre-swap', 'vaultIndex', () => {
   pendingRetries.clear();
   retriesSpent.clear();
   entrySeq.clear();
+  urgent.length = 0;
   index.clear();
-  bump();
+  publishAll();
 });

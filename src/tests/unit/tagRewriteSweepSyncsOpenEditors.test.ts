@@ -25,10 +25,8 @@ function makeMetadata(path: string, tag: string): FileMetadata {
   return {
     path,
     title: path,
-    headings: [],
     tags: [tag],
     frontmatter: { tags: [tag] },
-    links: [],
     content: '',
     lastModified: 0,
     rawFrontmatter: '',

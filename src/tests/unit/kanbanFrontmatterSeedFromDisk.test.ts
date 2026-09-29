@@ -31,10 +31,8 @@ function staleIndex(path: string, body: string): void {
   vaultIndexStore.restoreMetadata(path, {
     path,
     title: path.replace(/\.md$/, ''),
-    headings: [],
     tags: [],
     frontmatter: { completed: false },
-    links: [],
     content: body,
     lastModified: 0,
     rawFrontmatter: 'completed: false',

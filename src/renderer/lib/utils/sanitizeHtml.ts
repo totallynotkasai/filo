@@ -76,3 +76,24 @@ export function sanitizeInlineHtml(html: string): string {
     ADD_URI_SAFE_ATTR: ['target', 'rel', 'data-color', 'data-highlight'],
   });
 }
+
+const NOTE_BLOCK_TAGS = [
+  'p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'hr',
+  'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+];
+
+/**
+ * A rendered note body (block Markdown as HTML) for a read-only preview: the
+ * inline set plus block structure, with the same style and URI rules. No
+ * images, forms, media or scripts; a preview never loads anything.
+ */
+export function sanitizeNoteHtml(html: string): string {
+  ensureHook();
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [...INLINE_ALLOWED_TAGS, ...NOTE_BLOCK_TAGS],
+    ALLOWED_ATTR: [...INLINE_ALLOWED_ATTR, 'start', 'colspan', 'rowspan', 'align'],
+    ALLOW_DATA_ATTR: false,
+    ALLOWED_URI_REGEXP,
+    ADD_URI_SAFE_ATTR: ['target', 'rel', 'data-color', 'data-highlight', 'start', 'align'],
+  });
+}

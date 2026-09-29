@@ -26,7 +26,7 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: 80 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: 82 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
@@ -35,7 +35,7 @@ Package:        npm run package
 | `vaultIdentity` | A vault swap mid-`await` can't apply the outgoing vault's data to the new one (`isStillSameVault`); vault-scoped state resets on swap; path-keyed stores use `VaultPath` keys, case-fold compares, and follow renames (path keys in `boardDiscovery` / `vaultDeleteOps` / `folderPins` / `tagsStorage` go through `vaultPath()`, and "the item or inside it" is `isAtOrUnder`); crash sentinels are per-machine; disk-shape IPC goes through `vaultOperations.ts`; one vault open or close runs at a time, and every `vault:close` names the vault it releases (main releases only that one). |
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; a handler's vault-relative path comes from the root / target pair `assertWithinVault` matched (`vaultRelativeWithin`), never `path.relative` across two spellings of the vault (an 8.3 name, a junction), so the `.filo/` guards can't be walked around; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; a command holding snapshots of boards beyond its own names them in `touchedBoardIds()`, so a board reload drops it; Task List section positions are clamped. |
-| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, and a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts. |
+| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts, no view or lib module reads the vault index's vault-wide `version` (it reads the notes it shows), and a Kanban card builds its editor through `LazyTextTileBody` (a static preview, the editor mounted in idle time or on a press). |
 | `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; app source and build config carry no audit ids (`Audit-N`, `P0-N`, `Phase N / N.N`). |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// allow-direct-write: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
@@ -58,8 +58,8 @@ The `coverage` job (the vitest coverage ratchet) runs on pushes to `main` and on
 | Frontend           | Svelte 5 (runes: `$state`, `$derived`, `SvelteSet`), TypeScript, Vite |
 | Rich text editor   | TipTap (ProseMirror) + tiptap-markdown for MD round-tripping          |
 | Canvas             | Custom pointer-event handlers + rbush (spatial index)                  |
-| Markdown parsing   | unified + remark-parse + remark-frontmatter; `yaml` package for FM     |
-| Full-text search   | MiniSearch                                                             |
+| Markdown parsing   | markdown-it (the editor, through tiptap-markdown; card previews); `yaml` package for FM |
+| Full-text search   | MiniSearch (the vault index's `query()`, built on first use); the Search panel matches note bodies itself |
 | Schema validation  | Zod                                                                    |
 | List drag-and-drop | svelte-dnd-action                                                      |
 | IDs                | nanoid                                                                 |
@@ -177,11 +177,11 @@ filo/
 │   │   │
 │   │   ├── stores/                    # Svelte 5 rune stores (.svelte.ts files)
 │   │   │   ├── vault.svelte.ts        # Vault lifecycle, file tree, virtual project
-│   │   │   ├── vaultIndex.svelte.ts   # In-memory metadata index + MiniSearch
+│   │   │   ├── vaultIndex.svelte.ts   # In-memory metadata index: getMetadata tracks one note, listVersion the set of notes and tags; a rebuild publishes as it reads
 │   │   │   ├── notes.svelte.ts        # noteStore: one NoteModel per open note (by VaultPath), owns the note writer
 │   │   │   ├── noteModel.svelte.ts    # The NoteModel class and the note store's public types (notes.svelte.ts re-exports them)
 │   │   │   ├── noteDiskChanges.ts     # onDiskChanged: a watcher event on a loaded note (re-read past our own write, retry a failed read, forget our echo once theirs is taken)
-│   │   │   ├── noteMeta.ts            # noteTitle / noteTags / noteFrontmatter selectors (model, else vault index)
+│   │   │   ├── noteMeta.ts            # noteTitle / noteTags / noteFrontmatter / noteBody / noteFieldsKnown selectors (model, else vault index)
 │   │   │   ├── notePrompts.ts         # The note conflict prompt (Reload / Keep mine) + deleted-note prompt; a reload that shrank a note keeps the longer one in `.filo/recovery/<ts>-keep/`
 │   │   │   ├── vaultExternalChanges.ts  # Watcher events → vault index + noteStore.onDiskChanged
 │   │   │   ├── vaultExternalReconcilers.ts # Registers a reconciler per watcher event kind
@@ -330,7 +330,7 @@ filo/
 │   │   │   │   ├── renameToTitle.ts   # "Rename file to match title"
 │   │   │   │   └── setNoteTitle.ts    # Document-tab title edit → frontmatter `title:`
 │   │   │   ├── vault/                 # Vault-side helpers (renderer)
-│   │   │   │   ├── vaultIndex.ts      # Metadata indexing + MiniSearch wiring
+│   │   │   │   ├── vaultIndex.ts      # Per-note metadata (frontmatter, title, tags, body; no Markdown parse) + MiniSearch built on first query
 │   │   │   │   ├── vaultOperations.ts # Disk-shape IPC: withDrainedWrites, rename, trash/restore, folder, copy
 │   │   │   │   ├── fileRefIntegrity.ts # Board path rewrites on rename, cascade-delete targets, broken refs
 │   │   │   │   ├── dirtyFlagRecovery.ts # `.filo/.dirty.<machineId>` sentinel read/write
@@ -534,7 +534,7 @@ filo/
 │   │   │   │   ├── templateService.ts
 │   │   │   │   ├── layoutCapture.ts
 │   │   │   │   └── layoutTemplateStore.ts
-│   │   │   ├── search/                # Query parser + full-text search runner (MiniSearch)
+│   │   │   ├── search/                # Query parser + search runner (matches over the vault index's bodies)
 │   │   │   │   ├── queryParser.ts     # `tag:` / `board:` / `has:` / `property:` / `type:` operators, /regex/, free text
 │   │   │   │   └── runSearch.ts       # runVaultSearch: every tile on every board plus notes on no board
 │   │   │   ├── spatialIndex.ts        # rbush wrapper
@@ -950,7 +950,7 @@ Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, U
 
 ## Common Gotchas
 
-- **tiptap-markdown** — This handles Markdown ↔ ProseMirror round-tripping. The unified/remark pipeline is for VaultIndex metadata extraction, NOT for the editor.
+- **tiptap-markdown** — This handles Markdown ↔ ProseMirror round-tripping. The vault index doesn't parse Markdown: it reads frontmatter with the `yaml` package (`frontmatterRead.ts`) and keeps the body as text.
 - **svelte-dnd-action** — This is for Kanban column/tile reordering and Task List reordering. Canvas tile dragging is custom (raw pointer-event handlers + manual transform).
 - **`$effect` vs `$derived`** — Use `$derived` for computed values. Use `$effect` only for side effects (IPC calls, DOM manipulation, subscriptions). Overuse of `$effect` is a code smell.
 - **Store file extension** — Must be `.svelte.ts` for runes to work. Plain `.ts` files cannot use `$state`.

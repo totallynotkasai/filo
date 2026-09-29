@@ -3,7 +3,7 @@ import { VaultIndex, parseMarkdown, countTagsInInlineTiles, collectMarkdownPaths
 import type { FileTreeNode } from '../../shared/types';
 
 describe('parseMarkdown', () => {
-  it('extracts frontmatter, headings, tags, and links', () => {
+  it('extracts frontmatter, title, tags and the body', () => {
     const md = `---
 title: Meeting Notes
 tags: [work, urgent, todo, project/subproject]
@@ -25,18 +25,15 @@ See [[OtherDoc]] and [external link](https://example.com) and [local](./another.
     expect(meta.path).toBe('notes/meeting.md');
     expect(meta.title).toBe('Meeting Notes');
     expect(meta.frontmatter.status).toBe('active');
-    expect(meta.headings).toHaveLength(2);
-    expect(meta.headings[0]).toMatchObject({ level: 1, text: 'Meeting Notes' });
-    expect(meta.headings[1]).toMatchObject({ level: 2, text: 'Attendees' });
+    // The body without its frontmatter: what search matches against.
+    expect(meta.content.startsWith('\n# Meeting Notes')).toBe(true);
+    expect(meta.content).toContain('[[OtherDoc]]');
+    expect(meta.rawFrontmatter).toContain('status: active');
 
     expect(meta.tags).toContain('work');
     expect(meta.tags).toContain('urgent');
     expect(meta.tags).toContain('todo');
     expect(meta.tags).toContain('project/subproject');
-
-    expect(meta.links).toContain('OtherDoc');
-    expect(meta.links).toContain('./another.md');
-    expect(meta.links).not.toContain('https://example.com');
   });
 
   it('falls back to the filename stem when there is no frontmatter title', () => {
@@ -133,7 +130,7 @@ describe('parseMarkdown — single yaml parser, no gray-matter coercion (Audit-1
     const md = '---\n: : :\n---\n# Heading\n';
     const meta = parseMarkdown('weird.md', md);
     expect(meta.tags).toEqual([]);
-    expect(meta.headings[0]?.text).toBe('Heading');
+    expect(meta.content).toContain('# Heading');
   });
 });
 
@@ -326,7 +323,7 @@ describe('countTagsInInlineTiles', () => {
   });
 });
 
-describe('parseMarkdown — unified+remark pipeline', () => {
+describe('parseMarkdown — frontmatter and body', () => {
   it('preserves nested tags-with-slashes verbatim through frontmatter', () => {
     const md = [
       '---',
@@ -345,22 +342,13 @@ describe('parseMarkdown — unified+remark pipeline', () => {
     ]);
   });
 
-  it('records heading line numbers from the AST position', () => {
-    const md = [
-      '---',
-      'title: Example',
-      '---',
-      '',
-      '# First',
-      '',
-      'body',
-      '',
-      '## Second',
-    ].join('\n');
+  it('reads the frontmatter the note writer reads (BOM, CRLF, trailing space on the fence)', () => {
+    const md = '\uFEFF---  \r\ntitle: Example\r\ntags: [a]\r\n---\r\n\r\n# First\r\n';
     const meta = parseMarkdown('pos.md', md);
-    expect(meta.headings).toHaveLength(2);
-    expect(meta.headings[0].line).toBeGreaterThan(0);
-    expect(meta.headings[1].line).toBeGreaterThan(meta.headings[0].line);
+    expect(meta.title).toBe('Example');
+    expect(meta.tags).toEqual(['a']);
+    expect(meta.content).toContain('# First');
+    expect(meta.content).not.toContain('title:');
   });
 
   it('returns an empty tag list when frontmatter is malformed', () => {
@@ -375,7 +363,7 @@ describe('parseMarkdown — unified+remark pipeline', () => {
       'Has a #tag in body, which is decorative.',
     ].join('\n');
     const meta = parseMarkdown('broken.md', md);
-    expect(meta.headings[0]?.text).toBe('Body heading');
+    expect(meta.content).toContain('# Body heading');
     expect(meta.tags).toEqual([]);
   });
 });

@@ -49,7 +49,19 @@ export function collectDescendantIds(rows: RowLike[], tileId: string): string[] 
  * is detected (defensive, capped at 8 hops). Used to enforce the 3-level cap.
  */
 export function getTaskDepth(rows: RowLike[], tileId: string): number {
+  return depthOf(new Map(rows.map((r) => [r.tile.id, r])), tileId);
+}
+
+/**
+ * Every row's depth (as `getTaskDepth`), sharing one lookup, for a view that
+ * shows them all: `getTaskDepth` per row builds its lookup each time.
+ */
+export function buildTaskDepths(rows: RowLike[]): Map<string, number> {
   const byId = new Map(rows.map((r) => [r.tile.id, r]));
+  return new Map(rows.map((r) => [r.tile.id, depthOf(byId, r.tile.id)]));
+}
+
+function depthOf(byId: Map<string, RowLike>, tileId: string): number {
   let depth = 0;
   let current = byId.get(tileId);
   let safety = 0;

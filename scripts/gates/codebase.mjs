@@ -56,6 +56,7 @@ const CHARACTERISATION_SPECS = {
   'syncedVault.test.ts': 2,
   'editorFidelity.test.ts': 3,
   'kanbanClick.test.ts': 1,
+  'taskFieldsAtOpen.test.ts': 1,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

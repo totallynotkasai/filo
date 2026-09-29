@@ -37,11 +37,9 @@ describe('UpdateCardFieldCommand on a note no view holds', () => {
     vaultIndexStore.restoreMetadata('Card.md', {
       path: 'Card.md',
       title: 'Card',
-      headings: [],
       tags: [],
       frontmatter: { priority: 'low' },
       rawFrontmatter: 'priority: low',
-      links: [],
       content: 'stale index body',
       lastModified: 0,
     });

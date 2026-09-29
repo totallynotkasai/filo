@@ -98,10 +98,8 @@ describe('tag cascade — synchronous tags.json flush (Phase 4.3)', () => {
     const metadata: FileMetadata = {
       path: 'A.md',
       title: 'A',
-      headings: [],
       tags: ['old'],
       frontmatter: { tags: ['old'] },
-      links: [],
       content: '---\ntags: [old]\n---\nbody\n',
       lastModified: 0,
       rawFrontmatter: 'tags: [old]',

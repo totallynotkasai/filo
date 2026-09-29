@@ -7,7 +7,7 @@ import { uiStore } from '../../stores/ui.svelte';
 import { noteStore, type SetBodyStatus } from '../../stores/notes.svelte';
 import { BatchCommand, UpdateTaskFieldCommand } from '../../commands/index';
 import { nextDueDate, recurrenceAnchorToRecord } from '../tasks/recurrence';
-import type { Priority } from '../tasks/frontmatterReaders';
+import { FIELD_READERS, type Priority } from '../tasks/frontmatterReaders';
 import type { TaskRow } from '../tasks/taskListModel';
 
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
@@ -40,9 +40,13 @@ import { resolveTextTileVaultPath } from '../boards/textTilePath';
  * can't diverge (e.g. one permanently completing repeating tasks).
  *
  * Pure given `now`; defaults to the current time for production callers.
+ *
+ * The row is a first guess: `buildTaskFieldCommand` decides a completion
+ * again from the note as it stands (`completionPatchForFrontmatter`), since
+ * a row shown before its note's fields arrived has no recurrence yet.
  */
 export function completionPatchForRow(
-  row: TaskRow,
+  row: Pick<TaskRow, 'dueDate' | 'recurrence' | 'recurrenceMode' | 'recurrenceAnchor'>,
   now: Date = new Date(),
 ): Record<string, unknown> {
   if (row.recurrence) {
@@ -69,6 +73,24 @@ export function completionPatchForRow(
     }
   }
   return { completed: true };
+}
+
+/** `completionPatchForRow` for the task fields in a note's frontmatter. */
+export function completionPatchForFrontmatter(
+  fm: Readonly<Record<string, unknown>>,
+  now: Date = new Date(),
+): Record<string, unknown> {
+  return completionPatchForRow({
+    dueDate: FIELD_READERS.dueDate(fm),
+    recurrence: FIELD_READERS.recurrence(fm),
+    recurrenceMode: FIELD_READERS.recurrenceMode(fm),
+    recurrenceAnchor: FIELD_READERS.recurrenceAnchor(fm),
+  }, now);
+}
+
+/** A patch that completes a task (`{ completed: true }`) or rolls a recurring one forward. */
+function isCompletionPatch(patch: Record<string, unknown>): boolean {
+  return patch.completed === true || (patch.completed === false && 'dueDate' in patch);
 }
 
 /**
@@ -158,33 +180,46 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     // keys in between (which would leave `completed: true` + an advanced due).
     // This chokepoint serves both the single-row (toggleCompleted) and bulk
     // (bulkMarkComplete) paths, since both build commands through here.
-    const atomic = 'completed' in patch && 'dueDate' in patch;
-    return new UpdateTaskFieldCommand(board.id, path, patch, inverse, description, atomic);
+    //
+    // A completion is decided again from the note as it stands when the
+    // command runs: the row may show a task whose note hasn't loaded yet (no
+    // recurrence), and completing a recurring task must roll it forward.
+    const completion = isCompletionPatch(patch);
+    const atomic = completion || ('completed' in patch && 'dueDate' in patch);
+    return new UpdateTaskFieldCommand(
+      board.id, path, patch, inverse, description, atomic,
+      completion ? (fm) => completionPatchForFrontmatter(fm) : null,
+    );
   }
 
-  async function updateRowField(row: TaskRow, patch: Record<string, unknown>): Promise<void> {
+  /** Runs the row's field change; returns the change as made (null: none). */
+  async function runRowField(row: TaskRow, patch: Record<string, unknown>): Promise<Record<string, unknown> | null> {
     const board = getBoard();
-    if (!board) return;
+    if (!board) return null;
     const cmd = buildTaskFieldCommand(row, patch);
     // Await the command so this resolves once the change is queued and shows
     // on the row; the chain reports its own errors, so swallow the rejection
     // on this fire-and-forget UI path.
-    if (cmd) await historyStore.execute(cmd).catch(() => {});
+    const ok = cmd ? await historyStore.execute(cmd).then(() => true, () => false) : false;
     bumpCacheVersion();
+    return ok && cmd ? cmd.forwardDelta.set : null;
+  }
+
+  async function updateRowField(row: TaskRow, patch: Record<string, unknown>): Promise<void> {
+    await runRowField(row, patch);
   }
 
   async function toggleCompleted(row: TaskRow): Promise<void> {
     // Completing routes through the shared `completionPatchForRow` so the
-    // recurrence roll-forward stays identical to the bulk path.
-    // Un-completing is a plain `completed: false`.
-    const patch = row.completed ? { completed: false } : completionPatchForRow(row);
-    await updateRowField(row, patch);
+    // recurrence roll-forward stays identical to the bulk path (the command
+    // decides it again from the note). Un-completing is a plain
+    // `completed: false`.
+    const applied = await runRowField(row, row.completed ? { completed: false } : completionPatchForRow(row));
     // A recurring roll-forward keeps completed:false and advances the due
     // date, so the checkbox just snaps back with no other signal. Announce the new
-    // date so the reschedule is visible (only when completing produced the
-    // {completed:false, dueDate} roll-forward shape, not a plain (un)complete).
-    if (!row.completed && patch.completed === false && typeof patch.dueDate === 'string') {
-      uiStore.toast(`Recurring task rescheduled to ${patch.dueDate}`, 'info', 2500);
+    // date so the reschedule is visible.
+    if (!row.completed && applied?.completed === false && typeof applied.dueDate === 'string') {
+      uiStore.toast(`Recurring task rescheduled to ${applied.dueDate}`, 'info', 2500);
     }
   }
 

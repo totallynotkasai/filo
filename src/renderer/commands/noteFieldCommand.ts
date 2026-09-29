@@ -13,7 +13,10 @@ import { applyDeltaChecked, inverseDelta } from './frontmatterInverse';
  *
  * - First execute: the user's own action. The inverse delta is taken from the
  *   note as it stands, so undo restores the true prior value even when the
- *   caller built the command from a stale index.
+ *   caller built the command from a stale index. A command given
+ *   `forwardFrom` also decides its change from that read (a completion of a
+ *   recurring task reads the rule from the file, not from a row that may not
+ *   have loaded yet).
  * - Undo and redo: the inverse (or forward) delta, checked against the note as
  *   it stands then. A field another program changed meanwhile keeps that
  *   value, with an "Apply anyway" toast.
@@ -33,6 +36,8 @@ export abstract class NoteFieldCommand extends Command {
    * writes `completed` and `dueDate` together and must never half-apply).
    */
   private atomic: boolean;
+  /** Decides the change from the note as it stands at the first execute. */
+  private readonly forwardFrom: ((fm: Readonly<Record<string, unknown>>) => Record<string, unknown>) | null;
 
   constructor(
     boardId: string,
@@ -41,6 +46,7 @@ export abstract class NoteFieldCommand extends Command {
     inversePatch: Record<string, unknown>,
     description: string,
     atomic = false,
+    forwardFrom: ((fm: Readonly<Record<string, unknown>>) => Record<string, unknown>) | null = null,
   ) {
     super();
     this.targetBoardId = boardId;
@@ -51,6 +57,12 @@ export abstract class NoteFieldCommand extends Command {
     this.inverse = this.snapshot(patchToFrontmatterDelta(inversePatch));
     this.description = description;
     this.atomic = atomic;
+    this.forwardFrom = forwardFrom;
+  }
+
+  /** The change this command makes (after its first execute, as decided then). */
+  get forwardDelta(): FrontmatterDelta {
+    return this.forward;
   }
 
   async execute(): Promise<void> {
@@ -63,6 +75,7 @@ export abstract class NoteFieldCommand extends Command {
     const before = await noteStore.currentFrontmatter(this.relPath);
     // A vault swap landed during the read: the note belongs to the old vault.
     if (!isStillSameVault(identity)) return;
+    if (before && this.forwardFrom) this.forward = this.snapshot(patchToFrontmatterDelta(this.forwardFrom(before)));
     if (before) this.inverse = this.snapshot(inverseDelta(before, this.forward));
     noteStore.patchFrontmatter(this.relPath, this.forward);
     boardCacheStore.markDirty(this.targetBoardId);

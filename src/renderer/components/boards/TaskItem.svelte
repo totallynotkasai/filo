@@ -10,8 +10,7 @@
    */
   import { untrack } from 'svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { noteStore } from '../../stores/notes.svelte';
-  import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+  import { noteBody } from '../../stores/noteMeta';
   import { vaultStore } from '../../stores/vault.svelte';
   import type { Tile } from '../../schema/index';
   import type { ResolvedTaskStyle } from '../../lib/styles/effectiveStyle';
@@ -37,6 +36,7 @@
   let {
     tile,
     completed,
+    fieldsPending = false,
     priority,
     dueDate,
     dueTime = '',
@@ -76,6 +76,7 @@
   }: {
     tile: Tile;
     completed: boolean;
+    fieldsPending?: boolean;
     priority: Priority;
     dueDate: string;
     dueTime?: string;
@@ -161,12 +162,7 @@
 
   let backingPath = $derived(resolveTextTileVaultPath(tile) ?? '');
 
-  let rawBody = $derived.by(() => {
-    void vaultIndexStore.version;
-    const note = backingPath ? noteStore.get(backingPath) : undefined;
-    if (note && note.status !== 'loading') return note.body;
-    return vaultIndexStore.getMetadata(backingPath)?.content ?? '';
-  });
+  let rawBody = $derived(noteBody(backingPath));
 
   let notesPreview = $derived(getBodyPreview(rawBody, 120));
   const notes = new NotesBox({ path: () => backingPath, body: () => rawBody, write: (b) => onSetNotes ? onSetNotes(b) : Promise.resolve('not-open') });
@@ -502,6 +498,7 @@
   class:selected
   class:is-dragging={isDragging}
   class:force-show-buttons={forceShowButtons}
+  class:fields-pending={fieldsPending}
   style:--task-depth={depth}
   style={wrapInlineStyle}
   data-task-id={tile.id}
@@ -570,6 +567,7 @@
     class="task-checkbox"
     role="checkbox"
     aria-checked={completed}
+    disabled={fieldsPending} aria-busy={fieldsPending}
     aria-label={`Completed: ${tile.title}`}
     onclick={(e) => { e.stopPropagation(); onToggleComplete(); }}
     title={completed ? 'Mark incomplete' : 'Mark complete'}
@@ -1142,6 +1140,8 @@
     border-radius: 3px;
   }
 
+  .task-item-wrap.fields-pending .task-checkbox { border-style: dashed; opacity: 0.5; cursor: progress; }
+  .task-item-wrap.fields-pending :is(.task-priority, .task-due, .task-due-btn, .task-start-date, .task-recurrence) { visibility: hidden; }
   .task-checkbox {
     flex-shrink: 0;
     width: 20px;

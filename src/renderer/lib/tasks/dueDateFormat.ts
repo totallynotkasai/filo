@@ -7,15 +7,41 @@
  * 12-hour string (`9am` / `4:30pm`).
  */
 
+/** Whether the runtime supports each locale asked about (asked once per locale). */
+const supportedLocale = new Map<string, boolean>();
+
 /** The OS regional-format locale the preload exposes, else the runtime default. */
 function chipLocale(): string | undefined {
   const locale = typeof window !== 'undefined' ? window.filo?.systemLocale : undefined;
   if (!locale) return undefined;
-  try {
-    return Intl.DateTimeFormat.supportedLocalesOf([locale]).length > 0 ? locale : undefined;
-  } catch {
-    return undefined;
+  let ok = supportedLocale.get(locale);
+  if (ok === undefined) {
+    try {
+      ok = Intl.DateTimeFormat.supportedLocalesOf([locale]).length > 0;
+    } catch {
+      ok = false;
+    }
+    supportedLocale.set(locale, ok);
   }
+  return ok ? locale : undefined;
+}
+
+/**
+ * One formatter per locale and shape: `toLocaleDateString` with options
+ * builds a new `Intl.DateTimeFormat` on every call, and a list of 400 tasks
+ * formats a chip per row.
+ */
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+function dateFormatter(locale: string | undefined, withYear: boolean): Intl.DateTimeFormat {
+  const key = `${locale ?? ''}|${withYear ? 'y' : ''}`;
+  let f = dateFormatters.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat(locale, withYear
+      ? { month: 'short', day: 'numeric', year: 'numeric' }
+      : { month: 'short', day: 'numeric' });
+    dateFormatters.set(key, f);
+  }
+  return f;
 }
 
 /**
@@ -31,9 +57,7 @@ export function formatDueDateAbsolute(iso: string, opts: { locale?: string; now?
     : new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const thisYear = d.getFullYear() === (opts.now ?? new Date()).getFullYear();
-  return d.toLocaleDateString(opts.locale ?? chipLocale(), thisYear
-    ? { month: 'short', day: 'numeric' }
-    : { month: 'short', day: 'numeric', year: 'numeric' });
+  return dateFormatter(opts.locale ?? chipLocale(), !thisYear).format(d);
 }
 
 /**

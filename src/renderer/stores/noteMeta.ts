@@ -34,6 +34,28 @@ export function noteFrontmatter(path: string): Readonly<Record<string, unknown>>
   return noteStore.frontmatter(path);
 }
 
+/**
+ * The note's body (no frontmatter): its model's when loaded, so unsaved typing
+ * shows, else the vault index's copy of the file.
+ */
+export function noteBody(path: string): string {
+  if (!path) return '';
+  const m = noteStore.get(path);
+  if (m && m.status !== 'loading') return m.body;
+  return vaultIndexStore.getMetadata(path)?.content ?? '';
+}
+
+/**
+ * Whether the note's fields are known yet: its model has loaded, or the vault
+ * index holds it. False for a note the vault-open read hasn't reached.
+ */
+export function noteFieldsKnown(path: string): boolean {
+  if (!path) return true;
+  const m = noteStore.get(path);
+  if (m && m.status !== 'loading') return true;
+  return vaultIndexStore.getMetadata(path) !== null;
+}
+
 /** Frontmatter `title` when it is a non-empty string, else `null`. */
 export function titleFromFrontmatter(fm: Readonly<Record<string, unknown>>): string | null {
   const t = fm.title;

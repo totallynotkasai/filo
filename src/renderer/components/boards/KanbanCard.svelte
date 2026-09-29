@@ -13,8 +13,8 @@
    * the `KanbanTilePlacement` and rendered via the same `filo://` media URL
    * pipeline as `ImageTile`.
    */
-  import { noteStore } from '../../stores/notes.svelte';
-  import { noteFrontmatter } from '../../stores/noteMeta';
+  import { noteBody, noteFieldsKnown, noteFrontmatter } from '../../stores/noteMeta';
+  import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { toMediaUrl } from '../../lib/utils/mediaUrl';
@@ -25,10 +25,10 @@
     ResolvedTileStyle,
   } from '../../lib/styles/effectiveStyle';
   import { effectiveTileStyle } from '../../lib/styles/effectiveStyle';
-  import { getContext } from 'svelte';
+  import { getContext, untrack } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import TileContainer from '../tiles/TileContainer.svelte';
-  import TextTileBody from '../tiles/TextTile.svelte';
+  import LazyTextTileBody from '../tiles/LazyTextTileBody.svelte';
   import ImageTile from '../tiles/ImageTile.svelte';
   import AudioTile from '../tiles/AudioTile.svelte';
   import FileTile from '../tiles/FileTile.svelte';
@@ -149,17 +149,22 @@
     notePath ? (noteFrontmatter(notePath) as Record<string, unknown>) : ({} as Record<string, unknown>),
   );
 
+  // Shown before the vault-open read reached its note: ask for it next.
+  $effect(() => {
+    const path = notePath;
+    if (path && vaultIndexStore.isBuilding && !noteFieldsKnown(path)) untrack(() => vaultIndexStore.prioritize([path]));
+  });
+
   let priority = $derived<Priority>(FIELD_READERS.priority(frontmatter));
   let dueDate = $derived<string>(FIELD_READERS.dueDate(frontmatter));
 
   // ── Checklist progress (TipTap TaskList round-trips to `- [ ]` / `- [x]`) ──
-  // Reads the open note's body so ticking a box in its editor refreshes the
-  // badge without a disk round-trip. Hides when total === 0.
+  // The open note's body when loaded (ticking a box in its editor refreshes
+  // the badge without a disk round-trip), else the vault index's: a card
+  // whose editor isn't mounted yet has no open note. Hides when total === 0.
   let checklistProgress = $derived.by<{ checked: number; total: number } | null>(() => {
     if (!notePath) return null;
-    const note = noteStore.get(notePath);
-    if (!note) return null;
-    const body = note.body;
+    const body = noteBody(notePath);
     const checked = (body.match(/\[x\]/gi) ?? []).length;
     const open = (body.match(/\[ \]/g) ?? []).length;
     const total = checked + open;
@@ -315,7 +320,7 @@
 
   <TileContainer tile={tile} flowLayout={true} resolved={composedTileResolved}>
     {#if tile.type === 'text'}
-      <TextTileBody tile={tile as TextTile} resolved={composedTileResolved} />
+      <LazyTextTileBody tile={tile as TextTile} resolved={composedTileResolved} />
     {:else if tile.type === 'image'}
       <ImageTile {tile} />
     {:else if tile.type === 'audio'}

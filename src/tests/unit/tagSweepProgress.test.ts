@@ -34,10 +34,8 @@ function metadata(paths: string[], tag: string): FileMetadata[] {
   return paths.map((path) => ({
     path,
     title: path,
-    headings: [],
     tags: [tag],
     frontmatter: {},
-    links: [],
     content: '',
     lastModified: 0,
     rawFrontmatter: '',

@@ -21,13 +21,14 @@
  * clean note follows the disk, and the one prompt appears only when an unsaved
  * body edit meets a body change on disk.
  */
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteSet } from 'svelte/reactivity';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { registerPathRenamable } from '../lib/vault/renamePathKeys';
 import { vaultIndexStore } from './vaultIndex.svelte';
+import { KeyedSvelteMap } from '../lib/utils/keyedReactivity.svelte';
 import { parseMarkdown } from '../lib/vault/vaultIndex';
 import { applyFrontmatterDelta, type FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 import {
@@ -79,14 +80,16 @@ export type { NotePromptHandlers, NoteStatus, RawWriteResult, SetBodyStatus, Vie
 /** Waits before re-reading a note caught mid-write by another program. */
 const TORN_RETRY_MS = [500, 1500, 3000];
 
-const models = new SvelteMap<VaultPath, NoteModel>();
+// Keyed: a view asking about a note that isn't open depends on that note alone,
+// so opening one note doesn't re-run every card on a board.
+const models = new KeyedSvelteMap<VaultPath, NoteModel>();
 /** `writeBody` calls still waiting for their note to load (settled promises leave). */
 // allow-module-state: transient; each entry settles with its note's first read
 // eslint-disable-next-line svelte/prefer-svelte-reactivity
 const bodiesLoading = new Set<Promise<unknown>>();
 const loadingBodyPaths = new SvelteSet<VaultPath>();
 /** Queued frontmatter changes of notes no model holds, for display. */
-const overlays = new SvelteMap<VaultPath, FrontmatterDelta>();
+const overlays = new KeyedSvelteMap<VaultPath, FrontmatterDelta>();
 
 let prompts: NotePromptHandlers = {
   conflict: () => undefined,

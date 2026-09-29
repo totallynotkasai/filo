@@ -30,10 +30,8 @@ function md(path: string): FileMetadata {
   return {
     path,
     title: path.split('/').pop()?.replace(/\.md$/, '') ?? path,
-    headings: [],
     tags: [],
     frontmatter: {},
-    links: [],
     content: 'body text',
     lastModified: 0,
     rawFrontmatter: '',

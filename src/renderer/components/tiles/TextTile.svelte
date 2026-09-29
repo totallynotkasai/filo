@@ -24,12 +24,16 @@
   let {
     tile,
     resolved: resolvedOverride,
+    onEditorReady,
   }: {
     tile: TextTile;
     /** Pre-resolved style. <KanbanCard> passes its composed style so the
      *  card cascade's per-card `fontSizeBody` override reaches the body
      *  without TextTile re-running the cascade. */
     resolved?: ResolvedTileStyle;
+    /** Called once, when the editor exists and the note has loaded into it
+     *  (a lazily mounted card puts the caret where its preview was clicked). */
+    onEditorReady?: (editor: Editor) => void;
   } = $props();
 
   // Resolved style: explicit prop (Kanban card cascade) wins; otherwise read
@@ -96,8 +100,20 @@
     composeEl.addEventListener('compositionstart', () => { isComposing = true; });
     composeEl.addEventListener('compositionend', () => { isComposing = false; });
     // The model may have loaded before the editor existed.
-    untrack(() => view.sync({ composing: false }));
+    untrack(() => {
+      view.sync({ composing: false });
+      reportReady();
+    });
   });
+
+  let readyReported = false;
+  function reportReady(): void {
+    if (readyReported || !editor || !onEditorReady) return;
+    const m = model;
+    if (!m || m.status === 'loading') return;
+    readyReported = true;
+    onEditorReady(editor);
+  }
 
   // Follow the note: a body typed in another view, a change on disk or a
   // reload loads here. Never mid-composition; the effect re-runs on
@@ -108,7 +124,10 @@
     void m.bodyRevision;
     void m.status;
     const composing = isComposing;
-    untrack(() => view.sync({ composing }));
+    untrack(() => {
+      view.sync({ composing });
+      reportReady();
+    });
   });
 
   // A file deleted after the board loaded may not carry its "missing" badge

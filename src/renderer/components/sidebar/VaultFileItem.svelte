@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { dragHandle, dragHandleZone, type DndEvent } from 'svelte-dnd-action';
   import type { BoardType, FileTreeNode } from '../../../shared/types';
   import { vaultStore } from '../../stores/vault.svelte';
@@ -18,6 +18,7 @@
   import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
   import { reportError } from '../../lib/utils/errorBus';
   import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
+  import { ProgressiveCount } from '../../lib/utils/progressiveCount.svelte';
   import { adoptAndFindBoard } from '../../stores/boardDiscovery';
   import {
     basenameOf,
@@ -142,6 +143,19 @@
   // permitting the library to reassign during a drag gesture.
   let childDndItems: DndNode[] = $derived(
     (node.children ?? []).map((c) => ({ id: c.path, node: c })),
+  );
+
+  // A large folder renders its first rows at once and the rest in idle time;
+  // reordering waits until every row is there (the zone's items must be all
+  // of them, or a drop would drop the unrendered rows' ranks).
+  const shownChildren = new ProgressiveCount(() => childDndItems.length);
+  $effect(() => {
+    if (!isExpanded) return;
+    untrack(() => shownChildren.start());
+    return () => shownChildren.stop();
+  });
+  const renderedChildItems = $derived(
+    shownChildren.complete ? childDndItems : childDndItems.slice(0, shownChildren.shown),
   );
 
   function onChildConsider(e: CustomEvent<DndEvent<DndNode>>) {
@@ -625,18 +639,18 @@
   <div
     class="child-dnd-zone"
     use:dragHandleZone={{
-      items: childDndItems,
+      items: renderedChildItems,
       type: `vault-order:${node.path}`,
       // Disabled while search or a tag filter is on, for the same reason as the root zone
       // (see VaultSidebar.svelte) — partial item lists would clobber ranks.
-      dragDisabled: reorderDisabled,
+      dragDisabled: reorderDisabled || !shownChildren.complete,
       flipDurationMs: 150,
       dropTargetStyle: {},
     }}
     onconsider={onChildConsider}
     onfinalize={onChildFinalize}
   >
-    {#each childDndItems as item (item.id)}
+    {#each renderedChildItems as item (item.id)}
       <VaultFileItem node={item.node} depth={depth + 1} />
     {/each}
   </div>

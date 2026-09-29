@@ -318,6 +318,20 @@ const deleteSlice = makeBoardDeleteSlice({
   markDirty,
 });
 
+/**
+ * The notes placed on any loaded board (text tiles' paths): the vault index
+ * reads these first at open, so the boards' fields fill in before the rest.
+ */
+export function notesOnBoards(): string[] {
+  const out: string[] = [];
+  for (const data of Object.values(boardCache)) {
+    for (const def of Object.values(data.tileDefs ?? {})) {
+      if (def.type === 'text' && def.filePath) out.push(def.filePath);
+    }
+  }
+  return out;
+}
+
 export const boardCacheStore = {
   // ── Cache getters ──
   get cache() { return boardCache; },

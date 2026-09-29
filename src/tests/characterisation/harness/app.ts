@@ -223,6 +223,29 @@ export async function reopenVault(app: CharApp): Promise<void> {
 }
 
 /**
+ * Quit and relaunch, and run `whileOpening` as soon as the open starts: the
+ * user acting before Filo has finished reading the vault.
+ */
+export async function reopenVaultWhileReading(app: CharApp, whileOpening: () => Promise<void>): Promise<void> {
+  app.bridge.attach();
+  const { vaultStore } = await import('@renderer/stores/vault.svelte');
+  await quiesce(100);
+  if (!(await vaultStore.closeVault())) throw new Error('closeVault refused');
+  await settle(100);
+  const opened = vaultStore.openVault(app.root);
+  await whileOpening();
+  if (!(await opened)) throw new Error('reopen failed');
+  await quiesce(600);
+  app.bridge.resetLog();
+}
+
+/** Whether the vault-open read of every note has finished. */
+export async function vaultReadFinished(): Promise<boolean> {
+  const { vaultIndexStore } = await import('@renderer/stores/vaultIndex.svelte');
+  return !vaultIndexStore.isBuilding;
+}
+
+/**
  * Close the vault, run `whileClosed` (another program changing files), then
  * open it again: the next launch after the change.
  */

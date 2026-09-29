@@ -460,4 +460,53 @@ export const checks = [
       return out;
     },
   },
+  {
+    id: 'no-global-index-version',
+    title: "views and lib read a note's index entry (getMetadata), not the index's vault-wide version",
+    hint:
+      "`vaultIndexStore.version` bumps on every save of every note, so a derived that reads it re-runs on each " +
+      "autosave anywhere in the vault (every Task List row did, on every keystroke's save). Read `getMetadata(path)` " +
+      "or the note selectors (per note), or `listVersion` / `allTags()` / `listMetadata()` (notes and tags). If a " +
+      'view really needs every change, mark the line `// allow-global-index-version: <reason>`.',
+    run(ctx) {
+      const out = [];
+      for (const rel of ctx.files([COMPONENTS, 'src/renderer/lib'], { ext: ['.ts', '.svelte'] })) {
+        const raw = ctx.read(rel);
+        if (!raw.includes('vaultIndexStore')) continue;
+        const rawLines = raw.split(/\r?\n/);
+        const code = blank(rel.endsWith('.svelte') ? scriptOnly(raw) : raw);
+        for (const m of code.matchAll(/\bvaultIndexStore\s*\.\s*version\b/g)) {
+          const line = lineAt(code, m.index);
+          if (markerNear(rawLines, line - 1, /\/\/\s*allow-global-index-version:\s*\S+/)) continue;
+          out.push(fail(rel, line, 'reads vaultIndexStore.version: read the notes it shows (getMetadata / note selectors) or listVersion'));
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'kanban-cards-mount-lazily',
+    title: 'a Kanban card builds its text editor through LazyTextTileBody, never TextTile directly',
+    hint:
+      'A TipTap editor per card, all in one flush, froze a 300-card board for 20 s on every open and tab switch. ' +
+      'KanbanCard renders `LazyTextTileBody`, which shows a static preview and queues the editor on the idle-time ' +
+      'mount queue (`lib/editor/editorMountQueue.ts`), or mounts it at once on a press.',
+    run(ctx) {
+      const out = [];
+      const card = `${COMPONENTS}/boards/KanbanCard.svelte`;
+      const lazy = `${COMPONENTS}/tiles/LazyTextTileBody.svelte`;
+      const cardCode = ctx.read(card);
+      const lazyCode = ctx.read(lazy);
+      if (cardCode === null) return [fail(card, undefined, 'missing')];
+      if (lazyCode === null) return [fail(lazy, undefined, 'missing')];
+      const script = blank(scriptOnly(cardCode), { strings: false });
+      const direct = /from\s+['"][^'"]*\/TextTile\.svelte['"]/.exec(script);
+      if (direct) out.push(fail(card, lineAt(script, direct.index), 'imports TextTile.svelte: render LazyTextTileBody instead'));
+      if (!/<LazyTextTileBody\b/.test(cardCode)) out.push(fail(card, undefined, 'does not render <LazyTextTileBody>'));
+      if (!/\bqueueEditorMount\s*\(/.test(blank(scriptOnly(lazyCode)))) {
+        out.push(fail(lazy, undefined, 'no longer queues its editor on the mount queue (queueEditorMount)'));
+      }
+      return out;
+    },
+  },
 ];

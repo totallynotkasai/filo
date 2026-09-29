@@ -28,6 +28,7 @@ import type {
 export interface TaskListRowViewModel {
   rows: TaskRow[];
   childrenByParent: Map<string, TaskRow[]>;
+  taskDepths: Map<string, number>;
   availableSectionsForMove: Array<{ id: string; title: string }>;
 }
 

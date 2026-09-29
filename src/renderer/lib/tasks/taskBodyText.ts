@@ -32,7 +32,8 @@ export function getBodyPreview(markdown: string, maxChars: number): string {
   const lines = markdown.split(/\r?\n/);
 
   for (const raw of lines) {
-    let line = raw.trim();
+    // A trailing `\` is a line break (`notesBoxMarkdown.ts`), not text.
+    let line = raw.trim().replace(/(^|[^\\])\\$/, '$1').trim();
     if (!line) continue;
     if (line.startsWith('#')) continue;
     if (RULE_RE.test(line)) continue;

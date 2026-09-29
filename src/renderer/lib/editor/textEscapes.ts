@@ -1,5 +1,6 @@
 import { Node } from '@tiptap/core';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { LEAD_SPACE_ENTITY, startsLine } from './leadSpace';
 
 /**
  * The editor's text node, with the Markdown escaping a note's text needs.
@@ -9,11 +10,21 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
  * the character it names (`&`, `©`): the note changed meaning on reopen. An
  * `&` that starts a character reference is written as `&amp;`, which reads
  * back as the `&` that was typed. Any other `&` stays as it is.
+ *
+ * More escapes depend on where the text sits:
+ *  - a line that starts with a space writes that space as `&#32;`
+ *    (`leadSpace.ts`);
+ *  - text that opens a line and would read as a list marker, heading or
+ *    heading underline is escaped (`escapeBlockStart`, `escapeAfterBreak`);
+ *  - in a Markdown table a `|` is written `\|`, since a bare one ends the cell.
  */
 
 interface TextSerializeState {
   text(text: string, escape?: boolean): void;
+  esc(text: string, startOfLine?: boolean): string;
+  atBlockStart: boolean;
   inAutolink?: boolean;
+  inTable?: boolean;
 }
 
 /** `&` followed by what markdown-it would read as a named or numeric character reference. */
@@ -26,6 +37,39 @@ export function escapeNoteText(text: string, inAutolink = false): string {
   return refsKept.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * A block's first text, already escaped by prosemirror-markdown, with the
+ * list markers it misses: a lone `+` or `1.` (with nothing after it on the
+ * line, or only a tab) starts an empty list item.
+ */
+export function escapeBlockStart(escaped: string, aloneOnLine: boolean): string {
+  if (!aloneOnLine) return escaped;
+  return escaped.replace(/^\+$/, '\\+').replace(/^(\d{1,9})\.$/, '$1\\.');
+}
+
+/**
+ * The text that opens a line after a line break (Shift+Enter). prosemirror-markdown
+ * escapes only at the start of a block, but a line inside a paragraph is
+ * read the same way when it could interrupt the paragraph: a heading, a quote,
+ * a bullet or `1.` item with text, or (when it is the whole line) a row of
+ * `=` or `-` that would make the lines above a heading, or a thematic break.
+ * Only those are escaped, so any other line is written as it was.
+ */
+export function escapeAfterBreak(escaped: string, wholeLine: boolean, tabFollows = false): string {
+  // A tab item written right after the text counts as the space a marker needs.
+  const probe = tabFollows ? `${escaped}\t` : escaped;
+  let out = probe
+    .replace(/^(#{1,6})(?=[ \t]|$)/, '\\$1')
+    .replace(/^>/, '\\>')
+    .replace(/^([-+*])(?=[ \t])/, '\\$1')
+    .replace(/^(1)([.)])(?=[ \t])/, '$1\\$2');
+  if (tabFollows) out = out.slice(0, -1);
+  if (wholeLine && (/^(?:=+|-+)[ \t]*$/.test(out) || /^([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(out))) {
+    out = `\\${out}`;
+  }
+  return out;
+}
+
 export const NoteText = Node.create({
   name: 'text',
   group: 'inline',
@@ -33,9 +77,42 @@ export const NoteText = Node.create({
   addStorage() {
     return {
       markdown: {
-        serialize(state: TextSerializeState, node: ProseMirrorNode): void {
+        serialize(state: TextSerializeState, node: ProseMirrorNode, parent: ProseMirrorNode, index: number): void {
           // An autolink's text is its URL, where `&…;` is part of the address.
-          state.text(escapeNoteText(node.text ?? '', state.inAutolink === true));
+          const inAutolink = state.inAutolink === true;
+          let text = escapeNoteText(node.text ?? '', inAutolink);
+          if (inAutolink || text.includes('\n')) {
+            state.text(text);
+            return;
+          }
+          let blockStart = index === 0 && state.atBlockStart;
+          let afterBreak = index > 0 && startsLine(parent, index) && !state.inTable && parent.type.name !== 'heading';
+          if (text.startsWith(' ') && startsLine(parent, index)) {
+            state.text(LEAD_SPACE_ENTITY, false);
+            // The line no longer starts here, so nothing after the entity
+            // needs a line-start escape.
+            state.atBlockStart = false;
+            blockStart = false;
+            afterBreak = false;
+            text = text.slice(1);
+            if (!text) return;
+          }
+          let out = state.esc(text, blockStart);
+          if (node.marks.length === 0) {
+            const next = parent.maybeChild(index + 1);
+            const endsLine = !next;
+            if (blockStart) out = escapeBlockStart(out, endsLine || next?.type.name === 'tab');
+            else if (afterBreak) out = escapeAfterBreak(out, endsLine, next?.type.name === 'tab');
+            // A heading's trailing ` #` run is read as its closing sequence and dropped.
+            if (endsLine && parent.type.name === 'heading') out = out.replace(/(^|[ \t])(#+)$/, '$1\\$2');
+          }
+          // A `!` right before a link would make it an image. prosemirror-markdown
+          // escapes it too, but not after an escaped backslash (`\\!`).
+          const next = parent.maybeChild(index + 1);
+          const linkMark = next?.marks.find((m) => m.type.name === 'link');
+          if (out.endsWith('!') && linkMark && !linkMark.isInSet(node.marks)) out = `${out.slice(0, -1)}\\!`;
+          if (state.inTable) out = out.replace(/\|/g, '\\|');
+          state.text(out, false);
         },
         parse: {},
       },

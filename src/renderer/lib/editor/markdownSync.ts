@@ -118,7 +118,8 @@ export function parseMarkdownFile(raw: string): ParsedMarkdownDocument {
  * through tiptap-markdown losslessly. Callers should set the document
  * read-only when this is true so the next debounced write doesn't clobber
  * the syntax that tiptap can't preserve (Obsidian callouts, math blocks,
- * highlight `==…==`, etc.).
+ * highlight `==…==`, etc.). With it come up to three `changes`: the lines
+ * a save would change, for the read-only banner to name.
  *
  * Empty paragraphs the user added for vertical spacing are reconstructed from
  * the clean blank lines on disk before the body is loaded (see
@@ -129,8 +130,8 @@ export function loadMarkdownIntoEditor(
   editor: Editor,
   body: string,
   options: { emitUpdate?: boolean; preserveSelection?: boolean } = {},
-): { lossy: boolean } {
-  if (!editor || editor.isDestroyed) return { lossy: false };
+): { lossy: boolean; changes: RoundTripChange[] } {
+  if (!editor || editor.isDestroyed) return { lossy: false, changes: [] };
   const emit = options.emitUpdate ?? false;
   const preserveSelection = options.preserveSelection ?? false;
 
@@ -203,17 +204,20 @@ export function loadMarkdownIntoEditor(
   //    can't actually serialise back to markdown, so any comparison would
   //    be a false positive.
   let lossy = false;
+  let changes: RoundTripChange[] = [];
   const hasMarkdownStorage =
     (editor as { storage?: { markdown?: unknown } }).storage?.markdown !== undefined;
   if (originalBody.length > 0 && hasMarkdownStorage) {
     try {
       const roundTripped = editorMarkdown(editor);
       lossy = isLossyMarkdownRoundTrip(originalBody, roundTripped);
+      // What the read-only banner names, and Take ownership's confirm lists.
+      if (lossy) changes = roundTripChanges(originalBody, roundTripped);
     } catch {
       lossy = false;
     }
   }
-  return { lossy };
+  return { lossy, changes };
 }
 
 /**
@@ -232,6 +236,54 @@ export function isLossyMarkdownRoundTrip(original: string, roundTripped: string)
   return normaliseForRoundTripCompare(original) !== normaliseForRoundTripCompare(roundTripped);
 }
 
+/** A line of the note that saving from the editor would change, as the round-trip check compares it. */
+export interface RoundTripChange {
+  /** The line as it is in the file ('' when saving would add a line). */
+  original: string;
+  /** The line as Filo would write it ('' when saving would drop it). */
+  filo: string;
+}
+
+/**
+ * Up to `max` lines that differ between `original` and what the editor would
+ * write for it, in the round-trip check's normal form. The lines both share at
+ * the start and at the end are set aside, and the rest are paired in order,
+ * which names a single changed region exactly (the usual case). Empty when
+ * nothing differs.
+ */
+export function roundTripChanges(original: string, roundTripped: string, max = 3): RoundTripChange[] {
+  const a = normaliseForRoundTripCompare(original).split('\n');
+  const b = normaliseForRoundTripCompare(roundTripped).split('\n');
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  const out: RoundTripChange[] = [];
+  for (let i = 0; start + i < Math.max(endA, endB) && out.length < max; i++) {
+    const o = (start + i < endA ? a[start + i] : '') ?? '';
+    const f = (start + i < endB ? b[start + i] : '') ?? '';
+    if (o !== f) out.push({ original: o, filo: f });
+  }
+  return out;
+}
+
+/**
+ * The 1-based line of `text` (a whole file or a body) that the round-trip
+ * check reads as `normalisedLine`, from `fromLine` on; 0 when none does.
+ */
+export function lineOfRoundTripChange(text: string, normalisedLine: string, fromLine = 1): number {
+  if (!normalisedLine) return 0;
+  const lines = text.split(/\r?\n/);
+  for (let i = Math.max(0, fromLine - 1); i < lines.length; i++) {
+    if (normaliseForRoundTripCompare(lines[i] ?? '') === normalisedLine) return i + 1;
+  }
+  return 0;
+}
+
 function normaliseForRoundTripCompare(s: string): string {
   return s
     // CRLF / CR → LF
@@ -247,6 +299,11 @@ function normaliseForRoundTripCompare(s: string): string {
     // collapse the backslash form to match. Same transform on both sides ⇒ it
     // can't turn a genuine difference into a false match.
     .replace(/\\\n/g, '\n')
+    // Code fences: the fence's character and length are cosmetic (Filo
+    // fences with backticks, one longer than any backtick line in the code,
+    // `codeFence.ts`), so a `~~~` or a four-backtick fence compares as ```,
+    // keeping its info string.
+    .replace(/^ {0,3}(?:`{3,}|~{3,})[ \t]*([^\n]*)$/gm, '```$1')
     // Normalise Setext H1/H2 to ATX equivalents so `# Foo` and `Foo\n===`
     // compare as equal — `tiptap-markdown` serialises every heading as ATX
     // regardless of the input syntax, so the un-normalised compare would
@@ -281,9 +338,9 @@ function normaliseForRoundTripCompare(s: string): string {
     // cosmetic (the start number survives), so compare them as equal.
     .replace(/^(\s*\d+)\)(?=\s)/gm, '$1.')
     // GFM table SPACING only: strip the padding around `|`
-    // and collapse a delimiter cell's dash run to `---`, KEEPING its colons.
-    // tiptap drops column alignment (`:--` → `---`), so an aligned table still
-    // compares different (stays lossy) — only padding differences are masked.
+    // and collapse a delimiter cell's dash run to `---`, KEEPING its colons,
+    // so `:--` and `:---` (the form Filo writes) compare equal but a dropped
+    // alignment would not.
     .replace(/^[ \t]*\|.*$/gm, (line) =>
       line
         .trim()

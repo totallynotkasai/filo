@@ -18,6 +18,7 @@
  */
 import { getHTMLFromFragment } from '@tiptap/core';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { withLeadSpaceNodes } from './leadSpace';
 
 /** True when `node` (a paragraph or heading) is aligned or indented. */
 export function hasBlockLayout(node: ProseMirrorNode): boolean {
@@ -28,7 +29,8 @@ export function hasBlockLayout(node: ProseMirrorNode): boolean {
 
 /** `node` as one line of HTML, with its alignment and indent as inline styles. */
 export function blockLayoutHtml(node: ProseMirrorNode): string {
-  const html = getHTMLFromFragment(Fragment.from(node), node.type.schema);
+  // A leading space is kept as the lead-space span (`leadSpace.ts`).
+  const html = getHTMLFromFragment(Fragment.from(withLeadSpaceNodes(node)), node.type.schema);
   const body = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html').body;
   // Link's rendering attributes are for the live editor, not the file.
   for (const a of Array.from(body.querySelectorAll('a'))) {

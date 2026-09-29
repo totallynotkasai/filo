@@ -557,9 +557,12 @@ the document.
 **What:** When Filo's editor can't reproduce a note's Markdown byte-for-byte
 (`isLossyMarkdownRoundTrip`), the note opens **read-only**: the editor is
 non-editable and toolbar commands are refused (Audit-19 UX-1 — read-only used to
-block only *saving*, so typed text was silently discarded). A banner offers one
-action, **Take ownership**, which re-enables editing; the next save then rewrites
-the formatting Filo can't preserve.
+block only *saving*, so typed text was silently discarded). The banner names the
+first line a save would change ("Line 12 would change from … to …") and offers
+**Edit in Raw view** (opens the whole file with that line selected, to fix by
+hand) and **Take ownership**, which re-enables editing after a confirm listing
+up to three lines that will change; the next save then rewrites the formatting
+Filo can't preserve.
 
 Formats that still trigger read-only (each is a real byte or semantic change the
 serializer can't preserve cheaply):
@@ -567,15 +570,33 @@ serializer can't preserve cheaply):
 - hard-wrapped paragraphs (soft line breaks are joined onto one line);
 - multi-line blockquotes (joined);
 - `<` / `&` written raw (re-emitted as entities);
+- characters Markdown would read as formatting, written unescaped: `5 * 3`,
+  `[TODO]`, `C:\Users` (Filo writes `5 \* 3`, `\[TODO\]`, `C:\\Users`);
+- `[[wiki links]]` and footnotes `[^1]` (brackets escaped);
 - a tab at the start of a heading or list item, or directly before a hard
   line break (a tab inside a line, or inside inline code, round-trips);
-- `[[wiki links]]` (brackets escaped);
 - HTML comments and block HTML (`<div>`), Obsidian callouts;
-- GFM tables whose columns carry **alignment** (`:--`, `--:`) — alignment is dropped.
+- a **tight** list that mixes bullets and checklist items (`- a` then
+  `- [ ] b`), from another app: it loads as two lists (no filler checkbox),
+  and Filo would write them as two (`- a`, blank line, `* [ ] b`), so it stays
+  read-only;
+- inline code that starts and ends with a space, or is only spaces (Markdown
+  trims one space from each side of a code span).
 
 No longer read-only after Audit-19: filenames, bare domains, emails and bare URLs
 (DEP-2 — linkify is off), `filo://` internal links (UX-2), tight checklists
 (UX-7), GFM table **padding** differences and the `1)` ordered-list delimiter.
+
+No longer read-only after Audit-25 Phase 1 (each was something Filo itself
+wrote and then couldn't read back): an empty checkbox (Enter after the last
+task), one bullet turned into a checklist item (Ctrl+Shift+9), spaces typed at
+the start of a line, a `|` typed in a table cell, a list or heading in a table
+cell (now an HTML table), code holding a line of backticks, a line break in a
+heading, a lone `+` or `1.` line, a heading ending in ` #`, lines typed in the
+Task List notes box; and from other apps, aligned GFM tables and `~~~` or
+longer code fences. A loose mixed list an older Filo wrote (`- a`, `- [ ] b`,
+`- c` with blank lines between) now opens editable too, and is split into three
+lists on the next save.
 
 **Aligned and indented paragraphs are HTML in the file.** Markdown has no way
 to write alignment or indent, so a paragraph or heading aligned or indented from
@@ -604,6 +625,9 @@ the same, and the first body edit rewrites each into Filo's form:
 | `+` or `*` bullets | `-` |
 | two-space hard breaks | backslash hard breaks (`\` at line end) |
 | trailing spaces, 3+ blank lines, table cell padding | removed / collapsed |
+| `~~~` code fences, or a fence longer than it needs to be | backticks, three unless the code holds a line of backticks |
+| table alignment `:--` / `--:` | `:---` / `---:` |
+| a list right after another bullet or checklist list | the other bullet (`-` then `*`), so the two stay two lists |
 
 Nothing is lost, but a note you edit gets a formatting diff that sync tools and
 git will show, including lines you didn't touch. A note you only read is never
@@ -1003,8 +1027,15 @@ new name and removal of the old one can be further apart.
 which declares TipTap 3 as its peer but was designed in the TipTap 2 era and has
 little upstream activity). Filo extends it in several places: the tight-list
 rule (`taskListTight.ts`), the aligned or indented block writer
-(`blockLayout.ts`), and the lossy check that opens a note read-only when a
-round trip would change it (#17). A TipTap upgrade, or a patch release of the
+(`blockLayout.ts`), its own writers for lists (`listMarkers.ts`,
+`taskItems.ts`), tables (`tableMarkdown.ts`), code fences (`codeFence.ts`),
+line breaks (`hardBreak.ts`), quotes (`blockquote.ts`), leading spaces
+(`leadSpace.ts`) and text escapes (`textEscapes.ts`), and the lossy check that
+opens a note read-only when a round trip would change it (#17). Two of those
+writers work around its delimiter tidy, which cut into a quote's `>` when a
+bold or italic run opened a line; a bold, italic or strikethrough run that
+starts mid-word next to punctuation can still be shifted by it (the property
+test keeps such runs word-bounded). A TipTap upgrade, or a patch release of the
 package itself, can change how a node is written without any type error.
 
 **Where:** [src/renderer/lib/editor/createEditor.ts](src/renderer/lib/editor/createEditor.ts),
@@ -1015,7 +1046,10 @@ package itself, can change how a node is written without any type error.
 the package does what Filo needs today. The guard is the round-trip suites,
 which pin its output byte for byte: `markdownBodyRoundTrip.test.ts` (the golden
 corpus, LF and CRLF), `toolbarFormattingRoundTrip.test.ts` (every toolbar
-command, gate `toolbar-formatting-saved`), `markdownSync.test.ts` and the
+command, gate `toolbar-formatting-saved`), `editorRoundTripProperty.test.ts`
+(500 documents generated from the editor schema, plus list, table and
+line-break commands run in context; gate `editor-round-trip-property`),
+`markdownSync.test.ts` and the
 component and characterisation specs that save and reopen notes.
 
 **Impact:** Upgrade `tiptap-markdown` or any `@tiptap/*` package only on its own

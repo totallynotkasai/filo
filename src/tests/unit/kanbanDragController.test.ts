@@ -229,7 +229,7 @@ describe('KanbanDragController — multi-card drag block', () => {
     c.dispose();
   });
 
-  it('resets dragBlockIds when the drag ends without a destination', () => {
+  it('ends the drag when a card dropped outside every zone returns to its column', () => {
     const c = new KanbanDragController(
       noopDeps(columns, {
         selectedIds: new Set(['t1', 't3']),
@@ -238,22 +238,81 @@ describe('KanbanDragController — multi-card drag block', () => {
     );
     c.onCardPointerDown(pe(), 't1', false);
     expect(c.dragBlockIds.length).toBe(2);
+    c.onConsiderCards('c1', { detail: { items: [{ id: 't2' }], info: { id: 't1' } } } as unknown as CustomEvent);
 
-    // Synthesise a source-only finalize (no destination ever fires the
-    // commit-side finalize — drop-outside-any-zone path).
+    // svelte-dnd-action puts the card back in its source zone and fires
+    // finalize there with the drop-outside trigger.
     const sourceFinalize = {
       detail: {
-        items: [{ id: 't1' }],
+        items: [{ id: 't1' }, { id: 't2' }],
         info: { id: 't1', source: 'pointer', trigger: 'droppedOutsideOfAny' },
       },
     } as unknown as CustomEvent;
     c.onFinalizeCards('c1', sourceFinalize);
-    // dragTileId is still set on the source side; gestureend should clear via
-    // pointerup gate. Verifying that block resets when explicit destination
-    // commit fires:
-    c.dragBlockIds = [];
+    expect(c.dragTileId).toBeNull();
     expect(c.dragBlockIds).toEqual([]);
     c.dispose();
+  });
+});
+
+describe('KanbanDragController — a click that never becomes a drag', () => {
+  beforeEach(() => {
+    const { mql } = makeMatchMedia(false);
+    window.matchMedia = vi.fn(() => mql) as unknown as typeof window.matchMedia;
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function pe(): PointerEvent {
+    return {
+      button: 0,
+      target: { closest: () => null } as unknown as EventTarget,
+    } as unknown as PointerEvent;
+  }
+
+  const columns = [
+    { id: 'c1', title: 'A', tilePlacements: [{ tileId: 't1' }, { tileId: 't2' }] },
+  ] as unknown as KanbanBoard['columns'];
+
+  it('press and release without movement clears dragTileId, and syncCards runs again', () => {
+    const c = new KanbanDragController(noopDeps(columns));
+    c.syncCards({ c1: ['t1', 't2'] });
+    c.onCardPointerDown(pe(), 't1', false);
+    expect(c.dragTileId).toBe('t1');
+    window.dispatchEvent(new Event('pointerup'));
+    vi.runAllTimers();
+    expect(c.dragTileId).toBeNull();
+
+    // A card added after the click shows up.
+    c.syncCards({ c1: ['t1', 't2', 't3'] });
+    expect(c.dndCardsByColumn.c1.map((i) => i.id)).toEqual(['t1', 't2', 't3']);
+    c.dispose();
+  });
+
+  it('a real drag is left to its finalize, even when finalize comes after the pointerup', () => {
+    const c = new KanbanDragController(noopDeps(columns));
+    c.syncCards({ c1: ['t1', 't2'] });
+    c.onCardPointerDown(pe(), 't1', false);
+    c.onConsiderCards('c1', { detail: { items: [{ id: 't2' }, { id: 't1' }], info: { id: 't1' } } } as unknown as CustomEvent);
+    window.dispatchEvent(new Event('pointerup'));
+    vi.runAllTimers();
+    // Still dragging: the drop animation hasn't finished.
+    expect(c.dragTileId).toBe('t1');
+    c.onFinalizeCards('c1', {
+      detail: { items: [{ id: 't2' }, { id: 't1' }], info: { id: 't1', trigger: 'droppedIntoZone' } },
+    } as unknown as CustomEvent);
+    expect(c.dragTileId).toBeNull();
+    c.dispose();
+  });
+
+  it('dispose clears a pending click check', () => {
+    const c = new KanbanDragController(noopDeps(columns));
+    c.onCardPointerDown(pe(), 't1', false);
+    window.dispatchEvent(new Event('pointerup'));
+    c.dispose();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

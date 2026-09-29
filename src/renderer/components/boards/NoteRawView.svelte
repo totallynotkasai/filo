@@ -130,6 +130,34 @@
     return hasUnsavedText() ? 'failed' : 'saved';
   }
 
+  /** A line waiting to be shown once the text is in (1-based; 0 for none). */
+  let revealPending = 0;
+
+  /** Selects line `line` (1-based) of the file and scrolls it into view. */
+  export function revealLine(line: number): void {
+    revealPending = line;
+    applyReveal();
+  }
+
+  function applyReveal(): void {
+    const ta = textarea;
+    if (!revealPending || !ta || loading) return;
+    const lines = text.split('\n');
+    const index = Math.min(Math.max(revealPending, 1), lines.length) - 1;
+    revealPending = 0;
+    const start = lines.slice(0, index).reduce((n, l) => n + l.length + 1, 0);
+    ta.focus();
+    ta.setSelectionRange(start, start + (lines[index]?.length ?? 0));
+    const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+    ta.scrollTop = Math.max(0, index * lineHeight - ta.clientHeight / 3);
+  }
+
+  // A line asked for before the text was in is shown once it is.
+  $effect(() => {
+    if (loading || !textarea) return;
+    untrack(applyReveal);
+  });
+
   async function writeTyped(): Promise<RawSaveResult> {
     const hash = baseHash;
     if (hash === null) return 'failed';

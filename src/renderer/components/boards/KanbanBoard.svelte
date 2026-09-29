@@ -211,9 +211,11 @@
 
   // Per-column card-dndzone items: the cards each column shows, filtered and
   // sorted, so the items and the DOM match one to one. The controller skips
-  // this while a drag is in flight so the items aren't snap-reset mid-gesture.
+  // this while a drag is in flight so the items aren't snap-reset mid-gesture;
+  // reading `dragTileId` here re-runs it once the gesture ends.
   $effect(() => {
-    const shown = Object.fromEntries(columns.map((col) => [col.id, filtersAndSort.visiblePlacementsForColumn(col.id).map((p) => p.tileId)]));
+    void dragController.dragTileId;
+    const shown =Object.fromEntries(columns.map((col) => [col.id, filtersAndSort.visiblePlacementsForColumn(col.id).map((p) => p.tileId)]));
     untrack(() => dragController.syncCards(shown));
   });
 

@@ -1,4 +1,5 @@
 import { Extension } from '@tiptap/core';
+import { EMPTY_ITEM_TEXT_ATTR } from './taskItems';
 
 /**
  * A list parsed from HTML is tight unless an item holds a plain `<p>` (the
@@ -6,10 +7,11 @@ import { Extension } from '@tiptap/core';
  * indented paragraph saved as an HTML line (`blockLayout.ts`), which a tight
  * list can hold, so it doesn't make the list loose. Without that exception a
  * tight list with one centred item would reload loose, gain blank lines on the
- * next save, and open read-only as a lossy note.
+ * next save, and open read-only as a lossy note. The empty paragraph the parse
+ * gives an item with no text of its own (`taskItems.ts`) doesn't either.
  */
 function isTightListElement(el: HTMLElement): boolean {
-  return el.getAttribute('data-tight') === 'true' || !el.querySelector('p:not([style])');
+  return el.getAttribute('data-tight') === 'true' || !el.querySelector(`p:not([style]):not([${EMPTY_ITEM_TEXT_ATTR}])`);
 }
 
 /**

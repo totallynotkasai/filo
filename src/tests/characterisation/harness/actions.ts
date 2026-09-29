@@ -972,6 +972,44 @@ export async function alignFirstBlock(app: CharApp, ed: Editor, align: 'left' | 
   await settle();
 }
 
+/** Put the caret right after the first `text` in the editor. */
+export async function caretAfter(ed: Editor, text: string): Promise<void> {
+  let pos = -1;
+  ed.state.doc.descendants((node, p) => {
+    if (pos >= 0) return false;
+    if (node.isText && node.text?.includes(text)) pos = p + node.text.indexOf(text) + text.length;
+    return true;
+  });
+  if (pos < 0) throw new Error(`no "${text}" in the note`);
+  ed.commands.focus();
+  ed.commands.setTextSelection(pos);
+  await settle();
+}
+
+/** A key press in the editor (Enter, or a shortcut such as Ctrl+Shift+9), as the keyboard sends it. */
+export async function pressInEditor(ed: Editor, k: string, init: KeyboardEventInit = {}): Promise<void> {
+  const event = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init });
+  ed.view.someProp('handleKeyDown', (f) => f(ed.view, event));
+  await settle();
+}
+
+/** Type `text` at the caret one key at a time, so typing shortcuts (`[ ] `, `- `) fire. */
+export async function typeKeys(ed: Editor, text: string): Promise<void> {
+  for (const ch of text) {
+    const { from, to } = ed.state.selection;
+    const handled = ed.view.someProp('handleTextInput', (f) => f(ed.view, from, to, ch, () => ed.state.tr.insertText(ch, from, to)));
+    if (!handled) ed.view.dispatch(ed.state.tr.insertText(ch, from, to));
+  }
+  await settle();
+}
+
+/** Click away from the editor (it loses focus, which saves what it holds). */
+export async function leaveEditor(ed: Editor): Promise<void> {
+  ed.commands.blur();
+  (ed.view.dom as HTMLElement).dispatchEvent(new FocusEvent('blur'));
+  await settle();
+}
+
 /** Put the cursor in the editor's first block, then click the toolbar's Increase Indent button. */
 export async function indentFirstBlock(app: CharApp, ed: Editor): Promise<void> {
   ed.commands.focus('start');
@@ -1084,6 +1122,22 @@ export function newCardPickerShown(app: CharApp): boolean {
 export function kanbanColumns(app: CharApp): string[][] {
   return $$(app.el, '.kanban-column').map((col) =>
     $$(col, '.kanban-card-shell').map((el) => (el.querySelector('.tile-title')?.textContent ?? '').trim()));
+}
+
+/** A plain click (press and release, no movement) on a Kanban card, off its text. */
+export async function clickKanbanCard(card: CardView): Promise<void> {
+  click(card.el.closest('.tile-drop-zone') ?? card.el);
+  await quiesce(100);
+}
+
+/** Each Kanban column's card-count badge. */
+export function kanbanColumnCounts(app: CharApp): number[] {
+  return $$(app.el, '.kanban-column .column-count').map((el) => parseInt(el.textContent ?? '', 10));
+}
+
+/** Kanban columns still styled as mid-drag. */
+export function kanbanColumnsDragActive(app: CharApp): number {
+  return $$(app.el, '.kanban-column.drag-active').length;
 }
 
 // ── Tab menu ─────────────────────────────────────────────────────────────────

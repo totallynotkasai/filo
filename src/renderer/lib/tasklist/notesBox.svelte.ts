@@ -20,6 +20,11 @@
  * and quit name it and keep a rescue copy of it, and their save hands it to
  * the note first. A box that unmounts with a conflict still open stays counted
  * until the conflict is answered.
+ *
+ * The box shows the body with its line breaks as plain newlines, and a draft
+ * goes to the note with each newline inside a paragraph as a line break
+ * (`notesBoxMarkdown.ts`). Everything that compares the draft with the note
+ * compares it in that body form; a rescue copy keeps the draft as typed.
  */
 import { vaultPath } from '@shared/vaultPath';
 import { localNoteText, newNoteText, sameBody } from '../notes/noteFile';
@@ -30,6 +35,7 @@ import { uiStore } from '../../stores/ui.svelte';
 import { isLinkedNote, isNonUtf8 } from '../vault/nonUtf8Paths.svelte';
 import { registerUnsavedSource } from '../boards/writeStateTracking';
 import { registerComponentFlush } from '../boards/componentFlush';
+import { bodyToBoxText, boxTextToBody } from './notesBoxMarkdown';
 
 export interface NotesBoxState {
   /** The user typed in the box since it opened (or since its last write). */
@@ -134,9 +140,14 @@ export class NotesBox {
     return this.lastBody;
   }
 
+  /** The draft as the note's body. */
+  private draftBody(): string {
+    return boxTextToBody(this.draft);
+  }
+
   /** The user typed text that isn't in the note. */
   get unsaved(): boolean {
-    return this.touched && this.path !== '' && !sameBody(this.draft, this.body());
+    return this.touched && this.path !== '' && !sameBody(this.draftBody(), this.body());
   }
 
   /** The draft waits for the conflict question's answer. */
@@ -189,7 +200,7 @@ export class NotesBox {
 
   open(): void {
     const body = this.body();
-    this.draft = body;
+    this.draft = bodyToBoxText(body);
     this.openedBody = body;
     this.touched = false;
     this.expanded = true;
@@ -209,7 +220,7 @@ export class NotesBox {
   /** Esc: drop the draft. */
   cancel(): void {
     this.expanded = false;
-    this.draft = this.body();
+    this.draft = bodyToBoxText(this.body());
     this.touched = false;
   }
 
@@ -219,17 +230,17 @@ export class NotesBox {
     const write = this.deps.write;
     if (!write) return;
     const currentBody = this.body();
-    const sent = this.draft;
+    const sent = this.draftBody();
     const decision = notesBoxDecision({ touched: this.touched, openedBody: this.openedBody, currentBody, draft: sent });
     if (decision === 'skip') return;
     const path = this.path;
     if (decision === 'conflict') {
       this.expanded = true;
       this.conflictOpen = true;
-      promptNotesBoxConflict(path, () => this.draft, {
+      promptNotesBoxConflict(path, () => this.draftBody(), {
         onKept: (status) => {
           this.conflictOpen = false;
-          this.written(status, this.draft);
+          this.written(status, this.draftBody());
           this.forgetIfDone();
         },
         onUseTheirs: () => {
@@ -247,7 +258,7 @@ export class NotesBox {
   private written(status: SetBodyStatus, sent: string): void {
     if (status === 'queued') {
       this.openedBody = sent;
-      if (this.draft === sent) this.touched = false;
+      if (this.draftBody() === sent) this.touched = false;
       return;
     }
     // The draft is the only copy: keep it in front of the user.

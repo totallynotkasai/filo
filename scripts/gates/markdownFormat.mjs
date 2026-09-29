@@ -132,6 +132,7 @@ const SKIPPED_TEST_RE = /\b(?:it|describe)\.skip\b|\bit\.todo\b/;
 // no button can produce formatting the file can't hold.
 const TOOLBAR_CONFIG = 'src/renderer/lib/editor/toolbarConfig.ts';
 const TOOLBAR_ROUNDTRIP_TEST = 'src/tests/unit/toolbarFormattingRoundTrip.test.ts';
+const PROPERTY_TEST = 'src/tests/unit/editorRoundTripProperty.test.ts';
 
 const INVARIANT_TEST = 'src/tests/unit/frontmatterInvariant.test.ts';
 const NOTE_WRITER = 'src/renderer/lib/notes/noteWriter.ts';
@@ -439,6 +440,34 @@ export const checks = [
           }
         }
       }
+      return out;
+    },
+  },
+  {
+    id: 'editor-round-trip-property',
+    title: 'the editor round-trip property test exists, runs every case, and generates at least 500 documents',
+    hint:
+      'editorRoundTripProperty.test.ts generates documents from the editor schema and checks each is written in a form ' +
+      'that reads back (not lossy, same bytes on the next save). Keep NUM_RUNS >= 500 and nothing skipped; fix the ' +
+      'serialiser a counter-example points at and keep it as a named case in markdownBodyRoundTrip.test.ts.',
+    run(ctx) {
+      const raw = ctx.read(PROPERTY_TEST);
+      if (raw === null) return [fail(PROPERTY_TEST, undefined, 'missing (editor round-trip property test)')];
+      const src = stripComments(raw);
+      const out = tokenChecks(PROPERTY_TEST, src, {
+        required: [
+          { token: /\bfc\.assert\s*\(/, why: 'runs a fast-check property' },
+          { token: /\bcreateTiptapEditor\s*\(/, why: 'drives the real editor factory' },
+          { token: /\bloadMarkdownIntoEditor\s*\(/, why: 'reads back through the production load path' },
+          { token: /\bnumRuns:\s*NUM_RUNS\b/, why: 'the run count is NUM_RUNS' },
+        ],
+      });
+      if (SKIPPED_TEST_RE.test(src) || /\bit\.only\b|\bdescribe\.only\b/.test(src)) {
+        out.push(fail(PROPERTY_TEST, undefined, 'contains a skipped / focused / todo test'));
+      }
+      const runs = /\bconst\s+NUM_RUNS\s*=\s*([\d_]+)\s*;/.exec(src);
+      const n = runs ? Number(runs[1].replace(/_/g, '')) : 0;
+      if (n < 500) out.push(fail(PROPERTY_TEST, undefined, `NUM_RUNS is ${runs ? n : 'not a number literal'} (expected >= 500)`));
       return out;
     },
   },

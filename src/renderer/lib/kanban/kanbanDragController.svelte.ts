@@ -133,6 +133,16 @@ export class KanbanDragController {
    */
   private pendingPointerUps = new SvelteSet<() => void>();
 
+  /**
+   * True once svelte-dnd-action has reported a real card drag (`consider`).
+   * A press and release without movement gets no event from the library, so
+   * the pointerup check in `onCardPointerDown` is the only thing that ends
+   * such a gesture.
+   */
+  private dragStarted = false;
+  /** The deferred end-of-click check, cleared on dispose. */
+  private clickEndTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(private deps: KanbanDragControllerDeps) {
     if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
       this.mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -164,6 +174,10 @@ export class KanbanDragController {
       window.removeEventListener('pointerup', handler);
     }
     this.pendingPointerUps.clear();
+    if (this.clickEndTimer !== null) {
+      clearTimeout(this.clickEndTimer);
+      this.clickEndTimer = null;
+    }
   }
 
   /**
@@ -224,7 +238,10 @@ export class KanbanDragController {
   /**
    * Card pointerdown — arms the per-card dndzone for one drag gesture.
    * Filters out editable text targets (TipTap body) and interactive children
-   * so click-to-edit and inline buttons keep working. Re-locks on pointerup.
+   * so click-to-edit and inline buttons keep working. Re-locks on pointerup,
+   * and ends a press that never became a drag there: while `dragTileId` is
+   * set `syncCards` skips every column, so a plain click would otherwise
+   * leave the board showing stale cards until the next real drag.
    *
    * Multi-card drag: if the anchor is part of a 2+ selection of unlocked
    * cards, snapshot the full block (anchor + every other selected unlocked
@@ -240,8 +257,17 @@ export class KanbanDragController {
     if (tgt && isEditableTextTarget(tgt)) return;
     if (tgt && tgt.closest('button, a, input, textarea, select')) return;
     this.cardDragDisabled = false;
+    this.dragStarted = false;
     this.armPointerUp(() => {
       this.cardDragDisabled = true;
+      // One task later, so a drop's own events run first. A real drag's
+      // finalize can come later still (after the drop animation); it ends
+      // the drag itself, and `dragStarted` keeps this check out of its way.
+      if (this.clickEndTimer !== null) clearTimeout(this.clickEndTimer);
+      this.clickEndTimer = setTimeout(() => {
+        this.clickEndTimer = null;
+        if (!this.dragStarted) this.resetCardDrag();
+      }, 0);
     });
     this.dragTileId = tileId;
     this.dragBlockIds = this.computeDragBlockIds(tileId);
@@ -302,6 +328,7 @@ export class KanbanDragController {
    * in-flight order. No commit here; the move is committed on `finalize`.
    */
   onConsiderCards = (columnId: string, e: CustomEvent<DndEvent<KanbanCardDndItem>>): void => {
+    this.dragStarted = true;
     this.dndCardsByColumn = {
       ...this.dndCardsByColumn,
       [columnId]: e.detail.items,
@@ -331,9 +358,10 @@ export class KanbanDragController {
     // Commit only on the destination zone (the one now containing the tile).
     const dropIdx = items.findIndex((it) => it.id === draggedId);
     if (dropIdx < 0) {
-      // Source zone's finalize. If no destination ever fires (drop outside
-      // any zone), `dragTileId` is still set on the source side and the
-      // resetCardDrag call below will run via window pointerup gate.
+      // The source zone's finalize after a drop in another column: that
+      // column's finalize fired first and committed. A drop outside every
+      // zone puts the card back in its source, so it lands on the no-op
+      // path below.
       return;
     }
 
@@ -414,6 +442,7 @@ export class KanbanDragController {
   };
 
   private resetCardDrag(): void {
+    this.dragStarted = false;
     this.dragTileId = null;
     this.dragSourceColumnId = null;
     this.dropTargetColumnId = null;
@@ -520,16 +549,5 @@ export class KanbanDragController {
   transformDraggedColumn = (el?: HTMLElement): void => {
     if (!el) return;
     el.classList.add('kanban-column-dragging');
-  };
-
-  resetDragState(): void {
-    this.dragTileId = null;
-    this.dragSourceColumnId = null;
-    this.dropTargetColumnId = null;
-    this.dropTargetIndex = null;
-  }
-
-  onDragEnd = (): void => {
-    this.resetDragState();
   };
 }

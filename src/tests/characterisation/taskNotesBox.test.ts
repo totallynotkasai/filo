@@ -22,7 +22,11 @@ import {
   toastActions,
   chooseToastAction,
   placeNoteOnBoard,
+  openNoteFromSidebar,
+  editors,
+  $$,
 } from './harness/actions';
+import { documentBanners } from './harness/errorStates';
 
 afterEach(async () => {
   await stopApp();
@@ -92,6 +96,26 @@ describe('task notes box', () => {
     await leaveTaskNotes(row);
     await waitFor(() => app.read(rel).includes('More, and a line'), 'the notes on disk');
     expect(app.read(rel)).toMatch(/\n---\n---\nBetween two rules\n---\nMore, and a line\n$/);
+  });
+
+  it('two lines typed in the box are two lines in the note, which opens editable', async () => {
+    const { app, rel } = await taskWithBody('');
+    const row = rowOf(app, 'Water plants');
+    await openTaskNotes(row);
+    await typeTaskNotes(row, 'Buy compost\nCheck the roses');
+    await leaveTaskNotes(row);
+    await waitFor(() => app.read(rel).includes('Check the roses'), 'the notes on disk');
+    expect(app.read(rel)).toMatch(/\nBuy compost\\\nCheck the roses\n?$/);
+
+    // Fold the box and open it again: it shows the note's two lines as typed.
+    await openTaskNotes(row);
+    await openTaskNotes(row);
+    expect(taskNotesText(row)).toBe('Buy compost\nCheck the roses\n');
+    await openNoteFromSidebar(app, rel);
+    expect(documentBanners(app)).toEqual([]);
+    const [ed] = editors($$(app.el, '.document-board')[0]);
+    expect(ed.isEditable).toBe(true);
+    expect(ed.getJSON().content?.[0]?.content?.map((n) => n.type)).toEqual(['text', 'hardBreak', 'text']);
   });
 
   it('a note that isn\'t UTF-8 gets a read-only box', async () => {

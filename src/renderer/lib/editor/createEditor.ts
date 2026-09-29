@@ -26,13 +26,10 @@ import { FontFamily } from '@tiptap/extension-font-family';
 import { Link } from '@tiptap/extension-link';
 import { Image } from '@tiptap/extension-image';
 import { Placeholder } from '@tiptap/extension-placeholder';
-import { Table } from '@tiptap/extension-table';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 import { TableRow } from '@tiptap/extension-table-row';
-import { TaskList } from '@tiptap/extension-task-list';
 import { TaskItem } from '@tiptap/extension-task-item';
-import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
 import { Markdown } from 'tiptap-markdown';
 import { common, createLowlight } from 'lowlight';
 import { FiloListTight, FiloTaskListTight } from './taskListTight';
@@ -40,6 +37,13 @@ import { IndentBackspace, TabKeys } from './tabKeys';
 import { NoteText } from './textEscapes';
 import { TabChar, withEdgeTabsOutsideRuns } from './tabNode';
 import { KeepSpaces } from './keepSpaces';
+import { LeadSpace, withLeadSpacesOutsideRuns } from './leadSpace';
+import { FiloBulletList, FiloOrderedList } from './listMarkers';
+import { FiloTaskList, FiloListParse } from './taskItems';
+import { FiloTable } from './tableMarkdown';
+import { FiloCodeBlock } from './codeFence';
+import { FiloHardBreak } from './hardBreak';
+import { FiloBlockquote } from './blockquote';
 import { isFiloLink } from '../../schema/link';
 import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
 
@@ -155,8 +159,11 @@ interface MarkdownSerializeState {
  * would terminate the container, so nested empty paragraphs fall back to the
  * default (drop) behaviour rather than corrupt the structure.
  */
-/** A paragraph opening like an ordered list item with a `)` delimiter. */
-const ORDERED_PAREN_START = /^( {0,3}\d{1,9})\)(?=[ \t]|$)/;
+/**
+ * A paragraph opening like an ordered list item with a `)` delimiter. One
+ * that opens with a space can't: its line starts with `&#32;` (`leadSpace.ts`).
+ */
+const ORDERED_PAREN_START = /^(\d{1,9})\)(?=[ \t]|$)/;
 
 const ParagraphWithBlankLines = Paragraph.extend({
   addStorage() {
@@ -180,11 +187,23 @@ const ParagraphWithBlankLines = Paragraph.extend({
           const listLike = first?.isText && first.marks.length === 0
             ? ORDERED_PAREN_START.exec(first.text ?? '')
             : null;
+          // Start the line now (the blank line and `> ` before a paragraph in
+          // a quote). Left to the first write, a bold, italic or strikethrough
+          // run opening the paragraph records its start before them, and
+          // tiptap-markdown's delimiter tidy then cut into the `>`. An empty
+          // paragraph in a quote or list writes nothing, as before.
+          if (node.content.size > 0) state.write();
           if (listLike) {
             state.write(`${listLike[1]}\\)`);
-            state.renderInline(withEdgeTabsOutsideRuns(node.cut(listLike[0].length)), false);
+            let rest = node.cut(listLike[0].length);
+            // The space after `1)` is mid-line, so it is written as a space.
+            if (rest.firstChild?.text?.startsWith(' ')) {
+              state.write(' ');
+              rest = rest.cut(1);
+            }
+            state.renderInline(withEdgeTabsOutsideRuns(rest), false);
           } else {
-            state.renderInline(withEdgeTabsOutsideRuns(node));
+            state.renderInline(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node)));
           }
           state.closeBlock(node);
         },
@@ -207,7 +226,7 @@ const HeadingWithLayout = Heading.extend({
             state.write(blockLayoutHtml(node));
           } else {
             state.write(`${'#'.repeat(Number(node.attrs.level) || 1)} `);
-            state.renderInline(withEdgeTabsOutsideRuns(node), false);
+            state.renderInline(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node)), false);
           }
           state.closeBlock(node);
         },
@@ -246,7 +265,11 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
 
     extensions: [
       StarterKit.configure({
-        codeBlock: false, // replaced by CodeBlockLowlight
+        codeBlock: false, // replaced by FiloCodeBlock (highlighting; fence the code can't close)
+        bulletList: false, // replaced by FiloBulletList (keeps adjacent lists apart in the file)
+        orderedList: false, // replaced by FiloOrderedList (likewise)
+        hardBreak: false, // replaced by FiloHardBreak (`<br>` in a heading)
+        blockquote: false, // replaced by FiloBlockquote (no bare `>` line for an empty paragraph)
         paragraph: false, // replaced by ParagraphWithBlankLines (empty-para serialiser)
         heading: false, // replaced by HeadingWithLayout (saves alignment / indent)
         text: false, // replaced by NoteText (keeps a typed `&amp;` as typed)
@@ -262,6 +285,10 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         trailingNode: false,
       }),
       ParagraphWithBlankLines,
+      FiloBulletList,
+      FiloOrderedList,
+      FiloHardBreak,
+      FiloBlockquote,
       HeadingWithLayout,
       NoteText,
       TextAlign.configure({
@@ -299,18 +326,19 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         // (the Document board passes '' — see DocumentEditor.svelte).
         placeholder: options.placeholder ?? 'Start typing...',
       }),
-      Table.configure({
+      FiloTable.configure({
         resizable: true,
       }),
       TableRow,
       TableHeader,
       TableCell,
-      TaskList,
+      FiloTaskList,
       FiloTaskListTight,
+      FiloListParse,
       TaskItem.configure({
         nested: true,
       }),
-      CodeBlockLowlight.configure({
+      FiloCodeBlock.configure({
         lowlight,
       }),
       Markdown.configure({
@@ -338,6 +366,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       // After Markdown: replaces its list `tight` parse rule (see taskListTight.ts).
       FiloListTight,
       KeepSpaces,
+      LeadSpace,
       TabChar,
       TabKeys,
       IndentBackspace,

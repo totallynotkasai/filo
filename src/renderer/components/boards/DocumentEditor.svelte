@@ -5,7 +5,7 @@
    * backing file lives in the vault. Renders the per-board styling cascade,
    * the note's tag row and vault-file drop handling.
    */
-  import { onMount, onDestroy, untrack } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { tabStore } from '../../stores/tabs.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { noteStore, type NoteModel } from '../../stores/notes.svelte';
@@ -22,6 +22,7 @@
   import { createTiptapEditor } from '../../lib/editor/createEditor';
   import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
   import { setEditorEditable } from '../../lib/editor/setEditorEditable';
+  import { describeChange, locateChanges } from '../../lib/editor/lossyChanges';
   import { reportError } from '../../lib/utils/errorBus';
   import { effectiveDocumentStyle } from '../../lib/styles/effectiveStyle';
   import { vaultRelativeFromAbsolute } from '../../lib/canvas/vaultPath';
@@ -219,6 +220,8 @@
   });
 
   let readOnly = $derived(model?.lossy ?? false);
+  // The lines a save would change, for the banner and the Take ownership confirm.
+  let lossyChanges = $derived(readOnly && model?.base ? locateChanges(model.base.rawText, model.lossyChanges) : []);
   // A note whose bytes aren't UTF-8 is non-editable until converted.
   let nonUtf8 = $derived(isNonUtf8(docPath));
   // A symbolic link is shown but never written: saving would replace the link
@@ -282,12 +285,24 @@
     if (vaultRoot && docPath) confirmConvertToUtf8(vaultRoot, docPath);
   }
 
+  /** Opens the Raw view at the first line a save would change. */
+  async function editInRawView(): Promise<void> {
+    const line = lossyChanges[0]?.line ?? 0;
+    if (!rawMode) await toggleRaw();
+    await tick();
+    if (line) rawView?.revealLine(line);
+  }
+
   function takeOwnership(): void {
     if (!docPath) return;
     const path = docPath;
+    const listed = lossyChanges.map((c) => `• ${describeChange(c)}`).join('\n');
     uiStore.openConfirm({
       title: 'Take ownership of this file?',
-      body: "Filo will be able to edit and save this file, but formatting it can't preserve (for example hard-wrapped lines, callouts, wiki links, comments) will be rewritten or removed on the next save. Continue?",
+      body:
+        "Filo will be able to edit and save this file, but formatting it can't preserve (for example hard-wrapped lines, callouts, wiki links, comments) will be rewritten or removed on the next save." +
+        (listed ? `\n\n${listed}` : '') +
+        '\n\nContinue?',
       confirmLabel: 'Take ownership',
       cancelLabel: 'Cancel',
       danger: true,
@@ -339,7 +354,8 @@
         </div>
       {:else if readOnly}
         <div class="readonly-banner" role="status">
-          <span class="readonly-text">Filo can't save this file without changing formatting it doesn't support, so it's open read-only.</span>
+          <span class="readonly-text">Filo can't save this file without changing formatting it doesn't support, so it's open read-only.{#if lossyChanges[0]} {describeChange(lossyChanges[0])}.{/if}</span>
+          <button class="readonly-action" onclick={() => void editInRawView()}>Edit in Raw view</button>
           <button class="readonly-action" onclick={takeOwnership}>Take ownership</button>
         </div>
       {/if}

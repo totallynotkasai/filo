@@ -9,6 +9,7 @@ import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { isLinkedNote, isNonUtf8 } from '../lib/vault/nonUtf8Paths.svelte';
 import type { FreshRead } from '../lib/notes/noteWriter';
 import type { DiskSnapshot } from '../lib/notes/noteFile';
+import type { RoundTripChange } from '../lib/editor/markdownSync';
 
 export type ViewId = string;
 
@@ -59,6 +60,8 @@ export class NoteModel {
   editorOwner = $state<ViewId | null>(null);
   /** The body can't round-trip through the editor, so it isn't written. */
   lossy = $state(false);
+  /** While `lossy`: the lines a save from the editor would change (at most three). */
+  lossyChanges = $state<RoundTripChange[]>([]);
   /**
    * The `diskRevision` whose body the user chose to edit anyway (Take
    * ownership), or -1. Another view loading that same body must not freeze

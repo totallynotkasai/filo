@@ -57,6 +57,7 @@ import { askUnlessMoved, dropGraceChecks, settleGraceChecksNow } from '../lib/no
 import { unsavedNoteTexts } from '../lib/notes/unsavedNoteTexts';
 import { createDiskChangeHandler } from './noteDiskChanges';
 import { backupThenRead } from '../lib/vault/keepLocalBackup';
+import type { RoundTripChange } from '../lib/editor/markdownSync';
 import {
   NoteModel,
   type NotePromptHandlers,
@@ -543,11 +544,12 @@ export const noteStore = {
   },
 
   /** The editor found the body can't round-trip; it's shown but not written. */
-  setLossy(relPath: string, lossy: boolean): void {
+  setLossy(relPath: string, lossy: boolean, changes: RoundTripChange[] = []): void {
     const m = models.get(vaultPath(relPath));
     if (!m) return;
     if (lossy && m.ownedDiskRevision === m.diskRevision) return;
     if (m.lossy !== lossy) m.lossy = lossy;
+    m.lossyChanges = lossy ? changes : [];
   },
 
   /** The user accepted that saving may rewrite formatting Filo can't keep. */
@@ -556,6 +558,7 @@ export const noteStore = {
     if (!m) return;
     m.ownedDiskRevision = m.diskRevision;
     m.lossy = false;
+    m.lossyChanges = [];
   },
 
   /** Re-reads a note whose read failed. */

@@ -234,3 +234,104 @@ describe('markdown body round-trip — golden corpus', () => {
     expect(editorMarkdown(ed)).not.toContain('HelloX');
   });
 });
+
+/**
+ * Shapes Filo writes that it used to read back differently (so the note
+ * reopened read-only): the checklist, list, leading-space, table and code
+ * fence cases, and every counter-example the round-trip property test
+ * (`editorRoundTripProperty.test.ts`) found while they were fixed. Each must
+ * load editable and save to the same bytes.
+ */
+const FILO_WRITES: ReadonlyArray<[string, string]> = [
+  ['Enter after the last task', '- [ ] a\n- [ ] '],
+  ['an empty task after a paragraph', 'x\n\n- [ ] '],
+  ['an empty checked task holding sub-tasks', '- [x] \n  - [ ] \n  - [ ] z'],
+  ['Ctrl+Shift+9 on the middle bullet', '- a\n\n* [ ] b\n\n- c'],
+  ['two bullet lists with an empty line between', '- a\n\n\n* b'],
+  ['Enter twice in a numbered list', '1. a\n2. b\n\n\n1) c'],
+  ['an empty line after a list', '- a\n\n\n# b'],
+  ['an empty first item of a nested list', '- a\n  - &#32;\n  - b'],
+  ['a paragraph typed with one leading space', '&#32;one'],
+  ['a paragraph typed with four leading spaces', '&#32;   four'],
+  ['a leading space after a line break', 'a\\\n&#32; b'],
+  ['a list item typed with leading spaces', '- &#32;  text'],
+  ['a bold run after leading spaces', '&#32;**bold**'],
+  ['a pipe in a table cell', '| one yes\\|no | two |\n| --- | --- |\n| a | b |\n'],
+  ['a pipe in inline code in a table cell', '| `a\\|b` |\n| --- |\n| c |\n'],
+  ['an aligned table', '| a | b | c |\n| :--- | :---: | ---: |\n| d | e | f |\n'],
+  ['code holding a line of three backticks', '````\na\n```\nb\n````'],
+  ['code holding a line of four backticks', '`````md\n````\n`````'],
+  ['a line break in a heading', '# Title<br>next'],
+  ['a heading ending in " #"', '# a \\#'],
+  ['a heading that is only "#"', '# \\#'],
+  ['a lone "+"', '\\+'],
+  ['a lone "1."', '1\\.'],
+  ['"- " after a line break', 'a\\\n\\- b'],
+  ['"-" and a tab after a line break', '1. \\\n   \\-\ta'],
+  ['a row of "=" after a line break', 'a\\\n\\==='],
+  ['a bold run after a line break in a quote', '> a\\\n> **b** c'],
+  ['a bold run opening a second paragraph in a quote', '> &#9;\n>\n> **a** b'],
+  ['a quote whose first line was empty', '> a'],
+  ['an escaped backslash before "!" and a link', '\\\\\\![a](https://example.com/a)'],
+];
+
+describe('shapes Filo writes read back as written', () => {
+  for (const [name, body] of FILO_WRITES) {
+    it(name, () => {
+      const rt = roundTrip(body);
+      expect(rt.lossy).toBe(false);
+      expect(rt.out).toBe(body);
+    });
+  }
+});
+
+describe('Markdown from other apps', () => {
+  it('a `~~~` fence opens editable; Filo fences it with backticks', () => {
+    const rt = roundTrip('~~~js\nx\n~~~');
+    expect(rt.lossy).toBe(false);
+    expect(rt.out).toBe('```js\nx\n```');
+  });
+
+  it('a mixed bullet / checklist list loads without a filler checkbox, and stays read-only', () => {
+    const ed = makeEditor();
+    const { lossy } = loadMarkdownIntoEditor(ed, '- a\n- [ ] b');
+    expect(lossy).toBe(true);
+    expect(ed.getJSON().content?.map((n) => n.type)).toEqual(['bulletList', 'taskList']);
+    expect(editorMarkdown(ed)).toBe('- a\n\n* [ ] b');
+  });
+
+  it('a `:--` alignment row is written as `:---`, which the check treats as the same', () => {
+    const rt = roundTrip('| a |\n| :-- |\n| b |');
+    expect(rt.lossy).toBe(false);
+    expect(rt.out).toBe('| a |\n| :--- |\n| b |\n');
+  });
+});
+
+describe('tables Markdown cannot hold are written as HTML', () => {
+  function tableDoc(cell: object): object {
+    const p = (text: string): object => ({ type: 'paragraph', content: [{ type: 'text', text }] });
+    return {
+      type: 'doc',
+      content: [{
+        type: 'table',
+        content: [
+          { type: 'tableRow', content: [{ type: 'tableHeader', content: [p('Head')] }] },
+          { type: 'tableRow', content: [{ type: 'tableCell', content: [cell] }] },
+        ],
+      }],
+    };
+  }
+
+  it.each([
+    ['a list in a cell', { type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'item' }] }] }] }],
+    ['a heading in a cell', { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Big' }] }],
+  ])('%s', (_name, cell) => {
+    const ed = makeEditor();
+    ed.commands.setContent(tableDoc(cell));
+    const md = editorMarkdown(ed);
+    expect(md).toMatch(/^<table[ >]/);
+    const rt = roundTrip(md);
+    expect(rt.lossy).toBe(false);
+    expect(rt.out).toBe(md);
+  });
+});

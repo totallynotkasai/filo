@@ -203,7 +203,7 @@ export class NoteEditorView {
       // Only a body that came from disk says anything about the file. A body
       // another view typed is that editor's own output, so it can't make the
       // note read-only under the view the user is typing in.
-      if (m.bodySource === 'disk') noteStore.setLossy(m.relPath, result.lossy);
+      if (m.bodySource === 'disk') noteStore.setLossy(m.relPath, result.lossy, result.changes);
     } finally {
       this.loading = false;
     }

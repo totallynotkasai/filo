@@ -17,7 +17,7 @@ Type-check:     npm run check            (renderer + shared, svelte-check)
                 npm run typecheck:main   (main process)
                 npm run ci:test-typecheck (test sources, per-file ratchet)
 Unit tests:     npm run test:unit
-E2E tests:      npm run test:e2e
+E2E tests:      npm run build && npm run test:e2e   (drives dist/; FILO_E2E_SCALE=1 adds the scale budgets)
 Build:          npm run build
 Package:        npm run package
 ```
@@ -26,7 +26,7 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: 88 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: 89 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
@@ -36,7 +36,7 @@ Package:        npm run package
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; a handler's vault-relative path comes from the root / target pair `assertWithinVault` matched (`vaultRelativeWithin`), never `path.relative` across two spellings of the vault (an 8.3 name, a junction), so the `.filo/` guards can't be walked around; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; a command holding snapshots of boards beyond its own names them in `touchedBoardIds()`, so a board reload drops it; Task List section positions are clamped. |
 | `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts, no view or lib module reads the vault index's vault-wide `version` (it reads the notes it shows), a Kanban card builds its editor through `LazyTextTileBody` (a static preview, the editor mounted in idle time or on a press), toasts, notices, confirms and `reportError` messages say what happened in the user's words (no `sentinel`, `cascade`, `drain`, `baseline`, `IPC`, `envelope`), and every Enter handler in a component calls `preventDefault` (else its keypress presses the button of a dialog it opens). |
-| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; app source and build config carry no audit ids (`Audit-N`, `P0-N`, `A25-01`, `Phase N / N.N`, and in comments `E.11`); a note's `tags:` is read only through the tags normaliser (`noteTags` / `*TagsField`), since a note may write them as text (`tags: project`); a board's drop handler copies or imports a file dropped from Explorer only after `classifyDroppedFile` (a file already in the vault is linked by its path, never copied). |
+| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; E2E specs drive the built app (no `import('/src/…')`, named `*.e2e.ts`); app source and build config carry no audit ids (`Audit-N`, `P0-N`, `A25-01`, `Phase N / N.N`, and in comments `E.11`); a note's `tags:` is read only through the tags normaliser (`noteTags` / `*TagsField`), since a note may write them as text (`tags: project`); a board's drop handler copies or imports a file dropped from Explorer only after `classifyDroppedFile` (a file already in the vault is linked by its path, never copied). |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// allow-direct-write: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
 
@@ -44,7 +44,7 @@ Package:        npm run package
 
 `test:unit:strict` ([scripts/test-unit-strict.mjs](scripts/test-unit-strict.mjs)) runs vitest and also fails on known noise patterns in its output: a missing `window.filo` mock, a duplicate object key, the `yaml` collection-key warning, and Svelte effect-loop / unsafe-mutation warnings.
 
-The `coverage` job (the vitest coverage ratchet) runs on pushes to `main` and on PRs. The a11y axe-core scan and full Electron E2E run weekly (Monday 06:00 UTC) and on demand (Actions tab → CI → Run workflow).
+The `coverage` job (the vitest coverage ratchet) runs on pushes to `main` and on PRs. The `e2e` job runs the Playwright suite against the built app on `windows-latest`, weekly (Monday 06:00 UTC) and on demand (Actions tab → CI → Run workflow): the axe scan and, with `FILO_E2E_SCALE=1` and `FILO_E2E_BUDGET_FACTOR=2`, the 5,000-note scale budgets included.
 
 **Comments:** explain *why* (the invariant, the hazard a guard prevents), never history. No audit IDs, phases, dates or "used to…" in code: that belongs in commit messages. Plans and audit reports live in `docs/` (active) and `docs/archive/` (done), not the repo root.
 
@@ -64,7 +64,7 @@ The `coverage` job (the vitest coverage ratchet) runs on pushes to `main` and on
 | List drag-and-drop | svelte-dnd-action                                                      |
 | IDs                | nanoid                                                                 |
 | Focus management   | focus-trap                                                             |
-| Testing            | Vitest (unit, jsdom env), Playwright (E2E + a11y axe-core)             |
+| Testing            | Vitest (unit, jsdom env), Playwright on the built Electron app (E2E + axe-core) |
 | CSS                | Vanilla CSS only. CSS custom properties for theming.                   |
 
 **Critical:** Canvas-level tile dragging is built on raw pointer-event handlers in `lib/canvas/`, NOT svelte-dnd-action (which only handles list-based drag in Kanban / Task List).
@@ -408,7 +408,7 @@ filo/
 │   │   │   │   ├── writeSchedulerFailures.ts # Failure attribution + retention of transient failures for Retry / Ctrl+S
 │   │   │   │   ├── retryFeedback.ts   # A toast's Retry: fires every kept failed write, then names what still isn't on disk, per kind
 │   │   │   │   ├── writeErrorToast.ts # The toast for a failed debounced write (names a preserved temp file)
-│   │   │   │   ├── lastViewFlush.ts   # Writes a Kanban / Task List `lastView` by the captured board id at teardown
+│   │   │   │   ├── lastViewFlush.ts   # Writes a Kanban / Task List `lastView` by the captured board id at teardown, only when a value it owns changed
 │   │   │   │   ├── tileMemberships.ts # A deleted Mind Map tile's frames and groups, put back on undo
 │   │   │   │   ├── boardNaming.ts     # A board's name is its .board.json stem: name rules, new-board place, folder-follow rule
 │   │   │   │   ├── newBoardPlace.ts   # Where a new board goes in the open vault, and whether its name is free there
@@ -723,7 +723,7 @@ filo/
 │       ├── unit/                      # Vitest unit tests (flat; contracts/ holds whole-codebase contract checks)
 │       ├── component/                 # Vitest: real components mounted in jsdom
 │       ├── characterisation/          # Vitest: whole App against a real temp vault + real IPC handlers
-│       ├── e2e/                       # Playwright E2E tests
+│       ├── e2e/                       # Playwright on the built app (`*.e2e.ts`; `helpers/app.ts`: launchBuilt, quitLikeUser, openNoteByName, generateVault)
 │       ├── helpers/                   # Shared test helpers (memory vault, window.filo bridge, machine id, fake command, editor loop breaker)
 │       │   └── seedBoard.ts           # Seeds the board cache from runtime tiles, then calls setBoard
 │       └── types/
@@ -995,8 +995,8 @@ Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, U
 - **Unit tests (Vitest):** Cover all `lib/` modules. Stores should have unit tests for their logic. Target: every function in `lib/` has at least one test.
 - **Component tests (jsdom + Vitest):** `vitest.config.mts` has three projects: `unit` (`src/tests/unit/`), `component` (`src/tests/component/`, resolved with the `browser` export condition so Svelte 5 client `mount()` works) and `characterisation` (below). Component tests mount the REAL components with [src/tests/component/helpers/mountEditor.ts](src/tests/component/helpers/mountEditor.ts) (`recordingFilo`, `mountTextTile`, `mountDocumentEditor`, `pressUndo`, `settle`, `drainDebounce`). All three projects run in `test:unit:strict`. Heavy interaction coverage still lives in Playwright E2E.
 - **Characterisation suite:** `src/tests/characterisation/` mounts the whole `App.svelte` against a real temp vault, with the real main-process IPC handlers behind `window.filo` (only the Electron shell is faked). The specs pin what the user sees (views, one model across views, frontmatter edits, renames, disk changes, delete + undo through the trash, tag undo, the tag row and raw view, bytes never written by looking) and call only the `harness/` adapter. When an internal API moves, update the harness, not the specs; the `characterisation-suite` gate enforces this. The one skip allowed is `it.skipIf(onLinux)` (`harness/platform.ts`), for the few cases that time out only on the Linux CI runner's file watcher; Filo targets Windows, where they run. `npm run scratch-vault` uses the same harness to build the dogfooding vault.
-- **E2E tests (Playwright):** Cover critical user flows — create vault, create board, add tile, edit content, delete tile, switch tabs, undo/redo.
-- **Test file location:** Unit tests go flat in `src/tests/unit/`, named after the module or behaviour they cover (`noteWriter.test.ts`). `src/tests/unit/contracts/` holds checks that read the whole codebase (IPC envelope, untrusted sinks, command coverage); it is not the characterisation suite. Component tests go in `src/tests/component/`, characterisation specs in `src/tests/characterisation/`, E2E tests in `src/tests/e2e/`.
+- **E2E tests (Playwright):** `src/tests/e2e/*.e2e.ts` drive the **built** app (`dist/main/main.js`, so `npm run build` first) the way the user does, through [src/tests/e2e/helpers/app.ts](src/tests/e2e/helpers/app.ts): `launchBuilt` (fresh user-data dir, the folder picker and native message boxes stubbed in main, window restored and un-throttled), `quitLikeUser` (the window's close, so the quit flow runs), `openNoteByName`, `toasts`, `confirmDialogs`, `freshVault`, `generateVault(n)`, `hashVault`. A spec checks what is on screen or on disk, never a store; gate `e2e-drives-built-app` forbids `import('/src/…')` in the page. One worker (parallel Electron instances fight over `DevToolsActivePort`). The specs: editor fidelity (formatting reopens editable), the Kanban click, Syncthing-style deliveries, quit while minimized, no bytes written by looking (1,000 generated notes), a day's first use across launches, vault switch mid-edit and a BOM edit, crash recovery, keyboard access, an axe scan of each view (injected into the page; colour contrast is `themeContrast.test.ts`'s job), and `scaleBudgets` (weekly only). `FILO_E2E_MAIN` points the suite at another build, to see a spec fail where its bug is still present.
+- **Test file location:** Unit tests go flat in `src/tests/unit/`, named after the module or behaviour they cover (`noteWriter.test.ts`). `src/tests/unit/contracts/` holds checks that read the whole codebase (IPC envelope, untrusted sinks, command coverage); it is not the characterisation suite. Component tests go in `src/tests/component/`, characterisation specs in `src/tests/characterisation/`, E2E specs in `src/tests/e2e/` as `<behaviour>.e2e.ts`.
 
 ---
 

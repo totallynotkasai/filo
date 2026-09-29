@@ -189,7 +189,7 @@
       Only when the save failed does the surface become a role=button,
       accepting pointer + keyboard activation, and open a popover listing
       failed paths + a Retry button. Otherwise it is a status surface with
-      pointer-events disabled.
+      pointer-events disabled and role=status (which may carry the label).
     -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div
@@ -197,7 +197,7 @@
       class:clickable={inError}
       style:color={saveView.color}
       bind:this={saveIndicatorEl}
-      role={inError ? 'button' : undefined}
+      role={inError ? 'button' : 'status'}
       tabindex={inError ? 0 : undefined}
       aria-live={inError ? 'assertive' : 'polite'}
       aria-atomic="true"

@@ -9,9 +9,12 @@
  * cache keyed by the CAPTURED board id, which resolves whether or not that
  * board is still active.
  *
- * The JSON-equality guard makes the flush a no-op when the persisted slice
- * already matches (lastView is plain data), so a board switch with nothing
- * changed writes nothing.
+ * The flush is a no-op when the persisted slice already holds every value the
+ * view would write, so opening a board and leaving it writes nothing. The
+ * compare is per key: the loaded slice can carry keys the view doesn't own (the
+ * Task List schema defaults `groupBy` / `sortBy` into it, though they live in
+ * the board settings) and keys in another order, and a whole-object compare
+ * would rewrite every Task List board the moment it is shown.
  *
  * Callers must pass a `nextLastView` snapshot built when the debounce was
  * ARMED, not at flush time — by teardown time the next board's hydrate may
@@ -25,11 +28,17 @@ export function flushLastViewForBoard(boardId: string, nextLastView: unknown): b
   const cached = boardCacheStore.cache[boardId];
   if (!cached) return false;
   const prevSettings = (cached.board.settings ?? {}) as Record<string, unknown>;
-  if (
-    JSON.stringify(prevSettings.lastView ?? null) === JSON.stringify(nextLastView ?? null)
-  ) {
-    return false;
-  }
+  if (holdsEveryValue(prevSettings.lastView, nextLastView)) return false;
   boardCacheStore.updateBoardSettings(boardId, { ...prevSettings, lastView: nextLastView });
   return true;
+}
+
+/** Whether `saved` has each of `next`'s keys with an equal value (other keys ignored). */
+function holdsEveryValue(saved: unknown, next: unknown): boolean {
+  if (next === null || typeof next !== 'object') return JSON.stringify(saved ?? null) === JSON.stringify(next ?? null);
+  if (saved === null || typeof saved !== 'object') return false;
+  const s = saved as Record<string, unknown>;
+  return Object.entries(next as Record<string, unknown>).every(
+    ([k, v]) => JSON.stringify(s[k] ?? null) === JSON.stringify(v ?? null),
+  );
 }

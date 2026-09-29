@@ -67,11 +67,11 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.10.0",
     "@playwright/test": "^1.60.0",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@types/rbush": "^4.0.0",
     "@vitest/coverage-v8": "^5.0.1",
+    "axe-core": "^4.13.0",
     "electron": "^44.4.5",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",

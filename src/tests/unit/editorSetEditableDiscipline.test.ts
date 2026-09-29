@@ -16,7 +16,7 @@ import { setEditorEditable } from '../../renderer/lib/editor/setEditorEditable';
  * 1. `setEditorEditable` toggles editability on a REAL editor without emitting
  *    `update` (so no onUpdate → no store write → no debounced disk write).
  * 2. No renderer file calls `.setEditable(` directly — every toggle goes
- *    through the helper. (The real-app guard is `e2e/documentOpenNoWrite`.)
+ *    through the helper. (The real-app guard is `e2e/noBytesByLooking.e2e.ts`.)
  */
 
 let editor: Editor | null = null;

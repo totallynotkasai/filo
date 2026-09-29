@@ -494,7 +494,7 @@
        this truncates existing stacks immediately. -->
   <div class="setting-row">
     <div class="setting-label-stack">
-      <span class="setting-label">Undo History Limit</span>
+      <label class="setting-label" for="history-limit">Undo History Limit</label>
       <span class="setting-hint">Maximum undo steps per board. 10–5000. Raising this lets you step back further; lowering it trims memory used by snapshot-heavy commands.</span>
     </div>
     <input

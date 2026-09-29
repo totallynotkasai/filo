@@ -143,6 +143,13 @@ export async function openNoteFromSidebar(app: CharApp, rel: string): Promise<vo
   await settle(200);
 }
 
+/** Double-click a `.board.json` in the sidebar → its board opens in a tab. */
+export async function openBoardFromSidebar(app: CharApp, rel: string, kind: BoardKind): Promise<void> {
+  dblclick(await revealInSidebar(app, rel));
+  await waitFor(() => app.el.querySelector(BOARD_ROOT[kind]) !== null, `${kind} board for ${rel}`);
+  await settle(200);
+}
+
 // ── The note's tag row and raw view (Document tab) ─────────────────────────
 
 /** The tags the open Document tab's tag row shows. */

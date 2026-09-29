@@ -29,7 +29,7 @@ const CHARACTERISATION_SPECS = {
   'editingAndViews.test.ts': 5,
   'metadataEdits.test.ts': 5,
   'renamesAndDiskChanges.test.ts': 8,
-  'bytesOnDisk.test.ts': 4,
+  'bytesOnDisk.test.ts': 5,
   'noteModel.test.ts': 13,
   'oneModel.test.ts': 4,
   'trash.test.ts': 9,
@@ -395,6 +395,30 @@ export const checks = [
           if (/\b(?:frontmatter|fm)\.tags\s*=(?!=)/.test(line)) return;
           out.push(fail(rel, i + 1, line.trim()));
         });
+      }
+      return out;
+    },
+  },
+  {
+    // An E2E spec that imports renderer modules in the page (`import('/src/…')`)
+    // resolves only against a Vite dev server, never against the built app the
+    // suite launches, so it fails before it tests anything; and a spec that
+    // reaches into stores tests a path the user never takes.
+    id: 'e2e-drives-built-app',
+    title: 'E2E specs drive the built app (no `import(\'/src/…\')` in the page), named *.e2e.ts',
+    hint:
+      'Drive the UI through src/tests/e2e/helpers/app.ts (launchBuilt, openNoteByName, quitLikeUser …) and check ' +
+      'the result on disk or on screen. Name the spec <behaviour>.e2e.ts (playwright.config.ts matches only that).',
+    run(ctx) {
+      const out = [];
+      for (const rel of ctx.files('src/tests/e2e', { ext: ['.ts'] })) {
+        const src = ctx.read(rel);
+        src.split('\n').forEach((line, i) => {
+          if (/import\(\s*['"`]\/src\//.test(line)) out.push(fail(rel, i + 1, line.trim()));
+        });
+        if (!rel.startsWith('src/tests/e2e/helpers/') && !rel.endsWith('.e2e.ts')) {
+          out.push(fail(rel, undefined, 'a spec outside helpers/ must be named *.e2e.ts, or Playwright never runs it'));
+        }
       }
       return out;
     },

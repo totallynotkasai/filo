@@ -2,7 +2,7 @@
  * Audit-19 0.2 — the REAL `DocumentEditor.svelte` opened on a note and closed
  * with no edit must leave the bytes untouched and must not trip Svelte's
  * `effect_update_depth_exceeded` (the loop the svelte ^5.57.1 upgrade fixed;
- * previously guarded only by the E2E `documentOpenNoWrite.test.ts`). Plus the
+ * also guarded in the built app by `e2e/noBytesByLooking.e2e.ts`). Plus the
  * DocumentEditor twin of MD-1 (load → Ctrl+Z). Pinned by
  * ci:markdown-body-roundtrip (EDITOR_SUITE arm).
  */

@@ -5,9 +5,11 @@ name: CI
 # runs the parts that behave differently on Windows: the unit tests (the
 # `itOnWindows` cases and case-insensitive path handling) and the main-process
 # type-check. `coverage` enforces the coverage ratchet on pushes to main
-# (work lands there directly, without PRs) and on PRs. The a11y axe scan and
-# the full Electron E2E run weekly, and on demand (Actions tab -> CI -> Run
-# workflow): they drive the real Electron shell, which nothing else exercises.
+# (work lands there directly, without PRs) and on PRs. `e2e` runs weekly, and
+# on demand (Actions tab -> CI -> Run workflow): the Playwright suite drives the
+# built app in the real Electron shell, which nothing else exercises (the axe
+# scan and the 5,000-note scale budgets included). It runs on Windows, the
+# platform Filo targets.
 
 on:
   push:
@@ -79,35 +81,16 @@ jobs:
           path: coverage/
           retention-days: 7
 
-  a11y:
-    name: a11y (axe-core E2E subset, weekly and manual)
-    runs-on: ubuntu-latest
-    needs: verify
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - run: npm run build
-      - run: xvfb-run --auto-servernum -- npx playwright test a11y.test.ts
-      - if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: a11y-traces
-          path: |
-            test-results/
-            playwright-report/
-          retention-days: 7
-
   e2e:
-    name: Full E2E (weekly and manual)
-    runs-on: ubuntu-latest
+    name: E2E on the built app (weekly and manual)
+    runs-on: windows-latest
     needs: verify
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    env:
+      # scaleBudgets.e2e.ts runs only here; a hosted runner is slower than a
+      # desktop, so its budgets get twice the room.
+      FILO_E2E_SCALE: '1'
+      FILO_E2E_BUDGET_FACTOR: '2'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -115,13 +98,12 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
       - run: npm run build
-      - run: xvfb-run --auto-servernum -- npm run test:e2e
+      - run: npm run test:e2e
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-traces
+          name: e2e-results
           path: |
             test-results/
             playwright-report/

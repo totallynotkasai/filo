@@ -14,6 +14,7 @@ import {
   addKanbanColumn,
   placeNoteOnBoard,
   openNoteFromSidebar,
+  openBoardFromSidebar,
   closeActiveTab,
   showBoard,
   panAndZoomMindMap,
@@ -71,6 +72,58 @@ describe('opening things never writes', () => {
     await waitFor(() => kanbanCards(app).length === notes.length, 'kanban cards');
     await showBoard(app, 'tasklist');
     await waitFor(() => taskRows(app).length === notes.length, 'task rows');
+    await quiesce();
+    expect(app.snapshot()).toEqual(before);
+  });
+
+  it('a Task List and a Kanban board file written elsewhere, opened and shown, stay byte-identical', async () => {
+    // As another copy of Filo writes them: a `lastView` holding only what the
+    // view restores (no group / sort, which live in the board settings).
+    const at = 1790000000000;
+    const def = (id: string, filePath: string): Record<string, unknown> => ({
+      id, type: 'text', filePath, style: { headerColor: '', bodyColor: '' }, createdAt: at, updatedAt: at,
+    });
+    const head = (id: string, name: string, type: string, settings: Record<string, unknown>): Record<string, unknown> => ({
+      id, name, emoji: '', createdAt: at, updatedAt: at, type,
+      settings: { backgroundColor: '', defaultFolder: '', accentColor: '', ...settings, defaults: {} },
+    });
+    const taskList = JSON.stringify({
+      version: 8,
+      board: {
+        ...head('elsewheretl1', 'Elsewhere List', 'tasklist', {
+          groupBy: 'status', sortBy: 'manual',
+          lastView: { filterTags: [], filterStatus: null, filterPriority: null, showCompleted: true, smartList: 'all' },
+        }),
+        tasks: [{ tileId: 'tlelsewhere1', position: 0 }, { tileId: 'tlelsewhere2', position: 1 }],
+        sections: [{ id: 'sec_elsewhere', title: 'Section 1', position: 0, collapsed: false }],
+        collapsedSubtasks: [],
+      },
+      tileDefs: { tlelsewhere1: def('tlelsewhere1', 'One.md'), tlelsewhere2: def('tlelsewhere2', 'Two.md') },
+      connections: {},
+      frames: [],
+    }, null, 2);
+    const kanban = JSON.stringify({
+      version: 8,
+      board: {
+        ...head('elsewherekb1', 'Elsewhere Kanban', 'kanban', { lastView: { sortBy: 'manual', filterTags: [], filterProp: null } }),
+        columns: [{ id: 'colelsewhere', title: 'To do', position: 0, collapsed: false, tilePlacements: [{ tileId: 'kbelsewhere1', position: 0 }] }],
+      },
+      tileDefs: { kbelsewhere1: def('kbelsewhere1', 'One.md') },
+      connections: {},
+      frames: [],
+    }, null, 2);
+    const app = await startApp({
+      'One.md': '---\ntitle: One\n---\nFirst\n',
+      'Two.md': '---\ntitle: Two\n---\nSecond\n',
+      'Elsewhere List.board.json': taskList,
+      'Elsewhere Kanban.board.json': kanban,
+    });
+    const before = app.snapshot();
+    await openBoardFromSidebar(app, 'Elsewhere List.board.json', 'tasklist');
+    await waitFor(() => taskRows(app).length === 2, 'task rows');
+    await openBoardFromSidebar(app, 'Elsewhere Kanban.board.json', 'kanban');
+    await waitFor(() => kanbanCards(app).length === 1, 'kanban card');
+    await showBoard(app, 'tasklist');
     await quiesce();
     expect(app.snapshot()).toEqual(before);
   });

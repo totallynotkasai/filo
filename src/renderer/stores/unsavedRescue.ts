@@ -25,6 +25,7 @@ import type { RescueResult, UnsavedCause, UnsavedItem } from '../lib/vault/unsav
 import { dirtyRawViews, rawViewInConflict, takeRawRescueItems } from '../lib/notes/rawViews';
 import { notesBoxDraftPath, notesBoxInConflict, takeNotesBoxRescueItems } from '../lib/tasklist/notesBox.svelte';
 import { unsavedConfigPayloads } from '../lib/boards/configWriteScheduler';
+import { isBoardDriftHeld } from '../lib/boards/boardDriftHold';
 import { unsavedMiscPayloads } from '../lib/boards/miscWriteScheduler';
 import { unsavedComponentPayloads } from '../lib/boards/componentWriteRetry';
 
@@ -80,8 +81,17 @@ async function fileExists(vaultRoot: string, relPath: string): Promise<boolean> 
   }
 }
 
+/** The question a change waits on, if any. */
+function answerCause(key: VaultPath, relPath: string): UnsavedCause | null {
+  if (noteStore.get(key)?.status === 'conflict' || notesBoxInConflict(relPath)) return 'conflict';
+  if (rawViewInConflict(relPath)) return 'raw-conflict';
+  if (isBoardDriftHeld(relPath)) return 'board-drift';
+  return null;
+}
+
 async function causeOf(key: VaultPath, relPath: string, vaultRoot: string | null): Promise<UnsavedCause> {
-  if (noteStore.get(key)?.status === 'conflict' || rawViewInConflict(relPath)) return 'conflict';
+  const answer = answerCause(key, relPath);
+  if (answer) return answer;
   if (isNonUtf8(relPath)) return 'non-utf8';
   if (vaultRoot && !(await fileExists(vaultRoot, relPath))) return 'missing';
   return 'write-failed';
@@ -109,8 +119,7 @@ export async function describeUnsaved(work: UnsavedWork = unsavedWork()): Promis
   for (const key of work.pending) {
     const path = displayPath(key, boards);
     // A held body shows as pending to the ledger; say what holds it.
-    const conflict = noteStore.get(key)?.status === 'conflict' || rawViewInConflict(path) || notesBoxInConflict(path);
-    items.push({ path, cause: conflict ? 'conflict' : 'pending' });
+    items.push({ path, cause: answerCause(key, path) ?? 'pending' });
   }
   return items;
 }

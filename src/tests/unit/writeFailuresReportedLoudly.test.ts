@@ -19,6 +19,7 @@ import {
 } from '@renderer/lib/boards/writeStateTracking';
 import { noteStore, setNotePromptHandlers } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
+import { releaseBoardDrift } from '@renderer/lib/boards/boardDriftHold';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { onError, __resetErrorBusForTests, type ReportedError } from '@renderer/lib/utils/errorBus';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -251,7 +252,7 @@ describe('Audit-17 2.3 — board pre-write ENOENT re-stats once instead of silen
     restoreFiloDefault();
   });
 
-  it('unlink→recreate blip with foreign bytes → drift prompt (defer aborts), NOT silent success', async () => {
+  it('unlink→recreate blip with foreign bytes → drift prompt (the write is held), NOT silent success', async () => {
     // The board was known on disk (baseline) …
     noteBaseline('b.board.json', 1000, 200);
     // … then the pre-write stat sees ENOENT (blip), and the re-stat sees a
@@ -269,10 +270,11 @@ describe('Audit-17 2.3 — board pre-write ENOENT re-stats once instead of silen
 
     // Pre-fix: bare `return` → resolved as SUCCESS, debounce window's board
     // mutations silently dropped. Post-fix: the reappeared file falls through
-    // to the drift check → handler prompts → 'defer' aborts loudly.
+    // to the drift check → handler prompts, and the write is held for the answer.
     await expect(writeBoardFile('/v', 'b.board.json', makeCachedBoard())).rejects.toMatchObject({
-      code: 'EXTERNAL_EDIT',
+      code: 'BOARD_DRIFT_HELD',
     });
+    releaseBoardDrift('b.board.json');
     expect(promptedPath).toBe('b.board.json');
     expect(calls.filter((c) => c.channel === 'board:save').length).toBe(0);
   });

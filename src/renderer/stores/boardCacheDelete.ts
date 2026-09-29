@@ -9,6 +9,7 @@ import {
   setViewport,
 } from '../lib/boards/boardSaver';
 import { markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
+import { releaseBoardDrift } from '../lib/boards/boardDriftHold';
 import { trashVaultPath } from '../lib/vault/vaultOperations';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
@@ -92,6 +93,8 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
       if (project) project.boards = project.boards.filter((b) => b.id !== boardId);
 
       cancelBoardWrite(boardId);
+      // A drift question about a board no longer here has nothing left to decide.
+      if (typeof _path === 'string') releaseBoardDrift(_path);
       // Drop the entry from the unified viewports map and schedule a
       // debounced flush so .filo/viewports.json reflects the deletion.
       removeViewport(boardId);

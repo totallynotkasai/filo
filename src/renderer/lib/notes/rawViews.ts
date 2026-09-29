@@ -10,7 +10,10 @@
  *  - reported to `unsavedWork()`, so the leave and quit dialogs name them;
  *  - flushed by `flushRawViews()` from the vault save and before a tab closes;
  *  - copied whole into `.filo/recovery/` by the rescue path when they still
- *    can't be written.
+ *    can't be written;
+ *  - while one shows its conflict banner, held as a decision
+ *    (`noteRawConflict`), so the save indicator lists it and quit says it is
+ *    waiting for an answer rather than that the save failed.
  */
 import { vaultPath } from '@shared/vaultPath';
 import { registerArmedPathSource, registerUnsavedSource } from '../boards/writeStateTracking';
@@ -18,6 +21,7 @@ import { getActiveVaultPath } from '../vault/activeVaultPath';
 import { invokeOk } from '../utils/invokeOk';
 import { reportError } from '../utils/errorBus';
 import { uiStore } from '../../stores/ui.svelte';
+import { holdDecision, releaseDecision } from '../../stores/heldDecisions';
 
 /**
  * - `clean`: nothing typed that isn't on disk.
@@ -46,6 +50,8 @@ export interface RawViewHandle {
   markRescued(text: string): void;
   /** The leave or quit was called off: the view saves its text again. */
   clearRescued(): void;
+  /** Brings the view's text field into view and focuses it. */
+  focus(): void;
 }
 
 // allow-module-state: holds mounted views only; each removes itself on unmount, which a vault swap causes
@@ -56,7 +62,43 @@ export function registerRawView(handle: RawViewHandle): () => void {
   views.add(handle);
   return () => {
     views.delete(handle);
+    releaseDecision(rawDecisionKey(handle));
   };
+}
+
+// allow-module-state: a counter for decision keys; the keys go with their views
+let nextRawDecisionId = 1;
+// allow-module-state: weakly keyed by mounted views, which a vault swap unmounts
+const rawDecisionKeys = new WeakMap<RawViewHandle, string>();
+
+/** One decision key per mounted view, stable across renames of its note. */
+function rawDecisionKey(handle: RawViewHandle): string {
+  let key = rawDecisionKeys.get(handle);
+  if (!key) {
+    key = `raw-conflict:${nextRawDecisionId++}`;
+    rawDecisionKeys.set(handle, key);
+  }
+  return key;
+}
+
+/**
+ * The view's conflict banner came up (`inConflict`) or was answered. While
+ * it is up, the typed text can't be written by any save or retry, only by
+ * the user's answer, so it is held as a decision; `reopen` focuses the view.
+ */
+export function noteRawConflict(handle: RawViewHandle, inConflict: boolean): void {
+  const key = rawDecisionKey(handle);
+  if (!inConflict) {
+    releaseDecision(key);
+    return;
+  }
+  holdDecision({
+    key,
+    relPath: () => handle.path(),
+    text: 'Changed while you were editing it as text: Show the new version or Keep mine',
+    stillHeld: () => views.has(handle) && handle.inConflict(),
+    reopen: () => handle.focus(),
+  });
 }
 
 // A dirty raw view keeps its path pending, so another writer finishing a

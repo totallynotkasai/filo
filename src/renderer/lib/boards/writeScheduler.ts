@@ -873,7 +873,10 @@ export function createScheduler<TArgs>(
    */
   function drainRetained(key?: string): void {
     for (const [k, getArgs] of ledger.takeRetained(key)) {
-      if (!pending.has(k) && getArgs()) schedule(k, getArgs, 0);
+      const args = getArgs();
+      // Waiting for the user's answer: re-firing would only meet the same question.
+      if (args && opts.holdRetained?.(args)) ledger.retain(k, getArgs);
+      else if (!pending.has(k) && args) schedule(k, getArgs, 0);
     }
   }
 
@@ -950,6 +953,7 @@ export function createScheduler<TArgs>(
     flush,
     flushAll,
     retryFailed,
+    discardRetained: (key: string) => ledger.release(key),
     reset,
     hasPendingTimer,
     hasParked,

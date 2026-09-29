@@ -209,7 +209,8 @@ at all) was not done; it would only save work, not change behaviour.
 **What (still open):** For `.board.json` and `.filo/` config files, Filo
 suppresses its own file-watcher echo with time windows so it isn't reclassified
 as an external edit. Two layers: the main-process watcher suppresses for
-~500–2000 ms (`FileWatcher.suppress`), and a renderer-side registry holds each
+~500–2000 ms (`FileWatcher.suppress`; for boards `suppressWrite`, which drops
+only Filo's own bytes), and a renderer-side registry holds each
 path for `RECENT_SELF_WRITE_TTL_MS = 1500` ms (or
 `RECENT_SELF_WRITE_TTL_BULK_MS = 5000` ms while a bulk write is in flight).
 
@@ -245,17 +246,15 @@ recent-self-write TTL can still expire first; for boards the baseline-divergence
 tie-break (Audit-15 P2.4) then drops the echo because the disk stat matches what
 Filo wrote. Notes use the content-hash check above.
 
-**Another program's board write inside main's window goes unannounced until
-the next save.** Main's `suppress` for a board is time-only
-(`LOCK_AWARE_SUPPRESS_MS`, about 7 s on Windows), unlike a note's
-`suppressWrite`, which drops only its own bytes. So a board rewritten by
-another program within those seconds of a Filo save raises no event: the
-renderer's content-aware check above never sees it, and no toast appears. It
-is still never overwritten. The board's next save compares the file with its
-drift baseline, finds the other version and asks **Reload** / **Keep local**
-(a real-app check wrote a `version: 9` board 2.5 s after a Filo save: nothing
-was shown until the next tile move, and the file stayed as written). Giving
-boards a byte-aware `suppressWrite` would close the silent gap.
+**Board writes hide only their own bytes; `.filo/` files still hide by time.**
+`board:save` and `board:create` suppress with `suppressWrite` and the bytes
+written, as note writes do, so another program's board write inside main's
+window (`LOCK_AWARE_SUPPRESS_MS`, about 7 s on Windows) is reported at once.
+The `.filo/` config, tags and template handlers still use the time-only
+`suppress`: a config file rewritten by another program within those seconds of
+a Filo save raises no event, and nothing is shown until Filo next writes that
+file. It is still never overwritten: every config write goes through a drift
+check first (`writeConfigs`, `saveMiscConfig`).
 
 ---
 

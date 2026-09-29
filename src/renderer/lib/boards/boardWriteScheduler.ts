@@ -26,9 +26,11 @@ import {
   noteAdditionalPendingPath,
   dropPendingPath,
   markRecentSelfWrite,
+  clearFailedPathAfterLateSuccess,
   registerResetCallback,
   registerTestResetCallback,
 } from './writeStateTracking';
+import { BoardDriftHeldError, holdBoardDrift, isBoardDriftHeld } from './boardDriftHold';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { backupExternalVersion } from '../vault/keepLocalBackup';
@@ -49,10 +51,12 @@ import { getBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../v
  * overwritten.
  */
 /**
- * `'defer'` (toast auto-dismissed / closed) aborts like `'reload'` so the
- * external edit isn't overwritten, but the handler must NOT have refreshed the
- * in-memory cache — the dirty state persists so the next debounced write
- * re-prompts.
+ * The writer never waits for the answer. It holds the board
+ * (`boardDriftHold`), asks, and fails the write at once with
+ * `BoardDriftHeldError`, which the scheduler retains without re-firing. The
+ * handler carries out the answer: Reload discards the held write
+ * (`discardBoardWrite`), Keep local re-fires it (`retryFailedBoardWrite`),
+ * and a dismissal (`'defer'`) leaves the board held, its cache dirty.
  */
 export type BoardExternalEditHandler = (path: string) => Promise<'reload' | 'keep-local' | 'defer'>;
 let boardExternalEditHandler: BoardExternalEditHandler | null = null;
@@ -62,6 +66,13 @@ let boardExternalEditHandler: BoardExternalEditHandler | null = null;
  * scheduler). Exported for the unit test's timer control.
  */
 export const BOARD_ENOENT_RESTAT_DELAY_MS = ENOENT_RESTAT_DELAY_MS;
+
+/** Starts the drift question without waiting for it; its failure is reported, never left unhandled. */
+function askAboutDrift(handler: BoardExternalEditHandler, boardPath: string): void {
+  void handler(boardPath).catch((err: unknown) => {
+    console.error(`[boardWriteScheduler] drift question for "${boardPath}" failed:`, err);
+  });
+}
 
 export function setBoardExternalEditHandler(handler: BoardExternalEditHandler | null): void {
   boardExternalEditHandler = handler;
@@ -133,6 +144,16 @@ export function retryFailedBoardWrite(boardId: string): Promise<{ failed: string
   return boardScheduler.retryFailed(boardId);
 }
 
+/**
+ * The board was read from disk in place of Filo's copy: nothing written,
+ * retained or failed for it is owed any more.
+ */
+export function discardBoardWrite(boardId: string, boardPath: string, vaultRoot: string | undefined): void {
+  boardScheduler.cancel(boardId, boardPath);
+  boardScheduler.discardRetained(boardId);
+  clearFailedPathAfterLateSuccess(vaultRoot, boardPath);
+}
+
 export interface BoardWriteArgs {
   vaultRoot: string;
   boardPath: string;
@@ -169,6 +190,7 @@ const boardScheduler = createScheduler<BoardWriteArgs>({
   },
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: args.boardPath }),
   getFailureId: (args) => args.boardPath,
+  holdRetained: (args) => isBoardDriftHeld(args.boardPath),
   onReschedule: (prev, next) => {
     // If the path changed between schedule calls (rename-mid-debounce), drop
     // the OLD entry from pendingVaultPaths before adding the new one —
@@ -228,6 +250,13 @@ export async function writeBoardFile(
   // Held (missing on disk, re-check pending): fail loudly and
   // let the scheduler retain the write rather than recreate the old path.
   if (isBoardPathHeld(boardPath)) throw new BoardPathHeldError(boardPath);
+  // Waiting for a Reload / Keep local answer: no write can land until it is
+  // in. Show the question again if it was dismissed (one per path), and
+  // refuse without a stat or a failure toast.
+  if (isBoardDriftHeld(boardPath) && boardExternalEditHandler) {
+    askAboutDrift(boardExternalEditHandler, boardPath);
+    throw new BoardDriftHeldError(boardPath);
+  }
   const fileData = cached;
   // Stamp the envelope version on every write. The cache holds only the
   // current shape (defs are built by `buildTileDefinition`), so nothing else
@@ -237,9 +266,8 @@ export async function writeBoardFile(
   // Pre-write drift check. If the on-disk mtime no longer
   // matches the baseline captured at load (or after the last successful
   // self-write), an external tool wrote to the .board.json since we last
-  // knew about it. Surface a Reload / Keep-local choice; on Reload the
-  // handler reads the disk version into the cache and this write is
-  // dropped. No baseline = no comparison
+  // knew about it. Hold the board and surface a Reload / Keep-local choice;
+  // this write is refused meanwhile. No baseline = no comparison
   // anchor (e.g. a freshly-created board that the loader's stat probe
   // happened to miss), fall through to the unguarded write.
   const baseline = getBaseline(boardPath);
@@ -281,39 +309,22 @@ export async function writeBoardFile(
     }
     if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
       const handler = boardExternalEditHandler;
-      // No registered handler (boot ordering edge, tests) → 'defer': the abort
-      // branch below surfaces the failure and the dirty cache survives, so the
-      // next write re-prompts once the handler is registered. Never silently
-      // overwrite the external edit.
-      const choice = handler ? await handler(boardPath) : 'defer';
-      // 'reload' means the handler read the disk version into the cache,
-      // cancelled the queued writes and re-stamped the baseline: disk and
-      // cache agree, so there is nothing to write and nothing failed.
-      if (choice === 'reload') return;
-      if (choice === 'defer') {
-        // The user dismissed the prompt (or the reload couldn't be done) and
-        // neither side was touched. Skip the write and surface the failure so
-        // the Ctrl+S aggregate honestly reflects "didn't save". The dirty
-        // board cache survives, so the next debounced write re-detects drift
-        // and re-prompts.
-        const externalEditError = Object.assign(
-          new Error(`Board "${boardPath}" was modified externally; write aborted.`),
-          { code: 'EXTERNAL_EDIT' },
-        );
-        notifyWriteError({ kind: 'board', path: boardPath, error: externalEditError });
-        throw externalEditError;
+      if (handler) {
+        // The question is the only notice: the write is retained, not
+        // re-fired, until it is answered (see `boardDriftHold`).
+        holdBoardDrift(boardPath);
+        askAboutDrift(handler, boardPath);
+        throw new BoardDriftHeldError(boardPath);
       }
-      // 'keep-local' — back up the external version, then
-      // fall through and overwrite it. A declined un-backed-up overwrite
-      // aborts exactly like 'defer'.
-      if (!(await backupExternalVersion(vaultRoot, boardPath))) {
-        const declined = Object.assign(
-          new Error(`Board "${boardPath}" was modified externally; backup failed and overwrite declined.`),
-          { code: 'EXTERNAL_EDIT' },
-        );
-        notifyWriteError({ kind: 'board', path: boardPath, error: declined });
-        throw declined;
-      }
+      // No registered handler (boot ordering edge, tests): nothing can ask,
+      // so surface the failure and keep the dirty cache; the next write
+      // re-checks. Never silently overwrite the external edit.
+      const externalEditError = Object.assign(
+        new Error(`Board "${boardPath}" was modified externally; write aborted.`),
+        { code: 'EXTERNAL_EDIT' },
+      );
+      notifyWriteError({ kind: 'board', path: boardPath, error: externalEditError });
+      throw externalEditError;
     }
   }
 

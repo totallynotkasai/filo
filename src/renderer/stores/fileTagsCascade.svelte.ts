@@ -17,6 +17,7 @@ import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { isInlineTileType } from '../lib/boards/tileDefBuilder';
 import { uiStore } from './ui.svelte';
+import { tagSweepLabel, withTagSweepProgress } from './tagSweepProgress.svelte';
 import {
   rewriteTagInAllMarkdown,
   type MarkdownRewriteResult,
@@ -130,6 +131,9 @@ export function cascadeTagToBoardSettings(oldName: string, newName: string | nul
  * The sweep finds its notes through the note index, so it waits for a build
  * in progress (the one a vault open starts): sampled mid-build, the index
  * would hold only some of the notes that carry the tag.
+ *
+ * It runs under a progress toast (`withTagSweepProgress`), which also keeps
+ * the Tags Browser's Rename and Delete disabled until it ends.
  */
 export async function runTagRewriteSweep(
   oldName: string,
@@ -138,16 +142,19 @@ export async function runTagRewriteSweep(
   pathFilter?: ReadonlySet<string>,
 ): Promise<MarkdownRewriteResult> {
   const captured = captureVaultIdentity();
-  await vaultIndexStore.whenBuildComplete();
-  // Another vault opened meanwhile: its index isn't this vault's notes.
-  if (!isStillSameVault(captured)) return { attempted: 0, succeeded: [], failed: [] };
-  return rewriteTagInAllMarkdown({
-    vaultRoot,
-    metadata: vaultIndexStore.allMetadata(),
-    oldName,
-    newName,
-    applyChanges: (paths) => vaultIndexStore.applyChanges(paths),
-    pathFilter,
+  return withTagSweepProgress(tagSweepLabel(oldName, newName), async (onProgress) => {
+    await vaultIndexStore.whenBuildComplete();
+    // Another vault opened meanwhile: its index isn't this vault's notes.
+    if (!isStillSameVault(captured)) return { attempted: 0, succeeded: [], failed: [] };
+    return rewriteTagInAllMarkdown({
+      vaultRoot,
+      metadata: vaultIndexStore.allMetadata(),
+      oldName,
+      newName,
+      applyChanges: (paths) => vaultIndexStore.applyChanges(paths),
+      pathFilter,
+      onProgress,
+    });
   });
 }
 

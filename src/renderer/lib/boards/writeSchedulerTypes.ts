@@ -83,6 +83,12 @@ export interface CreateSchedulerOptions<TArgs> {
    */
   shouldSkipWrite?: (args: TArgs) => boolean;
   /**
+   * True while a retained failed write waits for the user's answer, which no
+   * retry gives: `flushAll` and Retry leave it retained and don't re-fire it.
+   * Used by the board scheduler for a board held for a drift decision.
+   */
+  holdRetained?: (args: TArgs) => boolean;
+  /**
    * Called when an existing pending key is rescheduled. Receives the
    * sentinel info captured at the previous schedule call and the new one.
    * Used by the board scheduler for rename-mid-debounce path bookkeeping
@@ -275,6 +281,8 @@ export interface Scheduler<TArgs> {
    * awaits them. `flushAll` also re-fires them once per call.
    */
   retryFailed(key?: string): Promise<{ failed: string[] }>;
+  /** Drops `key`'s retained failed write: the change it held is no longer owed (the file was reloaded). */
+  discardRetained(key: string): void;
   /** True while `key` has a pending, parked, in-flight or retained write. */
   hasWork(key: string): boolean;
   /**

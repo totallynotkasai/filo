@@ -29,6 +29,7 @@ import { isMarkdownExtension } from '../lib/vault/extension';
 import { isMissingFileError } from '../lib/notes/noteWriter';
 import { reportError } from '../lib/utils/errorBus';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
+import { withTagSweepProgress } from './tagSweepProgress.svelte';
 
 /** How long the Undo stays on offer. */
 export const TAG_UNDO_TOAST_MS = 15_000;
@@ -173,17 +174,22 @@ export async function undoRemoval(snapshot: TagRemovalSnapshot): Promise<void> {
 
   // Re-add to exactly the notes the delete rewrote, each on its fresh bytes.
   const failed: string[] = [];
-  for (const path of snapshot.writtenPaths) {
-    if (!isStillSameVault(identity)) return;
-    try {
-      await noteStore.transform(path, (fresh) => addTagToMarkdown(fresh.raw, tagName), { notifyOnError: false });
-    } catch (err) {
-      // A note deleted since has nothing to restore the tag to.
-      if (isMissingFileError(err)) continue;
-      reportError('tagUndo', err, `Couldn't restore tag "#${tagName}" in ${path}`);
-      failed.push(path);
+  const total = snapshot.writtenPaths.length;
+  await withTagSweepProgress(`Restoring tag "#${tagName}"`, async (onProgress) => {
+    let done = 0;
+    for (const path of snapshot.writtenPaths) {
+      if (!isStillSameVault(identity)) return;
+      onProgress({ phase: 'writing', done: done++, total });
+      try {
+        await noteStore.transform(path, (fresh) => addTagToMarkdown(fresh.raw, tagName), { notifyOnError: false });
+      } catch (err) {
+        // A note deleted since has nothing to restore the tag to.
+        if (isMissingFileError(err)) continue;
+        reportError('tagUndo', err, `Couldn't restore tag "#${tagName}" in ${path}`);
+        failed.push(path);
+      }
     }
-  }
+  });
   if (!isStillSameVault(identity)) return;
 
   await fileTagsStore.flushPendingSave();
@@ -209,7 +215,11 @@ export async function renameTagWithUndo(oldName: string, newName: string): Promi
   const color = fileTagsStore.getDefinition(oldName)?.color;
   const outcome = await fileTagsStore.renameTagEverywhere(oldName, newName);
   if (!outcome.committed || !isStillSameVault(identity)) return outcome.committed;
-  if (merging) return true;
+  if (merging) {
+    // A merge can't be split again, so it has no Undo; it still says it's done.
+    uiStore.pushToast({ text: `Merged "#${oldName}" into "#${newName}".`, type: 'success', duration: TAG_UNDO_TOAST_MS });
+    return true;
+  }
   uiStore.pushToast({
     text: `Renamed "#${oldName}" to "#${newName}".`,
     type: 'success',

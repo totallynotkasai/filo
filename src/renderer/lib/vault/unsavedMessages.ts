@@ -4,13 +4,24 @@
  *
  * Each unsaved path carries the reason it isn't on disk, so the message tells
  * the user what is actually wrong: a file held by another program, a file that
- * no longer exists, a conflict waiting for an answer, or a note Filo won't
- * overwrite. Pure: no IPC, stores or DOM.
+ * no longer exists, a question waiting for an answer (a note or board changed
+ * elsewhere), or a note Filo won't overwrite. Pure: no IPC, stores or DOM.
  */
 import { vaultPath } from '../../../shared/vaultPath';
 
 /** Why a change isn't on disk. */
-export type UnsavedCause = 'pending' | 'conflict' | 'missing' | 'non-utf8' | 'write-failed';
+export type UnsavedCause =
+  | 'pending'
+  | 'conflict'
+  | 'raw-conflict'
+  | 'board-drift'
+  | 'missing'
+  | 'non-utf8'
+  | 'write-failed';
+
+/** The causes that wait for the user's answer: no retry saves them. */
+// allow-module-state: a constant, never changed
+const ANSWER_CAUSES: ReadonlySet<UnsavedCause> = new Set(['conflict', 'raw-conflict', 'board-drift']);
 
 export interface UnsavedItem {
   /** Vault path, in its on-disk spelling where known. */
@@ -34,6 +45,8 @@ const MAX_LISTED = 6;
 const CAUSE_TEXT: Record<UnsavedCause, string> = {
   pending: 'still being written',
   conflict: 'waiting for your answer: another program changed it while you were editing',
+  'raw-conflict': 'changed while you were editing it as text: Show the new version or Keep mine',
+  'board-drift': 'changed outside Filo, waiting for Reload or Keep local',
   missing: 'the file no longer exists',
   'non-utf8': "it isn't UTF-8 text, so Filo won't overwrite it",
   'write-failed': "the file couldn't be written (another program, such as OneDrive or antivirus, may be holding it)",
@@ -68,7 +81,7 @@ export function leaveVaultDialog(
     message: unsavedHeadline(items),
     detail:
       (list ? `${list}\n\n` : '') +
-      `"${anyway}" keeps a copy of each unsaved note in .filo/recovery, then ${kind === 'close' ? 'closes the vault' : 'opens the other vault'}. ` +
+      `"${anyway}" keeps a copy of each unsaved file in .filo/recovery, then ${kind === 'close' ? 'closes the vault' : 'opens the other vault'}. ` +
       '"Cancel" keeps this vault open so you can deal with them first.',
     anyway,
   };
@@ -94,12 +107,13 @@ export function rescueKeptText(result: RescueResult): string | null {
   return `${plural(result.kept.length, 'unsaved change was', 'unsaved changes were')} kept in ${result.dir}.`;
 }
 
-const QUIT_CHOICES = '"Quit anyway" keeps a copy of each unsaved note in .filo/recovery. "Stay open" lets you keep editing.';
+const QUIT_CHOICES = '"Quit anyway" keeps a copy of each unsaved file in .filo/recovery. "Stay open" lets you keep editing.';
 
 /**
  * The quit dialog when changes aren't on disk. `decisions` are the paths
  * (case-folded vault paths) held for the user's answer (a conflict, a note
- * deleted with unsaved edits); no retry saves those. When they are all that
+ * deleted with unsaved edits, a board changed outside Filo, a raw view's
+ * conflict); no retry saves those. When they are all that
  * is left, the dialog says it is waiting for a decision and offers
  * **Show decisions** instead of **Retry now** (`decisionsOnly`). Otherwise
  * it is "Save failed", and names the ones waiting among the rest.
@@ -144,6 +158,8 @@ export function quitFailureBody(items: readonly UnsavedItem[], preservedTmp: num
     );
   } else if (causes.has('conflict')) {
     parts.push('Answer the "changed by another program" prompt to save or drop that edit.');
+  } else if ([...causes].some((c) => ANSWER_CAUSES.has(c))) {
+    parts.push('Answer its question (Reload or keep yours) to save or drop that edit.');
   }
   if (preservedTmp > 0) {
     parts.push(
@@ -178,7 +194,7 @@ export function retryResultText(
   }
   const isComponent = (i: UnsavedItem): boolean => keys.componentKeys?.has(vaultPath(i.path)) ?? false;
   const isDecision = (i: UnsavedItem): boolean =>
-    (keys.decisionKeys?.has(vaultPath(i.path)) ?? false) || i.cause === 'conflict';
+    (keys.decisionKeys?.has(vaultPath(i.path)) ?? false) || ANSWER_CAUSES.has(i.cause);
   const rest = items.filter((i) => !isDecision(i));
   const retriable = rest.filter((i) => i.cause === 'write-failed' || i.cause === 'pending');
   const groups: Array<[UnsavedItem[], (itThey: string) => string]> = [

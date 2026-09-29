@@ -3,6 +3,10 @@
  * (split out of writeScheduler.ts, which sits at the 1000-LOC gates:file-sizes
  * limit).
  *
+ * A board write held for a drift answer (`BOARD_DRIFT_HELD`) is retained so
+ * Keep local can re-fire it, but the scheduler's `holdRetained` keeps it from
+ * re-firing (and re-asking) until the answer is in.
+ *
  * Attribution: a per-failure-id Set populated by `fireWrite` on rejection /
  * partial failure, drained by `flush(key)` / `flushAll()` so the Ctrl+S
  * aggregate stays scoped to writes the caller awaited, plus a per-key record so
@@ -27,6 +31,7 @@ export const RETAINABLE: ReadonlySet<string> = new Set([
   'ENOSPC',
   'EIO',
   'BOARD_PATH_HELD',
+  'BOARD_DRIFT_HELD',
   'WRITE_TIMEOUT',
 ]);
 

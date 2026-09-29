@@ -20,7 +20,7 @@
   import { rawTextForView } from '../../lib/notes/noteFile';
   import { backupThenRead } from '../../lib/vault/keepLocalBackup';
   import { reportError } from '../../lib/utils/errorBus';
-  import { keepRawRescueCopy, registerRawView, type RawSaveResult } from '../../lib/notes/rawViews';
+  import { keepRawRescueCopy, noteRawConflict, registerRawView, type RawSaveResult, type RawViewHandle } from '../../lib/notes/rawViews';
   import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
   import { dropPendingPath, noteAdditionalPendingPath } from '../../lib/boards/writeStateTracking';
   import { getActiveVaultPath } from '../../lib/vault/activeVaultPath';
@@ -48,6 +48,7 @@
   let saving = $state(false);
   let followTimer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
+  let textarea = $state<HTMLTextAreaElement | null>(null);
   /** The save running now, which a second save waits for. */
   let inFlight: Promise<RawSaveResult> | null = null;
   /**
@@ -193,7 +194,7 @@
     }
   }
 
-  const unregister = registerRawView({
+  const handle: RawViewHandle = {
     path: () => path,
     isDirty: hasUnsavedText,
     inConflict: () => conflict,
@@ -205,6 +206,17 @@
     clearRescued: () => {
       rescuedText = null;
     },
+    focus: () => {
+      textarea?.scrollIntoView({ block: 'nearest' });
+      textarea?.focus();
+    },
+  };
+  const unregister = registerRawView(handle);
+
+  // The banner is a question only the user can answer: hold it as a decision.
+  $effect(() => {
+    const on = conflict;
+    untrack(() => noteRawConflict(handle, on));
   });
 
   // Typed text counts as a pending write of the note while it is unsaved,
@@ -286,6 +298,7 @@
       disabled={loading}
       readonly={readOnly || closeDrainGate.draining}
       bind:value={text}
+      bind:this={textarea}
       onblur={() => void save()}
       onkeydown={onKeydown}
     ></textarea>

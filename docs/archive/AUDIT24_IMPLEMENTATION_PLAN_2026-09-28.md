@@ -41,6 +41,7 @@ Target after Phase 6: no area below 8.5.
 | 5 | Config files, misc writers and board lifecycle | Medium | |
 | 6 | Messaging, settings on leave, path security | Low | |
 | 7 | Verification, docs, archive | None (no code) | Sign-off |
+| 9 | Low-severity findings from the Phase 7 real-app check (A24-51 … A24-54) | Low; touches the quit dialog, board drift and the watcher | |
 
 ### Cross-cutting rules for every phase
 
@@ -653,7 +654,7 @@ Each new test was run against the pre-fix source and failed there (the passing c
 
 **3. Docs.** KNOWN_LIMITATIONS #1 was already corrected in Phase 1, and CLAUDE.md already carries every new gate, the `loadBoard` stamping rule and the count of 77 (checked against `node scripts/gates/run.mjs --list`). KNOWN_LIMITATIONS #5 gained the gap found in step 2 (below).
 
-**4.** This plan moved to `docs/archive/`.
+**4.** This plan moved to `docs/archive/`. It moved back to `docs/` when Phase 9 was added, and returns to the archive once Phase 9 is done.
 
 **Deviations from the plan**
 
@@ -670,8 +671,115 @@ Each new test was run against the pre-fix source and failed there (the passing c
   - **A24-51 (LOW, messaging).** Only note prompts are held decisions. A board drift prompt and a raw-view conflict banner are not. So when one of them is all that's left at quit, the dialog is still "Save failed" with **Retry now**, and it gives the cause "another program … may be holding it". For a board it also says "keeps a copy of each unsaved note". A24-38's quit dialog works as built for held note decisions (the notes-box scenario above).
   - **A24-52 (LOW, UX).** Quitting with a held board drift took about 16 s to show its dialog, and "Board not saved (9×)" toasts pushed the Reload / Keep local toast out of view. The save loop keeps retrying a board whose write is held for a drift decision.
   - **A24-53 (LOW, accepted).** Another program's board write within main's time-only suppression window (about 7 s after a Filo save on Windows) raises no notice. It is still never overwritten: the next save's drift check asks. Recorded in KNOWN_LIMITATIONS #5.
-  - A24-51 and A24-52 are a separate suggested task. Neither loses data.
+  - A24-51, A24-52 and A24-53 are planned in Phase 9, with A24-54 (below). None loses data.
+  - **A24-54 (LOW, UX).** The 3,000-note tag rename ran for about 180 s with no progress shown and no toast at the end.
 - **Not covered.** A crash in the middle of a vault-wide tag sweep was not exercised in the real app. The recovery sentinel for it (`tag-rewrite-pending.<machineId>.json`) has unit coverage.
+
+---
+
+## Phase 9: Low-severity findings from the real-app check
+
+These four came out of Phase 7's real-app check. None loses data: each is about what the user is told, or when. The cross-cutting rules apply as for every phase. There is no Phase 8.
+
+### A24-51 · The quit dialog calls a board drift or a raw-view conflict "Save failed" (LOW)
+
+**What goes wrong.** Only note prompts register a held decision (`holdDecision` is called only from `stores/notePrompts.ts`). A board drift prompt (`stores/boardDrift.ts`, Reload / Keep local) and a raw view's conflict banner (`components/boards/NoteRawView.svelte`, "Show the new version / Keep mine") don't. When one of them is all that is left at quit, `quitDialog` (`lib/vault/unsavedMessages.ts`) doesn't see a decision, so:
+- the title is "Save failed" and it offers **Retry now**, which can't help;
+- the cause reads "another program, such as OneDrive or antivirus, may be holding it", even when the other version is Filo's own write (a Task List tick under a raw view);
+- `QUIT_CHOICES` says "keeps a copy of each unsaved note" when the item is a board.
+
+To reproduce: open a Mind Map, overwrite its `.board.json` with `"version": 9`, drag a tile, and close the window. Or: a note in Raw in one pane, type, tick its task in a Task List in another pane, and quit.
+
+**Fix.**
+1. `boardDrift.ts` holds a decision per board path while its prompt is unanswered. `stillHeld` is true while the drift is undecided, and `reopen` shows the prompt again. It is released on Reload, Keep local, or a board close or delete.
+2. A raw view in conflict holds a decision keyed by its note path (in `lib/notes/rawViews.ts`, next to its dirty registration). `reopen` focuses the view, and the decision is released when the banner is answered or the view closes.
+3. Unsaved-item wording by cause: a board drift says "changed outside Filo, waiting for Reload or Keep local"; a raw conflict says "changed while you were editing it as text". Neither mentions another program holding the file.
+4. `QUIT_CHOICES` says "each unsaved file" (or names notes and boards separately) rather than "note".
+
+**Tests.**
+- Unit: `quitDialog` with only a board drift held is "Waiting for your decision" with **Show decisions**, and the same for only a raw conflict.
+- Unit: a mixed case (a board drift plus a failed note write) stays "Save failed" and says one item is waiting for a decision.
+- Characterisation (through `harness/`): an outside v9 write, a tile move, then quit; the dialog is the decision form and names the board.
+
+### A24-52 · Quitting with a held board drift is slow and stacks toasts (LOW)
+
+**What goes wrong.** In the real app, the quit dialog took about 16 s to appear with a held board drift. Meanwhile "Board not saved (9×): … changed outside Filo" toasts piled up and pushed the Reload / Keep local toast out of view. The quit's save loop keeps re-firing a board write that is held for a decision it can never get from a retry.
+
+**Fix.**
+- A board whose write is held for a drift decision is skipped by `flushAll` / the quit drain and by Retry, like a held note body, and counted as "waiting for a decision" in `unsavedWork()`. It is not counted as failed.
+- The drift's own toast is the only notice for that board. The "Board not saved" failure toast is not raised for a write refused because of a held drift.
+
+**Tests.**
+- Unit: with a held drift, `flushAll` resolves without re-firing that board's write, and no failure toast is raised.
+- Unit: `handleFlushAndQuit` with only a held drift reaches its dialog without waiting out the drain deadline.
+
+### A24-53 · Another program's board write just after a Filo save goes unannounced (LOW)
+
+**What goes wrong.** Main suppresses a board's watcher events for a fixed time after Filo writes it (`watcher.suppress(relativePath, LOCK_AWARE_SUPPRESS_MS)` in `src/main/ipc/board.ipc.ts`, about 7 s on Windows). A foreign write inside that window raises no event, so no toast appears. The board's next save still finds the drift and asks, so nothing is overwritten. This is recorded in KNOWN_LIMITATIONS #5.
+
+**Fix.** Board writes use the byte-aware `suppressWrite(path, ms, content)` (`src/main/services/watcherSuppression.ts`) that note writes use. It drops only an event whose file still holds the bytes Filo wrote. Keep the renderer's content-aware check (`selfWriteDivergedFromBaseline`) as it is. Update KNOWN_LIMITATIONS #5: remove the new paragraph, or reduce it to what is left.
+
+**Tests.**
+- Main unit: after a board write, a different write inside the window is reported, and Filo's own echo is still dropped.
+- Characterisation: an outside v9 write 2 s after a Filo board save raises the drift or can't-load notice without another edit.
+
+**Gate.** Extend `writePath/note-write-suppression` (or add `board-write-suppression`): the board write handlers call `suppressWrite` with the written content, not the time-only `suppress`.
+
+### A24-54 · A long tag rename shows no progress (LOW)
+
+**What goes wrong.** A tag rename across 3,000 notes (`runTagRewriteSweep`, `lib/vault/tagRewriteSweep.ts`) ran for about 180 s with no progress, no busy state and no toast when it finished. A user can't tell it is running, and may quit or rename again mid-sweep. The crash sentinel covers an interrupted sweep, but the user is never told one is in progress.
+
+**Fix.**
+- While a sweep runs, show a sticky toast: "Renaming tag "a" to "b"… n of N notes". Update it at most a few times a second, and replace it with a done toast (with the tag Undo, where one exists) or the existing failure toast.
+- The Tags Browser disables Rename / Delete while a sweep runs, as it does while the index builds.
+- `DECISION:` no cancel button. A half-done sweep would need its own undo, and the sentinel already covers a crash.
+
+**Tests.**
+- Unit: the sweep reports progress through a callback, and the toast shows the counts and is replaced at the end.
+- Unit: Rename / Delete are disabled while a sweep runs.
+
+### Not included
+
+- **Ctrl+Shift+W does nothing while the focus is in a text area**, such as the notes box, because the hotkeys skip every shortcut in text fields. This is intentional, so typing is never taken as a command. It is listed here only so a later audit doesn't file it again.
+
+### Phase 9 outcome
+
+All four items are fixed. `npm run ci:verify` passes: lint, svelte-check (839 files, 0 errors), `typecheck:main`, `test:unit:strict` (723 files; 6,803 passed, 5 skipped, the same platform-gated symlink cases), build, and 79/79 gates. Not pushed, so CI has not run.
+
+Three existing tests changed with the behaviour they pin: `boardCreateBaseline` now expects `board:create` to hide its echo with `suppressWrite` (and no plain `suppress`); `writeFailuresReportedLoudly`'s unlink-then-recreate case now expects the write to be held (`BOARD_DRIFT_HELD`) rather than aborted with `EXTERNAL_EDIT`; the gate `baseline-stamp-forward-only` now looks for `board:create`'s `suppressWrite`. A note conflict keeps its own "changed by another program" hint in the "Save failed" body (`quitFailureMessage` unchanged).
+
+New tests:
+- `unit/boardDriftHold.test.ts` (6): the write that finds a drift fails at once, asks once and raises no failure toast; a later save, a quit drain and Retry don't re-fire it or ask again; a new edit while held is refused before any stat; Keep local re-fires the held write; Reload drops it; the held decision is listed, survives a dismissed toast, re-opens and goes when released.
+- `unit/decisionQuitWording.test.ts` (5): `quitDialog` with only a board drift, and with only a raw conflict, is "Waiting for your decision" with **Show decisions**; a board drift plus a failed note write stays "Save failed" and says one is waiting; the leave dialog says "file"; `handleFlushAndQuit` with a held drift and a prompt that is never answered reaches its dialog in well under 2 s, with no error toast.
+- `unit/boardWriteEchoOnly.test.ts` (2): after `board:save` / `board:create`, Filo's own echo is dropped and a different write inside the window is reported.
+- `unit/tagSweepProgress.test.ts` (4) and `component/tagsBrowserBusy.test.ts` (1): the sweep reports read and write counts; the toast shows them, at most every 250 ms, and goes when the sweep ends (also when it throws); Rename / Delete are disabled while it runs.
+- `characterisation/decisionsAtQuit.test.ts` (3): an outside v9 write, a board edit, then quit: the dialog is the decision form, names the board, comes up in under 5 s and no "not saved" toast is raised; the same for a raw-view conflict; an outside v9 write 2 s after a Filo board save is noticed within 3 s without another edit.
+
+Each characterisation case and `boardWriteEchoOnly` was run against the pre-fix source (app changes stashed) and failed there. The other new unit and component tests import modules this phase adds (`boardDriftHold`, `tagSweepProgress`, the new causes), so on the pre-fix source they fail at import rather than at an assertion.
+
+Two gates were added (79 in all), each proven to bite by planting the violation:
+- `writePath/board-drift-held`: `writeBoardFile` never awaits the drift handler; it holds the board (`holdBoardDrift`) and throws `BoardDriftHeldError` both on a new drift and for a held board, and refuses a held board before its pre-write stat; the board scheduler passes `holdRetained`, `drainRetained` honours it, and `boardDrift.ts` re-fires the held write on Keep local.
+- `writePath/board-write-suppression`: `board:save` and `board:create` call `suppressWrite(path, ms, bytes)` and never a plain `suppress()`.
+
+**Deviations from the plan**
+
+- **A24-51.**
+  - The hold lives in a new `lib/boards/boardDriftHold.ts` (one per board path, following renames, cleared on vault swap). `resolveBoardDrift` holds the board and registers the decision, so the watcher's prompt and the writer's prompt hold it the same way. It is released by Reload, Keep local and `removeBoardFromCache` (a board closed as missing, or deleted). A dismissed question keeps the hold: the save indicator lists it and re-opens the question, and the next edit of the board asks again.
+  - The drift toast stays promise-backed (the 15 s cap), not sticky. What persists is the held decision under the save indicator, which is what "reopen" shows again.
+  - The raw view: `RawViewHandle` gains `focus()`, and `noteRawConflict(handle, on)` in `rawViews.ts` holds or releases the decision; `NoteRawView` calls it from an effect on its `conflict` state, and unregistering the view releases it. `reopen` scrolls the text field into view and focuses it; a view in a background tab is not brought to the front.
+  - Wording: two new causes, `board-drift` ("changed outside Filo, waiting for Reload or Keep local") and `raw-conflict` ("changed while you were editing it as text: Show the new version or Keep mine"). `describeUnsaved` picks them for failed and pending paths alike (a notes-box conflict on a failed path now also reads as `conflict`). The "Save failed" body's hint for any of the three question causes became "Answer its question (Reload or keep yours) to save or drop that edit." `retryResultText` counts both new causes as decisions. The close / open-another-vault dialog also said "each unsaved note"; it now says "file", like `QUIT_CHOICES`.
+  - The characterisation case's board edit is adding a text tile (the harness has no tile-drag action), not a tile move.
+- **A24-52.**
+  - The writer no longer waits for the answer at all, even the first time: on a drift it holds the board, starts the question without awaiting it and throws `BoardDriftHeldError` (code `BOARD_DRIFT_HELD`). A held board is refused before the stat, and the question is shown again if it isn't on screen. So a quit never waits on a prompt (before, a write waited for the prompt until the toast's 15 s cap dismissed it, which matches the ~16 s seen in Phase 7), and nothing calls `notifyWriteError` for it.
+  - `BOARD_DRIFT_HELD` is in `RETAINABLE`, so the refused write is retained and Keep local can re-fire it (`retryFailedBoardWrite`). A new scheduler option, `holdRetained`, keeps `flushAll` and Retry from re-firing a held one. Reload drops it through a new `discardBoardWrite` (cancel, a new `discardRetained`, and the failed mark cleared).
+  - Keep local is now carried out only by `boardDrift.keepLocalVersion` (backup, baseline, then the re-fire). The writer's own Keep local branch (a second backup inside `writeBoardFile`) is gone, so `writeBoardFile` came off the `keep-local-backup` gate's chokepoint list.
+  - `unsavedWork()` still lists the held board under `failed`, rather than a new "waiting" field. That keeps the crash sentinel dirty, the rescue copy covering it and `save()` honest. Everything that words it treats it as a decision: the save indicator (`saveStateFeed` subtracts held decisions), the quit and leave dialogs (the `board-drift` cause and `heldDecisions()`) and the Retry toast.
+  - With no drift handler registered (early boot, some unit tests), the writer still fails with `EXTERNAL_EDIT` and a failure toast, as before: nothing else could tell the user.
+- **A24-53.** As planned. `board:create`'s post-create `suppress` became a `suppressWrite` with the board bytes too. The gate is a new `board-write-suppression` rather than an extension of `note-write-suppression`. KNOWN_LIMITATIONS #5 now says board writes hide only their own bytes, and that the `.filo/` config, tags and template handlers still hide by time (their drift checks still stop an overwrite).
+- **A24-54.**
+  - Progress covers both halves of the sweep: "checking n of N notes" while it reads the notes carrying the tag, then "n of N notes" while it writes the ones that need it.
+  - The progress toast goes when the sweep ends and the caller's existing toast follows: the done toast with Undo (rename, delete), or the failure toast with Retry. A merge had no done toast; it now shows "Merged "#a" into "#b"." (no Undo, as before). Undoing a tag delete, which rewrites the same notes, shows its own progress ("Restoring tag …").
+  - The busy state (`tagSweepStatus.running`) covers the sweep itself, including its wait for the index; not the short note flush before it or the board commit after it. The disabled buttons' tooltip reads "A tag change is still running…".
 
 ## Decisions
 
@@ -689,4 +797,5 @@ Each new test was run against the pre-fix source and failed there (the passing c
 | 4 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 4"` |
 | 5 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 5"` |
 | 6 | Done (2026-09-29) | see `git log --grep "Audit-24 Phase 6"` |
-| 7 | Done (2026-09-29); A24-51 and A24-52 open as a follow-up | see `git log --grep "Audit-24 Phase 7"` |
+| 7 | Done (2026-09-29) | see `git log --grep "Audit-24 Phase 7"` |
+| 9 | Done (2026-09-29) | see `git log --grep "Audit-24 Phase 9"` |

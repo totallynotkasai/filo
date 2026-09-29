@@ -9,7 +9,12 @@
  *  - Keep local: the other version is copied to `.filo/recovery/` and the
  *    baseline moves to it, so the next save writes Filo's version without
  *    asking again.
- *  - Dismissed: nothing is written; the next save asks again.
+ *  - Dismissed: nothing is written, and the board stays held for the answer
+ *    (`boardDriftHold`): the save indicator lists it as a decision, and the
+ *    next edit asks again.
+ *
+ * The board writer never waits for the answer (it refuses while the board is
+ * held), so the answer re-fires or drops the held write here.
  */
 import { uiStore } from './ui.svelte';
 import { boardCacheStore } from './boardCache.svelte';
@@ -18,7 +23,9 @@ import { historyStore } from './history.svelte';
 import { vaultStore } from './vault.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
-import { cancelBoardWrite } from '../lib/boards/boardSaver';
+import { discardBoardWrite, retryFailedBoardWrite } from '../lib/boards/boardWriteScheduler';
+import { boardDriftHold, holdBoardDrift, releaseBoardDrift, setBoardDriftReleasedListener, type BoardDriftHold } from '../lib/boards/boardDriftHold';
+import { holdDecision, releaseDecision } from './heldDecisions';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { adoptLoadedBoardBaseline } from '../lib/boards/boardBaseline';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
@@ -155,8 +162,10 @@ export async function reloadBoardFromDisk(
   // finds the outside version and routes to the one prompt.
   if (opts.guardPending?.()) return 'pending';
   // The user chose the disk version (or had no unsaved changes): a queued
-  // write of Filo's copy must not land on top of it.
-  cancelBoardWrite(boardId, rel);
+  // write of Filo's copy must not land on top of it, and one held or failed
+  // is no longer owed.
+  discardBoardWrite(boardId, rel, vaultRoot);
+  releaseBoardDrift(rel);
   // Rebind the stored path to the OS-reported casing. After a case-only
   // external rename the stale casing could later make a tree reconcile treat
   // the board as missing and evict it. `renameBoardPath` no-ops when the path
@@ -219,13 +228,23 @@ export function resolveBoardDrift(rel: string): Promise<BoardDriftChoice> {
   // The watcher and the writer can both ask about one change: one answer, carried out once.
   const existing = inFlightResolutions.get(rel);
   if (existing) return existing;
+  holdDriftDecision(holdBoardDrift(rel));
   const resolution = (async (): Promise<BoardDriftChoice> => {
     const choice = await promptBoardExternalEdit({ path: rel });
+    const boardId = findBoardIdForPath(rel);
     if (choice === 'reload') {
-      const boardId = findBoardIdForPath(rel);
-      return boardId && (await reloadBoardFromDisk(rel, boardId)) === 'reloaded' ? 'reload' : 'defer';
+      if (!boardId || (await reloadBoardFromDisk(rel, boardId)) !== 'reloaded') return 'defer';
+      releaseBoardDrift(rel);
+      return 'reload';
     }
-    if (choice === 'keep-local') return (await keepLocalVersion(rel)) ? 'keep-local' : 'defer';
+    if (choice === 'keep-local') {
+      if (!(await keepLocalVersion(rel))) return 'defer';
+      releaseBoardDrift(rel);
+      // The write refused while the question was open goes now, over the
+      // version just copied.
+      if (boardId) void retryFailedBoardWrite(boardId);
+      return 'keep-local';
+    }
     return 'defer';
   })();
   inFlightResolutions.set(rel, resolution);
@@ -234,3 +253,22 @@ export function resolveBoardDrift(rel: string): Promise<BoardDriftChoice> {
   });
   return resolution;
 }
+
+const driftDecisionKey = (hold: BoardDriftHold): string => `board-drift:${hold.id}`;
+
+/**
+ * Lists the held board under the save indicator until it is answered, so a
+ * dismissed question can be shown again, and quit says it is waiting for a
+ * decision rather than that the save failed.
+ */
+function holdDriftDecision(hold: BoardDriftHold): void {
+  holdDecision({
+    key: driftDecisionKey(hold),
+    relPath: () => hold.path,
+    text: 'Changed outside Filo: Reload or Keep local',
+    stillHeld: () => boardDriftHold(hold.path) === hold,
+    reopen: () => void resolveBoardDrift(hold.path),
+  });
+}
+
+setBoardDriftReleasedListener((hold) => releaseDecision(driftDecisionKey(hold)));

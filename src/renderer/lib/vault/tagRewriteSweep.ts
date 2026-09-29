@@ -107,6 +107,16 @@ export interface MarkdownRewriteResult {
 }
 
 /**
+ * How far a sweep has got: `reading` checks each note that carries the tag,
+ * `writing` rewrites the ones that need it. `done` of `total` notes.
+ */
+export interface TagSweepProgress {
+  phase: 'reading' | 'writing';
+  done: number;
+  total: number;
+}
+
+/**
  * Arguments for {@link rewriteTagInAllMarkdown}. Kept as a struct so call
  * sites read clearly at a glance — the runtime context (vaultRoot,
  * metadata, applyChanges) flows in alongside the rename arguments.
@@ -121,6 +131,8 @@ export interface TagRewriteSweepArgs {
   applyChanges: (relPaths: string[]) => Promise<void>;
   /** When provided, only rewrite candidate files whose path is in this set. */
   pathFilter?: ReadonlySet<string>;
+  /** Told as each note is read and as each is written (how many are done), so a long sweep can show how far it is. */
+  onProgress?: (progress: TagSweepProgress) => void;
 }
 
 /**
@@ -162,6 +174,13 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
 async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResult> {
   const { vaultRoot, metadata, oldName, newName, applyChanges, pathFilter } = args;
   if (!vaultRoot) return { attempted: 0, succeeded: [], failed: [] };
+  const progress = (phase: TagSweepProgress['phase'], done: number, total: number): void => {
+    try {
+      args.onProgress?.({ phase, done, total });
+    } catch (err) {
+      console.error('[tagRewriteSweep] progress listener threw:', err);
+    }
+  };
 
   // The plan holds only PATHS; the rewritten bytes are recomputed from a fresh
   // re-read inside the post-drain commit loop, so they can't go stale against an
@@ -178,11 +197,14 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
   // to follow: named in a toast, and the sentinel stays.
   const skippedMissing: string[] = [];
 
-  for (const md of metadata) {
-    // Case-insensitive match: the index preserves the file's authored casing
-    // (`Project`) while the registry canonical may be `project`.
-    if (!md.tags.some((t) => tagsEqual(t, oldName))) continue;
-    if (pathFilter && !pathFilter.has(md.path)) continue;
+  // Case-insensitive match: the index preserves the file's authored casing
+  // (`Project`) while the registry canonical may be `project`.
+  const candidates = metadata.filter(
+    (md) => md.tags.some((t) => tagsEqual(t, oldName)) && (!pathFilter || pathFilter.has(md.path)),
+  );
+  let read = 0;
+  for (const md of candidates) {
+    progress('reading', read++, candidates.length);
 
     let raw: string | null = null;
     try {
@@ -220,6 +242,7 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
     if (next === raw) continue;
     plan.push({ path: md.path });
   }
+  progress('writing', 0, plan.length);
 
   // Lay down the recovery sentinel BEFORE Phase 2 so a crash mid-write leaves
   // a resume breadcrumb. The tag rewriter is idempotent, so a Resume on next
@@ -268,7 +291,9 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
   const succeeded: string[] = [];
   try {
     await withDrainedWrites(async () => {
+      let written = 0;
       for (const item of plan) {
+        progress('writing', written++, plan.length);
         // The note writer writes into whichever vault is open. After a swap the
         // planned paths belong to the previous vault: stop, and leave the rest
         // failed (the sentinel resumes them there).
@@ -342,6 +367,7 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
           failed.push(item.path);
         }
       }
+      progress('writing', plan.length, plan.length);
     });
   } catch (err) {
     // PendingWritesFailedError → drain rejected; sentinel stays in place

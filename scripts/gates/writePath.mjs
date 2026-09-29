@@ -197,8 +197,9 @@ const TRASH_STORE = 'src/renderer/stores/trash.svelte.ts';
 // ── keep-local-backup ─────────────────────────────────────────────────────
 // A note's Keep mine backs up inside `resolveConflict`, through
 // `backupThenRead`, so the overwrite is built on the bytes that were backed up.
+// A board's Keep local is carried out only by `keepLocalVersion`: the board
+// writer never overwrites a drifted file itself (it holds the board and asks).
 const KEEP_LOCAL_CHOKEPOINTS = [
-  { file: 'src/renderer/lib/boards/boardWriteScheduler.ts', fn: 'writeBoardFile', fnKeyword: true, token: 'backupExternalVersion(' },
   { file: 'src/renderer/stores/notes.svelte.ts', fn: 'resolveConflict', fnKeyword: false, token: 'backupThenRead(' },
   { file: 'src/renderer/lib/vault/keepLocalBackup.ts', fn: 'backupThenRead', fnKeyword: true, token: 'backupExternalVersion(' },
   { file: 'src/renderer/components/boards/NoteRawView.svelte', fn: 'keepMine', fnKeyword: true, token: 'backupThenRead(' },
@@ -520,6 +521,77 @@ export const checks = [
     },
   },
   {
+    id: 'board-write-suppression',
+    title: "a board write hides only its own echo: another program's save right after it is still reported",
+    hint:
+      "board:save and board:create in board.ipc.ts suppress with suppressWrite(path, ms, <the bytes written>), never a plain " +
+      'suppress(), which drops every event for the path for ~7 s, so a sync landing just after a Filo save would go unannounced.',
+    run(ctx) {
+      const out = [];
+      const IPC = 'src/main/ipc/board.ipc.ts';
+      const raw = ctx.read(IPC);
+      if (raw === null) return [fail(IPC, undefined, 'file missing')];
+      const code = blank(raw, { strings: false });
+      for (const ch of ['board:save', 'board:create']) {
+        const start = code.indexOf(`'${ch}'`);
+        if (start < 0) { out.push(fail(IPC, undefined, `the '${ch}' handler is missing`)); continue; }
+        const end = code.indexOf('ipcMain.handle(', start);
+        const body = code.slice(start, end < 0 ? code.length : end);
+        const line = lineAt(raw, start);
+        if (/\.suppress\s*\(/.test(body)) out.push(fail(IPC, line, `'${ch}' uses a plain suppress(); use suppressWrite(path, ms, bytes)`));
+        const calls = [...body.matchAll(/\.suppressWrite\s*\(([^;]*)\)\s*;/g)].map((m) => m[1]);
+        if (calls.length === 0) out.push(fail(IPC, line, `'${ch}' must suppressWrite() before the write`));
+        for (const args of calls) {
+          if (args.split(',').length < 3) out.push(fail(IPC, line, `'${ch}' must pass the bytes it writes to suppressWrite(path, ms, bytes)`));
+        }
+      }
+      return out;
+    },
+  },
+  {
+    id: 'board-drift-held',
+    title: 'the board writer never waits for the drift question: it holds the board and refuses at once',
+    hint:
+      'writeBoardFile must not await the external-edit handler (a quit would wait out the prompt, and every retry would ' +
+      're-ask). On drift it calls holdBoardDrift() and throws BoardDriftHeldError; a held board is refused before any stat; ' +
+      "the board scheduler's holdRetained keeps a held write from re-firing; boardDrift.ts re-fires it on Keep local.",
+    run(ctx) {
+      const out = [];
+      const W = 'src/renderer/lib/boards/boardWriteScheduler.ts';
+      const raw = ctx.read(W);
+      if (raw === null) return [fail(W, undefined, 'file missing')];
+      const code = stripCommentsStateful(raw);
+      const fn = functionBody(code, 'writeBoardFile', { fnKeyword: true });
+      if (!fn) return [fail(W, undefined, 'writeBoardFile() not found')];
+      if (/await\s+(handler|boardExternalEditHandler)\s*\(/.test(fn.text)) {
+        out.push(fail(W, undefined, 'writeBoardFile() awaits the drift handler; hold the board and throw BoardDriftHeldError instead'));
+      }
+      if (!/\bholdBoardDrift\s*\(/.test(fn.text)) out.push(fail(W, undefined, 'writeBoardFile() never holds a drifted board (holdBoardDrift)'));
+      if ((fn.text.match(/new\s+BoardDriftHeldError\s*\(/g) ?? []).length < 2) {
+        out.push(fail(W, undefined, 'writeBoardFile() must throw BoardDriftHeldError both for a held board and on a new drift'));
+      }
+      const heldAt = fn.text.search(/\bisBoardDriftHeld\s*\(/);
+      const statAt = fn.text.search(/'vault:stat'/);
+      if (heldAt < 0 || (statAt >= 0 && heldAt > statAt)) {
+        out.push(fail(W, undefined, 'writeBoardFile() must refuse a held board (isBoardDriftHeld) before its pre-write stat'));
+      }
+      if (!/holdRetained\s*:\s*\(args\)\s*=>\s*isBoardDriftHeld\s*\(/.test(code)) {
+        out.push(fail(W, undefined, "the board scheduler must pass holdRetained: (args) => isBoardDriftHeld(args.boardPath)"));
+      }
+      const S = 'src/renderer/lib/boards/writeScheduler.ts';
+      const sched = ctx.read(S);
+      const drain = sched === null ? null : functionBody(stripCommentsStateful(sched), 'drainRetained', { fnKeyword: true });
+      if (!drain || !/opts\.holdRetained\?\.\(/.test(drain.text)) out.push(fail(S, undefined, 'drainRetained() must leave a held write retained (opts.holdRetained)'));
+      const D = 'src/renderer/stores/boardDrift.ts';
+      const drift = ctx.read(D);
+      if (drift === null) out.push(fail(D, undefined, 'file missing'));
+      else if (!/\bretryFailedBoardWrite\s*\(/.test(stripCommentsStateful(drift))) {
+        out.push(fail(D, undefined, 'Keep local must re-fire the held write (retryFailedBoardWrite)'));
+      }
+      return out;
+    },
+  },
+  {
     id: 'note-write-expects-stat',
     title: 'a note overwrite names the stat of the read it builds on, and the main process refuses it (STALE) if the file changed since',
     hint:
@@ -606,7 +678,7 @@ export const checks = [
       const start = ipc.indexOf("'board:create'");
       const end = start < 0 ? -1 : ipc.indexOf('ipcMain.handle(', start);
       const createBody = start < 0 ? '' : ipc.slice(start, end < 0 ? ipc.length : end);
-      if (!/\.suppress\s*\(\s*relativePath\b/.test(createBody)) {
+      if (!/\.suppressWrite\s*\(\s*relativePath\b/.test(createBody)) {
         out.push(fail(IPC, undefined, "board:create must suppress the new file's watcher echo"));
       }
       const STORE = 'src/renderer/stores/boardCache.svelte.ts';

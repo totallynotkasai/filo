@@ -77,7 +77,10 @@ describe('board:create (main)', () => {
     const stat = await fs.stat(join(vaultDir, 'Plan.board.json'));
     expect(res.mtimeMs).toBe(stat.mtimeMs);
     expect(res.size).toBe(stat.size);
-    expect(suppressed.map((s) => s.path)).toEqual(['Plan.board.json']);
+    // Hidden only while it holds the bytes written: never a plain, time-only suppress.
+    expect(suppressed).toEqual([]);
+    const onDisk = await fs.readFile(join(vaultDir, 'Plan.board.json'), 'utf8');
+    expect(ownWrites.filter((w) => w.fileExisted).map((w) => [w.path, w.content])).toEqual([['Plan.board.json', onDisk]]);
   });
 
   // The create reserves an empty placeholder, then writes the JSON over it. A
@@ -91,10 +94,10 @@ describe('board:create (main)', () => {
     const data = { version: 8 };
     const res = (await create({}, vaultDir, 'Plan', data, 'Boards')) as { ok: boolean; path: string };
     expect(res.ok).toBe(true);
-    expect(ownWrites.map((w) => w.path)).toEqual(['Boards/Plan.board.json', 'Boards/Plan.board.json']);
-    expect(ownWrites.every((w) => !w.fileExisted)).toBe(true);
+    const before = ownWrites.filter((w) => !w.fileExisted);
+    expect(before.map((w) => w.path)).toEqual(['Boards/Plan.board.json', 'Boards/Plan.board.json']);
     const onDisk = await fs.readFile(join(vaultDir, 'Boards', 'Plan.board.json'), 'utf8');
-    expect(ownWrites.map((w) => w.content)).toEqual(['', onDisk]);
+    expect(before.map((w) => w.content)).toEqual(['', onDisk]);
   });
 });
 

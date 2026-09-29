@@ -94,7 +94,7 @@ export function classifyChange(relativePath: string): FileChangeType {
   if (relativePath.startsWith('.filo/')) {
     // Granular `.filo/` classification. The renderer's exhaustive
     // dispatcher routes each kind to its dedicated reconciler
-    // (`tagsJsonReconciler`, `themeJsonReconciler`, etc.). Anything else
+    // (`reconcileTagsJsonChange`, `reconcileThemeChange`, etc.). Anything else
     // stays plain `config` so dispatch can no-op cleanly.
     if (relativePath === '.filo/tags.json') return 'config-tags';
     if (relativePath.startsWith('.filo/themes/')) return 'config-theme';

@@ -19,7 +19,7 @@ const DEFAULT_CLUSTER_DISTANCE = 600;
  * Resolves a text tile's real backing body for the empty-orphan check. `tile.content` is always '' (the body lives in the .md), so emptiness
  * has to come from the live document or the on-disk index. Priority:
  *
- *   1. The open `DocumentState` — captures unsaved in-memory edits and
+ *   1. The note's `NoteModel` in `noteStore` — captures unsaved in-memory edits and
  *      freshly-created tiles whose body hasn't been flushed to disk yet.
  *   2. The vault index's cached `.md` body — covers tiles whose document
  *      isn't currently open.

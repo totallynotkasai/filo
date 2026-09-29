@@ -61,7 +61,7 @@ export interface SearchMatch {
   matchEnd: number;
   /** The matched text (used by ReplaceAllCommand for length-mismatch checks). */
   matchText: string;
-  /** Where the match was found. Drives the highlight strategy in E.4. */
+  /** Where the match was found. Drives how the match is highlighted. */
   matchKind: 'body' | 'title';
   /** ±40-char context window around the match for the Find All popup. */
   snippet: string;

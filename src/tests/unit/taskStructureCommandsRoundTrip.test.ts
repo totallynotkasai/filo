@@ -96,10 +96,8 @@ describe('Audit-6 Phase 5.5 — Task-List structure command round-trips', () => 
   });
 
   it('AddSectionCommand: execute appends, undo removes, redo re-adds', () => {
-    const before = slice();
     const newSection: TaskListSection = { id: 'sec-C', title: 'C', position: 3, collapsed: false };
-    const after = { sections: [...before.sections, newSection], tasks: before.tasks };
-    const cmd = new AddSectionCommand('tl', before, after, 'C');
+    const cmd = new AddSectionCommand('tl', newSection);
 
     cmd.execute();
     expect(sectionIds()).toContain('sec-C');
@@ -166,7 +164,7 @@ describe('SEC-3 — add-then-undo on a section-less board restores []', () => {
 
   /** Builds the command exactly as sectionOps.addSection does for a section-less board. */
   function addSectionCmd(): AddSectionCommand {
-    const placements = (board().tasks ?? []).map((p: TaskPlacement) => ({ ...p }));
+    const placements = board().tasks ?? [];
     const autoDefault: TaskListSection = {
       id: 'sec-default',
       title: 'Task List',
@@ -179,13 +177,7 @@ describe('SEC-3 — add-then-undo on a section-less board restores []', () => {
       position: placements.length,
       collapsed: false,
     };
-    return new AddSectionCommand(
-      'tl',
-      { sections: [], tasks: placements },
-      { sections: [autoDefault, newSection], tasks: placements },
-      'New Section',
-      autoDefault,
-    );
+    return new AddSectionCommand('tl', newSection, autoDefault);
   }
 
   it('execute materialises [default, new]; undo restores []; redo re-adds', () => {

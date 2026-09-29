@@ -118,7 +118,7 @@
     return 1;
   });
 
-  // Cycle labelVisibility per V1.0 plan: visible → hidden → visible-locked → hidden-locked → visible
+  // Cycle labelVisibility: visible → hidden → visible-locked → hidden-locked → visible
   function cycleLabelVisibility(e: Event) {
     e.stopPropagation();
     const current: Connection['labelVisibility'] = connection.labelVisibility ?? 'visible';
@@ -337,7 +337,7 @@
     hideTimeout = setTimeout(() => { showControls = false; }, 200);
   }
 
-  // Cycle path visibility per V1.0 plan: visible → hidden → visible-locked → hidden-locked → visible
+  // Cycle path visibility: visible → hidden → visible-locked → hidden-locked → visible
   function cyclePathVisibility(e: Event) {
     e.stopPropagation();
     const states: Connection['visibility'][] = ['visible', 'hidden', 'visible-locked', 'hidden-locked'];

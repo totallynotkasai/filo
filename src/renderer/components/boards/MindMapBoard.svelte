@@ -15,7 +15,8 @@
   import { connectionsStore } from '../../stores/connections.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
-  import { TILE_DEFAULTS, FRAME_DEFAULTS, defaultTileStyleSnapshot, defaultFrameStyleSnapshot } from '../../constants/defaults';
+  import { TILE_DEFAULTS } from '../../constants/defaults';
+  import { createTile, createFrame } from '../../stores/tiles.svelte';
   import { screenToCanvas } from '../../lib/canvas/coordinates';
 
   // Pull board / canvas / selection / spatial from the pane's scope (set in
@@ -58,7 +59,7 @@
   import { tileIdFromTarget, topmostHitTile } from '../../lib/mindmap/tileHitTest';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
-  import type { Frame } from '../../schema/index';
+  import type { Frame, Tile } from '../../schema/index';
 
   import SmartGuides from '../canvas/SmartGuides.svelte';
 
@@ -159,25 +160,15 @@
       y: canvasStore.viewportHeight / 2,
     };
     const canvasPos = screenToCanvas(viewportCenter.x, viewportCenter.y, canvasStore.transform);
-    const now = Date.now();
-    boardStore.addTileWithHistory({
-      id: createId(),
-      type: 'text',
-      title: boardStore.getNextTileName(),
-      position: {
-        x: canvasPos.x - TILE_DEFAULTS.width / 2,
-        y: canvasPos.y - TILE_DEFAULTS.height / 2,
-      },
-      size: { width: TILE_DEFAULTS.width, height: TILE_DEFAULTS.height },
-      style: defaultTileStyleSnapshot(),
-      locked: false,
-      faded: false,
-      tags: [],
-      boardId: boardStore.current.id,
-      content: '',
-      createdAt: now,
-      updatedAt: now,
-    });
+    boardStore.addTileWithHistory(newTextTile({
+      x: canvasPos.x - TILE_DEFAULTS.width / 2,
+      y: canvasPos.y - TILE_DEFAULTS.height / 2,
+    }));
+  }
+
+  /** A new text tile on this pane's board, named from this pane's board. */
+  function newTextTile(position: { x: number; y: number }): Tile {
+    return createTile('text', position, boardStore.current?.id ?? '', { title: boardStore.getNextTileName() });
   }
 
   // Connection mode
@@ -297,37 +288,10 @@
         : undefined,
       brokenCount,
       onNewTile: () => {
-        const now = Date.now();
-        boardStore.addTileWithHistory({
-          id: createId(),
-          type: 'text',
-          title: boardStore.getNextTileName(),
-          position: { x: canvasPos.x, y: canvasPos.y },
-          size: { width: TILE_DEFAULTS.width, height: TILE_DEFAULTS.height },
-          style: defaultTileStyleSnapshot(),
-          locked: false,
-          faded: false,
-          tags: [],
-          boardId: boardStore.current?.id ?? '',
-              content: '',
-          createdAt: now,
-          updatedAt: now,
-        });
+        boardStore.addTileWithHistory(newTextTile({ x: canvasPos.x, y: canvasPos.y }));
       },
       onNewFrame: () => {
-        const now = Date.now();
-        boardStore.addFrameWithHistory({
-          id: createId(),
-          boardId: boardStore.current?.id ?? '',
-          title: 'Frame',
-          position: { x: canvasPos.x, y: canvasPos.y },
-          size: { width: FRAME_DEFAULTS.width, height: FRAME_DEFAULTS.height },
-          style: defaultFrameStyleSnapshot(),
-          collapsed: false,
-          tileIds: [],
-          createdAt: now,
-          updatedAt: now,
-        });
+        boardStore.addFrameWithHistory(createFrame({ x: canvasPos.x, y: canvasPos.y }, boardStore.current?.id ?? ''));
       },
       onInsertTemplate: () => {
         templatesStore.setPendingInsertAnchor({ x: canvasPos.x, y: canvasPos.y });
@@ -571,27 +535,12 @@
         createTileAtViewportCenter();
         return;
       }
-      const now = Date.now();
-      const newId = createId();
-      boardStore.addTileWithHistory({
-        id: newId,
-        type: 'text',
-        title: boardStore.getNextTileName(),
-        position: {
-          x: anchor.position.x + anchor.size.width + 40,
-          y: anchor.position.y,
-        },
-        size: { width: TILE_DEFAULTS.width, height: TILE_DEFAULTS.height },
-        style: defaultTileStyleSnapshot(),
-        locked: false,
-        faded: false,
-        tags: [],
-        boardId: boardStore.current?.id ?? '',
-          content: '',
-        createdAt: now,
-        updatedAt: now,
+      const tile = newTextTile({
+        x: anchor.position.x + anchor.size.width + 40,
+        y: anchor.position.y,
       });
-      selectionStore.select(newId);
+      boardStore.addTileWithHistory(tile);
+      selectionStore.select(tile.id);
       return;
     }
 

@@ -1,14 +1,13 @@
 import { SpatialIndex, type QueryRect } from '../lib/spatialIndex';
-import { getActiveScope, makeFacade } from '../lib/boards/boardScope.svelte';
 
 /**
  * Per-pane spatial-index store. Wraps an `SpatialIndex` and exposes a
  * `$state revision` counter so viewport-culling consumers re-derive on
  * every insert/update/remove.
  *
- * Each `BoardScope` owns a fresh `SpatialScope` instance. The exported
- * `spatialStore` is a global facade Proxy that delegates to the active
- * scope's instance.
+ * Each `BoardScope` owns a fresh `SpatialScope` instance (`scope.spatial`);
+ * there is no global facade, since a gesture must stay on the pane it
+ * started on.
  */
 export class SpatialScope {
   private _index = new SpatialIndex();
@@ -142,10 +141,3 @@ export class SpatialScope {
 export function createSpatialScope(): SpatialScope {
   return new SpatialScope();
 }
-
-/**
- * Global facade — every property access delegates to the active pane's
- * scope. Workspace-level call sites can keep importing `spatialStore` and
- * get the active scope's spatial index transparently.
- */
-export const spatialStore: SpatialScope = makeFacade(() => getActiveScope().spatial);

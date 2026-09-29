@@ -5,7 +5,6 @@
    */
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
-  import { vaultStore } from '../../stores/vault.svelte';
   import { connectionsStore } from '../../stores/connections.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { createBoardToolbar } from '../../lib/boards/boardToolbar.svelte';
@@ -15,9 +14,10 @@
   const boardStore = scope.board;
   const canvasStore = scope.canvas;
   const selectionStore = scope.selection;
-  import { createId } from '../../lib/utils/ids';
   import type { Tile } from '../../schema/index';
-  import { TILE_DEFAULTS, FRAME_DEFAULTS, defaultTileStyleSnapshot, defaultFrameStyleSnapshot } from '../../constants/defaults';
+  import type { TileType } from '../../../shared/types';
+  import { TILE_DEFAULTS, FRAME_DEFAULTS } from '../../constants/defaults';
+  import { createTile as newTile, createFrame as newFrame } from '../../stores/tiles.svelte';
   import { alignTiles, layoutTree, layoutRadial, type AlignMode } from '../../lib/canvas/layout';
   import { historyStore } from '../../stores/history.svelte';
   import { ToggleFadeCommand } from '../../commands/index';
@@ -49,109 +49,26 @@
     { type: 'timer', label: 'Timer', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2' },
   ] as const;
 
-  function createTile(tileType: string) {
-    showNewTileMenu = false;
-
+  /** A point near the viewport centre for an element of `size`, jittered so repeats don't stack. */
+  function nearViewportCentre(size: { width: number; height: number }): { x: number; y: number } {
     const vp = canvasStore.viewportRect;
-    const jitterX = (Math.random() - 0.5) * 100;
-    const jitterY = (Math.random() - 0.5) * 100;
-    const centerX = vp.left + vp.width / 2 - TILE_DEFAULTS.width / 2 + jitterX;
-    const centerY = vp.top + vp.height / 2 - TILE_DEFAULTS.height / 2 + jitterY;
-    const now = Date.now();
-    const tileDefs = vaultStore.project?.settings?.mindmap?.tile;
-
-    const baseTile = {
-      id: createId(),
-      title: boardStore.getNextTileName(),
-      position: { x: centerX, y: centerY },
-      size: { width: TILE_DEFAULTS.width, height: TILE_DEFAULTS.height },
-      style: {
-        ...defaultTileStyleSnapshot(),
-        ...(tileDefs?.headerColor != null && { headerColor: tileDefs.headerColor }),
-        ...(tileDefs?.bodyColor != null && { bodyColor: tileDefs.bodyColor }),
-        ...(tileDefs?.borderColor != null && { borderColor: tileDefs.borderColor }),
-        ...(tileDefs?.shape != null && { shape: tileDefs.shape }),
-        ...(tileDefs?.borderStyle != null && { borderStyle: tileDefs.borderStyle }),
-        ...(tileDefs?.borderWidth != null && { borderWidth: tileDefs.borderWidth }),
-        ...(tileDefs?.shadowIntensity != null && { shadowIntensity: tileDefs.shadowIntensity }),
-      },
-      locked: false,
-      faded: false,
-      tags: [],
-      boardId: boardStore.current?.id ?? '',
-      createdAt: now,
-      updatedAt: now,
+    return {
+      x: vp.left + vp.width / 2 - size.width / 2 + (Math.random() - 0.5) * 100,
+      y: vp.top + vp.height / 2 - size.height / 2 + (Math.random() - 0.5) * 100,
     };
+  }
 
-    let tile: Tile;
-
-    switch (tileType) {
-      case 'text':
-        tile = { ...baseTile, type: 'text', content: '' } as Tile;
-        break;
-      case 'image':
-        tile = { ...baseTile, type: 'image', src: '' } as Tile;
-        break;
-      case 'video':
-        tile = { ...baseTile, type: 'video', src: '', isPlaying: false } as Tile;
-        break;
-      case 'file':
-        tile = { ...baseTile, type: 'file', filePath: '', fileName: '', fileExtension: '' } as Tile;
-        break;
-      case 'audio':
-        tile = { ...baseTile, type: 'audio', src: '', isPlaying: false } as Tile;
-        break;
-      case 'link':
-        tile = { ...baseTile, type: 'link', url: '' } as Tile;
-        break;
-      case 'iframe':
-        tile = { ...baseTile, type: 'iframe', url: '' } as Tile;
-        break;
-      case 'timer':
-        tile = { ...baseTile, type: 'timer', duration: 0, remaining: 0, mode: 'hms', isRunning: false } as Tile;
-        break;
-      default:
-        tile = { ...baseTile, type: 'text', content: '' } as Tile;
-    }
-
+  function createTile(tileType: TileType) {
+    showNewTileMenu = false;
+    const tile = newTile(tileType, nearViewportCentre(TILE_DEFAULTS), boardStore.current?.id ?? '', {
+      title: boardStore.getNextTileName(),
+    });
     boardStore.addTileWithHistory(tile);
   }
 
   function createFrame() {
     closeAllMenus();
-    const vp = canvasStore.viewportRect;
-    const jitterX = (Math.random() - 0.5) * 100;
-    const jitterY = (Math.random() - 0.5) * 100;
-    const centerX = vp.left + vp.width / 2 - FRAME_DEFAULTS.width / 2 + jitterX;
-    const centerY = vp.top + vp.height / 2 - FRAME_DEFAULTS.height / 2 + jitterY;
-    const now = Date.now();
-
-    boardStore.addFrameWithHistory({
-      id: createId(),
-      boardId: boardStore.current?.id ?? '',
-      title: 'Frame',
-      position: { x: centerX, y: centerY },
-      size: { width: FRAME_DEFAULTS.width, height: FRAME_DEFAULTS.height },
-      style: {
-        ...defaultFrameStyleSnapshot(),
-        ...(vaultStore.project?.settings?.mindmap?.frame?.headerColor != null && {
-          headerColor: vaultStore.project.settings.mindmap.frame.headerColor,
-        }),
-        ...(vaultStore.project?.settings?.mindmap?.frame?.borderColor != null && {
-          borderColor: vaultStore.project.settings.mindmap.frame.borderColor,
-        }),
-        ...(vaultStore.project?.settings?.mindmap?.frame?.borderStyle != null && {
-          borderStyle: vaultStore.project.settings.mindmap.frame.borderStyle,
-        }),
-        ...(vaultStore.project?.settings?.mindmap?.frame?.borderWidth != null && {
-          borderWidth: vaultStore.project.settings.mindmap.frame.borderWidth,
-        }),
-      },
-      collapsed: false,
-      tileIds: [],
-      createdAt: now,
-      updatedAt: now,
-    });
+    boardStore.addFrameWithHistory(newFrame(nearViewportCentre(FRAME_DEFAULTS), boardStore.current?.id ?? ''));
   }
 
   function closeAllMenus() {

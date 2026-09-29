@@ -1,10 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   isInsideVault,
-  vaultRelativeFromAbsolute,
   classifyDroppedFile,
 } from '@renderer/lib/vault/droppedFiles';
-import { samePath } from '@renderer/lib/utils/path';
+import { samePath, toVaultRelative } from '@renderer/lib/utils/path';
 
 describe('isInsideVault', () => {
   it('returns true for a file directly inside the vault (unix)', () => {
@@ -45,34 +44,34 @@ describe('isInsideVault', () => {
   });
 });
 
-describe('vaultRelativeFromAbsolute', () => {
+describe('toVaultRelative (the path a dropped file is linked by)', () => {
   it('returns the path relative to the vault, preserving original casing', () => {
-    expect(vaultRelativeFromAbsolute('/vault/Sub/Notes.md', '/vault')).toBe('Sub/Notes.md');
+    expect(toVaultRelative('/vault/Sub/Notes.md', '/vault')).toBe('Sub/Notes.md');
   });
 
   it('strips a windows-style vault prefix', () => {
-    expect(vaultRelativeFromAbsolute('C:\\Vault\\Sub\\Notes.md', 'C:\\Vault')).toBe('Sub/Notes.md');
+    expect(toVaultRelative('C:\\Vault\\Sub\\Notes.md', 'C:\\Vault')).toBe('Sub/Notes.md');
   });
 
   it('preserves casing of the subpath even when vault prefix differs in case', () => {
-    expect(vaultRelativeFromAbsolute('/Vault/MyFolder/Notes.md', '/VAULT')).toBe(
+    expect(toVaultRelative('/Vault/MyFolder/Notes.md', '/VAULT')).toBe(
       'MyFolder/Notes.md',
     );
   });
 
   it('returns an empty string when the path equals the vault', () => {
-    expect(vaultRelativeFromAbsolute('/vault', '/vault')).toBe('');
-    expect(vaultRelativeFromAbsolute('/vault/', '/vault')).toBe('');
+    expect(toVaultRelative('/vault', '/vault')).toBe('');
+    expect(toVaultRelative('/vault/', '/vault')).toBe('');
   });
 
-  it('returns an empty string for paths outside the vault', () => {
-    expect(vaultRelativeFromAbsolute('/elsewhere/x.md', '/vault')).toBe('');
-    expect(vaultRelativeFromAbsolute('/vaultish/x.md', '/vault')).toBe('');
+  it('returns null for paths outside the vault', () => {
+    expect(toVaultRelative('/elsewhere/x.md', '/vault')).toBeNull();
+    expect(toVaultRelative('/vaultish/x.md', '/vault')).toBeNull();
   });
 
-  it('returns an empty string for empty inputs', () => {
-    expect(vaultRelativeFromAbsolute('', '/vault')).toBe('');
-    expect(vaultRelativeFromAbsolute('/vault/x', '')).toBe('');
+  it('returns null for empty inputs', () => {
+    expect(toVaultRelative('', '/vault')).toBeNull();
+    expect(toVaultRelative('/vault/x', '')).toBeNull();
   });
 });
 

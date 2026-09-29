@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { BorderStyleSchema, ShapeSchema } from './styleEnums';
 import { coerceToNumber, optionalNumber } from './schemaUtils';
 
+/** A timer tile's display mode: the one list (tile, placement, the mode button's cycle). */
+export const TimerModeSchema = z.enum(['hms', 'ms', 's', 'clock']);
+export type TimerMode = z.infer<typeof TimerModeSchema>;
+
 /**
  * Two layers live here:
  *
@@ -174,7 +178,7 @@ export const TimerTileSchema = BaseTileSchema.extend({
   // negative timer field belongs in failedBoards, not on the canvas.
   duration: z.number().finite().nonnegative().default(0), // seconds
   remaining: z.number().finite().nonnegative().default(0),
-  mode: z.enum(['hms', 'ms', 's', 'clock']).default('hms'),
+  mode: TimerModeSchema.default('hms'),
   isRunning: z.boolean().default(false),
   // Wall-clock end (epoch ms) of a running countdown; absent while stopped.
   endsAt: z.number().finite().nonnegative().optional(),
@@ -325,7 +329,7 @@ export const TimerTileDefSchema = InlineTileDefinitionBase.extend({
   // Mirrors TimerTileSchema.duration / remaining.
   duration: z.number().finite().nonnegative().default(0),
   remaining: z.number().finite().nonnegative().default(0),
-  mode: z.enum(['hms', 'ms', 's', 'clock']).default('hms'),
+  mode: TimerModeSchema.default('hms'),
   isRunning: z.boolean().default(false),
   endsAt: z.number().finite().nonnegative().optional(),
 });

@@ -9,26 +9,11 @@
  * case-sensitive, and so is macOS by default). The vault-relative path keeps
  * the input's own casing, so it resolves on a case-sensitive file system too.
  */
-import { normalizePath } from '../utils/path';
+import { toVaultRelative } from '../utils/path';
 
 /** True when `absPath` is the vault folder or anything inside it. */
 export function isInsideVault(absPath: string, vaultDir: string): boolean {
-  if (!absPath || !vaultDir) return false;
-  const a = normalizePath(absPath).toLowerCase();
-  const v = normalizePath(vaultDir).toLowerCase();
-  return a === v || a.startsWith(v + '/');
-}
-
-/** `absPath` relative to the vault, in its own casing; '' when it isn't inside it. */
-export function vaultRelativeFromAbsolute(absPath: string, vaultDir: string): string {
-  if (!absPath || !vaultDir) return '';
-  const n = normalizePath(absPath);
-  const vn = normalizePath(vaultDir);
-  // Case-insensitive prefix detection, sliced from the original string so
-  // the casing of the subpath is kept.
-  if (n.toLowerCase() === vn.toLowerCase()) return '';
-  if (!n.toLowerCase().startsWith(vn.toLowerCase() + '/')) return '';
-  return n.slice(vn.length + 1);
+  return !!absPath && toVaultRelative(absPath, vaultDir) !== null;
 }
 
 /**
@@ -71,6 +56,6 @@ export function classifyDroppedFile(file: File, vaultRoot: string): InVaultDrop 
   const sourcePath = resolveDroppedFilePath(file);
   if (!sourcePath) return null;
   if (!isInsideVault(sourcePath, vaultRoot)) return { kind: 'outside', file, sourcePath };
-  const relPath = vaultRelativeFromAbsolute(sourcePath, vaultRoot);
+  const relPath = toVaultRelative(sourcePath, vaultRoot);
   return relPath ? { kind: 'in-vault', file, relPath } : null;
 }

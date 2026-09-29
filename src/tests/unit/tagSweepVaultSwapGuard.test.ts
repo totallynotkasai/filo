@@ -24,6 +24,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { emptyTagsFile as newTagsFile } from '@renderer/lib/vault/tagsStorage';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import {
   beginVaultGeneration,
@@ -97,7 +98,7 @@ describe('Audit-12 H3 — vault-wide tag rename/remove swap guard', () => {
       'vault:stat': async () => ({ success: true, mtimeMs: 1, size: 20 }),
     });
 
-    await fileTagsStore.hydrate('/vault');
+    fileTagsStore.commitFromCandidate('/vault', newTagsFile());
   });
 
   afterEach(() => {

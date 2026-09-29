@@ -226,10 +226,8 @@ export function getBaseline(path: string): FileBaseline | undefined {
 }
 
 /**
- * Drops `path`'s baseline. Called from rename / delete propagation paths
- * so a stale baseline doesn't pin to an entry the file no longer occupies.
- * Mirror to `noteBaseline(newPath, mtime, size)` on the rename side so the new
- * path inherits the freshly-renamed baseline.
+ * @internal test-only. Drops `path`'s baseline. The app moves a renamed
+ * path's baseline instead (`renameBaselinePath`).
  */
 export function clearBaseline(path: string): void {
   if (!path) return;
@@ -313,7 +311,7 @@ export function assertBaselinesSeeded(paths: Iterable<string>, label: string): v
   if (missing.length === 0) return;
   console.warn(
     `[fileBaselineRegistry] ${missing.length} ${label}(s) loaded without a drift baseline — ` +
-      `pre-write external-edit detection is inert for them (F1 regression?): ${missing.join(', ')}`,
+      `pre-write external-edit detection is inert for them: ${missing.join(', ')}`,
   );
 }
 

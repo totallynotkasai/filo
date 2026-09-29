@@ -68,13 +68,6 @@
   interface Props {
     open?: boolean;
     /**
-     * Kept as a passthrough prop so existing call sites that supply a
-     * `role` value still type-check. The legacy `'popout'` branch
-     * (second BrowserWindow) was removed when the sidebar moved to
-     * an in-app floating panel; both values now behave identically.
-     */
-    role?: 'main' | 'popout';
-    /**
      * When provided, the `.sidebar-header` strip becomes a drag handle.
      * Used by `FloatingVaultPanel` to let the user drag the floating
      * panel by its title bar. The action buttons' `onpointerdown`
@@ -84,7 +77,7 @@
     dragHandlers?: DragHandlers;
   }
 
-  let { open = true, role = 'main', dragHandlers }: Props = $props();
+  let { open = true, dragHandlers }: Props = $props();
 
   let rootDropActive = $state(false);
 
@@ -516,7 +509,7 @@
             onfinalize={onRootFinalize}
           >
             {#each rootDndItems as item (item.id)}
-              <VaultFileItem node={item.node} {role} />
+              <VaultFileItem node={item.node} />
             {/each}
           </div>
         {/if}
@@ -763,7 +756,7 @@
     transition: box-shadow 0.08s ease, background-color 0.08s ease;
   }
 
-  /* E.12 — when reorder is disabled (sort != none or search active), each
+  /* When reorder is disabled (sort != none or search active), each
      row no longer carries a 12 px drag-handle. Shift the whole list in by
      12 px so the text x-position matches the non-sorted state. */
   .file-tree.sort-active {

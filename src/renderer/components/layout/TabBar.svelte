@@ -101,7 +101,7 @@
 
   let tabListEl = $state<HTMLDivElement | null>(null);
 
-  // E.9 — overflow affordance. A ResizeObserver mirrors the container's
+  // Overflow affordance. A ResizeObserver mirrors the container's
   // scrollWidth vs clientWidth; the right-edge fade + ▾ overflow button
   // appear only when the user actually has more tabs than fit. Re-runs
   // whenever the tabs change too (track tabStore.tabs.length).

@@ -12,10 +12,6 @@ import type { TileType } from '../../shared/types';
 export interface TileRegistryEntry {
   /** The tile type identifier. */
   type: TileType;
-  /** Human-readable display name. */
-  name: string;
-  /** Whether this tile type appears in the "add tile" menu. */
-  selectable: boolean;
   /** Type-specific default fields merged into the tile on creation. */
   defaultOverrides: Record<string, unknown>;
 }
@@ -28,50 +24,34 @@ export interface TileRegistryEntry {
 export const tileRegistry: Record<TileType, TileRegistryEntry> = {
   text: {
     type: 'text',
-    name: 'Text',
-    selectable: true,
     defaultOverrides: { content: '' },
   },
   image: {
     type: 'image',
-    name: 'Image',
-    selectable: true,
     defaultOverrides: { src: '' },
   },
   video: {
     type: 'video',
-    name: 'Video',
-    selectable: true,
     defaultOverrides: { src: '', isPlaying: false },
   },
   file: {
     type: 'file',
-    name: 'File',
-    selectable: true,
     defaultOverrides: { filePath: '', fileName: '', fileExtension: '' },
   },
   audio: {
     type: 'audio',
-    name: 'Audio',
-    selectable: true,
     defaultOverrides: { src: '', isPlaying: false },
   },
   link: {
     type: 'link',
-    name: 'Link',
-    selectable: true,
     defaultOverrides: { url: '' },
   },
   iframe: {
     type: 'iframe',
-    name: 'Embed',
-    selectable: true,
     defaultOverrides: { url: '' },
   },
   timer: {
     type: 'timer',
-    name: 'Timer',
-    selectable: true,
     defaultOverrides: { duration: 0, remaining: 0, mode: 'hms', isRunning: false },
   },
 };

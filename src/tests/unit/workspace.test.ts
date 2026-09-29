@@ -9,26 +9,16 @@ describe('workspaceStore', () => {
   });
 
   it('starts with sensible defaults', () => {
-    expect(workspaceStore.sidebarWidth).toBe(260);
     expect(workspaceStore.activePaneId).toBeNull();
     expect(workspaceStore.paneTree).toBeNull();
     expect(workspaceStore.leafCount).toBe(0);
-  });
-
-  it('clamps sidebar width to [120, 800]', () => {
-    workspaceStore.setSidebarWidth(50);
-    expect(workspaceStore.sidebarWidth).toBe(260);
-    workspaceStore.setSidebarWidth(900);
-    expect(workspaceStore.sidebarWidth).toBe(260);
-    workspaceStore.setSidebarWidth(400);
-    expect(workspaceStore.sidebarWidth).toBe(400);
   });
 
   it('notifies change listener on every mutation', () => {
     let count = 0;
     workspaceStore.setChangeListener(() => count++);
 
-    workspaceStore.setSidebarWidth(300);
+    workspaceStore.setBoardToolbarPinned('board_1', true);
     workspaceStore.ensureRoot('tab_a');
     workspaceStore.setActivePane('some_pane');
 
@@ -149,7 +139,6 @@ describe('workspaceStore', () => {
     const before: WorkspaceLayout = {
       paneTree: split,
       activePaneId: 'leaf_1',
-      sidebarWidth: 320,
       boardToolbars: { board_1: { position: { x: 40, y: 80 }, pinned: true } },
     };
 
@@ -163,15 +152,14 @@ describe('workspaceStore', () => {
   });
 
   it('hydrate(null) resets to defaults', () => {
-    workspaceStore.setSidebarWidth(400);
+    workspaceStore.ensureRoot('tab_a');
     workspaceStore.hydrate(null);
-    expect(workspaceStore.sidebarWidth).toBe(260);
     expect(workspaceStore.paneTree).toBeNull();
   });
 
   it('hydrate fills missing fields with defaults', () => {
-    workspaceStore.hydrate({ sidebarWidth: 500 });
-    expect(workspaceStore.sidebarWidth).toBe(500);
+    workspaceStore.hydrate({ boardToolbars: { b: { position: null, pinned: true } } });
+    expect(workspaceStore.boardToolbar('b').pinned).toBe(true);
     expect(workspaceStore.activePaneId).toBeNull();
   });
 });

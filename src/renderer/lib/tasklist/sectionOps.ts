@@ -114,14 +114,8 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
     const autoDefault: TaskListSection | null = wasEmpty
       ? newSection(`sec_${createId()}`, 'Task List', 0)
       : null;
-    const id = `sec_${createId()}`;
-    const placements = deps.getPlacements();
-    const baseSections = autoDefault ? [autoDefault] : before.sections;
-    const after = {
-      sections: [...baseSections, newSection(id, title, placements.length)],
-      tasks: before.tasks,
-    };
-    historyStore.execute(new AddSectionCommand(board.id, before, after, title, autoDefault));
+    const added = newSection(`sec_${createId()}`, title, deps.getPlacements().length);
+    historyStore.execute(new AddSectionCommand(board.id, added, autoDefault));
     deps.tickAndPersist();
   }
 

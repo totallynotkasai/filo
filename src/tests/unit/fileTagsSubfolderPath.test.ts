@@ -18,6 +18,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { emptyTagsFile as newTagsFile } from '@renderer/lib/vault/tagsStorage';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { cancelAllPendingWrites, __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
@@ -60,7 +61,7 @@ describe('Audit-12 H2 — fileTags tag write honors subfolders', () => {
     });
     vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);
 
-    await fileTagsStore.hydrate('/vault');
+    fileTagsStore.commitFromCandidate('/vault', newTagsFile());
   });
 
   afterEach(() => {

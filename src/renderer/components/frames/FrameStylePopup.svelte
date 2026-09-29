@@ -12,7 +12,7 @@
   import type { Frame } from '../../schema/index';
   import { untrack, getContext } from 'svelte';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
-  import { nanoid } from 'nanoid';
+  import { createId } from '../../lib/utils/ids';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateFrameStyleCommand } from '../../commands/index';
@@ -25,7 +25,7 @@
   import { portal } from '../../lib/utils/portal';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
 
-  const popupTitleId = `frame-style-popup-title-${nanoid(6)}`;
+  const popupTitleId = `frame-style-popup-title-${createId()}`;
 
   let {
     frame,

@@ -190,7 +190,7 @@
       back" button (only when floating). That avoids a duplicate "Vault"
       title and keeps all vault controls in one place.
     -->
-    <VaultSidebar open={true} role="main" dragHandlers={headerDragHandlers} />
+    <VaultSidebar open={true} dragHandlers={headerDragHandlers} />
   </div>
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->

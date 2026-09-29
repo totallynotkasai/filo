@@ -1,5 +1,4 @@
-import { vaultRelativeFromAbsolute } from '../vault/droppedFiles';
-import { stripLeadingSlash, toPosix } from './path';
+import { stripLeadingSlash, toPosix, toVaultRelative } from './path';
 
 /**
  * Converts a tile's `src` field into a URL that the renderer can load.
@@ -73,7 +72,7 @@ export function toMediaUrl(src: string | undefined | null, vaultRoot?: string): 
       console.warn('[toMediaUrl] absolute path with no vault root context:', src);
       return '';
     }
-    const rel = vaultRelativeFromAbsolute(candidate, vaultRoot);
+    const rel = toVaultRelative(candidate, vaultRoot);
     if (!rel) {
       console.warn('[toMediaUrl] absolute path is outside the vault:', src);
       return '';

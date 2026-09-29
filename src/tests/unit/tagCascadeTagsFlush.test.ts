@@ -3,6 +3,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { emptyTagsFile as newTagsFile } from '@renderer/lib/vault/tagsStorage';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
@@ -55,7 +56,7 @@ describe('tag cascade — synchronous tags.json flush (Phase 4.3)', () => {
 
     // Seed an 'old' tag definition and drain the resulting write so the
     // cascade's flush is the only tags:save we observe.
-    await fileTagsStore.hydrate('/vault');
+    fileTagsStore.commitFromCandidate('/vault', newTagsFile());
     fileTagsStore.ensureTag('old', '#abcdef');
     await fileTagsStore.flushPendingSave();
     tagsSaves.length = 0;

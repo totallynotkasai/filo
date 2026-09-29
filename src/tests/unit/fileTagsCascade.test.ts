@@ -3,6 +3,7 @@ import { boardStore } from '@renderer/stores/board.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { emptyTagsFile as newTagsFile } from '@renderer/lib/vault/tagsStorage';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import {
@@ -115,7 +116,7 @@ describe('fileTagsStore — rename / delete cascade', () => {
       'vault:read-file-text': async () => ({ success: true, content: '' }),
     });
 
-    await fileTagsStore.hydrate('/vault');
+    fileTagsStore.commitFromCandidate('/vault', newTagsFile());
     // Seed two tag definitions on a media file (tags.json is where a media
     // file's tags live); the cascade should rewrite both occurrences.
     fileTagsStore.addTagToFile('Media/A.png', 'urgent');
@@ -552,7 +553,7 @@ describe('fileTagsStore — rename / delete cascade', () => {
         'vault:file-exists': async () => true,
       });
 
-      await fileTagsStore.hydrate('/vault');
+      fileTagsStore.commitFromCandidate('/vault', newTagsFile());
 
       fileTagsStore.addTagToPath('Notes/foo.md', 'urgent');
 
@@ -590,7 +591,7 @@ describe('fileTagsStore — rename / delete cascade', () => {
         'vault:file-exists': async () => false,
       });
 
-      await fileTagsStore.hydrate('/vault');
+      fileTagsStore.commitFromCandidate('/vault', newTagsFile());
 
       fileTagsStore.addTagToPath('Notes/gone.md', 'urgent');
 

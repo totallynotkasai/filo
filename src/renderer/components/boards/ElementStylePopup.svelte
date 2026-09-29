@@ -11,7 +11,7 @@
    */
   import { untrack, getContext } from 'svelte';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
-  import { nanoid } from 'nanoid';
+  import { createId } from '../../lib/utils/ids';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import {
@@ -51,7 +51,7 @@
   const fields = target.fields;
   const p = target.idPrefix;
 
-  const popupTitleId = `${p}-style-popup-title-${nanoid(6)}`;
+  const popupTitleId = `${p}-style-popup-title-${createId()}`;
 
   // Snapshot the whole style block at mount so popup-close can dispatch a
   // single style command spanning every pick made during this session. The

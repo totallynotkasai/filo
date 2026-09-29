@@ -79,7 +79,7 @@ interface OrphanPruneReport {
    * self-heal (the correct value *is* `board.id`), so it must not trip the
    * orphan-prune recovery snapshot / refuse-to-load path. It is surfaced via
    * the separate `boardIdsNormalized` result flag, which marks the board
-   * dirty so the repair reaches disk — the same way `groupsBackfilled` does.
+   * dirty so the repair reaches disk.
    */
   normalizedBoardIdRefs: string[];
 }

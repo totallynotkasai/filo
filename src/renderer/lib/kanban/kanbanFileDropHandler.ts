@@ -3,8 +3,8 @@ import { defaultTileStyleSnapshot } from '../../constants/defaults';
 import { createId } from '../utils/ids';
 import { buildTextTileDefForNote } from '../canvas/markdownTileSeed';
 import { isMarkdownExtension, normalizeExtension } from '../vault/extension';
-import { vaultRelativeFromAbsolute, type OutsideDrop } from '../vault/droppedFiles';
-import { toPosix } from '../utils/path';
+import type { OutsideDrop } from '../vault/droppedFiles';
+import { toPosix, toVaultRelative } from '../utils/path';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { copyFileIntoVault } from '../vault/vaultOperations';
 
@@ -103,7 +103,7 @@ export async function buildTileDefForVaultFile(args: {
   const tileId = createId();
   const now = Date.now();
   const tileType = inferKanbanTileType('', extension) ?? 'file';
-  const relPath = vaultRelativeFromAbsolute(filePath, vaultRoot) || toPosix(filePath);
+  const relPath = toVaultRelative(filePath, vaultRoot) || toPosix(filePath);
 
   if (tileType === 'text') {
     return await buildTextTileDefForKanbanDrop({ vaultRelPath: relPath, tileId, now, allTilesById });
@@ -139,7 +139,7 @@ export async function importKanbanFileTile(args: {
     // The copy result returns either a vault-relative path (preferred) or an
     // absolute path. Normalise to vault-relative for the def.
     const resolvedRel = (res.relativePath as string)
-      || (res.path ? vaultRelativeFromAbsolute(res.path as string, vaultRoot) : '')
+      || (res.path ? toVaultRelative(res.path as string, vaultRoot) : '')
       || fileName;
     // Refresh the file tree so the newly copied file is in the
     // `knownVaultPaths` snapshot before broken-ref detection runs on the tile.

@@ -4,7 +4,8 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { framesStore } from '../../stores/frames.svelte';
 import { reportError } from '../utils/errorBus';
-import { classifyDroppedFile, vaultRelativeFromAbsolute } from '../vault/droppedFiles';
+import { classifyDroppedFile } from '../vault/droppedFiles';
+import { toVaultRelative } from '../utils/path';
 import { buildTextTileDefForNote } from './markdownTileSeed';
 import { copyFileIntoVault } from '../vault/vaultOperations';
 import type { TextTile, Tile } from '../../schema/index';
@@ -105,7 +106,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
           // as a last-resort fallback (which would be logged & rejected by
           // toMediaUrl rather than leaking into an `<img src>`).
           const vaultDir = vaultStore.path ?? '';
-          const relPath = vaultRelativeFromAbsolute(filePath, vaultDir) || filePath;
+          const relPath = toVaultRelative(filePath, vaultDir) || filePath;
 
           const overrides: Record<string, unknown> = {};
           if (type === 'image' || type === 'video' || type === 'audio') {
@@ -305,7 +306,7 @@ async function createTextTileFromFile(
     return null;
   }
 
-  const relPath = vaultRelativeFromAbsolute(filePath, vaultDir) || filePath;
+  const relPath = toVaultRelative(filePath, vaultDir) || filePath;
   const { def } = buildTextTileDefForNote({
     vaultRelPath: relPath,
     existingTiles: Object.values(boardScope.tiles) as Array<TextTile>,

@@ -891,6 +891,48 @@ No behaviour changes. Each commit is small, and `ci:verify` stays green.
    - plus everything Phases 1–5 changed.
 9. **KNOWN_LIMITATIONS.** #4 (OS shutdown, after A25-15), #15 (the compare-and-swap is in main for notes; boards and configs per A25-19), #17 (after Phase 1).
 
+### Phase 6 outcome (2026-09-29)
+
+**Done.** Items 1–9, plus N4, N5, N10 and N11 from earlier phases. One new gate (88 in all) and a widened one. Where a change alters behaviour (the SideToolbar factories, the drift-prompt keys, the date formatter in TemplateBrowser, N4, N10, N11), a test was written first and seen to fail with the fix switched off.
+
+**Checks.** `npm run ci:verify`: lint, svelte-check, typecheck:main, 765 test files / 7,106 tests (5 skipped, as before), build all green; the first gates run failed `test-typecheck` (a new test helper's return type), fixed, then 88/88 gates. Two earlier full runs caught a test still calling `AddSectionCommand` with the old arguments (`sectionOps.test.ts`, updated) and that type error.
+
+**Real-app check** (built app, a session-scratchpad Playwright script, `realapp/phase6.mjs`):
+
+| Scenario | Result |
+|---|---|
+| Sidebar (Sort By None): move Alpha below Charlie with the drag handle's keyboard reorder; quit; copy the vault to another folder; open it there | `sidebar-order.json` holds `{ "": ["Bravo.md", "Charlie.md", "Alpha.md"] }`; the moved vault shows Bravo, Charlie, Alpha |
+| `defaults.json` sets a Mind Map tile header `#aa0000`, shape rounded, frame border `#00aa00`; a new Mind Map board; side toolbar New → Timer, then New → Frame; quit | Both show the default colours on screen; the board file holds the tile style `{ headerColor: "", bodyColor: "", borderColor: "" }` and the frame's with `borderColor: ""`. The same run on a build of `bec1a17` saved `#aa0000`, `rounded`, the border and shadow into the tile and `#00aa00` into the frame |
+
+**What changed, by item.**
+
+| Item | Where | Tests |
+|---|---|---|
+| 1 Dead code | removed: `toggleTagFade` + `ToggleTagFadeCommand` (and its gate exemption), `getTagUsageCount`, the global `spatialStore` facade, `isThemeToken`, `vaultStore.setLoading`, `searchStore.togglePanel`, the tile registry's `name` / `selectable`, `workspaceStore.setSidebarWidth` / `sidebarWidth` (no longer written to `workspace.json`; an old file's key is ignored), the `role` prop on VaultSidebar / VaultFileItem, the `backupExternalVersion` re-export, `AddSectionCommand`'s before / after arrays (it takes the new section), `fileTagsStore.hydrate()` (its seven test users seed through `commitFromCandidate`). SideToolbar's unreachable `switch` cases went with its factory copy (item 3). `toolbarConfig.toggleTaskList` stays: Phase 1 added the Checklist button (D11) | updated `workspace.test.ts`, `configExternalChanges.test.ts`, `sectionCommandsDelta.test.ts`, `taskStructureCommandsRoundTrip.test.ts` |
+| 2 Test-only exports | `/** @internal test-only */` on `encodeFiloLink` / `FiloLinkSchema` (dropped from `schema/index.ts`), `clearBaseline`, `SETTINGS_VAR_NAMES`, `vaultStore.setPath` / `setTree`. `parseTagsField` is used by the app (tag writer, rewriter), so it stays as is | — |
+| 3 Duplicates | one tile and one frame factory (`stores/tiles.svelte.ts`: `createTile`, new `createFrame`); SideToolbar and MindMapBoard (three tiles, one frame) build through them, so a new element no longer freezes the Global Defaults colours / shape into its style. One date formatter (`lib/utils/dateFormat.ts`: `localIsoDate`, `localIsoDateInDays`) for TaskBulkActionBar, TaskDatePicker, quick add, recurrence, templates and TemplateBrowser (which used UTC: a template board made after midnight UTC but before local midnight was named with tomorrow's date). `vaultRelativeFromAbsolute` → `toVaultRelative`; `pinIsUnder` → `isAtOrUnder`; one `TimerModeSchema` (`schema/tile.ts`) for the tile, placement, command and the mode button; style popups use `createId()` | component `sideToolbarNewElements.test.ts` (fails on the old toolbar: `#aa0000` baked in); unit `dateFormat.test.ts`; `droppedFiles.test.ts` and `folderPins.test.ts` now test the shared helpers |
+| 4 Stale comments | `boardWriteScheduler.ts` (the orphaned handler doc merged into one; the writer never awaits the drift question), `boardDrift.ts` (Reload clears undo; the toast is sticky), `writeStateTracking.ts` header, `taskCommands.ts` (moves record the move; delete undo is a restore from the trash), `groupAndBoardCommands.ts` (the orphaned cascade doc), `vault.svelte.ts` (`runPostCommitTasks`, and its dead `store` argument), the TaskItem notes animation (see deviation 3), and 30 comments naming removed identifiers (list in the commit message) | — |
+| 5 Audit-id gate | `codebase/no-audit-narration` also matches `A25-01` and `F1 regression` anywhere, and a lettered item id (`E.11`, `C5.2`) in comments; proved to bite (14 hits), all cleaned | gate |
+| 6 Pre-swap order | `runAfter: ['leftBehind']` on `boardCache`, `fileTags`, `workspace`, `sidebarOrder`, `pendingSettings`, `nonUtf8Paths` (`boardWriteScheduler` already had it) | new gate `vaultIdentity/pre-swap-after-left-behind` (proved: fails with the `workspace` declaration removed) |
+| 7 Drift keys | `inFlightDriftPrompts` / `inFlightResolutions` keyed by `VaultPath` | unit `driftPromptDedup.test.ts` (+1: two spellings, one toast; fails without) |
+| 8 CLAUDE.md | BoardRegistry (lazy component, no toolbar / schema), TileRegistry (defaults only), `coordinates.ts`, `quit-failure.<machineId>.json`, config debounce (300 ms; viewports 1,500 ms), a Document tab's stack keyed by `tab.boardId`, gate count and the two gate descriptions, the new modules | — |
+| 9 KNOWN_LIMITATIONS | #4 and #15 were already current (Phase 4); #17 and #4 lost their audit narration, and two `ci:` names now name the gates | — |
+| N4 | `taskItems.ts` `addEachCoreRuleOnce`: a core rule whose name is registered isn't added again, whichever setup runs first | unit `taskListRuleOnce.test.ts` (6 copies after 5 loads before) |
+| N5 | `electron.vite.config.mts`: the `markdown-tools` chunk (gray-matter, js-yaml, remark…) removed | build |
+| N10 | TaskItem and KanbanCard pass `clockStore.todayDate()` to `isOverdue` and the date chip | component `dueChipMidnight.test.ts` (a row due today turns overdue at midnight; fails without) |
+| N11 | `sidebar-order.json` holds vault-relative paths; the store keeps absolute ones as the tree spells them; an absolute file is still read and is written back relative at the next change; the tree matches paths separator-agnostically | unit `sidebarOrderRelative.test.ts` (3 cases; all fail without) |
+
+**Deviations from the plan.**
+
+1. **"One tile factory" kept `createTile`'s signature;** a pane-scoped caller passes `title` from its own board, since the factory's fallback names from the active pane. Before, only AppShell's Ctrl+N and templates used the factory; now every Mind Map new-tile path does.
+2. **Item 6 covers six handlers, not four:** the leave rescue also reads unapplied Settings (`pendingSettings`) and the read-only note set (`nonUtf8Paths`), so both got the declaration and are in the gate's list.
+3. **TaskItem's notes panel: fixed, not documented as an exception.** The row now snaps between `0fr` and `1fr` and its content fades and slides in (opacity and transform only), with no transition under reduced motion. Subtasks below move at once instead of gliding.
+4. **Item 1: `AddSectionCommand` takes the new section itself** rather than keeping the old parameters as unused; its three test call sites were updated.
+5. **`kanbanDragController`'s stale comment (report, 335-336) was already gone;** `boardCacheDelete.ts:137-139` had been rewritten in Phase 4.
+6. **The audit-id gate's `F1 regression` pattern applies to code too:** the one hit was in a console message (`fileBaselineRegistry.ts`), which the plan's "comments only" wording would have missed.
+7. **N1, N2 and N3 not done.** N1 and N2 change how Markdown is written (outside "no behaviour changes") and stay in KNOWN_LIMITATIONS #32 / #17. N3 (an empty code block after a lone horizontal rule reloads as an empty paragraph) writes nothing, since the note is read-only; left as found.
+8. **The stale-identifier sweep used a scratch script** (backticked names in comments that appear in no code or file name); it found more than the ~20 expected, about 30 real ones after dropping runes, `.json` names and library internals (`animateDraggedToFinalPosition`, `styleDraggable`, `registerPlugin`).
+
 ---
 
 ## Phase 7: Real-app regression suite (the E2E rewrite)
@@ -981,4 +1023,5 @@ Plan written 2026-09-29.
 - **Phase 3: done** 2026-09-29 (see "Phase 3 outcome": the real-app check, 10 deviations including a pre-existing merge-confirm bug fixed, new finding N8).
 - **Phase 4: done** 2026-09-29 (see "Phase 4 outcome": the real-app check, 9 deviations, new finding N9; A25-19 recorded in KNOWN_LIMITATIONS #15 and deferred).
 - **Phase 5: done** 2026-09-29 (see "Phase 5 outcome": the real-app check, 15 deviations, N8 and N9 done, new findings N10–N11; two gates added, 87 in all).
-- Phases 6–8: not started.
+- **Phase 6: done** 2026-09-29 (see "Phase 6 outcome": the real-app check, 8 deviations, N4, N5, N10 and N11 done; N1–N3 left as recorded; one gate added, 88 in all).
+- Phases 7–8: not started.

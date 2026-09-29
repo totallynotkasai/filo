@@ -115,7 +115,7 @@ export function tileResizeAction(node: HTMLElement, options: TileResizeOptions) 
 
   function onPointerCancel(_e: PointerEvent) {
     if (!isResizing) return;
-    // D.4 — native pointercancel routes through the same snap-back path as
+    // A native pointercancel routes through the same snap-back path as
     // Escape so an interrupted resize doesn't strand the tile at a half-way
     // size that the user can't undo (no command would have been pushed).
     cancelResize();

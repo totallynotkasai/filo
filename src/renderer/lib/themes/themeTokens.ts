@@ -166,6 +166,8 @@ export const THEME_TOKEN_NAMES: readonly string[] = [
 ];
 
 /**
+ * @internal test-only: a test checks that no theme token is one of these.
+ *
  * Variables that are the user's settings, written onto `:root` by App.svelte
  * (font, sizes, UI scales). A theme never sets them; one saved by an older
  * version that carries them has them skipped on apply.

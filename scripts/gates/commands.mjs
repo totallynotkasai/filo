@@ -62,7 +62,6 @@ const ROUNDTRIP_EXEMPT = new Map([
   ['UpdateTimerConfigCommand', 'full before/after timer-config snapshot'],
   ['AlignTilesCommand', 'full before/after position-map snapshot'],
   ['LayoutTilesCommand', 'full before/after position-map snapshot'],
-  ['ToggleTagFadeCommand', 'full previous-state snapshot'],
   ['AddPathTagCommand', 'inverse-op pair on a path'],
   ['RemovePathTagCommand', 'inverse-op pair on a path'],
   ['ReplaceAllCommand', 'round-trip driven via historyStore.undo() in replaceAllCommand.test.ts'],

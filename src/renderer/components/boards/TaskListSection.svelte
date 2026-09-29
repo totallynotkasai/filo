@@ -22,7 +22,7 @@
    *     passes the same reference into both layers.
    *
    * Section-mutable state (`editingSectionId`, `editingSectionTitle`,
-   * `dragOverSectionId`, `inlineQuickAddSectionId`, `lastTargetedSectionId`)
+   * `dragOverSectionId`, `lastTargetedSectionId`)
    * is owned by the host and exposed here via `$bindable()` so the
    * `bind:value` inside the rename input + the inline assignments inside
    * pointer / drag handlers continue to drive host reactivity without an

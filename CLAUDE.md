@@ -26,17 +26,17 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: 87 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: 88 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
 | `writePath` | Only the note writer ([noteWriter.ts](src/renderer/lib/notes/noteWriter.ts)) writes a `.md`, and it applies every change to a **fresh read of the file**; a note is renamed, trashed or restored only while its write queue is held; writes are time-bounded, failed writes are kept and re-fired, and nothing silently aborts; new files are created exclusively (never overwrite an existing note); "Keep mine" / "Keep local" first backs up the other version (for a note, inside `resolveConflict`, so the backup is of the bytes it then overwrites); user deletes move items to `.filo/trash` (only a confirmed fallback deletes for good); a note overwrite names the stat of the read it builds on and the main process refuses it (STALE) if the file changed since; a note or board write hides only its own watcher echo (the bytes it wrote), so another program's save, rename or delete right after it still gets through; the board writer never waits for a drift question (it holds the board and refuses, and the held write is neither re-fired nor retried until Reload / Keep local), and neither do the `.filo/` settings and shortcuts writers (the file is held, its write refused at once and kept for the answer); a board load no stat pinned leaves the board unverified, so its first save reads the file before writing over it; a drift baseline only moves forward, a new board's create counts as Filo's own write, and a board's baseline is stamped only once its loaded data is in the cache (never by a load that failed or was set aside); close, open-another-vault and quit save first and never let unsaved work go without a rescue copy, and first ask about unapplied Settings / theme-editor edits (which no writer holds); a `.filo/` config's baseline is stamped only from a stat that didn't move across its read, and every config write goes through a drift check (`writeConfigs`, or `saveMiscConfig` after `readOutsideVersion`); a board that loads after failing gets the renames made meanwhile before it joins the cache; a write past its timeout keeps its place in its key's order. |
 | `markdownFormat` | Byte fidelity: BOM, UTF-8 validation (non-UTF-8 notes are read-only), EOL re-application, a single YAML parser (no js-yaml / gray-matter anywhere in the app) and a single frontmatter-fence parser (`frontmatterFence.ts`), editor load/undo/unmount discipline, a save → reload case for every formatting-toolbar command, a round-trip property test (at least 500 documents generated from the editor schema, none skipped), the note writer refusing any write that would turn a parsing frontmatter block into one that doesn't, and that the frontmatter-invariant and markdown body round-trip suites exist and aren't skipped. |
-| `vaultIdentity` | A vault swap mid-`await` can't apply the outgoing vault's data to the new one (`isStillSameVault`); vault-scoped state resets on swap; path-keyed stores use `VaultPath` keys, case-fold compares, and follow renames (path keys in `boardDiscovery` / `vaultDeleteOps` / `folderPins` / `tagsStorage` go through `vaultPath()`, and "the item or inside it" is `isAtOrUnder`); crash sentinels are per-machine; disk-shape IPC goes through `vaultOperations.ts`; one vault open or close runs at a time, and every `vault:close` names the vault it releases (main releases only that one). |
+| `vaultIdentity` | A vault swap mid-`await` can't apply the outgoing vault's data to the new one (`isStillSameVault`); vault-scoped state resets on swap; path-keyed stores use `VaultPath` keys, case-fold compares, and follow renames (path keys in `boardDiscovery` / `vaultDeleteOps` / `folderPins` / `tagsStorage` go through `vaultPath()`, and "the item or inside it" is `isAtOrUnder`); crash sentinels are per-machine; disk-shape IPC goes through `vaultOperations.ts`; one vault open or close runs at a time, and every `vault:close` names the vault it releases (main releases only that one); the pre-swap resets of state a rescue copy reads (board cache, tags, layout, sidebar order, unapplied Settings) declare `runAfter: ['leftBehind']`. |
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; a handler's vault-relative path comes from the root / target pair `assertWithinVault` matched (`vaultRelativeWithin`), never `path.relative` across two spellings of the vault (an 8.3 name, a junction), so the `.filo/` guards can't be walked around; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; a command holding snapshots of boards beyond its own names them in `touchedBoardIds()`, so a board reload drops it; Task List section positions are clamped. |
 | `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts, no view or lib module reads the vault index's vault-wide `version` (it reads the notes it shows), a Kanban card builds its editor through `LazyTextTileBody` (a static preview, the editor mounted in idle time or on a press), toasts, notices, confirms and `reportError` messages say what happened in the user's words (no `sentinel`, `cascade`, `drain`, `baseline`, `IPC`, `envelope`), and every Enter handler in a component calls `preventDefault` (else its keypress presses the button of a dialog it opens). |
-| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; app source and build config carry no audit ids (`Audit-N`, `P0-N`, `Phase N / N.N`); a note's `tags:` is read only through the tags normaliser (`noteTags` / `*TagsField`), since a note may write them as text (`tags: project`); a board's drop handler copies or imports a file dropped from Explorer only after `classifyDroppedFile` (a file already in the vault is linked by its path, never copied). |
+| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; app source and build config carry no audit ids (`Audit-N`, `P0-N`, `A25-01`, `Phase N / N.N`, and in comments `E.11`); a note's `tags:` is read only through the tags normaliser (`noteTags` / `*TagsField`), since a note may write them as text (`tags: project`); a board's drop handler copies or imports a file dropped from Explorer only after `classifyDroppedFile` (a file already in the vault is linked by its path, never copied). |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// allow-direct-write: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
 
@@ -121,7 +121,7 @@ filo/
 │   │   │   ├── approvedSources.ts     # Which source paths vault:copy-file may copy
 │   │   │   ├── emergencyFileRegistry.ts # Files preserved after a failed write (disk full, locked)
 │   │   │   ├── orphanTmpSweep.ts      # Sweeps orphaned atomic-write temps
-│   │   │   ├── quitFailureBreadcrumb.ts # `.filo/quit-failure.json` when quit preserved files
+│   │   │   ├── quitFailureBreadcrumb.ts # `.filo/quit-failure.<machineId>.json` when quit preserved files
 │   │   │   ├── sessionEnd.ts          # Windows shutdown / restart / sign-out: hold the session only while the renderer saves and keeps rescue copies, then exit
 │   │   │   ├── vaultRegistry.ts       # Active vault tracker (gates IPC); armedAt: when the open began
 │   │   │   ├── recoverySnapshot.ts    # `.filo/recovery/` snapshots; `<ts>-unsaved/` rescue copies and `<ts>-keep/` kept versions (never pruned)
@@ -163,7 +163,7 @@ filo/
 │   │   │
 │   │   ├── core/                      # Core application wiring
 │   │   │   ├── commandRegistry.ts     # Keyboard-shortcut binding surface (no palette yet)
-│   │   │   ├── tileRegistry.ts        # Tile-type metadata + creation defaults (getTileDefaults); tile bodies render via board snippets, not a component map
+│   │   │   ├── tileRegistry.ts        # Tile-type creation defaults (getTileDefaults); tile bodies render via board snippets, not a component map
 │   │   │   ├── boardRegistry.ts       # Board-type registration; `component` is a lazy () => import() loader so boards code-split out of the Home preload
 │   │   │   ├── boardDefaults.ts       # Per-type default board factories
 │   │   │   ├── boardModules.ts        # A board type's loaded component module (or its one pending import)
@@ -208,7 +208,7 @@ filo/
 │   │   │   ├── configFileReconciler.ts # Watcher `config` events: view state / shortcuts re-read, an unreadable file that reads again is saved again
 │   │   │   ├── newNotesInTree.ts      # Every created note re-reads the sidebar tree
 │   │   │   ├── sidebarTagFilter.svelte.ts # Sidebar tag-chip filter (view state; folder open/closed while filtering)
-│   │   │   ├── sidebarOrder.svelte.ts # Manual sidebar order (`.filo/sidebar-order.json`); another copy merges per folder
+│   │   │   ├── sidebarOrder.svelte.ts # Manual sidebar order (`.filo/sidebar-order.json`, vault-relative paths); another copy merges per folder
 │   │   │   ├── noteLayout.ts          # setNoteLineSpacing
 │   │   │   ├── vaultFolderOps.ts      # In-app rename/move
 │   │   │   ├── vaultDeleteOps.ts      # Sidebar delete → .filo/trash + tile cascade (undoable)
@@ -253,14 +253,14 @@ filo/
 │   │   │   ├── ui.svelte.ts           # Modals, toasts, context menu state
 │   │   │   ├── theme.svelte.ts
 │   │   │   ├── themeVersion.svelte.ts # Counts theme applications; colours read off :root re-resolve on a switch
-│   │   │   ├── spatial.svelte.ts      # rbush index wrapper
+│   │   │   ├── spatial.svelte.ts      # rbush index wrapper, per pane (`scope.spatial`; no global facade)
 │   │   │   ├── guides.svelte.ts       # Smart guides
 │   │   │   ├── pendingSettings.svelte.ts  # Settings modal Apply/Cancel scope
 │   │   │   ├── orphans.svelte.ts
 │   │   │   ├── links.svelte.ts        # filo:// internal link handling
-│   │   │   ├── tiles.svelte.ts        # Tile factory + drop-type detection; recordingTiles (runtime: Audio tiles recording now)
+│   │   │   ├── tiles.svelte.ts        # The one tile and frame factory (a new element follows the style cascade) + drop-type detection; recordingTiles (runtime: Audio tiles recording now)
 │   │   │   ├── saveState.svelte.ts    # Saved / saving / failed / waiting-for-a-decision indicator
-│   │   │   ├── clock.svelte.ts        # The local calendar day as a rune (moves on at midnight and on wake): Task List Today / Overdue
+│   │   │   ├── clock.svelte.ts        # The local calendar day as a rune (moves on at midnight and on wake): Task List Today / Overdue, a due chip's overdue colour
 │   │   │   └── toolbar.svelte.ts      # Toolbar formatting state; the focused editor's own undo / redo (the toolbar Undo acts on it, as Ctrl+Z does)
 │   │   │
 │   │   ├── schema/                    # Zod schemas + inferred TypeScript types
@@ -294,7 +294,7 @@ filo/
 │   │   │   ├── frontmatterInverse.ts  # inverseDelta, applyDeltaChecked (same-key conflict check on undo)
 │   │   │   ├── updateTitleCommand.ts  # Title edit = frontmatter `title:` delta (+ board titleHtml)
 │   │   │   ├── renameFileCommand.ts   # Undo of "Rename file to match title"
-│   │   │   ├── tileTagCommands.ts     # tile/path tag add/remove + fade-by-tag
+│   │   │   ├── tileTagCommands.ts     # tile/path tag add/remove
 │   │   │   ├── connectionCommands.ts  # connection add/delete/update
 │   │   │   ├── frameCommands.ts       # frame add/update/move/delete
 │   │   │   ├── sectionCommands.ts     # Task List section add/delete/rename/reorder
@@ -339,7 +339,7 @@ filo/
 │   │   │   │   ├── dirtyFlagRecovery.ts # `.filo/.dirty.<machineId>` sentinel read/write
 │   │   │   │   ├── machineIdentity.ts # This machine's id, fetched once at boot; builds its own sentinel paths
 │   │   │   │   ├── machineSentinels.ts # Read / clear this machine's own crash-recovery sentinel
-│   │   │   │   ├── quitFailureRecovery.ts # Read / clear `.filo/quit-failure.json` on open (cleared only when the user dismisses)
+│   │   │   │   ├── quitFailureRecovery.ts # Read / clear `.filo/quit-failure.<machineId>.json` on open (cleared only when the user dismisses)
 │   │   │   │   ├── vaultIdentity.ts   # isStillSameVault: path + generation token, checked after every await
 │   │   │   │   ├── activeVaultPath.ts # The committed vault root as a leaf holder (no store imports, so no cycle)
 │   │   │   │   ├── vaultOpenFailure.ts # Why a vault didn't open (Home drops a recent only when the folder is gone)
@@ -354,7 +354,7 @@ filo/
 │   │   │   │   ├── handleSessionEnding.ts # Windows ending the session: save, rescue copies (unapplied Settings too), no dialog
 │   │   │   │   ├── unsavedStateReport.ts # Tells main whether leaving now could lose work (`app:unsaved-state`)
 │   │   │   │   ├── conventionPaths.ts # Default folders + free-name helpers for new files
-│   │   │   │   ├── droppedFiles.ts    # classifyDroppedFile: a file dropped from Explorer is in the vault (link it) or outside (copy it); isInsideVault
+│   │   │   │   ├── droppedFiles.ts    # classifyDroppedFile: a file dropped from Explorer is in the vault (link it, by `toVaultRelative`) or outside (copy it); isInsideVault
 │   │   │   │   ├── extension.ts
 │   │   │   │   ├── moveIntoFolder.ts
 │   │   │   │   ├── moveIntoFolderFeedback.ts # The toast wording for a failed move into a folder
@@ -425,7 +425,7 @@ filo/
 │   │   │   │   ├── writeFailureToasts.ts # A "Board save failed" toast closes once its boards are saved or owe nothing
 │   │   │   │   └── writeStateTracking.ts # trackComponentWrite + counters
 │   │   │   ├── canvas/                # Canvas engine (custom pointer events)
-│   │   │   │   ├── coordinates.ts     # screenToCanvas, getCanvasPointFromEvent
+│   │   │   │   ├── coordinates.ts     # screenToCanvas
 │   │   │   │   ├── gestures.ts        # Pan/zoom pointer-event bindings
 │   │   │   │   ├── edgePan.ts         # Edge-panning on drag
 │   │   │   │   ├── tileDrag.ts
@@ -453,7 +453,7 @@ filo/
 │   │   │   │   ├── emptyParagraphs.ts # Blank lines the user typed survive the Markdown round-trip (sentinel encode / strip)
 │   │   │   │   ├── taskListTight.ts   # A list stays tight on reload when an item holds an aligned / indented HTML paragraph
 │   │   │   │   ├── listMarkers.ts     # Bullet / numbered list writers: adjacent lists alternate `-`/`*` and `.`/`)`; a tight list that holds a block is written loose
-│   │   │   │   ├── taskItems.ts       # Checklists: an empty `- [ ] ` reads as a task, a mixed list is split, an item with no text keeps its sub-list
+│   │   │   │   ├── taskItems.ts       # Checklists: an empty `- [ ] ` reads as a task, a mixed list is split, an item with no text keeps its sub-list; a core parse rule is registered once (tiptap-markdown re-runs its setups every parse)
 │   │   │   │   ├── leadSpace.ts       # A line that starts with a space writes it `&#32;`; reads back as the lead-space node
 │   │   │   │   ├── tableMarkdown.ts   # GFM only for one-paragraph cells (`|` escaped, alignment kept); any other table is HTML
 │   │   │   │   ├── codeFence.ts       # A code fence one longer than any backtick line in the code
@@ -552,6 +552,7 @@ filo/
 │   │   │   ├── spatialIndex.ts        # rbush wrapper
 │   │   │   └── utils/                 # Shared utilities
 │   │   │       ├── ids.ts             # nanoid wrapper
+│   │   │       ├── dateFormat.ts      # localIsoDate: the one `YYYY-MM-DD` formatter (local calendar date, never UTC)
 │   │   │       ├── lineEnding.ts      # fileLineEnding (majority) / frontmatterLineEnding: note writer + tag rewriter
 │   │   │       ├── color.ts           # Colour manipulation helpers
 │   │   │       ├── cloneTile.ts
@@ -905,15 +906,15 @@ Boundary").
 
 - Content edits (tile text, frontmatter): the editor serialises its Markdown into the note model after 150ms idle (at once on blur, unmount, save and quit), then the note writer waits a 300ms idle debounce before the disk write. Within that window the latest body wins and frontmatter deltas merge.
 - Layout changes (tile move/resize, connections): 300ms idle debounce.
-- Config changes (`.filo/` files): write on panel close or confirmation.
+- Config changes (`.filo/` files): a 300ms idle debounce once the change lands (a Settings edit lands on Apply); viewports 1,500ms.
 - File watcher events: 300ms debounce to batch rapid changes.
 
 ### Registry Pattern
 
 Three registries power extensibility:
 
-- **TileRegistry** — Maps `TileType` string to its display metadata + creation defaults (`getTileDefaults`). Adding a new tile type means registering its defaults here. Tile *bodies* are rendered by the boards via Svelte snippets, not through the registry (eager `*.svelte` imports there would pull TipTap into the Home-screen preload).
-- **BoardRegistry** — Maps `BoardType` string to board component + toolbar component + schema.
+- **TileRegistry** — Maps `TileType` string to its creation defaults (`getTileDefaults`). Adding a new tile type means registering its defaults here. Tile *bodies* are rendered by the boards via Svelte snippets, not through the registry (eager `*.svelte` imports there would pull TipTap into the Home-screen preload).
+- **BoardRegistry** — Maps `BoardType` string to its metadata and a lazy loader for its board component (`() => import(...)`, so boards code-split out of the Home preload); each board mounts its own side toolbar, and default boards come from `boardDefaults.ts`.
 - **CommandRegistry** — Binds keyboard shortcuts via `registerCommandWithShortcut` using a verb:noun naming scheme. There is no command palette yet; when one lands, add `registerCommand` / `unregisterCommand` backed by a `Map<name, handler>` populated alongside the shortcut.
 
 When adding a new tile type or board type: register it, implement the interface, done. Never scatter type checks across the codebase.
@@ -921,7 +922,7 @@ When adding a new tile type or board type: register it, implement the interface,
 ### Undo/Redo
 
 - Uses command pattern. Every undoable action implements `{ execute(): void; undo(): void }`.
-- Each board has its own independent undo/redo stack. A Document tab has its own stack too, keyed by the tab's id (PaneView makes it the active history board); `boardCacheStore.markDirty` ignores such ids, since no board file carries them.
+- Each board has its own independent undo/redo stack. A Document tab has its own stack too, keyed by the tab's `boardId` (PaneView makes it the active history board); `boardCacheStore.markDirty` ignores such ids, since no board file carries them.
 - **Board undo covers layout plus inverse frontmatter deltas.** A command that changes a note (title, tags, task/card fields) records a forward and an inverse `FrontmatterDelta`. Undo sends the inverse through `noteStore.patchFrontmatter`, so it lands on a fresh read of the file and keeps unrelated edits made in between. If another program changed the same key since (checked against a fresh read of the file, never the open note's model, which lags the watcher debounce), undo keeps that value and offers "Apply anyway" on a toast (`applyDeltaChecked`), because a blind inverse would overwrite the newer value. "Apply anyway" writes the note wherever a rename has moved it meanwhile.
 - **Commands follow renames.** Every command on every stack (Document-tab stacks included) is re-pointed when a file or folder is renamed, in-app or by another program: `stores/history.svelte.ts` registers a `'history'` rename sweep that calls `Command.renamePath(old, new)`. The default (`rebaseCommandFields` in `commands/commandPaths.ts`) rewrites every string held under a name in `PATH_FIELDS`, including snapshots, arrays and child commands; it never walks the user's own data (`CONTENT_FIELDS`: frontmatter, deltas, splices), and paths under a trashed item stay pinned, because restore puts the item back at its original path first. A new path-like field name must go in `PATH_FIELDS` (gate `commands-follow-renames`). Only `RenameFileCommand` overrides `renamePath`.
 - **A board reload drops every step that touches it.** When a board is read again from disk (`reloadBoardFromDisk`), `historyStore.clearBoard(id, { changedOnDisk: true })` drops, from every stack and from the off-stack cascades a toast still offers (`holdOffStack` / `undoOffStack`), each command whose `touchedBoardIds()` holds it: by default its `targetBoardId`; `CascadeDeleteCommand`, `BatchCommand` and `DeleteTilesCommand` add every board they hold a snapshot of (gate `cascade-touched-boards`). Closing or deleting a board drops only the steps that target it. A redo whose file can't go to Filo's trash throws `ChangeRefusedError`, so it stays a redo; placement re-adds (`persistAddKanbanPlacement`, `persistAddTaskPlacement`) are no-ops for a tile already placed.

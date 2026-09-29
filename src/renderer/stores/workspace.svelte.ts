@@ -45,7 +45,6 @@ export interface BoardToolbarState {
 export interface WorkspaceLayout {
   paneTree: PaneNode | null;
   activePaneId: string | null;
-  sidebarWidth: number;
   /** Each board's side toolbar, by board id. A board left docked and unpinned has no entry. */
   boardToolbars: Record<string, BoardToolbarState>;
 }
@@ -53,7 +52,6 @@ export interface WorkspaceLayout {
 const DEFAULT_LAYOUT: WorkspaceLayout = {
   paneTree: null,
   activePaneId: null,
-  sidebarWidth: 260,
   boardToolbars: {},
 };
 
@@ -184,7 +182,6 @@ function findParentOfLeaf(node: PaneNode | null, leafId: string): { parent: Pane
 
 export const workspaceStore = {
   get layout() { return layout; },
-  get sidebarWidth() { return layout.sidebarWidth; },
   get activePaneId() { return layout.activePaneId; },
   get paneTree() { return layout.paneTree; },
   get boardToolbars() { return layout.boardToolbars; },
@@ -203,12 +200,6 @@ export const workspaceStore = {
 
   setChangeListener(fn: (() => void) | null) {
     onChangeListener = fn;
-  },
-
-  setSidebarWidth(width: number) {
-    if (width < 120 || width > 800) return;
-    layout = { ...layout, sidebarWidth: width };
-    notify();
   },
 
   /** A board's side toolbar; docked and unpinned when it has no entry. */
@@ -452,7 +443,6 @@ export const workspaceStore = {
     layout = {
       paneTree,
       activePaneId,
-      sidebarWidth: persisted.sidebarWidth ?? DEFAULT_LAYOUT.sidebarWidth,
       boardToolbars: asBoardToolbars(persisted.boardToolbars),
     };
   },
@@ -467,4 +457,4 @@ export const workspaceStore = {
 // vault's pane geometry into the new vault's workspace.json on save.
 onVaultSwap('pre-swap', 'workspace', () => {
   workspaceStore.reset();
-});
+}, { runAfter: ['leftBehind'] });

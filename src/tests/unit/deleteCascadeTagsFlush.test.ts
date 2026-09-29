@@ -5,6 +5,7 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { emptyTagsFile as newTagsFile } from '@renderer/lib/vault/tagsStorage';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
@@ -78,7 +79,7 @@ describe('delete cascade — synchronous tags.json flush (Phase 4.1)', () => {
 
     // Seed a tag on Notes/foo.png and drain the resulting write so the
     // delete's flush is the only tags:save we observe.
-    await fileTagsStore.hydrate('/vault');
+    fileTagsStore.commitFromCandidate('/vault', newTagsFile());
     fileTagsStore.setFileTags('Notes/foo.png', ['mytag']);
     await fileTagsStore.flushPendingSave();
     tagsSaves.length = 0;

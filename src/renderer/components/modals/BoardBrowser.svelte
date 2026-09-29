@@ -59,7 +59,7 @@
   let renameInputEl = $state<HTMLInputElement | null>(null);
   const selectedBoardIds = new SvelteSet<string>();
 
-  // E.2 — autofocus + select the rename input when renamingBoardId flips so
+  // Autofocus + select the rename input when renamingBoardId flips so
   // the user can immediately type the new name. `bind:this` is reactive to
   // the conditional render, so we wait a tick for the input to mount.
   $effect(() => {

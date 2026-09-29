@@ -231,11 +231,6 @@ export type TileType =
 export type ThemeId = 'light' | 'dark' | 'blueprint' | 'retro' | 'nature';
 
 /**
- * Timer mode options.
- */
-export type TimerMode = 'hms' | 'ms' | 's' | 'clock';
-
-/**
  * Sort & group settings for the vault sidebar. Sort and group each have a
  * field (the attribute) and a direction (ascending / descending). Folders
  * always sort by name regardless of the active field (mtime/size are

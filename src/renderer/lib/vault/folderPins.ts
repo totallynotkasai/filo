@@ -11,9 +11,9 @@ import { boardStore } from '../../stores/board.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import type { FileTreeNode } from '../../../shared/types';
 import { normalizePath, samePath, stripLeadingSlash } from '../utils/path';
-import { vaultPath, type VaultPath } from '@shared/vaultPath';
+import { isAtOrUnder, vaultPath, type VaultPath } from '@shared/vaultPath';
 import { directoryExistsInTree, flattenTreePaths } from './vaultTreeSort';
-import { folderMoveOfFileRename, pinIsUnder, rebasePin } from './folderPinPaths';
+import { folderMoveOfFileRename, rebasePin } from './folderPinPaths';
 
 interface GeneralWithRoot {
   activeRootFolder?: string;
@@ -69,12 +69,12 @@ export interface ClearedPin {
 /** The pins at or under `folder` (vault-relative), before a delete clears them. */
 export function pinsUnder(general: GeneralWithRoot | undefined, folder: string): ClearedPin[] {
   const out: ClearedPin[] = [];
-  if (general?.activeRootFolder && pinIsUnder(general.activeRootFolder, folder)) {
+  if (general?.activeRootFolder && isAtOrUnder(general.activeRootFolder, folder)) {
     out.push({ boardId: null, defaultFolder: general.activeRootFolder });
   }
   for (const [boardId, data] of Object.entries(boardStore.cache)) {
     const pin = (data.board as { settings?: { defaultFolder?: string } }).settings?.defaultFolder;
-    if (pin && pinIsUnder(pin, folder)) out.push({ boardId, defaultFolder: pin });
+    if (pin && isAtOrUnder(pin, folder)) out.push({ boardId, defaultFolder: pin });
   }
   return out;
 }
@@ -120,7 +120,7 @@ export async function confirmedFolderMove(
   pins: readonly string[],
 ): Promise<{ oldFolder: string; newFolder: string } | null> {
   const move = folderMoveOfFileRename(oldRel, newRel);
-  if (!move || !pins.some((pin) => pinIsUnder(pin, move.oldFolder))) return null;
+  if (!move || !pins.some((pin) => isAtOrUnder(pin, move.oldFolder))) return null;
   if (samePath(move.oldFolder, move.newFolder)) return move;
   try {
     const [oldExists, newExists] = await Promise.all([

@@ -18,7 +18,7 @@
   let error = $state<string | null>(null);
   let saving = $state(false);
   let includeConnections = $state(true);
-  // E.14 — capture the focused element at open time so we can restore
+  // Capture the focused element at open time so we can restore
   // focus on close. Modal.svelte's focus-trap already calls
   // `returnFocusOnDeactivate`, but SaveTemplateModal is typically opened
   // from a context menu whose host element is already unmounted by the

@@ -415,4 +415,4 @@ export const pendingSettingsStore = {
 // into the new vault on a delayed Apply.
 onVaultSwap('pre-swap', 'pendingSettings', () => {
   pendingSettingsStore.cancel();
-});
+}, { runAfter: ['leftBehind'] });

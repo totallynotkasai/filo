@@ -86,11 +86,6 @@ export function copyName(name: string, takenIds: readonly string[]): string {
 
 const THEME_TOKENS: ReadonlySet<string> = new Set(THEME_TOKEN_NAMES);
 
-/** Whether `name` is a colour (or shadow) a theme may set. */
-export function isThemeToken(name: string): boolean {
-  return THEME_TOKENS.has(name);
-}
-
 /**
  * The variables a theme may carry: the theme tokens (`themeTokens.ts`) whose
  * values pass the theme-value sanitiser. Anything else is dropped, not

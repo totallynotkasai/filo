@@ -221,21 +221,7 @@ export class ToggleGroupCommand extends Command {
   }
 }
 
-/**
- * Cascade-delete: a vault file was removed (in OS Explorer, by git, or in
- * the in-app sidebar) and every dependent placement across every board has
- * to follow. Snapshots tiles per-board so undo restores cache state for
- * inactive boards as well as runtime state for the active one.
- *
- * Notes:
- *   - The backing file is already gone, so this command does NOT restore
- *     file bodies (that's `DeleteTilesCommand`'s file-snapshot branch,
- *     which only applies to in-app "delete with files" gestures).
- *   - The undo entry lands on whatever board is active at cascade time. A
- *     truly cross-board undo isn't possible with the current per-board
- *     history model — but restoring placements on inactive boards is still
- *     correct, and switching to that board after undo will show them.
- */
+/** What a cascade delete took away besides the placements, for its undo. */
 export interface CascadeDeleteOptions {
   /** Anchors the vault-swap guard; defaults to the open vault. */
   vaultRoot?: string;
@@ -256,6 +242,12 @@ export interface CascadeDeleteOptions {
  *
  * Undo moves the item back from the trash (a rename, whatever its type or
  * size), then restores the placements. Redo moves it to the trash again.
+ *
+ * It snapshots the tiles of every board it touches, so undo restores the
+ * cache of boards that aren't open as well as the open one. The step sits on
+ * the stack of the board that was active at the delete; it names every
+ * board it holds a snapshot of (`touchedBoardIds`), so a reload of any of
+ * them drops it.
  */
 export class CascadeDeleteCommand extends Command {
   description: string;
@@ -567,7 +559,7 @@ export class UpdateBoardSettingsCommand extends Command {
    * Apply settings to THIS command's board via the cache, not the global
    * `boardStore` facade: on a cross-board undo the pane pivot is async, so the
    * facade could still point at the previously-active board.
-   * `updateBoardSettings` bumps that board's `settingsVersionByBoard`, so the
+   * `updateBoardSettings` replaces that board's cache entry, so the
    * target re-renders whether or not it is the active pane.
    */
   private applyToTarget(patch: Record<string, unknown>, deleteKeys: string[]): void {

@@ -28,6 +28,7 @@
  */
 
 import { addMonthsClamped } from './dateMath';
+import { localIsoDate } from '../utils/dateFormat';
 
 export type RecurrenceMode = 'schedule' | 'completion';
 
@@ -52,13 +53,6 @@ export function parseRecurrence(rec: string): RecurrenceUnit | null {
     return { kind: 'fixed', count, unit: u };
   }
   return null;
-}
-
-function fmtDate(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
 }
 
 function startOfDay(d: Date): Date {
@@ -161,7 +155,7 @@ export function nextDueDate(
   if (mode === 'completion') {
     // Completion mode is unaffected by how overdue the task is:
     // next = completion day + one interval.
-    return fmtDate(addInterval(startOfDay(completedOn), parsed));
+    return localIsoDate(addInterval(startOfDay(completedOn), parsed));
   }
 
   // Schedule mode: the next due date is the first occurrence on the
@@ -186,14 +180,14 @@ export function nextDueDate(
       k += 1;
       next = clampedMonthDate(parsedDue.getFullYear(), parsedDue.getMonth() + k * step, anchorDay);
     }
-    return fmtDate(next);
+    return localIsoDate(next);
   }
 
   let next = addInterval(parsedDue, parsed);
   while (next.getTime() <= today.getTime()) {
     next = addInterval(next, parsed);
   }
-  return fmtDate(next);
+  return localIsoDate(next);
 }
 
 /**
@@ -219,5 +213,5 @@ export function recurrenceAnchorToRecord(
   const canClamp = parsed.unit === 'm'
     ? resolved.getDate() >= 29
     : resolved.getMonth() === 1 && resolved.getDate() === 29;
-  return canClamp ? fmtDate(resolved) : undefined;
+  return canClamp ? localIsoDate(resolved) : undefined;
 }

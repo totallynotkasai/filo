@@ -5,7 +5,7 @@ import { boardCacheStore } from '../stores/boardCache.svelte';
 import { vaultStore } from '../stores/vault.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { framesStore } from '../stores/frames.svelte';
-import type { Tile, Connection } from '../schema/index';
+import type { Tile, Connection, TimerMode } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
 import { samePath } from '../lib/utils/path';
 import { vaultPath } from '../../shared/vaultPath';
@@ -600,7 +600,6 @@ export class UpdateImageAltCommand extends Command {
  * toggle are deliberately NOT wrapped (they fire on every tick / play / pause
  * and would blow through MAX_HISTORY); only configuration changes are.
  */
-export type TimerMode = 'hms' | 'ms' | 's' | 'clock';
 export interface TimerConfigSnapshot {
   mode: TimerMode;
   duration: number;
@@ -727,18 +726,13 @@ export class LayoutTilesCommand extends Command {
   }
 }
 
-// ── Tag Fade Command ──
+// ── Fade Command ──
 
 /**
- * Generic "fade these tiles" undoable. Snapshots each
+ * "Fade these tiles" undoable. Snapshots each
  * tile's prior `faded` flag so undo restores the mixed state exactly even
  * if the caller mixed already-faded and unfaded tiles into the same call.
  * Used by `SideToolbar.svelte`'s "Fade Selected" action.
- *
- * The tag-name variant (`ToggleTagFadeCommand`) wraps this with a
- * descriptive label that mentions the tag — keep both for the existing
- * "Fade by tag" UX, but route the bare "Fade Selected" gesture through
- * this generic class.
  */
 export class ToggleFadeCommand extends Command {
   description: string;

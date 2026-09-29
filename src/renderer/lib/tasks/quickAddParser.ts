@@ -29,6 +29,7 @@
  */
 
 import { addMonthsClamped } from './dateMath';
+import { localIsoDate } from '../utils/dateFormat';
 
 export type QuickAddPriority = 'low' | 'medium' | 'high' | 'urgent';
 
@@ -43,13 +44,6 @@ export interface QuickAddParsed {
 }
 
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-
-function fmtDate(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
 
 /**
  * Validates a (year, month, day) triple and returns the constructed local
@@ -70,10 +64,10 @@ function validDateOrNull(y: number, mo: number, d: number): Date | null {
   return out;
 }
 
-/** `fmtDate` that yields `undefined` for an Invalid Date so an overflowed
+/** `localIsoDate` that yields `undefined` for an Invalid Date so an overflowed
  *  offset can't write the literal string "NaN-NaN-NaN" as a due date. */
 function fmtDateOrNull(d: Date): string | undefined {
-  return Number.isNaN(d.getTime()) ? undefined : fmtDate(d);
+  return Number.isNaN(d.getTime()) ? undefined : localIsoDate(d);
 }
 
 function startOfDay(d: Date): Date {
@@ -220,21 +214,21 @@ export function parseQuickAdd(
           // The same M/D one year out can be invalid (Feb 29 this leap year,
           // not next) — re-validate rather than letting Date roll it to Mar 1.
           const rolled = validDateOrNull(today.getFullYear() + 1, month, day);
-          return rolled ? fmtDate(rolled) : undefined;
+          return rolled ? localIsoDate(rolled) : undefined;
         }
-        return fmtDate(candidate);
+        return localIsoDate(candidate);
       },
     },
     {
       re: /\s\^?today(?=\s)/i,
-      handler: () => fmtDate(today),
+      handler: () => localIsoDate(today),
     },
     {
       re: /\s\^?tomorrow(?=\s)/i,
       handler: () => {
         const t = new Date(today);
         t.setDate(t.getDate() + 1);
-        return fmtDate(t);
+        return localIsoDate(t);
       },
     },
     {
@@ -242,7 +236,7 @@ export function parseQuickAdd(
       handler: (m) => {
         const idx = WEEKDAYS.indexOf((m[1] ?? '').toLowerCase());
         if (idx < 0) return undefined;
-        return fmtDate(nextWeekday(today, idx));
+        return localIsoDate(nextWeekday(today, idx));
       },
     },
     {
@@ -250,7 +244,7 @@ export function parseQuickAdd(
       handler: (m) => {
         const count = parseInt(m[1] ?? '', 10);
         // Bound the offset so a 20-digit count can't overflow Date into
-        // an Invalid Date that `fmtDate` then stringifies as "NaN-NaN-NaN" and
+        // an Invalid Date that `localIsoDate` then stringifies as "NaN-NaN-NaN" and
         // writes to frontmatter. ~10 years is well past any quick-add horizon.
         if (!Number.isFinite(count) || count > 3650) return undefined;
         const u = (m[2] ?? '').toLowerCase()[0];

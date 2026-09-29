@@ -19,17 +19,19 @@ import { applyMove, layoutOf, movedTasks, regroup, type SectionKey, type TaskLay
 //
 // These wrap the existing `boardCacheStore.persist*` methods so list-style
 // board mutations participate in the per-board undo/redo stack. Structural
-// commands (Add/Delete/Move/Section…) snapshot the affected slice and
-// replay it; field commands (UpdateTaskField) capture before/after
-// frontmatter patches and schedule the debounced write on both legs.
+// commands record what they changed: a move keeps the ids that moved and each
+// task's section and order before and after (`sectionMembership.ts`), and an
+// add or delete recomputes section starts from each task's section, so a task
+// changed meanwhile by anything else is left alone. Field commands
+// (UpdateTaskField) carry forward and inverse frontmatter deltas.
 //
 // Backing files are never created or removed by Command undo/redo — the
 // Vault API owns file-system side effects. Re-adding a placement after
 // undo simply links it back to the existing `.md`. The one opt-in
 // exception is `DeleteTaskCommand` with `DeleteTaskFileOptions`:
-// when the user explicitly chooses "Delete task & file", that command owns
-// the disk delete and restores the snapshotted body on undo, mirroring
-// Mind Map's `DeleteTilesCommand`.
+// when the user explicitly chooses "Delete task & file", that command moves
+// the file to Filo's trash and its undo restores it from there (no command
+// keeps a note body), as Mind Map's `DeleteTilesCommand` does.
 
 /**
  * Captures the current shape of a Task List board's sections + tasks +

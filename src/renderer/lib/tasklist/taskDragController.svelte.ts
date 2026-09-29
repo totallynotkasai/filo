@@ -122,7 +122,7 @@ export class TaskDragController {
    *  consider-time block snapshot — by the time consider fires we already
    *  know which tile is moving and what the block was at pointerdown. */
   private pendingDragTileId: string | null = null;
-  /** Set by `cancelByEscape()` and consumed by `onFinalizeRows` so the
+  /** Set by the Escape handler (`installEscCancel`) and consumed by `onFinalizeRows` so the
    * synthetic pointerup that ESC dispatches unwinds dnd-action without
    * committing the reorder. Cleared on `endDrag()`. */
   private escCancelled = false;

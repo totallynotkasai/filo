@@ -60,7 +60,7 @@
       onClose();
       return;
     }
-    // E.11 — ArrowUp/ArrowDown traverse the four option buttons; Enter
+    // ArrowUp/ArrowDown traverse the four option buttons; Enter
     // activates the focused one (default button behaviour). Home/End jump
     // to first/last.
     if (bodyEl && handleListKeyNav(e, bodyEl, { selector: '.kn-option', orientation: 'vertical' })) {

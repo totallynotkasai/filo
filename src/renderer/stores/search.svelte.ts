@@ -123,14 +123,6 @@ export const searchStore = {
   closePanel() {
     open = false;
   },
-  togglePanel(initialMode: SearchMode = 'find') {
-    if (open) {
-      open = false;
-    } else {
-      open = true;
-      mode = initialMode;
-    }
-  },
 
   // ── Cycling ──
   next() {

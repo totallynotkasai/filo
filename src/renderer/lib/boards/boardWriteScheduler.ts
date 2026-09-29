@@ -33,30 +33,25 @@ import {
 import { BoardDriftHeldError, holdBoardDrift, isBoardDriftHeld } from './boardDriftHold';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
-import { backupExternalVersion } from '../vault/keepLocalBackup';
-// Re-exported so boardCache (at its LOC ceiling) reuses an existing import line.
-export { backupExternalVersion };
 import { createScheduler } from './writeScheduler';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 import { getBaseline, hasBaselineDrifted, isBaselineUnverified, refreshBaselineAfterWrite, unverifiedLoadedContent } from '../vault/fileBaselineRegistry';
 
 /**
- * Listener slot for the "board file changed externally" notification. Drift
- * detection inside `writeBoardFile` surfaces a toast via this handler before
- * aborting the write. The implementation lives in `stores/vaultExternalChanges`
- * (it needs uiStore) and registers via `setBoardExternalEditHandler`.
+ * The "board file changed outside Filo" question. The implementation lives in
+ * `stores/boardDrift.ts` (it needs uiStore); `vaultExternalDriftPrompts.ts`
+ * registers it at startup through `setBoardExternalEditHandler`.
  *
- * With no handler registered (tests, early boot), drift is treated as 'defer'
- * — abort + `notifyWriteError` — so the external edit is never silently
- * overwritten.
- */
-/**
  * The writer never waits for the answer. It holds the board
  * (`boardDriftHold`), asks, and fails the write at once with
  * `BoardDriftHeldError`, which the scheduler retains without re-firing. The
  * handler carries out the answer: Reload discards the held write
  * (`discardBoardWrite`), Keep local re-fires it (`retryFailedBoardWrite`),
  * and a dismissal (`'defer'`) leaves the board held, its cache dirty.
+ *
+ * With no handler registered (tests, early boot) nothing can ask, so a drift
+ * fails the write with `EXTERNAL_EDIT` and a failure notice; the external
+ * edit is never overwritten.
  */
 export type BoardExternalEditHandler = (path: string) => Promise<'reload' | 'keep-local' | 'defer'>;
 let boardExternalEditHandler: BoardExternalEditHandler | null = null;
@@ -82,7 +77,7 @@ export function setBoardExternalEditHandler(handler: BoardExternalEditHandler | 
  * Board paths whose `.board.json` is being deleted. `deleteBoard` (boardCache)
  * marks the path BEFORE the `board:delete` IPC and clears it once any in-flight
  * write has drained. `writeBoardFile` checks it just before `board:save`: an
- * in-flight write (e.g. suspended on the drift prompt) would otherwise resume
+ * in-flight write (e.g. awaiting its pre-write stat) would otherwise resume
  * after the unlink and re-create the file as a ghost board — `cancelBoardWrite`
  * only reaches pending/parked timers. Cleared on vault swap.
  */
@@ -204,10 +199,10 @@ const boardScheduler = createScheduler<BoardWriteArgs>({
   },
   missingSourceMessage: (key) =>
     `Filo couldn't save the latest changes (boardId: ${key}). Re-open the board and try again.`,
-  // `writeBoardFile` awaits an interactive drift prompt
-  // (`boardExternalEditHandler`) plus pre-write `vault:stat` + `board:save` IPCs,
-  // any of which can wedge (a never-resolving prompt, or a stalled network
-  // volume). Bound it so a wedged board write can't hang `flushAll` / quit.
+  // `writeBoardFile` awaits the pre-write `vault:stat` (and, for an unverified
+  // board, a read) plus `board:save`, any of which can wedge on a stalled
+  // network volume. Bound it so a wedged board write can't hang `flushAll` /
+  // quit. (It never awaits the drift question: see `boardDriftHold`.)
   writeTimeoutMs: WRITE_TIMEOUT_MS,
   retainIoError: true,
 });
@@ -340,9 +335,9 @@ export async function writeBoardFile(
     }
   }
 
-  // Re-check AFTER the drift-prompt await above: the board may have been
-  // deleted while the prompt waited, and `board:save` would resurrect it as a
-  // ghost board. `deleteBoard` owns the teardown.
+  // Re-check AFTER the pre-write stat above: the board may have been deleted
+  // while it was awaited, and `board:save` would resurrect it as a ghost
+  // board. `deleteBoard` owns the teardown.
   if (isBoardPathDeleting(boardPath)) return;
 
   // Mark the path BEFORE the IPC fires. The OS watcher event

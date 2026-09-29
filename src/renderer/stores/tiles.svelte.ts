@@ -1,7 +1,7 @@
-import type { Tile } from '../schema/index';
+import type { Frame, Tile } from '../schema/index';
 import type { TileType } from '../../shared/types';
 import { createId } from '../lib/utils/ids';
-import { TILE_DEFAULTS, defaultTileStyleSnapshot } from '../constants/defaults';
+import { TILE_DEFAULTS, FRAME_DEFAULTS, defaultTileStyleSnapshot, defaultFrameStyleSnapshot } from '../constants/defaults';
 import { boardStore } from './board.svelte';
 import { getTileDefaults } from '../core/tileRegistry';
 import { SvelteSet } from 'svelte/reactivity';
@@ -24,10 +24,12 @@ export const recordingTiles = new SvelteSet<string>();
 export const runningTimerTiles = new SvelteSet<string>();
 
 /**
- * Tile factory — centralised tile creation with correct defaults per type.
- * Uses the tile registry for type-specific defaults.
+ * Tile factory — the one place a new tile is built, with the tile registry's
+ * type-specific defaults. Its style carries no colour, shape or size, so the
+ * tile follows its board and the Global Defaults, including later changes to
+ * them. A pane-scoped caller passes `overrides.title` from its own board (the
+ * fallback names the tile from the active pane's board).
  */
-
 export function createTile(
   type: TileType,
   position: { x: number; y: number },
@@ -38,7 +40,7 @@ export function createTile(
 
   const base = {
     id: createId(),
-    title: boardStore.getNextTileName(),
+    title: overrides?.title ?? boardStore.getNextTileName(),
     position: { ...position },
     size: { width: TILE_DEFAULTS.width, height: TILE_DEFAULTS.height },
     // No font sizes: the tile follows the style cascade, down to General →
@@ -56,6 +58,23 @@ export function createTile(
   // Get type-specific defaults from registry, then apply overrides on top
   const typeDefaults = getTileDefaults(type);
   return { ...base, type, ...typeDefaults, ...overrides } as Tile;
+}
+
+/** Frame factory: a new frame follows the style cascade, like a new tile. */
+export function createFrame(position: { x: number; y: number }, boardId: string): Frame {
+  const now = Date.now();
+  return {
+    id: createId(),
+    boardId,
+    title: 'Frame',
+    position: { ...position },
+    size: { width: FRAME_DEFAULTS.width, height: FRAME_DEFAULTS.height },
+    style: defaultFrameStyleSnapshot(),
+    collapsed: false,
+    tileIds: [],
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 /**

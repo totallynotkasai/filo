@@ -5,7 +5,8 @@
  * spatial indexes.
  *
  * The currently-active pane's scope is reflected through the global
- * `boardStore` / `canvasStore` / `selectionStore` / `spatialStore` facades:
+ * `boardStore` / `canvasStore` / `selectionStore` facades (the spatial index
+ * has none: a gesture reads its own pane's `scope.spatial`):
  * each is a Proxy that resolves to `getActiveScope().<slice>` at every
  * property access. Workspace-level services (hotkeys, GlobalToolbar, command
  * registry) read through these facades; per-pane component trees read via
@@ -14,12 +15,12 @@
  * This file holds the *primitives* only — types, active-scope state,
  * accessors, the facade Proxy helper, and the context key. The composer
  * (`createBoardScope`) lives in `boardScopeFactory.ts` to break the circular
- * runtime import: the four store modules import `getActiveScope` /
+ * runtime import: the store modules import `getActiveScope` /
  * `makeFacade` from here for their global facades, so this file must NOT
  * import them at runtime. Type-only imports below are erased by the
  * compiler so they don't trigger module loading.
  */
-// Runtime import — NOT one of the four store modules the circular-import
+// Runtime import — NOT one of the store modules the circular-import
 // note below guards against. `vaultLifecycle` only depends on the leaf
 // `errorBus` util, so importing it here introduces no cycle back into the
 // store-facade graph.
@@ -63,7 +64,7 @@ export function setDefaultScopeFactory(factory: () => BoardScope): void {
 /**
  * The currently-active scope. Lazily created on first `getActiveScope()`
  * call rather than eagerly at module load — eager init would race the
- * circular ESM resolution between this file and the four store modules.
+ * circular ESM resolution between this file and the facade store modules.
  *
  * Marked `$state` so swapping the reference (`setActiveScope`) reactively
  * notifies every consumer that read through a global facade.
@@ -141,8 +142,8 @@ export function isActiveScope(scope: BoardScope): boolean {
 }
 
 /**
- * Shared factory for the four global facade Proxies (`boardStore`,
- * `canvasStore`, `selectionStore`, `spatialStore`). Each property access
+ * Shared factory for the three global facade Proxies (`boardStore`,
+ * `canvasStore`, `selectionStore`). Each property access
  * delegates to whatever object `getTarget()` currently returns.
  *
  * The trap surface is broader than just `get`/`set` so that

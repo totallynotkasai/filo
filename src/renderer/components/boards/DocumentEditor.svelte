@@ -25,7 +25,7 @@
   import { describeChange, locateChanges } from '../../lib/editor/lossyChanges';
   import { reportError } from '../../lib/utils/errorBus';
   import { effectiveDocumentStyle } from '../../lib/styles/effectiveStyle';
-  import { vaultRelativeFromAbsolute } from '../../lib/vault/droppedFiles';
+  import { toVaultRelative } from '../../lib/utils/path';
   import { ACCENT_COLOR } from '../../constants/defaults';
   import BoardBackground from '../canvas/BoardBackground.svelte';
   import NoteTagRow from '../tags/NoteTagRow.svelte';
@@ -145,7 +145,7 @@
       }
       const vaultDir = vaultStore.path;
       if (!vaultDir) return;
-      const relPath = vaultRelativeFromAbsolute(payload.path, vaultDir) || payload.path;
+      const relPath = toVaultRelative(payload.path, vaultDir) || payload.path;
       openNoteInDocumentTab(relPath);
     } catch (err) {
       reportError('DocumentEditor.drop', err, 'Failed to open the dropped file');

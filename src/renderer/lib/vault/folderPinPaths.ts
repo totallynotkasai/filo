@@ -7,18 +7,11 @@
  */
 
 import { normalizePath, normalizeVaultRelative, stripLeadingSlash } from '../utils/path';
+import { isAtOrUnder } from '../../../shared/vaultPath';
 
 /** A pin as a vault-relative folder: forward slashes, no leading or trailing slash. */
 function cleanFolder(p: string): string {
   return stripLeadingSlash(normalizePath(p)).replace(/\/+$/, '');
-}
-
-/** True when `pin` is `folder` or sits inside it (case-folded). */
-export function pinIsUnder(pin: string, folder: string): boolean {
-  const p = normalizeVaultRelative(cleanFolder(pin));
-  const f = normalizeVaultRelative(cleanFolder(folder));
-  if (!p || !f) return false;
-  return p === f || p.startsWith(`${f}/`);
 }
 
 /**
@@ -27,7 +20,7 @@ export function pinIsUnder(pin: string, folder: string): boolean {
  * (the folder was deleted). `null` when the pin isn't under `oldFolder`.
  */
 export function rebasePin(pin: string, oldFolder: string, newFolder: string): string | null {
-  if (!pinIsUnder(pin, oldFolder)) return null;
+  if (!isAtOrUnder(cleanFolder(pin), oldFolder)) return null;
   if (!newFolder) return '';
   const rest = cleanFolder(pin).slice(cleanFolder(oldFolder).length);
   return cleanFolder(newFolder) + rest;

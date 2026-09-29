@@ -2,14 +2,18 @@
  * writeStateTracking — single source of truth for save-pipeline counters.
  *
  * Owns the in-flight counter, the pending / failed path sets, the
- * write-error and write-state listener slots, and the
- * `beginWrite` / `endWrite` lifecycle that every scheduler routes through.
+ * write-error and write-state listener slots, the recent-self-write
+ * registry, and the `beginWrite` / `endWrite` lifecycle that every writer
+ * routes through.
  *
- * Sibling write modules (boardWriteScheduler, configWriteScheduler,
- * miscWriteScheduler, viewportCache) call `beginWrite` / `endWrite` to
- * keep the counter authoritative, and register their own cleanup hooks
- * via `registerResetCallback` / `registerTestResetCallback` so the
- * orchestrator's reset entry points sweep every module's local state.
+ * The schedulers (`createScheduler`: board, config, misc) and the note
+ * writer call `beginWrite` / `endWrite` to keep the counter authoritative,
+ * and register their own cleanup hooks via `registerResetCallback` /
+ * `registerTestResetCallback` so the reset entry points sweep every module's
+ * local state. `unsavedWork()` is the one answer to "could leaving now lose
+ * work?": these sets plus the sources registered with
+ * `registerUnsavedSource` (note bodies, editors not yet serialised, raw
+ * views).
  */
 
 import { markDirty, markClean } from '../vault/dirtyFlagRecovery';
@@ -24,7 +28,7 @@ import { isRetainableWriteError } from './writeSchedulerFailures';
 // via `FileWatcher.suppress`. On slow disks, large batches (tag-rename of 200
 // files), or simply a heavily loaded system, the OS-level change event can
 // arrive AFTER the main-side window has expired. Without a renderer-side
-// safety net, the late event flows into `handleExternalMarkdownChanges` and
+// safety net, the late event flows into the external-change reconcilers and
 // either (a) re-reads the file the renderer just wrote (no-op but wasteful)
 // or (b) classifies the disk content as an external edit and surfaces a
 // spurious "Reload / Keep local" toast.
@@ -693,7 +697,7 @@ export function endWrite(
 // ── Reset hook registry ──
 //
 // Other write modules (config, viewport, misc) own their own pending state
-// (e.g. `pendingMiscWrites`, `lastWrittenConfigs`, `viewportsCache`) but the
+// (e.g. `latestMiscArgs`, `lastWrittenConfigs`, `viewportsCache`) but the
 // authoritative reset entry points live here. Each module registers a
 // cleanup at module load via `registerResetCallback` (production reset on
 // vault swap) and `registerTestResetCallback` (test-only nuke including

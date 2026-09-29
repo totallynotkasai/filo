@@ -1,7 +1,7 @@
 import { boardStore } from './board.svelte';
 import { flattenTreePaths } from '../lib/vault/vaultTreeSort';
 import { normalizePath, samePath, stripLeadingSlash, toVaultRelative } from '../lib/utils/path';
-import { pinIsUnder } from '../lib/vault/folderPinPaths';
+import { isAtOrUnder } from '../../shared/vaultPath';
 import type { VaultContext } from './vaultStoreTypes';
 
 /**
@@ -28,12 +28,12 @@ export function makeRootFolderSlice(ctx: VaultContext) {
      * Resets `activeRootFolder` to vault root when the deleted/renamed path
      * matches the currently-marked folder (or is an ancestor of it).
      *
-     * Without this, subsequent autosaves through `vault:write-file-text` and
-     * `vault:copy-file` resurrect the folder via `fs.mkdir(..., { recursive: true })`
+     * Without this, a later note created into the pinned folder or a
+     * `vault:copy-file` would resurrect the folder via `fs.mkdir(..., { recursive: true })`
      * because the stale `activeRootFolder` setting still points at the deleted
-     * path. Called from `delete()`, `rename()` (where `setActiveRootFolderTo`
-     * does the propagation instead), and the watcher's tree-update handler
-     * (for external deletes). Synchronous and idempotent.
+     * path. Called from the sidebar delete, a cascade delete's redo, and the
+     * tree-update reconcile (for external deletes; a rename moves the pin
+     * instead, `folderPins.ts`). Synchronous and idempotent.
      *
      * `deletedPath` may be absolute (with vault-root prefix) or vault-relative.
      */
@@ -48,7 +48,7 @@ export function makeRootFolderSlice(ctx: VaultContext) {
         toVaultRelative(deletedPath, vaultPath) ?? stripLeadingSlash(normalizePath(deletedPath));
 
       if (!deletedRel) return;
-      if (pinIsUnder(current, deletedRel)) {
+      if (isAtOrUnder(current, deletedRel)) {
         project.settings.general.activeRootFolder = '';
         ctx.markMetaDirty();
       }

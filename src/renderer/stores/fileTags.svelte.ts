@@ -52,7 +52,6 @@ import { normalizeVaultRelative } from '../lib/utils/path';
 import { isMarkdownExtension } from '../lib/vault/extension';
 import { noteTags, noteTitle, registerMediaTagsReader } from './noteMeta';
 import { writeTagChangeToMarkdownPath } from '../lib/tags/noteTagWriter';
-import { vaultPath, type VaultPath } from '../../shared/vaultPath';
 import {
   commitTagRenameInMemory,
   commitTagRemovalInMemory,
@@ -67,7 +66,6 @@ import { boardCacheStore } from './boardCache.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { historyStore } from './history.svelte';
 import {
-  ToggleTagFadeCommand,
   AddTileTagCommand,
   RemoveTileTagCommand,
   AddPathTagCommand,
@@ -77,7 +75,6 @@ import { scheduleMiscWrite, flushAllMisc, flushMiscWrite } from '../lib/boards/b
 import { noteStore } from './notes.svelte';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { assertIpcOk } from '@shared/ipcEnvelope';
-import { reportError } from '../lib/utils/errorBus';
 import { uiStore } from './ui.svelte';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { cloneTagsFile, sameJson, mergeTagsThreeWay } from '../lib/vault/tagsFileMerge';
@@ -259,35 +256,12 @@ export const fileTagsStore = {
   get file(): TagsFile { return file; },
   get isHydrated(): boolean { return isHydrated; },
 
-  async hydrate(vaultRoot: string): Promise<void> {
-    activeVaultRoot = vaultRoot;
-    try {
-      // assertIpcOk re-throws a `{ ok:false }` envelope into the catch below.
-      const raw = assertIpcOk(await window.filo.invoke('tags:load', vaultRoot), 'tags:load') as string | null;
-      const loaded = loadTagsFile(raw);
-      file = loaded.file;
-      setMergeBase(cloneTagsFile(loaded.file)); // disk baseline
-      readOnlyTags = loaded.fromFuture || loaded.noMigrationPath || loaded.corrupt;
-    } catch (err) {
-      reportError(
-        'fileTags.hydrate',
-        err,
-        'Failed to load .filo/tags.json — tags reset to empty for this session',
-      );
-      file = emptyTagsFile();
-      setMergeBase(emptyTagsFile());
-      readOnlyTags = false;
-    }
-    isHydrated = true;
-  },
-
   /**
    * Synchronous commit hook for `loadVaultCandidate`.
    *
    * Installs a `TagsFile` that the candidate phase already loaded over
    * IPC. No throw, no IPC; the load happened (and any error surfaced)
-   * during the candidate phase. Mirrors the `hydrate` post-state but
-   * skips the I/O so the commit boundary stays synchronous.
+   * during the candidate phase, so the commit boundary stays synchronous.
    */
   commitFromCandidate(vaultRoot: string, tagsFile: TagsFile, readOnly = false): void {
     activeVaultRoot = vaultRoot;
@@ -513,15 +487,6 @@ export const fileTagsStore = {
       tiles.push(...Object.values(boardCacheStore.getFullTilesForBoard(boardId)));
     }
     return countTagUsage(files, tiles);
-  },
-
-  getTagUsageCount(tagName: string): number {
-    const tiles = this.getTilesWithTag(tagName);
-    // Dedup the files section against placed tiles' files so a tile and its
-    // file aren't double-counted.
-    const placedPaths = new SvelteSet<VaultPath>();
-    for (const { path } of tiles) if (path) placedPaths.add(vaultPath(path));
-    return tiles.length + this.getFilesWithTag(tagName, placedPaths).length;
   },
 
   // ── File-tag mutations ────────────────────────────────────────────────────
@@ -870,22 +835,6 @@ export const fileTagsStore = {
     return committed;
   },
 
-  /**
-   * Toggles faded state for every tile on the current board that carries
-   * the given tag. Uses history for undo support.
-   */
-  toggleTagFade(tagName: string): void {
-    const tilesWithTag = Object.values(boardStore.tiles).filter((t) => t.tags.includes(tagName));
-    if (tilesWithTag.length === 0) return;
-    const anyVisible = tilesWithTag.some((t) => !t.faded);
-    const cmd = new ToggleTagFadeCommand(
-      tilesWithTag.map((t) => t.id),
-      anyVisible,
-      tagName,
-    );
-    historyStore.execute(cmd);
-  },
-
 };
 
 // Tile derivation reads media tags through `noteMeta` (no import cycle here).
@@ -895,4 +844,4 @@ registerMediaTagsReader((path) => pureTagsForFile(file, path));
 // vault's `.filo/tags.json` doesn't merge with stale entries from the prior vault.
 onVaultSwap('pre-swap', 'fileTags', () => {
   fileTagsStore.reset();
-});
+}, { runAfter: ['leftBehind'] });

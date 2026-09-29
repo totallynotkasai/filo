@@ -28,7 +28,7 @@ const linked = new SvelteSet<VaultPath>();
 onVaultSwap('pre-swap', 'nonUtf8Paths', () => {
   nonUtf8.clear();
   linked.clear();
-});
+}, { runAfter: ['leftBehind'] });
 
 /** Records whether a read found `relPath` to be a symbolic link. */
 export function noteReadLink(relPath: string, link: boolean | undefined): void {

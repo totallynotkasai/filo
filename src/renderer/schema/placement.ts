@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { BorderStyleSchema, ShapeSchema } from './styleEnums';
 import { coerceToNumber } from './schemaUtils';
-import { TileStyleSchema, tileUrlString } from './tile';
+import { TileStyleSchema, TimerModeSchema, tileUrlString } from './tile';
 
 /**
  * Placement of a vault-backed tile on a board canvas.
@@ -170,7 +170,7 @@ export const InlineTileSchema = z.object({
   // seeds are nonsense.
   duration: z.number().finite().nonnegative().optional(),
   remaining: z.number().finite().nonnegative().optional(),
-  mode: z.enum(['hms', 'ms', 's', 'clock']).optional(),
+  mode: TimerModeSchema.optional(),
   isRunning: z.boolean().optional(),
   // Wall-clock end (epoch ms) of a running countdown (lib/utils/timerCountdown.ts).
   endsAt: z.number().finite().nonnegative().optional(),

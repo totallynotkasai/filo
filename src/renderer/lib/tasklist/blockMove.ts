@@ -109,7 +109,7 @@ export interface RowDndItem {
  * Build the post-drop placements array from svelte-dnd-action's per-section
  * `items` mirrors. Section `position` markers are recomputed from the new
  * ordering. The renderer emits one zone per visible section (real + leading
- * synthetic); this helper concatenates them in `displaySectionsOrdered` order
+ * synthetic); this helper concatenates them in `displaySections` order
  * and renumbers `position`.
  *
  * `itemsBySection` keys must include exactly the same set of section ids

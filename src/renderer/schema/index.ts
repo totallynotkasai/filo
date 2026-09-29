@@ -1,5 +1,5 @@
-export { TileSchema, TileDefinitionSchema, TileStyleSchema, ImageTileSchema, LinkTileSchema, IframeTileSchema, TimerTileSchema, TextTileDefSchema, ImageTileDefSchema, VideoTileDefSchema, FileTileDefSchema, AudioTileDefSchema, LinkTileDefSchema, IframeTileDefSchema, TimerTileDefSchema } from './tile';
-export type { Tile, TileDefinition, TileStyle, TextTile, ImageTile, VideoTile, FileTile, AudioTile, LinkTile, IframeTile, TimerTile, TextTileDef } from './tile';
+export { TileSchema, TileDefinitionSchema, TileStyleSchema, ImageTileSchema, LinkTileSchema, IframeTileSchema, TimerTileSchema, TimerModeSchema, TextTileDefSchema, ImageTileDefSchema, VideoTileDefSchema, FileTileDefSchema, AudioTileDefSchema, LinkTileDefSchema, IframeTileDefSchema, TimerTileDefSchema } from './tile';
+export type { Tile, TileDefinition, TileStyle, TextTile, ImageTile, VideoTile, FileTile, AudioTile, LinkTile, IframeTile, TimerTile, TimerMode, TextTileDef } from './tile';
 
 export {
   TilePlacementSchema,
@@ -31,7 +31,7 @@ export type { Project, WorkspaceState } from './project';
 export { ProjectSettingsSchema, GeneralSettingsSchema, MindMapDefaultsSchema, KanbanDefaultsSchema, TaskListDefaultsSchema, DocumentDefaultsSchema, defaultProjectSettings } from './settings';
 export type { ProjectSettings, GeneralSettings } from './settings';
 
-export { FiloLinkSchema, DecodedFiloLinkSchema, encodeFiloLink, decodeFiloLink, isFiloLink } from './link';
+export { DecodedFiloLinkSchema, decodeFiloLink, isFiloLink } from './link';
 
 export { TagsFileSchema } from './tagsFile';
 export type { TagsFile } from './tagsFile';

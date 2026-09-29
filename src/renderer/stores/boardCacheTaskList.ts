@@ -23,9 +23,9 @@ type PartialTaskSectionStyle = Record<string, unknown>;
  * after the write.** The standard call paths are:
  * - `TaskListBoard.svelte` direct calls (collapsed-subtask toggle, locked
  *   toggle, section CRUD, structure persist) — caller ticks immediately.
- * - `commands/taskListCommands.ts` history commands — the dispatch site
+ * - `commands/taskCommands.ts` / `sectionCommands.ts` history commands — the dispatch site
  *   ticks immediately after `historyStore.execute`.
- * - `kanbanSavedViews.svelte.ts` and `taskListSavedViews.svelte.ts` saved-
+ * - `kanbanSavedViews.svelte.ts` and `tasklist/filtersAndViews.svelte.ts` saved-
  *   view writers tick on commit.
  *
  * Exception: the Task Section / Task Item Style popups (driven by

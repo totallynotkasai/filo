@@ -2,6 +2,7 @@ import MiniSearch from 'minisearch';
 import type { FileTreeNode } from '../../../shared/types';
 import { normalizePath, stripLeadingSlash, toPosix } from '../utils/path';
 import { splitFrontmatterSource, parseFrontmatterObject } from '../vault/frontmatterRead';
+import { localIsoDate } from '../utils/dateFormat';
 
 /**
  * Templates live as plain Markdown files in the vault's `Templates/` folder.
@@ -92,7 +93,7 @@ export function collectTemplateRefs(
       out.push({
         path: rel,
         name: filename.replace(/\.md$/i, ''),
-        isBoard: false, // populated later by `loadTemplate` if needed.
+        isBoard: false, // set when the template is read (`isBoard: boardJson !== null`).
       });
     }
   }
@@ -170,22 +171,17 @@ export function templateMatchesBoardType(
  */
 export function interpolate(input: string, vars: TemplateVariables = {}): string {
   const now = vars.now ?? new Date();
-  // Use local date components so `{{date}}` matches the user's calendar,
-  // not UTC. `toISOString()` would silently shift across midnight for any
-  // non-UTC timezone.
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
+  const date = localIsoDate(now);
+  const [year = '', month = '', day = ''] = date.split('-');
   const hours = String(now.getHours()).padStart(2, '0');
   const minutes = String(now.getMinutes()).padStart(2, '0');
-  const date = `${year}-${month}-${day}`;
   const time = `${hours}:${minutes}`;
   const builtin: Record<string, string> = {
     title: vars.title ?? '',
     date,
     time,
     datetime: `${date} ${time}`,
-    year: String(year),
+    year,
     month,
     day,
     ...(vars.extras ?? {}),

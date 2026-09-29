@@ -11,9 +11,9 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { AddTaskCommand } from '../../commands/index';
 import { noteStore } from '../../stores/notes.svelte';
 import { reportError } from '../utils/errorBus';
-import { samePath } from '../utils/path';
+import { samePath, toVaultRelative } from '../utils/path';
 import { buildTextTileDefForNote } from '../canvas/markdownTileSeed';
-import { classifyDroppedFile, vaultRelativeFromAbsolute, type OutsideDrop } from '../vault/droppedFiles';
+import { classifyDroppedFile, type OutsideDrop } from '../vault/droppedFiles';
 import { isMarkdownExtension } from '../vault/extension';
 import {
   fileNameSafe,
@@ -264,7 +264,7 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
     }
 
     // The vault-sidebar payload's `path` is absolute (see VaultFileItem.svelte).
-    await addNoteAsTask(vaultRelativeFromAbsolute(parsed.path, vaultRoot) || parsed.path, sectionId, e.clientY);
+    await addNoteAsTask(toVaultRelative(parsed.path, vaultRoot) || parsed.path, sectionId, e.clientY);
     return true;
   }
 

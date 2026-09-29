@@ -18,11 +18,8 @@ export interface FileMetadata {
   content: string;
   lastModified: number;
   /**
-   * Verbatim YAML source between the `---` fences, captured at parse time so
-   * the external-change pipeline can refresh `originalFrontmatterCache` after a
-   * sync-frontmatter reload. Otherwise the CST engine's baseline stays at the
-   * pre-sync bytes and a later save drops the inline comment on an
-   * externally-changed key. Empty string when the file has no frontmatter fence.
+   * Verbatim YAML source between the `---` fences, captured at parse time.
+   * Empty string when the file has no frontmatter fence.
    */
   rawFrontmatter: string;
   /**

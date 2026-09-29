@@ -180,7 +180,7 @@ quitting indefinitely. Five seconds is generous for a normal flush.
 This is exactly the case the `.filo/.dirty.<machineId>` sentinel detects — recovery is
 offered on next launch.
 
-**Audit-19 EXT-5 — the 5 s bounds inter-beat SILENCE, not the drain:** the
+**The 5 s bounds inter-beat SILENCE, not the drain:** the
 renderer beats `app:drain-heartbeat` every ~2 s while it drains, and each beat
 re-arms main's timer. Since each atomic write may now wait up to ~5 s for a
 Windows file lock (OneDrive / antivirus) before failing, a drain of N serialised
@@ -574,8 +574,8 @@ the document.
 
 **What:** When Filo's editor can't reproduce a note's Markdown byte-for-byte
 (`isLossyMarkdownRoundTrip`), the note opens **read-only**: the editor is
-non-editable and toolbar commands are refused (Audit-19 UX-1 — read-only used to
-block only *saving*, so typed text was silently discarded). The banner names the
+non-editable and toolbar commands are refused (a read-only note that only
+refused the save would silently discard what was typed). The banner names the
 first line a save would change ("Line 12 would change from … to …") and offers
 **Edit in Raw view** (opens the whole file with that line selected, to fix by
 hand) and **Take ownership**, which re-enables editing after a confirm listing
@@ -601,11 +601,11 @@ serializer can't preserve cheaply):
 - inline code that starts and ends with a space, or is only spaces (Markdown
   trims one space from each side of a code span).
 
-No longer read-only after Audit-19: filenames, bare domains, emails and bare URLs
-(DEP-2 — linkify is off), `filo://` internal links (UX-2), tight checklists
-(UX-7), GFM table **padding** differences and the `1)` ordered-list delimiter.
+No longer read-only: filenames, bare domains, emails and bare URLs
+(linkify is off), `filo://` internal links, tight checklists, GFM table
+**padding** differences and the `1)` ordered-list delimiter.
 
-No longer read-only after Audit-25 Phase 1 (each was something Filo itself
+Also no longer read-only (each was something Filo itself
 wrote and then couldn't read back): an empty checkbox (Enter after the last
 task), one bullet turned into a checklist item (Ctrl+Shift+9), spaces typed at
 the start of a line, a `|` typed in a table cell, a list or heading in a table
@@ -655,7 +655,7 @@ written.
 [src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts);
 the editability `$effect` in `TextTile.svelte` / `DocumentEditor.svelte`;
 `chainIfEditable` in `lib/editor/toolbarConfig.ts`. Pinned by
-`ci:editor-body-discipline` Arm F.
+gate `editor-body-discipline`.
 
 **Why accepted:** Editing a note Filo would rewrite is the silent-loss class the
 open-format principle forbids; making it honest (non-editable) is the safe
@@ -749,7 +749,7 @@ and a vault-wide tag rename skips it and names it in a toast.
 **Where:** `readFileWithCoherentStat` in [src/main/vault/fileOps.ts](src/main/vault/fileOps.ts),
 [src/main/services/nonUtf8Registry.ts](src/main/services/nonUtf8Registry.ts),
 [src/main/ipc/vaultEncoding.ipc.ts](src/main/ipc/vaultEncoding.ipc.ts). Pinned by
-`ci:utf8-validated-read`.
+gate `utf8-validated-read`.
 
 **Why accepted:** There is no reliable way to guess a legacy code page. The
 convert action backs up the original bytes to `.filo/recovery/` and decodes them

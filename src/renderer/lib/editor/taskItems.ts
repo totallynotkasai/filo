@@ -32,12 +32,36 @@ interface BlockToken {
   content: string;
 }
 
+type CoreRule = (state: { tokens: BlockToken[] }) => void;
+
+/** The slice of markdown-it's core ruler Filo uses. */
+interface CoreRuler {
+  __rules__: Array<{ name: string }>;
+  before(beforeName: string, ruleName: string, fn: CoreRule, options?: object): void;
+  after(afterName: string, ruleName: string, fn: CoreRule, options?: object): void;
+  push(ruleName: string, fn: CoreRule, options?: object): void;
+}
+
+/**
+ * tiptap-markdown runs every extension's `setup` on every parse, and its
+ * checklist setup calls `md.use(markdown-it-task-lists)` each time, which
+ * adds another `github-task-lists` rule per note loaded. A second copy would
+ * read a task whose text starts with `[ ] ` as a second checkbox. So a core
+ * rule whose name is already registered is not added again, whichever of the
+ * two setups runs first.
+ */
+export function addEachCoreRuleOnce(ruler: CoreRuler): void {
+  const has = (name: string): boolean => ruler.__rules__.some((r) => r.name === name);
+  const { before, after, push } = ruler;
+  ruler.before = (anchor, name, fn, options) => { if (!has(name)) before.call(ruler, anchor, name, fn, options); };
+  ruler.after = (anchor, name, fn, options) => { if (!has(name)) after.call(ruler, anchor, name, fn, options); };
+  ruler.push = (name, fn, options) => { if (!has(name)) push.call(ruler, name, fn, options); };
+}
+
 /** The slice of markdown-it the rule is registered on. */
 interface CoreRulerHost {
   core: {
-    ruler: {
-      before(beforeName: string, ruleName: string, fn: (state: { tokens: BlockToken[] }) => void): void;
-    };
+    ruler: CoreRuler;
   };
 }
 
@@ -110,6 +134,7 @@ export const FiloListParse = Extension.create({
           setup(md: CoreRulerHost): void {
             if (prepared.has(md)) return;
             prepared.add(md);
+            addEachCoreRuleOnce(md.core.ruler);
             md.core.ruler.before('inline', 'filo-empty-task', emptyTaskRule);
           },
           updateDOM(element: Element): void {

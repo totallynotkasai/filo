@@ -3,9 +3,10 @@
  * prompt per board path, whichever side notices first (the watcher, or the
  * board writer's drift check before a save), and one set of actions.
  *
- *  - Reload: the pending write is cancelled and the board is read from disk
- *    into the cache (the load re-stamps the drift baseline), so the next save
- *    builds on the other program's version.
+ *  - Reload: the pending write is cancelled, the board is read from disk into
+ *    the cache (the load re-stamps the drift baseline) and its undo history is
+ *    cleared (its steps hold the replaced version), so the next save builds on
+ *    the other program's version.
  *  - Keep local: the other version is copied to `.filo/recovery/` and the
  *    baseline moves to it, so the next save writes Filo's version without
  *    asking again.
@@ -34,6 +35,7 @@ import { baselineSeq, noteBaseline } from '../lib/vault/fileBaselineRegistry';
 import { registerPathRenamable } from '../lib/vault/renamePathKeys';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
 import { samePath } from '../lib/utils/path';
+import { vaultPath, type VaultPath } from '../../shared/vaultPath';
 
 export type BoardDriftChoice = 'reload' | 'keep-local' | 'defer';
 
@@ -46,31 +48,32 @@ export type BoardDriftChoice = 'reload' | 'keep-local' | 'defer';
  * Reset on vault swap so a stale unresolved entry can't block a fresh prompt
  * for the same path in the new vault.
  */
-const inFlightDriftPrompts = new Map<string, Promise<BoardDriftChoice>>();
+const inFlightDriftPrompts = new Map<VaultPath, Promise<BoardDriftChoice>>();
 vaultSwapResettable('vaultExternalChanges.inFlightDriftPrompts', () => inFlightDriftPrompts.clear());
 /** `resolveBoardDrift` in progress per path: one answer, carried out once. */
-const inFlightResolutions = new Map<string, Promise<BoardDriftChoice>>();
+const inFlightResolutions = new Map<VaultPath, Promise<BoardDriftChoice>>();
 vaultSwapResettable('boardDrift.inFlightResolutions', () => inFlightResolutions.clear());
 // On rename, move an in-flight prompt to the new key so it isn't stranded under
 // the old one and a post-rename save doesn't open a duplicate prompt.
 registerPathRenamable('vaultExternalChanges.inFlightDriftPrompts', (oldRel, newRel) => {
-  const inflight = inFlightDriftPrompts.get(oldRel);
+  const inflight = inFlightDriftPrompts.get(vaultPath(oldRel));
   if (inflight === undefined) return;
-  inFlightDriftPrompts.delete(oldRel);
-  inFlightDriftPrompts.set(newRel, inflight);
+  inFlightDriftPrompts.delete(vaultPath(oldRel));
+  inFlightDriftPrompts.set(vaultPath(newRel), inflight);
 });
 
 /**
  * The Reload / Keep-local question for a board changed outside Filo. Only
  * asks: `resolveBoardDrift` acts on the answer.
  *
- * Promise-backed toast: 15s cap (never sticky); a timeout or dismiss resolves
- * 'defer' so the paused write aborts instead of stranding.
+ * A sticky toast (it stays until answered); dismissing it resolves 'defer', and
+ * the board stays held (`resolveBoardDrift`).
  */
 export function promptBoardExternalEdit(args: { path: string }): Promise<BoardDriftChoice> {
   const { path } = args;
   // A save storm produces ONE toast + ONE decision.
-  const existing = inFlightDriftPrompts.get(path);
+  const key = vaultPath(path);
+  const existing = inFlightDriftPrompts.get(key);
   if (existing) return existing;
 
   const promise = new Promise<BoardDriftChoice>((resolve) => {
@@ -80,8 +83,8 @@ export function promptBoardExternalEdit(args: { path: string }): Promise<BoardDr
         'last save are dropped), or keep your version (the other one is copied to .filo/recovery/ first)?',
       type: 'warning',
       duration: 0,
-      // Dismissed: the writer aborts without touching disk OR cache; the next
-      // save asks again.
+      // Dismissed: nothing is written and the cache keeps Filo's version; the
+      // board stays held and the next save asks again.
       onDismiss: () => resolve('defer'),
       actions: [
         { label: 'Reload', handler: () => resolve('reload') },
@@ -94,9 +97,9 @@ export function promptBoardExternalEdit(args: { path: string }): Promise<BoardDr
     });
   });
 
-  inFlightDriftPrompts.set(path, promise);
+  inFlightDriftPrompts.set(key, promise);
   void promise.finally(() => {
-    if (inFlightDriftPrompts.get(path) === promise) inFlightDriftPrompts.delete(path);
+    if (inFlightDriftPrompts.get(key) === promise) inFlightDriftPrompts.delete(key);
   });
   return promise;
 }
@@ -108,7 +111,7 @@ export function __inFlightDriftPromptsForTests(): {
 } {
   return {
     size: inFlightDriftPrompts.size,
-    has: (path: string) => inFlightDriftPrompts.has(path),
+    has: (path: string) => inFlightDriftPrompts.has(vaultPath(path)),
   };
 }
 
@@ -226,7 +229,8 @@ async function keepLocalVersion(rel: string): Promise<boolean> {
  */
 export function resolveBoardDrift(rel: string): Promise<BoardDriftChoice> {
   // The watcher and the writer can both ask about one change: one answer, carried out once.
-  const existing = inFlightResolutions.get(rel);
+  const key = vaultPath(rel);
+  const existing = inFlightResolutions.get(key);
   if (existing) return existing;
   holdDriftDecision(holdBoardDrift(rel));
   const resolution = (async (): Promise<BoardDriftChoice> => {
@@ -247,9 +251,9 @@ export function resolveBoardDrift(rel: string): Promise<BoardDriftChoice> {
     }
     return 'defer';
   })();
-  inFlightResolutions.set(rel, resolution);
+  inFlightResolutions.set(key, resolution);
   void resolution.finally(() => {
-    if (inFlightResolutions.get(rel) === resolution) inFlightResolutions.delete(rel);
+    if (inFlightResolutions.get(key) === resolution) inFlightResolutions.delete(key);
   });
   return resolution;
 }

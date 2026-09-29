@@ -362,16 +362,13 @@ function commitVaultCandidate(
  *   - `vault:watch` failure surfaces a toast and leaves the vault
  *     open without an external-edit watcher; user can reopen the
  *     vault to retry.
- *   - `vaultIndexStore.rebuild` is best-effort full-text indexing;
- *     if it fails the search UI degrades but nothing else does.
- *   - The recovery sequencer surfaces three deferred modals (`.dirty`,
- *     tag-rewrite, rename-cascade) but each handles its own errors.
+ *   - `vaultIndexStore.rebuild` reads every note's metadata and never
+ *     rejects; if it fails, search and note metadata degrade, nothing else.
+ *   - The recovery sequencer surfaces its prompts one after another
+ *     (quit failure, `.dirty`, tag rewrite, rename cascade…); each step
+ *     handles its own errors.
  */
-function runPostCommitTasks(
-  candidate: VaultCandidate,
-  store: { handleExternalMarkdownChanges?: unknown },
-): void {
-  void store;
+function runPostCommitTasks(candidate: VaultCandidate): void {
   const newVaultPath = candidate.path;
   // Generation-aware identity, so the post-await re-check below distinguishes a
   // close→reopen of the SAME path (a new generation) from a no-swap — a path
@@ -470,7 +467,7 @@ async function revertToOutgoingVault(
     resetRenameQueue();
     const restored = await loadVaultCandidate(outgoingPath);
     commitVaultCandidate(restored, store);
-    runPostCommitTasks(restored, store);
+    runPostCommitTasks(restored);
   } catch (revertErr) {
     reportError(
       'vault.revert',
@@ -811,7 +808,7 @@ export const vaultStore = {
   // ── Recovery UX ──
   get recoveryPendingPaths() { return recoveryPendingPaths; },
 
-  // ── File tree setters ──
+  // ── File tree setters (@internal test-only: the app sets both while opening a vault) ──
   setPath(path: string) {
     vaultPath = path;
     // Keep the vault-identity generation and the committed-vault signal in
@@ -823,7 +820,6 @@ export const vaultStore = {
   },
   setTree(tree: FileTreeNode[]) { fileTree = tree; },
   setSearch(query: string) { searchQuery = query; },
-  setLoading(loading: boolean) { isLoading = loading; },
 
   // ── Manual sidebar order (Sort By 'None') ──
   //
@@ -966,7 +962,7 @@ export const vaultStore = {
       }
 
       commitVaultCandidate(candidate, this);
-      runPostCommitTasks(candidate, this);
+      runPostCommitTasks(candidate);
       return true;
     } finally {
       // Close the swap window so a deferred `save()` proceeds. Clear the slot

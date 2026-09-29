@@ -401,7 +401,7 @@
     if (path) openNoteInDocumentTab(path);
   }
 
-  // E.13 — header buttons stop propagation on `onclick` only so the
+  // Header buttons stop propagation on `onclick` only so the
   // pointerdown drag on the parent `.tile-header-drag` doesn't start a
   // tile drag the moment the user presses a header button. We DO NOT add
   // oncontextmenu handlers here — right-click on a header button must

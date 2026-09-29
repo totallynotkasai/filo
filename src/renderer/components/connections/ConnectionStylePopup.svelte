@@ -24,7 +24,7 @@
    */
   import { untrack, getContext } from 'svelte';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
-  import { nanoid } from 'nanoid';
+  import { createId } from '../../lib/utils/ids';
   import type { Connection } from '../../schema/index';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { historyStore } from '../../stores/history.svelte';
@@ -36,7 +36,7 @@
   import { portal } from '../../lib/utils/portal';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
 
-  const popupTitleId = `conn-style-popup-title-${nanoid(6)}`;
+  const popupTitleId = `conn-style-popup-title-${createId()}`;
 
   let {
     connection,

@@ -42,6 +42,7 @@
     formatDueDateAbsolute,
     isOverdue as isOverdueLib,
   } from '../../lib/tasks/dueDateFormat';
+  import { clockStore } from '../../stores/clock.svelte';
 
   // Per-pane scope so we can compose the tile cascade with the card
   // cascade's per-card fontSize overrides below.
@@ -182,12 +183,14 @@
   function handleCoverError() { coverFailed = true; }
 
   function isOverdue(): boolean {
-    return isOverdueLib(dueDate, frontmatter.completed === true);
+    return isOverdueLib(dueDate, frontmatter.completed === true, clockStore.todayDate());
   }
 
-  // `formatDueDate` proxies to the shared lib helper so TaskList and Kanban
-  // render due-date chips identically.
-  const formatDueDate = formatDueDateAbsolute;
+  // The shared chip helpers (as TaskList). `now` is the clock store's day, so a
+  // chip turns overdue (and gains its year) at midnight.
+  function formatDueDate(iso: string): string {
+    return formatDueDateAbsolute(iso, { now: clockStore.todayDate() });
+  }
 
   // ── Due date popover ──
   let dueDateInput: HTMLInputElement | null = $state(null);

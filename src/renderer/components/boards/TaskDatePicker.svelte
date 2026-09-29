@@ -14,6 +14,7 @@
   import { portal } from '../../lib/utils/portal';
   import { tick } from 'svelte';
   import { SvelteDate } from 'svelte/reactivity';
+  import { localIsoDate, localIsoDateInDays } from '../../lib/utils/dateFormat';
   import { DatePickerViewState } from '../../lib/tasklist/datePickerViewState.svelte';
   let {
     value,
@@ -37,22 +38,6 @@
     onClose: () => void;
   } = $props();
 
-  function toIso(d: Date): string {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
-
-  function todayIso(): string {
-    return toIso(new Date());
-  }
-
-  function dateNDaysFromNow(days: number): string {
-    const d = new SvelteDate();
-    d.setDate(d.getDate() + days);
-    return toIso(d);
-  }
 
   // View month/year is owned by DatePickerViewState so the "seed once per value,
   // never reset on navigation" logic is unit-tested in isolation — the
@@ -87,12 +72,12 @@
     const first = new Date(view.viewYear, view.viewMonth, 1);
     const startOffset = first.getDay(); // 0 = Sun
     const start = new Date(view.viewYear, view.viewMonth, 1 - startOffset);
-    const today = todayIso();
+    const today = localIsoDate();
     const cells: GridCell[] = [];
     for (let i = 0; i < 42; i++) {
       const d = new SvelteDate(start);
       d.setDate(start.getDate() + i);
-      const iso = toIso(d);
+      const iso = localIsoDate(d);
       cells.push({
         iso,
         day: d.getDate(),
@@ -186,9 +171,9 @@
     {style}
   >
     <div class="quick-chips">
-      <button class="chip" onclick={() => handlePick(todayIso())}>Today</button>
-      <button class="chip" onclick={() => handlePick(dateNDaysFromNow(1))}>Tomorrow</button>
-      <button class="chip" onclick={() => handlePick(dateNDaysFromNow(7))}>Next week</button>
+      <button class="chip" onclick={() => handlePick(localIsoDateInDays(0))}>Today</button>
+      <button class="chip" onclick={() => handlePick(localIsoDateInDays(1))}>Tomorrow</button>
+      <button class="chip" onclick={() => handlePick(localIsoDateInDays(7))}>Next week</button>
     </div>
 
     <div class="month-header">

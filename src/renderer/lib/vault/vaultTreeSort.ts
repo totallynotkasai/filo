@@ -77,10 +77,10 @@ function applyManualOrder(nodes: FileTreeNode[], orderForParent: string[] | unde
   }
   // allow-string-path-key: keys are absolute file-tree node paths from `n.path`, not vault-relative
   const indexByPath = new Map<string, number>();
-  orderForParent.forEach((p, i) => indexByPath.set(p, i));
+  orderForParent.forEach((p, i) => indexByPath.set(normalizePath(p), i));
   const unknownStart = orderForParent.length;
   const decorated = nodes.map((n, i) => {
-    const known = indexByPath.get(n.path);
+    const known = indexByPath.get(normalizePath(n.path));
     return { n, rank: known !== undefined ? known : unknownStart + i };
   });
   decorated.sort((a, b) => {

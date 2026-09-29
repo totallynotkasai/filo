@@ -153,7 +153,7 @@ function resolveOwnerCached(
  * Invariant: a `tile.id` is unique across all boards. When the same `.md`
  * file appears on multiple boards each placement creates a fresh tile def
  * with its own `tile.id`; cross-board sharing is via the note's path (which
- * keys the shared `DocumentState`), never via a shared `tile.id`.
+ * keys its one `NoteModel` in `noteStore`), never via a shared `tile.id`.
  * Returning the first hit is therefore correct and unambiguous.
  */
 function findBoardIdForTile(tileId: string): string | null {
@@ -757,4 +757,4 @@ export const boardCacheStore = {
 // so the next vault opens against a clean slate.
 onVaultSwap('pre-swap', 'boardCache', () => {
   boardCacheStore.clear();
-});
+}, { runAfter: ['leftBehind'] });

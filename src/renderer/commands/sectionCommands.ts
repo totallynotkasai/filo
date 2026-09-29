@@ -24,36 +24,15 @@ export class AddSectionCommand extends Command {
    */
   private autoDefault: TaskListSection | null;
 
-  constructor(
-    boardId: string,
-    // Legacy params kept for sectionOps call-site compatibility. The
-    // `after` array is consulted only to find the newly-added section
-    // (matching it by id-not-in-before); everything else falls through
-    // to the live cache read at execute/undo time.
-    before: { sections: TaskListSection[]; tasks: TaskPlacement[] },
-    after: { sections: TaskListSection[]; tasks: TaskPlacement[] },
-    title: string,
-    autoDefault: TaskListSection | null = null,
-  ) {
+  constructor(boardId: string, newSection: TaskListSection, autoDefault: TaskListSection | null = null) {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.autoDefault = autoDefault ? this.snapshot(autoDefault) : null;
-    const beforeIds = new Set(before.sections.map((s) => s.id));
-    const autoId = autoDefault?.id;
-    // The new section is the after-section that's neither in `before` nor the
-    // auto-materialised default (which is also absent from a section-less before).
-    const newSection = after.sections.find((s) => !beforeIds.has(s.id) && s.id !== autoId);
-    if (!newSection) {
-      // Fallback to the last after-section (legacy callers always append).
-      const last = after.sections[after.sections.length - 1];
-      // Deep-clone: TaskListSection carries an optional nested `style` object,
-      // which a shallow spread would alias to the live section.
-      this.newSection = last ? this.snapshot(last) : { id: '', title, position: 0, collapsed: false };
-    } else {
-      this.newSection = this.snapshot(newSection);
-    }
-    this.description = `Add section "${title}"`;
+    // Deep-clone: TaskListSection carries an optional nested `style` object,
+    // which a shallow spread would alias to the live section.
+    this.newSection = this.snapshot(newSection);
+    this.description = `Add section "${newSection.title}"`;
   }
 
   execute() {

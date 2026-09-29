@@ -70,7 +70,7 @@ export interface WatcherSupervisorCallbacks {
   /**
    * Opens (or re-opens) the live `fs.watch` handle. Returns true on
    * success, false if the synchronous `fs.watch` call threw (caller
-   * already handled the error path via `notifyError`).
+   * already handled the error path via `handleWatcherError`).
    */
   openLiveWatcher(): boolean;
 }

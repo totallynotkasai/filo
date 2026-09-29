@@ -34,7 +34,7 @@ export async function readOwnSentinel(vaultRoot: string, kind: SentinelKind): Pr
 async function deleteSentinelFile(vaultRoot: string, relPath: string): Promise<void> {
   const fullPath = `${normalizePath(vaultRoot)}/${relPath}`;
   try {
-    // Crash-recovery sentinel cleanup (`.filo/`), not user content — ALLOWLISTed in check-no-raw-disk-shape-ipc.
+    // Crash-recovery sentinel cleanup (`.filo/`), not user content — allowlisted in the `no-raw-disk-shape-ipc` gate.
     await invokeOk('vault:delete', vaultRoot, fullPath);
   } catch (err) {
     if (isEnoent(err)) return;

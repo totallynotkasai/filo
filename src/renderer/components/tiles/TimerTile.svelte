@@ -4,7 +4,8 @@
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { historyStore } from '../../stores/history.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { UpdateTimerConfigCommand, type TimerMode, type TimerConfigSnapshot } from '../../commands/index';
+  import { UpdateTimerConfigCommand, type TimerConfigSnapshot } from '../../commands/index';
+  import { TimerModeSchema } from '../../schema/index';
   import { timerRemainingAt, startTimerPatch, stopTimerPatch } from '../../lib/utils/timerCountdown';
   import { runningTimerTiles } from '../../stores/tiles.svelte';
 
@@ -106,7 +107,7 @@
   // / pause) keep their direct boardStore.updateTile calls — wrapping
   // them in commands would blow through MAX_HISTORY on every play.
   function cycleMode() {
-    const modes: TimerMode[] = ['hms', 'ms', 's', 'clock'];
+    const modes = TimerModeSchema.options;
     const nextIdx = (modes.indexOf(tile.mode) + 1) % modes.length;
     const before = configSnapshot();
     // A mode swap stops a running countdown where it is, not where it started.

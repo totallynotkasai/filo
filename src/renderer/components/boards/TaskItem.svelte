@@ -27,11 +27,8 @@
   import { portal } from '../../lib/utils/portal';
   import type { Priority } from '../../lib/tasks/frontmatterReaders';
   import { PRIORITY_COLOR, PRIORITY_LABEL } from '../../constants/taskPriorities';
-  import {
-    formatDueDateAbsolute,
-    formatTimeChip,
-    isOverdue as isOverdueLib,
-  } from '../../lib/tasks/dueDateFormat';
+  import { formatDueDateAbsolute, formatTimeChip, isOverdue as isOverdueLib } from '../../lib/tasks/dueDateFormat';
+  import { clockStore } from '../../stores/clock.svelte';
 
   let {
     tile,
@@ -296,7 +293,8 @@
   }
 
   // formatTimeChip / formatDueDateAbsolute / isOverdue come from
-  // lib/tasks/dueDateFormat.ts (shared with Kanban so dates/overdue render alike).
+  // lib/tasks/dueDateFormat.ts (shared with Kanban). `now` is the clock store's
+  // day, so a chip turns overdue (and gains its year) at midnight.
 
   // ── Date picker popover ──
   // Inline calendar grid behind the chip click (replaces the old 4-option menu).
@@ -386,7 +384,7 @@
   }
 
   function isOverdue(): boolean {
-    return isOverdueLib(dueDate, completed);
+    return isOverdueLib(dueDate, completed, clockStore.todayDate());
   }
 
   function handleContextMenu(e: MouseEvent) {
@@ -774,7 +772,7 @@
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <polyline points="5 12 12 19 19 12" transform="rotate(-90 12 12)" />
       </svg>
-      {formatDueDateAbsolute(startDate)}
+      {formatDueDateAbsolute(startDate, { now: clockStore.todayDate() })}
     </button>
   {/if}
 
@@ -787,7 +785,7 @@
       onclick={openDueDateMenu}
       oncontextmenu={openDateContextMenu}
     >
-      {formatDueDateAbsolute(dueDate)}{dueTime ? ` ${formatTimeChip(dueTime)}` : ''}
+      {formatDueDateAbsolute(dueDate, { now: clockStore.todayDate() })}{dueTime ? ` ${formatTimeChip(dueTime)}` : ''}
     </button>
   {:else}
     <button
@@ -825,11 +823,10 @@
 
 {#if onSetNotes}
   <!--
-    Notes panel uses a CSS grid-template-rows 0fr ↔ 1fr trick so opening /
-    closing physically pushes any subtasks below this row down with a smooth
-    transition, while only animating GPU-friendly properties (per CLAUDE.md).
+    The panel opens at full height at once (subtasks below move down with it)
+    and its content fades and slides in: only opacity and transform animate.
     The inner content must have `min-height: 0; overflow: hidden` for the
-    grid to actually collapse to zero.
+    closed grid row to collapse to zero.
   -->
   <div class="task-notes-panel" class:open={isExpanded} aria-hidden={!isExpanded}>
     <div class="task-notes-panel-inner" style={notesInlineStyle}>
@@ -1030,16 +1027,14 @@
     color: var(--text-primary);
   }
 
-  /* ── Task Note panel (slides open with grid-row trick) ──
-     Animating grid-template-rows from 0fr → 1fr keeps the animation on the
-     compositor while *physically* pushing siblings (subtasks) down, which
-     is what the user asked for. Inner element gets min-height: 0 so the
-     row can actually collapse to zero. */
+  /* ── Task Note panel: the row snaps between 0fr and 1fr (animating its
+     height would lay the list out every frame); the content fades and
+     slides in. min-height: 0 on the inner element lets the row collapse. */
   .task-notes-panel {
     display: grid;
     grid-template-rows: 0fr;
     opacity: 0;
-    transition: grid-template-rows 180ms ease, opacity 140ms ease;
+    transition: opacity 140ms ease;
   }
 
   .task-notes-panel.open {
@@ -1053,10 +1048,13 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    transform: translateY(-4px);
+    transition: transform 180ms ease;
   }
 
   .task-notes-panel.open .task-notes-panel-inner {
     padding: 4px 12px 8px;
+    transform: none;
   }
 
   .task-notes-tags {
@@ -1071,7 +1069,7 @@
   .task-notes-tags li { display: inline-flex; }
 
   @media (prefers-reduced-motion: reduce) {
-    .task-notes-panel {
+    .task-notes-panel, .task-notes-panel-inner {
       transition: none;
     }
   }

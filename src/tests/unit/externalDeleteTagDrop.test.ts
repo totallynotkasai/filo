@@ -5,6 +5,7 @@ import { registerNotePrompts } from '@renderer/stores/notePrompts';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { emptyTagsFile as newTagsFile } from '@renderer/lib/vault/tagsStorage';
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -105,7 +106,7 @@ describe('vaultExternalChanges — external delete drops tags.json entry only wh
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     slice = makeExternalChangesSlice(makeCtx());
     await vaultIndexStore.applyChanges(['Notes.md']);
-    await fileTagsStore.hydrate('/vault');
+    fileTagsStore.commitFromCandidate('/vault', newTagsFile());
     fileTagsStore.setFileTags('Notes.md', ['mytag']);
     expect(fileTagsStore.file.fileTags['notes.md']).toEqual(['mytag']);
   });

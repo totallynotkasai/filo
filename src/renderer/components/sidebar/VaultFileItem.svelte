@@ -34,16 +34,9 @@
   interface Props {
     node: FileTreeNode;
     depth?: number;
-    /**
-     * Retained for backwards compatibility with existing call sites that
-     * still pass a `role` value. The legacy `'popout'` branch (second
-     * BrowserWindow) was removed when the sidebar moved to an in-app
-     * floating panel; both values now behave identically.
-     */
-    role?: 'main' | 'popout';
   }
 
-  let { node, depth = 0, role: _role = 'main' }: Props = $props();
+  let { node, depth = 0 }: Props = $props();
 
   let isRenaming = $state(false);
   let renameValue = $state('');
@@ -396,7 +389,7 @@
   }
 
   // Auto-focus + select-all when the rename input mounts. Benefits both
-  // the context-menu Rename entry and the C.7 auto-rename-after-create
+  // the context-menu Rename entry and the auto-rename-after-create
   // path. `tick`-equivalent: the bind populates before this effect runs
   // because Svelte mounts the input synchronously after isRenaming flips.
   $effect(() => {

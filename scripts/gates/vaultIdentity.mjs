@@ -115,6 +115,20 @@ const LIFECYCLE_EXEMPT = new Map([
   ['src/renderer/stores/noteModel.svelte.ts', 'the NoteModel class: per-instance fields; notes.svelte.ts drops every model on a vault swap'],
 ]);
 // Subscribing proves a reset is wired, not that it resets: pin the behavioural reset tests.
+// ── pre-swap-after-left-behind config ─────────────────────────────────────
+// Pre-swap resets of state the leave rescue (`keepRescueCopies`) reads: the
+// board cache, tags, the layout and sidebar order (config / misc payloads),
+// unapplied Settings, and which notes are read-only.
+const PRE_SWAP_AFTER_LEFT_BEHIND = [
+  ['src/renderer/stores/boardCache.svelte.ts', 'boardCache'],
+  ['src/renderer/stores/fileTags.svelte.ts', 'fileTags'],
+  ['src/renderer/stores/workspace.svelte.ts', 'workspace'],
+  ['src/renderer/stores/sidebarOrder.svelte.ts', 'sidebarOrder'],
+  ['src/renderer/stores/pendingSettings.svelte.ts', 'pendingSettings'],
+  ['src/renderer/lib/vault/nonUtf8Paths.svelte.ts', 'nonUtf8Paths'],
+  ['src/renderer/lib/boards/boardSaver.ts', 'boardWriteScheduler'],
+];
+
 const RESET_COVERAGE = [
   { module: 'src/renderer/stores/vaultRecovery.ts', test: 'src/tests/unit/vaultRecovery.test.ts', token: /acknowledgeRecovery/ },
   { module: 'src/renderer/lib/vault/dirtyFlagRecovery.ts', test: 'src/tests/unit/dirtyFlagRecovery.test.ts', token: /checkRecovery/ },
@@ -253,6 +267,33 @@ export const checks = [
         const src = ctx.read(test);
         if (!src) out.push(fail(test, undefined, `reset test for ${module} is missing`));
         else if (!token.test(src)) out.push(fail(test, undefined, `no longer exercises ${module}'s reset (missing /${token.source}/)`));
+      }
+      return out;
+    },
+  },
+  {
+    id: 'pre-swap-after-left-behind',
+    title: "the pre-swap resets of state a rescue copy reads run after 'leftBehind'",
+    hint:
+      "The 'leftBehind' handler (stores/vaultLeaveGuard.ts) copies whatever is still unsaved to .filo/recovery/ " +
+      "before the swap; a reset that ran first would leave it nothing to copy. Declare `{ runAfter: ['leftBehind'] }` " +
+      'on the registration (module load order is not a contract).',
+    run(ctx) {
+      const out = [];
+      const guard = ctx.read('src/renderer/stores/vaultLeaveGuard.ts');
+      if (!guard || !/onVaultSwap\(\s*'pre-swap',\s*'leftBehind'/.test(guard)) {
+        out.push(fail('src/renderer/stores/vaultLeaveGuard.ts', undefined, "the 'leftBehind' pre-swap handler is gone — update this gate"));
+      }
+      for (const [rel, name] of PRE_SWAP_AFTER_LEFT_BEHIND) {
+        const src = ctx.read(rel);
+        const start = src === null ? -1 : src.search(new RegExp(`onVaultSwap\\(\\s*'pre-swap',\\s*'${name}'`));
+        if (start < 0) { out.push(fail(rel, undefined, `no pre-swap handler '${name}' — update PRE_SWAP_AFTER_LEFT_BEHIND`)); continue; }
+        const end = src.slice(start).search(/\n\}[^\n]*\);/);
+        const call = src.slice(start, end < 0 ? undefined : start + end + 80);
+        const closing = /\n\}([^\n]*)\);/.exec(call)?.[1] ?? '';
+        if (!/runAfter:\s*\[[^\]]*'leftBehind'/.test(closing)) {
+          out.push(fail(rel, lineAt(src, start), `pre-swap '${name}' doesn't declare runAfter: ['leftBehind']`));
+        }
       }
       return out;
     },

@@ -147,21 +147,10 @@ describe('addSection', () => {
     makeSectionOps(deps).addSection('Later');
     const [name, args] = lastCommand();
     expect(name).toBe('AddSectionCommand');
-    const [boardId, before, after, title, autoDefault] = args as [
-      string,
-      { sections: TaskListSection[] },
-      { sections: TaskListSection[] },
-      string,
-      TaskListSection | null,
-    ];
+    const [boardId, added, autoDefault] = args as [string, TaskListSection, TaskListSection | null];
     expect(boardId).toBe('b1');
-    expect(before.sections).toEqual([]);
     expect(autoDefault).toEqual({ id: 'sec_id1', title: 'Task List', position: 0, collapsed: false });
-    expect(after.sections).toEqual([
-      autoDefault,
-      { id: 'sec_id2', title: 'Later', position: 2, collapsed: false },
-    ]);
-    expect(title).toBe('Later');
+    expect(added).toEqual({ id: 'sec_id2', title: 'Later', position: 2, collapsed: false });
     expect(tick).toHaveBeenCalledTimes(1);
   });
 
@@ -169,12 +158,9 @@ describe('addSection', () => {
     const { deps } = harness([section('a', 0)], [task('t1')]);
     makeSectionOps(deps).addSection();
     const [, args] = lastCommand();
-    const after = args[2] as { sections: TaskListSection[] };
-    expect(args[4]).toBeNull();
-    expect(after.sections.map((s) => [s.id, s.title, s.position])).toEqual([
-      ['a', 'A', 0],
-      ['sec_id1', 'New Section', 1],
-    ]);
+    const added = args[1] as TaskListSection;
+    expect(args[2]).toBeNull();
+    expect([added.id, added.title, added.position]).toEqual(['sec_id1', 'New Section', 1]);
   });
 });
 

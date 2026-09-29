@@ -2,10 +2,10 @@
  * vaultExternalReconcilers — registers the external-edit reconcilers with
  * `externalChangeRegistry`:
  *
- *  - `board`           → `boardJsonReconciler`
- *  - `config-tags`     → `tagsJsonReconciler`
- *  - `config-theme`    → `themeJsonReconciler`
- *  - `config-template` → `templateReconciler`
+ *  - `board`           → `reconcileBoardJsonChange`
+ *  - `config-tags`     → `reconcileTagsJsonChange`
+ *  - `config-theme`    → `reconcileThemeChange`
+ *  - `config-template` → `reconcileTemplateChange`
  *  - `config`          → `reconcileConfigFileChange` (configFileReconciler.ts)
  *
  * The `document` / `attachment` reconcilers live on the `vaultStore` mixin
@@ -86,10 +86,9 @@ async function boardMatchesBaseline(rel: string): Promise<boolean> {
  *  - Board not in cache (untracked) — adopted into the running session
  *    (`adoptBoardAtRuntime`) when the file really exists.
  *  - Board in cache but clean (no pending writes) — reload silently.
- *    Mirrors the `reload-silently` branch of the `.md` classifier.
- *  - Board in cache AND has a pending debounced write — surface a
- *    "Board changed externally" toast with Reload / Keep your edits.
- *    Mirrors the dirty-editor branch of `promptModifiedFile`.
+ *    As a note with no unsaved edit takes another program's version.
+ *  - Board in cache AND has a pending debounced write — the one board drift
+ *    question (`resolveBoardDrift`): Reload / Keep local.
  */
 async function reconcileBoardJsonChange(event: ExternalChangeEvent): Promise<void> {
   const rel = event.filename;

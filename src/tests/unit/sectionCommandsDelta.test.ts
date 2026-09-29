@@ -554,7 +554,6 @@ describe('Audit-13 L8 — AddSectionCommand deep-clones the section (nested styl
   });
 
   it('a post-construction mutation of the SOURCE section style does not leak into the snapshot', () => {
-    const before = { sections: sections().map((s) => ({ ...s })), tasks: board().tasks ?? [] };
     const newSec: TaskListSection = {
       id: 'sec-C',
       title: 'C',
@@ -562,8 +561,7 @@ describe('Audit-13 L8 — AddSectionCommand deep-clones the section (nested styl
       collapsed: false,
       style: { headerColor: '#abc' },
     };
-    const after = { sections: [...before.sections, newSec], tasks: before.tasks };
-    const cmd = new AddSectionCommand('tl', before, after, 'C');
+    const cmd = new AddSectionCommand('tl', newSec);
 
     // The section is captured BEFORE execute. A shallow copy would alias
     // newSec.style, so this between-construction-and-execute mutation would

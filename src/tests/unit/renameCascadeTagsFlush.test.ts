@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeExternalChangesSlice } from '@renderer/stores/vaultExternalChanges';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
+import { emptyTagsFile as newTagsFile } from '@renderer/lib/vault/tagsStorage';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { boardStore } from '@renderer/stores/board.svelte';
@@ -83,7 +84,7 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
 
     // Seed a tag on Old.md and drain the resulting write so the rename's
     // flush is the only tags:save we observe.
-    await fileTagsStore.hydrate('/vault');
+    fileTagsStore.commitFromCandidate('/vault', newTagsFile());
     fileTagsStore.setFileTags('Old.md', ['mytag']);
     await fileTagsStore.flushPendingSave();
     tagsSaves.length = 0;

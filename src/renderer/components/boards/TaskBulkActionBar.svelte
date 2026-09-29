@@ -6,7 +6,7 @@
    * (`TaskListBoard`) wires each callback to the matching mutation.
    */
 
-  import { SvelteDate } from 'svelte/reactivity';
+  import { localIsoDateInDays } from '../../lib/utils/dateFormat';
 
   type Priority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
 
@@ -41,25 +41,6 @@
   let priorityMenuOpen = $state(false);
   let dueMenuOpen = $state(false);
   let sectionMenuOpen = $state(false);
-
-  function todayIso(): string {
-    const d = new Date();
-    return [
-      d.getFullYear(),
-      String(d.getMonth() + 1).padStart(2, '0'),
-      String(d.getDate()).padStart(2, '0'),
-    ].join('-');
-  }
-
-  function dateNDaysFromNow(days: number): string {
-    const d = new SvelteDate();
-    d.setDate(d.getDate() + days);
-    return [
-      d.getFullYear(),
-      String(d.getMonth() + 1).padStart(2, '0'),
-      String(d.getDate()).padStart(2, '0'),
-    ].join('-');
-  }
 
   function closeAll() {
     priorityMenuOpen = false;
@@ -116,9 +97,9 @@
     </button>
     {#if dueMenuOpen}
       <div class="bar-menu" role="menu">
-        <button class="bar-menu-item" onclick={() => { dueMenuOpen = false; onSetDueDate(todayIso()); }}>Today</button>
-        <button class="bar-menu-item" onclick={() => { dueMenuOpen = false; onSetDueDate(dateNDaysFromNow(1)); }}>Tomorrow</button>
-        <button class="bar-menu-item" onclick={() => { dueMenuOpen = false; onSetDueDate(dateNDaysFromNow(7)); }}>Next week</button>
+        <button class="bar-menu-item" onclick={() => { dueMenuOpen = false; onSetDueDate(localIsoDateInDays(0)); }}>Today</button>
+        <button class="bar-menu-item" onclick={() => { dueMenuOpen = false; onSetDueDate(localIsoDateInDays(1)); }}>Tomorrow</button>
+        <button class="bar-menu-item" onclick={() => { dueMenuOpen = false; onSetDueDate(localIsoDateInDays(7)); }}>Next week</button>
         <button class="bar-menu-item danger" onclick={() => { dueMenuOpen = false; onSetDueDate(''); }}>Clear due date</button>
       </div>
     {/if}

@@ -5,7 +5,7 @@
  *
  * One concern per file (all re-exported below):
  *  - tileCommands          — tile add/delete/move/resize/style/lock
- *  - tileTagCommands       — tile/path tag add/remove + fade-by-tag (dispatched by fileTagsStore)
+ *  - tileTagCommands       — tile/path tag add/remove (dispatched by fileTagsStore)
  *  - connectionCommands    — connection add/delete/update
  *  - frameCommands         — frame add/update/move/delete
  *  - sectionCommands       — Task List section add/delete/rename/reorder

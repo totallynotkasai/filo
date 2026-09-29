@@ -200,7 +200,7 @@ describe('Vault-swap reset chain — lifecycle contract', () => {
     // `themeStore.refreshAvailable` and `themeStore.applyById` no
     // longer appear because the candidate phase loads the cache
     // directly and `themeStore.commitFromCandidate` installs it
-    // synchronously. `fileTagsStore.hydrate` is similarly replaced by
+    // synchronously; tags go the same way through
     // `fileTagsStore.commitFromCandidate`.
     const hydrationSymbols = [
       'workspaceStore.hydrate(',

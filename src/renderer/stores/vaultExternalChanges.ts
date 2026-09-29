@@ -38,7 +38,7 @@ import {
 /**
  * Vault slice — external-edit pipeline. A changed note refreshes the vault
  * index and, when a view holds it, its note model (`noteStore.onDiskChanged`
- * decides per the C.5 table). Deletes offer to remove tiles that point at the
+ * decides, `lib/notes/noteDiskChange.ts`). Deletes offer to remove tiles that point at the
  * file; renames re-key every path-keyed piece of state.
  *
  * The partial-read retry bookkeeping and the attachment-delete grace window
@@ -174,15 +174,15 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
      *      as "missing" and evict the board.
      *   3. Propagate the rename across tile defs (boardStore.propagateRename
      *      walks FILE_REF_FIELDS — covers `file`/`src`/`filePath`/`coverImage`/
-     *      `backgroundImage`, including text-tile filename via the
-     *      `propagateMarkdownRenameToTextTiles` branch).
+     *      `backgroundImage`).
      *   4. Mirror into `.filo/tags.json` (file + folder helpers — both safe
      *      to call regardless of file/folder).
-     *   5. Rebind any open `DocumentState.filename`.
+     *   5. Re-key every path-keyed store (note models and their write queues,
+     *      tabs, undo history, baselines) through `renameAllPathKeys` (done
+     *      first, before the drain, since the file has already moved).
      *   6. Propagate `activeRootFolder` (vault-wide pin) if it matched the
-     *      old path. Without this the next autosave through
-     *      `vault:write-file-text` resurrects the old folder via
-     *      mkdir-recursive.
+     *      old path. Without this the next note or file created into the
+     *      pinned folder resurrects the old folder via mkdir-recursive.
      *   7. Propagate per-board `defaultFolder` pins (same protection). When
      *      the watcher reports a folder rename as per-file renames (its
      *      reconcile walk does), the pins also follow the folder a file
@@ -259,14 +259,14 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
      * `vault:files-changed` channel surfaces `type: 'attachment'` events for
      * every uncorrelated image/video/audio/pdf change. Correlated cross-folder
      * moves are already routed through `vault:file-renamed` and propagated by
-     * `handleRenameEvent` (which rewrites tile `src` / `filePath` /
+     * `handleExternalRename` (which rewrites tile `src` / `filePath` /
      * `coverImage` / frame `backgroundImage` via `propagateRename`'s
      * FILE_REF_FIELDS scan). What remains here:
      *
      *  - Uncorrelated deletes (file gone, no rename pair) — surface a
      *    confirm toast and let the user cascade-delete the dependent
-     *    placements via the existing undoable command. Mirrors the
-     *    `prompt-closed-board-file-missing` flow for documents.
+     *    placements via the existing undoable command, as the note deleted
+     *    outside Filo prompt does for notes (`vaultExternalPrompts.ts`).
      *  - Uncorrelated creates / content changes — no action. Attachments
      *    have no body-sync pipeline; a content change to a referenced media
      *    file is invisible to the cache (the OS-level file is what the

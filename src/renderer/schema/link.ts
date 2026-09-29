@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
 /**
+ * @internal test-only (with `encodeFiloLink`): the app reads links through
+ * `DecodedFiloLinkSchema`.
+ *
  * Internal link types for navigation and actions within Filo.
  *
  * - board-nav: Navigate to a board (opens in tab)
@@ -51,6 +54,9 @@ export const DecodedFiloLinkSchema = z.object({
 type DecodedFiloLink = z.infer<typeof DecodedFiloLinkSchema>;
 
 /**
+ * @internal test-only: builds the URI the app decodes (`decodeFiloLink`); the app
+ * itself never writes one.
+ *
  * Encodes a Filo internal link as a URI for use in Tiptap Link extension.
  * Format: filo://<type>/<params>
  */

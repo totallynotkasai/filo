@@ -1,5 +1,6 @@
 /**
- * Reads / clears `.filo/quit-failure.json` on vault open.
+ * Reads / clears this machine's `.filo/quit-failure.<machineId>.json` on
+ * vault open.
  *
  * The main-side quit drain writes this breadcrumb when the session preserved
  * emergency partial files after a failed write (see
@@ -12,12 +13,9 @@
  * re-surfaces the location next open. (The preserved `.tmp` partials remain
  * on disk regardless.)
  *
- * Same read/delete shape as the `.filo/.dirty` sentinel: a relative-path read
- * through `vault:read-file-text` (the handler resolves it against the active
- * vault) and an absolute-path delete through `vault:delete` (allowlisted for
- * `.filo/quit-failure.json` in `RENDERER_PERMITTED_FILO_PATHS`). This module
- * is exempt from the raw-disk-shape-IPC gate alongside the other sentinels —
- * the breadcrumb is internal recovery state, not user content.
+ * Read and cleared like the other per-machine sentinels
+ * (`machineSentinels.ts`: `readOwnSentinel` / `clearOwnSentinel`); the
+ * breadcrumb is internal recovery state, not user content.
  */
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';

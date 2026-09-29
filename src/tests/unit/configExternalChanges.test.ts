@@ -6,6 +6,7 @@ import { noteBaseline, __resetBaselinesForTests } from '@renderer/lib/vault/file
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
+import type { WorkspaceLayout } from '@renderer/stores/workspace.svelte';
 
 /**
  * A `.filo/` config changed or deleted outside Filo never blocks its saves for
@@ -16,7 +17,11 @@ import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
 
 const VAULT = '/vault';
 const workspace: WorkspaceState = { openTabs: [], activeTabId: '' };
-const layout = (sidebarWidth: number) => ({ paneTree: null, activePaneId: null, sidebarWidth, boardToolbars: {} });
+const layout = (toolbarX?: number): WorkspaceLayout => ({
+  paneTree: null,
+  activePaneId: null,
+  boardToolbars: toolbarX === undefined ? {} : { b: { position: { x: toolbarX, y: 0 }, pinned: false } },
+});
 const settingsWith = (mindmap: Record<string, unknown>): ProjectSettings =>
   ({ general: { globalFont: 'fixed' }, mindmap, kanban: {}, tasklist: {}, document: {} } as ProjectSettings);
 
@@ -87,7 +92,7 @@ describe('config files changed outside Filo', () => {
     __resetBaselinesForTests();
     __resetDirtyTrackingForTests();
     for (const f of ['app.json', 'defaults.json', 'appearance.json', 'workspace.json']) noteBaseline(`.filo/${f}`, 1000, 50);
-    seedConfigSnapshots(settingsWith({ x: 1 }), 'light', workspace, layout(260));
+    seedConfigSnapshots(settingsWith({ x: 1 }), 'light', workspace, layout());
   });
   afterEach(() => {
     setConfigExternalHandlers(null);
@@ -100,14 +105,14 @@ describe('config files changed outside Filo', () => {
     const log = handlers('defer');
     const calls: Call[] = [];
     mockVault({ 'defaults.json': { mindmap: { x: 1 }, kanban: {}, tasklist: {}, document: {} } }, calls);
-    const result = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout(260));
+    const result = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout());
     expect(result.failed).toEqual([]);
     expect(saves(calls, 'defaults.json')).toHaveLength(1);
     expect(log.prompts).toEqual([]);
 
     // And the next change is not blocked either.
     calls.length = 0;
-    const again = await writeConfigs(VAULT, settingsWith({ x: 3 }), 'light', workspace, layout(260));
+    const again = await writeConfigs(VAULT, settingsWith({ x: 3 }), 'light', workspace, layout());
     expect(again.failed).toEqual([]);
     expect(saves(calls, 'defaults.json')).toHaveLength(1);
   });
@@ -132,7 +137,7 @@ describe('config files changed outside Filo', () => {
     const calls: Call[] = [];
     mockVault({ 'defaults.json': { mindmap: { theirs: true }, kanban: {}, tasklist: {}, document: {} } }, calls);
     // The write doesn't wait for the answer: the file is held, its write refused at once.
-    const result = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout(260));
+    const result = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout());
     expect(result.failed).toEqual(['defaults.json']);
     expect((result.error as { code?: string }).code).toBe('CONFIG_DRIFT_HELD');
     expect(saves(calls, 'defaults.json')).toHaveLength(0);
@@ -142,12 +147,12 @@ describe('config files changed outside Filo', () => {
     const snap = calls.findIndex((c) => c.channel === 'recovery:snapshot');
     expect(calls[snap]?.args).toEqual([VAULT, '.filo/defaults.json', 'keep']);
 
-    const refired = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout(260));
+    const refired = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout());
     expect(refired.failed).toEqual([]);
     expect(calls.findIndex((c) => c.channel === 'config:save' && c.args[1] === 'defaults.json')).toBeGreaterThan(snap);
 
     calls.length = 0;
-    const again = await writeConfigs(VAULT, settingsWith({ x: 3 }), 'light', workspace, layout(260));
+    const again = await writeConfigs(VAULT, settingsWith({ x: 3 }), 'light', workspace, layout());
     expect(again.failed).toEqual([]);
     expect(saves(calls, 'defaults.json')).toHaveLength(1);
     expect(log.prompts).toEqual(['defaults.json']);
@@ -158,13 +163,13 @@ describe('config files changed outside Filo', () => {
     const calls: Call[] = [];
     const theirs = { mindmap: { theirs: true }, kanban: {}, tasklist: {}, document: {} };
     mockVault({ 'defaults.json': theirs }, calls);
-    const result = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout(260));
+    const result = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout());
     expect(result.failed).toEqual(['defaults.json']);
     await __configDriftSettledForTests();
     expect(isConfigDriftHeld('defaults.json')).toBe(false);
     expect(log.reloads).toEqual([['defaults.json', theirs]]);
     // Memory now holds the file's settings: the next save leaves the file alone.
-    const next = await writeConfigs(VAULT, settingsWith({ theirs: true }), 'light', workspace, layout(260));
+    const next = await writeConfigs(VAULT, settingsWith({ theirs: true }), 'light', workspace, layout());
     expect(next.failed).toEqual([]);
     expect(saves(calls, 'defaults.json')).toHaveLength(0);
   });
@@ -174,17 +179,17 @@ describe('config files changed outside Filo', () => {
     const calls: Call[] = [];
     const theirs = { mindmap: { theirs: true }, kanban: {}, tasklist: {}, document: {} };
     mockVault({ 'defaults.json': theirs }, calls);
-    const result = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout(260));
+    const result = await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout());
     expect(result.failed).toEqual(['defaults.json']);
     await __configDriftSettledForTests();
     expect(saves(calls, 'defaults.json')).toHaveLength(0);
     expect(isConfigDriftHeld('defaults.json')).toBe(true);
 
     // A re-fire of the same change is refused without asking again...
-    await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout(260));
+    await writeConfigs(VAULT, settingsWith({ x: 2 }), 'light', workspace, layout());
     expect(log.prompts).toEqual(['defaults.json']);
     // ...a new change asks again.
-    await writeConfigs(VAULT, settingsWith({ x: 3 }), 'light', workspace, layout(260));
+    await writeConfigs(VAULT, settingsWith({ x: 3 }), 'light', workspace, layout());
     await __configDriftSettledForTests();
     expect(log.prompts).toEqual(['defaults.json', 'defaults.json']);
     expect(saves(calls, 'defaults.json')).toHaveLength(0);
@@ -195,7 +200,7 @@ describe('config files changed outside Filo', () => {
     const calls: Call[] = [];
     mockVault({ 'app.json': null }, calls);
     const settings = { ...settingsWith({ x: 1 }), general: { globalFont: 'changed' } } as ProjectSettings;
-    const result = await writeConfigs(VAULT, settings, 'light', workspace, layout(260));
+    const result = await writeConfigs(VAULT, settings, 'light', workspace, layout());
     expect(result.failed).toEqual([]);
     const created = saves(calls, 'app.json');
     expect(created).toHaveLength(1);
@@ -216,7 +221,7 @@ describe('config files changed outside Filo', () => {
       return undefined;
     });
     const settings = { ...settingsWith({ x: 1 }), general: { globalFont: 'changed' } } as ProjectSettings;
-    const result = await writeConfigs(VAULT, settings, 'light', workspace, layout(260));
+    const result = await writeConfigs(VAULT, settings, 'light', workspace, layout());
     expect(result.failed).toEqual(['app.json']);
     expect(saves(calls, 'app.json')).toHaveLength(1);
   });

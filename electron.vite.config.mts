@@ -99,7 +99,6 @@ export default defineConfig({
           // of the whole renderer bundle. Order-of-magnitude breakdown:
           //   • tiptap-core    ~1.0 MB (TipTap + ProseMirror)
           //   • lowlight       ~400 KB (syntax highlighting languages)
-          //   • markdown-tools ~150 KB (gray-matter, remark, js-yaml)
           // Per Vite docs, `manualChunks` runs only on the production
           // build — `npm run dev` still uses ESM dynamic imports.
           manualChunks: (id: string) => {
@@ -109,17 +108,6 @@ export default defineConfig({
             }
             if (id.includes('lowlight') || id.includes('highlight.js')) {
               return 'lowlight';
-            }
-            if (
-              id.includes('gray-matter') ||
-              id.includes('js-yaml') ||
-              id.includes('/remark') ||
-              id.includes('mdast') ||
-              id.includes('micromark') ||
-              id.includes('unified') ||
-              id.includes('unist-')
-            ) {
-              return 'markdown-tools';
             }
             return undefined;
           },

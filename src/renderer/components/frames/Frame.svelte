@@ -397,7 +397,7 @@
     // so contained tiles move by the same step the frame moved by. We
     // anchor against a local `lastFrameX/Y` rather than `frame.position.x`
     // so the computation no longer depends on the cache↔active proxy
-    // staying stale across the `updateFrame` write (folded-in C.8 fix).
+    // staying stale across the `updateFrame` write.
     const tileDx = newX - lastFrameX;
     const tileDy = newY - lastFrameY;
     lastFrameX = newX;

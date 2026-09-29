@@ -29,8 +29,8 @@ import type { CacheContext } from './boardCacheTypes';
  *  - `commands/groupAndBoardCommands.ts` (CascadeDeleteCommand undo) —
  *    destructive-undo path; the consumer re-syncs.
  *
- * Style updates flowing through `persistUpdateTileStyle` (TileStylePopup
- * write-through) — same exception class as the Kanban / Task List style
+ * Style updates from the TileStylePopup (through `persistUpdateTile`,
+ * written through as picked) — same exception class as the Kanban / Task List style
  * popups: per-pick writes without ticking, single command pushed on close.
  */
 export function makeTilesSlice(ctx: CacheContext) {

@@ -213,7 +213,6 @@ function buildConfigPayloads(
       activeTabId: workspace.activeTabId,
       paneTree: layout?.paneTree ?? null,
       activePaneId: layout?.activePaneId ?? null,
-      sidebarWidth: layout?.sidebarWidth ?? 260,
       boardToolbars: layout?.boardToolbars ?? {},
     }, null, 2),
     'defaults.json': JSON.stringify({

@@ -80,6 +80,21 @@ describe('promptBoardExternalEdit — per-path dedup', () => {
     expect(__inFlightDriftPromptsForTests().size).toBe(0);
   });
 
+  it('two spellings of one path (case, separators) share one toast', async () => {
+    const p1 = promptBoardExternalEdit({ path: 'Plans/Roadmap.board.json' });
+    const p2 = promptBoardExternalEdit({ path: 'plans\\roadmap.board.json' });
+
+    expect(p1).toBe(p2);
+    expect(__inFlightDriftPromptsForTests().size).toBe(1);
+    const driftToasts = uiStore.toasts.filter(
+      (t) => typeof t.text === 'string' && t.text.includes('was changed outside Filo'),
+    );
+    expect(driftToasts).toHaveLength(1);
+
+    await clickKeepLocal();
+    await expect(p2).resolves.toBe('keep-local');
+  });
+
   it('different paths get independent prompts (no cross-talk)', async () => {
     const a = promptBoardExternalEdit({ path: 'a.board.json' });
     const b = promptBoardExternalEdit({ path: 'b.board.json' });

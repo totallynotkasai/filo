@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { pinIsUnder, rebasePin, folderMoveOfFileRename } from '@renderer/lib/vault/folderPinPaths';
+import { rebasePin, folderMoveOfFileRename } from '@renderer/lib/vault/folderPinPaths';
+import { isAtOrUnder } from '@shared/vaultPath';
 import { folderMovesBetween } from '@renderer/lib/vault/treeFolderMoves';
 import { noteFolderMoves, takeFolderMoves } from '@renderer/lib/vault/unreconciledFolderMoves';
 import { markRecentSelfWrite } from '@renderer/lib/boards/writeStateTracking';
@@ -61,10 +62,10 @@ function file(rel: string, sizeBytes = 10): FileTreeNode {
 
 describe('folder pin path rules', () => {
   it('a pin is under a folder whatever the spelling, and only on a segment boundary', () => {
-    expect(pinIsUnder('Notes', 'notes')).toBe(true);
-    expect(pinIsUnder('Notes/Daily', 'NOTES')).toBe(true);
-    expect(pinIsUnder('Notes2', 'Notes')).toBe(false);
-    expect(pinIsUnder('Notes', '')).toBe(false);
+    expect(isAtOrUnder('Notes', 'notes')).toBe(true);
+    expect(isAtOrUnder('Notes/Daily', 'NOTES')).toBe(true);
+    expect(isAtOrUnder('Notes2', 'Notes')).toBe(false);
+    expect(isAtOrUnder('Notes', '')).toBe(false);
   });
 
   it('rebases the pin onto the new folder, keeping its own remainder; clears it for a delete', () => {

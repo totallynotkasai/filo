@@ -7,6 +7,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { cleanTagName, isSafeNewTagName } from '../../lib/vault/tagsStorage';
   import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
+  import { tagSuggestions, preselectedSuggestion, completeLastEntry } from '../../lib/tags/tagRowInput';
 
   // BoardScope is only required for tile-mode (single / multi). In file-path
   // mode the editor reads + writes via vault-relative paths, so no scope is
@@ -44,7 +45,8 @@
 
   // Autocomplete dropdown state.
   let showSuggestions = $state(false);
-  let highlightedIndex = $state(0);
+  /** The suggestion Enter takes; -1: none, so Enter adds what was typed. */
+  let highlightedIndex = $state(-1);
 
   // Union of tags across the selection (and a count of how many tiles carry each tag).
   let aggregatedTags = $derived.by(() => {
@@ -64,31 +66,16 @@
     return Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   });
 
-  // Suggestions = all known tags minus those already applied, filtered by
-  // the typed prefix (case-insensitive substring match). Cap to keep the
-  // dropdown short.
-  let suggestions = $derived.by(() => {
-    const query = inputValue.trim().replace(/^#/, '').toLowerCase();
-    if (!query) return [] as string[];
-    const applied = new Set(aggregatedTags.map(([t]) => t.toLowerCase()));
-    const all = fileTagsStore.allTagNames();
-    const out: string[] = [];
-    for (const name of all) {
-      const lower = name.toLowerCase();
-      if (applied.has(lower)) continue;
-      if (!lower.includes(query)) continue;
-      out.push(name);
-      if (out.length >= 8) break;
-    }
-    return out;
-  });
+  // Known tags minus those already applied, ranked exact → prefix → substring
+  // (the same list the note's tag row offers).
+  let suggestions = $derived(
+    tagSuggestions(inputValue, fileTagsStore.allTagNames(), aggregatedTags.map(([t]) => t)),
+  );
 
   // Clamp the highlighted index whenever the suggestion list shrinks so the
   // arrow-key cursor never points past the end. Re-runs on every list change.
   $effect(() => {
-    if (highlightedIndex >= suggestions.length) {
-      highlightedIndex = Math.max(0, suggestions.length - 1);
-    }
+    if (highlightedIndex >= suggestions.length) highlightedIndex = suggestions.length - 1;
   });
 
   function commitTag(rawName: string): void {
@@ -117,15 +104,10 @@
   }
 
   function handleAddTag() {
-    // Prefer the highlighted suggestion when the dropdown is open and has
-    // entries; otherwise commit the literal text (supports comma-separated).
-    if (showSuggestions && suggestions.length > 0) {
-      const tag = suggestions[highlightedIndex] ?? suggestions[0];
-      if (tag) commitTag(tag);
-      inputValue = '';
-      showSuggestions = false;
-      return;
-    }
+    // A suggestion the user picked (or the exact tag typed) replaces the entry
+    // being typed; otherwise the literal text is committed (comma-separated).
+    const choice = showSuggestions ? suggestions[highlightedIndex] : undefined;
+    if (choice) inputValue = completeLastEntry(inputValue, choice);
     const val = inputValue.trim();
     if (!val) return;
     const tagNames = val.split(',').map((s) => s.replace(/^#/, '').trim()).filter(Boolean);
@@ -157,7 +139,7 @@
       if (suggestions.length === 0) return;
       e.preventDefault();
       showSuggestions = true;
-      highlightedIndex = (highlightedIndex - 1 + suggestions.length) % suggestions.length;
+      highlightedIndex = highlightedIndex <= 0 ? suggestions.length - 1 : highlightedIndex - 1;
       return;
     }
     if (e.key === 'Enter') {
@@ -185,7 +167,7 @@
 
   function handleInput() {
     showSuggestions = inputValue.trim().length > 0;
-    highlightedIndex = 0;
+    highlightedIndex = preselectedSuggestion(inputValue, suggestions);
   }
 
   function pickSuggestion(name: string) {

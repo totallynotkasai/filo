@@ -35,6 +35,7 @@ import { noteStore } from '../stores/notes.svelte';
 import { isMissingFileError, NoteBusyError } from '../lib/notes/noteWriter';
 import { splitFrontmatterSource } from '../lib/vault/frontmatterRead';
 import { noteTextHash } from '../lib/notes/noteFile';
+import { TOO_MANY_TO_REPLACE } from '../lib/search/replaceAllText';
 
 /** One replacement: at `start` (in the file before the replace), `before` became `after`. */
 export interface Splice {
@@ -300,6 +301,12 @@ export async function runReplaceAllCommand(): Promise<void> {
     uiStore.toast('No matches to replace.', 'info', 2500);
     return;
   }
+  // A capped list is only some of the matches: replacing it would leave the
+  // rest and still say it was done.
+  if (searchStore.truncated) {
+    uiStore.toast(TOO_MANY_TO_REPLACE, 'warning', 5000);
+    return;
+  }
 
   const result = await buildPlans(vaultRoot, matches, replaceText);
   if (!result.ok) {
@@ -326,11 +333,21 @@ export async function runReplaceAllCommand(): Promise<void> {
 
   const fileCount = result.plans.length;
   const total = result.plans.reduce((n, p) => n + p.splices.length, 0);
-  uiStore.toast(
-    `Replaced ${total} occurrence(s) across ${fileCount} file(s). Ctrl+Z to undo.`,
-    'success',
-    4000,
-  );
+  // Its Undo reaches the command wherever it sits: Ctrl+Z only undoes it
+  // from the tab that was active when it ran, and only while it is on top.
+  uiStore.pushToast({
+    text: `Replaced ${total} occurrence${total === 1 ? '' : 's'} in ${fileCount} note${fileCount === 1 ? '' : 's'}.`,
+    type: 'success',
+    duration: 10_000,
+    actions: [{
+      label: 'Undo',
+      handler: () => {
+        if (!historyStore.undoFromToast(command, 'Undo Replace All')) {
+          uiStore.toast('That Replace All was already undone.', 'info', 3000);
+        }
+      },
+    }],
+  });
 }
 
 /**
@@ -361,7 +378,7 @@ export async function replaceCurrentMatch(): Promise<boolean> {
   // arithmetic stays in one place. Refresh the result against the latest
   // store state (so a vault edit between Find and Replace doesn't write a
   // stale offset).
-  const fresh = runVaultSearch(searchStore.parsed);
+  const fresh = runVaultSearch(searchStore.parsed, searchStore.options);
   const current = fresh.matches[searchStore.currentIndex];
   if (!current || current.filePath !== match.filePath || current.matchStart !== match.matchStart) {
     uiStore.toast(

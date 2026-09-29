@@ -258,6 +258,8 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
       defaultSectionId: 'default',
     });
     const file = new File(['dropped\n'], 'README.md', { type: 'text/markdown' });
+    // A README from outside the vault (one inside it is added by its path).
+    Object.defineProperty(file, 'path', { value: 'D:/Downloads/README.md' });
     const dt = { types: ['Files'], files: [file], getData: () => '' } as unknown as DataTransfer;
     const e = { dataTransfer: dt, preventDefault: () => {}, stopPropagation: () => {}, clientY: null } as unknown as DragEvent;
     await handler.onSectionBodyDrop(e, null);

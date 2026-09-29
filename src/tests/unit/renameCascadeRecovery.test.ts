@@ -279,7 +279,7 @@ describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
 
     resolveDeferred();
     await seq;
-    expect(fileTagsStore.renameTagEverywhere).toHaveBeenCalledWith('oldTag', 'newTag');
+    expect(fileTagsStore.renameTagEverywhere).toHaveBeenCalledWith('oldTag', 'newTag', undefined);
   });
 });
 

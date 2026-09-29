@@ -43,6 +43,7 @@ import { FiloTaskList, FiloListParse } from './taskItems';
 import { FiloTable } from './tableMarkdown';
 import { FiloCodeBlock } from './codeFence';
 import { FiloHardBreak } from './hardBreak';
+import { PastePlainText } from './pastePlainText';
 import { FiloBlockquote } from './blockquote';
 import { isFiloLink } from '../../schema/link';
 import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
@@ -360,9 +361,15 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         // open read-only. Bare text stays text (KNOWN_LIMITATIONS #17).
         linkify: false,
         breaks: false,
-        transformPastedText: true,
-        transformCopiedText: true,
+        // A plain-text paste is parsed by `PastePlainText` (HTML off, line
+        // breaks kept), not by this parser.
+        transformPastedText: false,
+        // Copying out puts the text as shown on the clipboard's text/plain
+        // (not its Markdown source, `C:\\Users`, `5 \*`); Filo-to-Filo copies
+        // keep their formatting through the HTML flavour.
+        transformCopiedText: false,
       }),
+      PastePlainText,
       // After Markdown: replaces its list `tight` parse rule (see taskListTight.ts).
       FiloListTight,
       KeepSpaces,

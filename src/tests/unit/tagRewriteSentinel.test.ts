@@ -96,6 +96,20 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     expect(result.payload).toEqual(payload);
   });
 
+  it('a scoped sweep reads back scoped, so Resume rewrites only its plan', async () => {
+    const payload: TagRewriteSentinelPayload = {
+      timestamp: 1700000000000,
+      oldName: 'fresh',
+      newName: 'old',
+      plan: ['A.md'],
+      preexistingNewNamePaths: [],
+      committedPaths: [],
+      scoped: true,
+    };
+    await writePendingRewrite('/vault', payload);
+    expect((await readPendingRewrite('/vault')).payload).toEqual(payload);
+  });
+
   it('write → read returns the exact payload (removal case with newName=null)', async () => {
     const payload: TagRewriteSentinelPayload = {
       timestamp: 1700000000000,

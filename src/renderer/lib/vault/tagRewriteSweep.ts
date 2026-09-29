@@ -266,6 +266,7 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
         : metadata.filter((m) => m.tags.includes(newName)).map((m) => m.path),
     // Filled incrementally below (removals only).
     committedPaths: [],
+    ...(pathFilter ? { scoped: true } : {}),
   };
   if (plan.length > 0) {
     try {

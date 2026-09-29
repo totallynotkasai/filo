@@ -581,7 +581,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
     const res = await readPendingRewrite(newVaultPath);
     if (!isStillSameVault(captured)) return;
     if (res.payload) {
-      const { oldName, newName, plan, preexistingNewNamePaths, committedPaths } = res.payload;
+      const { oldName, newName, plan, preexistingNewNamePaths, committedPaths, scoped } = res.payload;
       const verb = newName === null ? 'removal' : 'rename';
       const target = newName === null ? `"${oldName}"` : `"${oldName}" → "${newName}"`;
       // Wait for the post-commit index rebuild (runs in parallel with this
@@ -617,9 +617,9 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       // "undo" it (the sentinel holds the plan + progress, not a pre-edit snapshot).
       const convergeForward = async (): Promise<void> => {
         if (newName === null) {
-          await fileTagsStore.removeTagEverywhere(oldName);
+          await fileTagsStore.removeTagEverywhere(oldName, scoped ? plan : undefined);
         } else {
-          await fileTagsStore.renameTagEverywhere(oldName, newName);
+          await fileTagsStore.renameTagEverywhere(oldName, newName, scoped ? plan : undefined);
         }
       };
       await awaitConfirm({

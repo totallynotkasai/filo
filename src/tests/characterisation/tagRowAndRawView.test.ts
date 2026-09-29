@@ -40,6 +40,20 @@ describe('tag row', () => {
     expect(tagRowTags(app)).toEqual(['work', 'alpha', 'beta']);
   });
 
+  it('Enter adds exactly the tag typed, not a known tag that merely contains it', async () => {
+    const app = await startApp({
+      'Plan.md': '---\ntitle: Plan\n---\nBody text\n',
+      'Other.md': '---\ntitle: Other\ntags: [not-urgent]\n---\nOther\n',
+      '.filo/tags.json': JSON.stringify({ version: 1, tags: { 'not-urgent': { color: '#123456' } }, fileTags: {} }),
+    });
+    await openNoteFromSidebar(app, 'Plan.md');
+
+    await typeInTagRow(app, 'urgent');
+    await waitFor(() => app.read('Plan.md').includes('urgent'), 'the tag on disk');
+    expect(app.read('Plan.md')).toBe('---\ntitle: Plan\ntags:\n  - urgent\n---\nBody text\n');
+    expect(tagRowTags(app)).toEqual(['urgent']);
+  });
+
   it('removing a tag writes it out of the frontmatter, and board undo puts it back', async () => {
     const note = '---\ntitle: Plan\ntags: [work, home]\n---\nBody text\n';
     const app = await startApp({ 'Plan.md': note });

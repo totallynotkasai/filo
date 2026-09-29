@@ -15,7 +15,7 @@
   import { historyStore } from '../../stores/history.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { UpdatePropertiesCommand } from '../../commands/propertiesCommands';
-  import { parseTagInput, withTagsAdded, tagSuggestions, completeLastEntry } from '../../lib/tags/tagRowInput';
+  import { parseTagInput, withTagsAdded, tagSuggestions, preselectedSuggestion, completeLastEntry } from '../../lib/tags/tagRowInput';
   import { portal } from '../../lib/utils/portal';
   import { createId } from '../../lib/utils/ids';
   import TagBadge from './TagBadge.svelte';
@@ -38,14 +38,15 @@
   let tags = $derived(noteTags(path));
   let text = $state('');
   let open = $state(false);
-  let highlighted = $state(0);
+  /** The suggestion Enter takes; -1: none, so Enter adds what was typed. */
+  let highlighted = $state(-1);
   let inputEl: HTMLInputElement | null = $state(null);
   let tagMenu = $state<{ tagName: string; x: number; y: number } | null>(null);
 
   let suggestions = $derived(open ? tagSuggestions(text, fileTagsStore.allTagNames(), tags) : []);
 
   $effect(() => {
-    if (highlighted >= suggestions.length) highlighted = Math.max(0, suggestions.length - 1);
+    if (highlighted >= suggestions.length) highlighted = suggestions.length - 1;
   });
 
   /** Writes `next` as the note's tag list, as one undoable step. */
@@ -105,7 +106,7 @@
       highlighted = (highlighted + 1) % suggestions.length;
     } else if (e.key === 'ArrowUp' && suggestions.length > 0) {
       e.preventDefault();
-      highlighted = (highlighted - 1 + suggestions.length) % suggestions.length;
+      highlighted = highlighted <= 0 ? suggestions.length - 1 : highlighted - 1;
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const choice = suggestions[highlighted];
@@ -131,7 +132,7 @@
 
   function onInput(): void {
     open = text.trim().length > 0;
-    highlighted = 0;
+    highlighted = preselectedSuggestion(text, suggestions);
   }
 
   function openTagMenu(name: string, e: MouseEvent): void {

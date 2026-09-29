@@ -540,6 +540,48 @@ It must restore the window and turn off background throttling first. Record the 
 - `ci:verify` green.
 - Real app: a tag rename-and-undo scenario, a Kanban bulk add on a string-form note, an Explorer drop of an in-vault note on each board type, a paste of `List<String>`.
 
+### Phase 3 outcome (2026-09-29)
+
+**Done.** A25-09 … A25-14, D7 taken at its default, two new gates (84 in all), and one pre-existing bug found by the real-app check and fixed (deviation 9).
+
+**Real-app check** (built app, a session-scratchpad Playwright script driving `dist/main/main.js`; an Explorer drop is a real on-disk `File` from a file input, carried by a `drop` event):
+
+| Scenario | Result |
+|---|---|
+| Rename `blocked` → `waiting`, where `waiting` is only in B.md (not registered) | The merge confirm shows; Cancel leaves A and B as they were |
+| Rename `old` → `fresh`, another program then writes E.md with `tags: [fresh]`, Undo | D.md back to `tags: [old]`; E.md keeps `fresh` |
+| Drop `Notes/Plan.md` from Explorer onto a Mind Map, a Task List and a Kanban column (and C.md on the Kanban) | Each shows the note; no new `.md` anywhere (no `Plan (1).md`) |
+| Kanban bulk "Add tag" `urgent` on C.md (`tags: project`) and Plan.md | C.md: `tags:` list `project`, `urgent`; Plan.md: `urgent` |
+| Paste `Use List<String> here\nand <Enter> there` into a note, relaunch, reopen | Shown as pasted on two lines; saved `List&lt;String&gt; here\` + newline; reopens editable, no read-only banner |
+
+**What changed, by item.**
+
+| Item | Where | Tests |
+|---|---|---|
+| A25-09 | `fileTagsStore.tagInUse` / `tagExists` (case-folded over the registry, the vault index's tags, attachments and board-only tiles); `isMergingRename` in `stores/tagUndo.svelte.ts`, used by `renameTagWithConfirm` (which now waits for the index build first) and `renameTagWithUndo`; a rename records a `TagRenameSnapshot` (notes written, attachments, board-only tiles and filter chips that carried the old name) and `undoRename(snapshot)` changes back only those; quick-add registers the tags it writes (`taskCreation.ts`); the tag-rewrite sentinel records `scoped`, and Resume of a scoped sweep rewrites only its plan (`renameTagEverywhere` / `removeTagEverywhere` take `onlyNotes`) | characterisation `tagUndo.test.ts` (+3: an unregistered tag in a note is a merge; another spelling is a merge; Undo leaves a note tagged with the new name since); unit `tagUndo.test.ts` (`tagExists` case-folded, attachments renamed back only where changed), `tagRewriteSentinel.test.ts` (`scoped` round-trips) |
+| A25-10 | Kanban bulk "Add tag" is one `AddPathTagCommand` per card (the tag-row writer, fresh read, the field's own form) in one `BatchCommand`; the Kanban tag filter and find bar read `noteTags(path)`; the Task List's `FIELD_READERS.tags` uses `orderPreservingTagsField` | unit `kanbanTextFormTags.test.ts` (`tags: project` + `urgent` → a list of both; the filter matches a text-form tag and doesn't throw); gate `codebase/tags-read-through-normaliser` (proved to bite: the old filter line fails it) |
+| A25-11 | `tagSuggestions` ranks exact → prefix → substring; `preselectedSuggestion` preselects only an exact match, so Enter adds what was typed; `NoteTagRow` and `TagEditor` (the Tags popup) both use them | unit `tagRowInput.test.ts` (ranking, preselect); characterisation `tagRowAndRawView.test.ts` (+1: typing `urgent` + Enter with `not-urgent` known adds `urgent`; fails on the old row) |
+| A25-12 | `buildNeedleRegex(needle, { matchCase, wholeWord })` (whole word: `(?<![\p{L}\p{N}_])…(?![\p{L}\p{N}_])` with `u`); Match case / Whole word checkboxes in `SearchPanel` (search store `matchCase` / `wholeWord`, cleared by `reset()`); `lib/search/replaceAllText.ts` (confirm body: body matches only, up to five notes named, "…and N more", title matches said to be skipped; `TOO_MANY_TO_REPLACE`); Replace All disabled and refused when `truncated`; the success toast's Undo calls `historyStore.undoFromToast` | unit `replaceAllText.test.ts` (wording, `replaceableMatches`, the regex options), `replaceAllCommand.test.ts` (+3: options narrow the replace; a capped list writes nothing; the toast's Undo works from another tab with a step on top); component `searchReplaceAllConfirm.test.ts` (the real panel's confirm text; the Match case checkbox) |
+| A25-13 | `lib/vault/droppedFiles.ts`: `classifyDroppedFile` → `InVaultDrop` / `OutsideDrop` / null, plus `isInsideVault`, `vaultRelativeFromAbsolute`, `resolveDroppedFilePath` (moved from `lib/canvas/vaultPath.ts` and `dragDrop.ts`; the old file is gone); Mind Map, Kanban and Task List drops link an in-vault file by path; `importKanbanFileTile` and the Task List's `importOsMarkdownFile` take an `OutsideDrop` | unit `droppedFiles.test.ts` (was `vaultPath.test.ts`; +4 for `classifyDroppedFile`); characterisation `explorerDrops.test.ts` (new: an in-vault note dropped on each board type makes no new file, fails with classification switched off; an outside note is copied); gate `codebase/os-drops-classify-first` (proved to bite twice: dropping the `OutsideDrop` parameter type from either copier fails it) |
+| A25-14 | `lib/editor/pastePlainText.ts` (`PastePlainText`: a second parser of the same class as tiptap-markdown's, `html: false, breaks: true`; Ctrl+Shift+V → `literalTextSlice`); `transformPastedText: false`, `transformCopiedText: false` in `createEditor.ts` | unit `pastePlainText.test.ts` (tag-like text kept, two lines stay two, `**x**` still bolds, Ctrl+Shift+V literal, copy-out `C:\Users` / `5 * 3` / `a < b` as shown; 4 of 5 fail with the old configuration) |
+
+**Deviations from the plan.**
+
+1. **A25-09: the undo is scoped by a snapshot, not a new `renameTagInPaths`.** The existing sweep already took a path filter, so `undoRename(snapshot)` runs `runTagRewriteSweep(new, old, root, writtenPaths)` and then changes back, in memory, only the attachments, board-only tiles and filter chips the snapshot names; the old name's definition comes back with its colour, and the new name's is dropped unless something carries it since. A failed note offers Retry of just the failed notes.
+2. **A25-09: a crash mid-undo resumes scoped.** The tag-rewrite sentinel gained `scoped`, so the next open's Resume rewrites only the plan's notes; without it, Resume of an interrupted undo would have renamed every note carrying the new name (the bug again, through recovery). `vault.svelte.ts` stayed at its line ceiling.
+3. **A25-09: a different spelling of the same tag is not a merge** (`draft` → `Draft`), since the sweep treats spellings as one tag.
+4. **A25-10: the gate also allows a raw read handed straight to a `*TagsField(...)` normaliser and assignments building a new note** (`fm.tags = […]` in quick-add), and exempts `markdownSync.ts`, whose assembler only drops an empty `tags: []` it is writing. The sweep found one more reader: the Task List's own `FIELD_READERS.tags`, which split text on spaces too (`tags: Book 1` was two tags there and one everywhere else); it now uses the shared normaliser.
+5. **A25-11: the Kanban bulk prompt has no autocomplete** (`TagPromptPopup` is a plain field), so nothing changed there. The Tags popup's `TagEditor` had its own copy of the substring list; it now uses `tagSuggestions`, and a chosen suggestion replaces only the entry being typed (`completeLastEntry`) instead of dropping the rest of a comma list.
+6. **A25-12: Undo from the toast drops the command rather than moving it to a redo stack** (KNOWN_LIMITATIONS #43); Ctrl+Z on its own tab still undoes it with a redo. The toggles apply to free text only; a `/regex/` keeps its own flags. `reset()` now clears them (a Clear or a vault swap starts plain). The confirm test mounts the real panel (component) and the wording has its own unit test.
+7. **A25-13: 8.3 / junction spellings aren't resolved.** The renderer sees only the path Explorer reports; the shared helpers compare case-insensitively and across separators, but can't expand `C:\MYVAUL~1`. Such a drop is copied, as before (KNOWN_LIMITATIONS #42). A file with no OS path now gets "Could not read dropped file" on the Task List too (it used to import by content), as the Mind Map already did. The sidebar's own OS drop onto a folder (`VaultFileItem.svelte`) still copies: dropping a file onto a folder reads as "put a copy here", and it isn't a board. `KanbanBoard.svelte` shrank 20 lines, and its allowlist ceiling was lowered to 1,416.
+8. **A25-14: tests are unit tests on a real editor** (`createTiptapEditor`) rather than a component mount; the paste goes through ProseMirror's own `clipboardTextParser` prop and the copy through `view.serializeForClipboard`. The paste parser is built from the class of tiptap-markdown's parser (the package doesn't export it), so every Filo extension's Markdown setup applies to pastes too.
+9. **Found by the real-app check, fixed: Enter couldn't confirm a tag merge.** Enter in the Tags Browser's rename field opened the merge confirm, which focuses Cancel; Chromium then delivered the same key's `keypress` to that button, so the confirm closed at once and nothing was merged. It predates this phase (a registered-tag merge did the same) and jsdom doesn't reproduce it. The field now calls `preventDefault()` on Enter; component `tagsBrowserRenameEnter.test.ts` pins that.
+10. **Harness:** the characterisation `RecordingDataTransfer` lists `Files` when it carries files, and the bridge's `getPathForFile` returns the path `dropFromExplorer` recorded and registers it with main as an approved copy source, as the preload does.
+
+**New findings (for later phases).**
+
+- **N8** — the same Enter-then-`keypress` hazard can reach any in-app confirm opened from an Enter `keydown` that doesn't `preventDefault` (a text field that opens a confirm on Enter). Worth a sweep in Phase 5 or a gate in Phase 6.
+
 ---
 
 ## Phase 4: Lifecycle edges
@@ -815,6 +857,8 @@ Taken in Phase 1, all at their defaults: D1 (with the differences in deviation 1
 
 Taken in Phase 2: D3 at its default (the queue runs in idle time, Phase 2 deviation 2); D5 at its default, with the remark packages uninstalled (deviation 10); D6 measured over its threshold (443–585 ms) and resolved by progressive rendering instead of windowing (deviation 9).
 
+Taken in Phase 3: D7 at its default (Markdown with HTML off and line breaks kept; Ctrl+Shift+V literal; KNOWN_LIMITATIONS #41).
+
 ## Not included
 
 - **Keeping boards mounted while their tab is hidden** (memory cost). A25-06 makes remounting cheap instead.
@@ -828,4 +872,5 @@ Plan written 2026-09-29.
 
 - **Phase 1: done** 2026-09-29 (see "Phase 1 outcome" for the deviations and four new findings, N1–N4). The report and this plan are committed with it.
 - **Phase 2: done** 2026-09-29 (see "Phase 2 outcome": before / after numbers, 12 deviations, new findings N5–N7).
-- Phases 3–8: not started.
+- **Phase 3: done** 2026-09-29 (see "Phase 3 outcome": the real-app check, 10 deviations including a pre-existing merge-confirm bug fixed, new finding N8).
+- Phases 4–8: not started.

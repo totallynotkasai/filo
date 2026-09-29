@@ -1,5 +1,6 @@
 import type { KanbanBoard as KanbanBoardType, Tile } from '../../schema/index';
-import { noteFrontmatter } from '../../stores/noteMeta';
+import { noteTags } from '../../stores/noteMeta';
+import { sameTag } from '../vault/sidebarTagFilter';
 import type { SelectionScope } from '../../stores/selection.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { historyStore } from '../../stores/history.svelte';
@@ -8,7 +9,7 @@ import {
   BatchCommand,
   DeleteCardCommand,
   MoveCardsCommand,
-  UpdateCardFieldCommand,
+  AddPathTagCommand,
 } from '../../commands/index';
 import { buildBulkCardContextMenu } from './kanbanContextMenus';
 
@@ -178,31 +179,20 @@ export class KanbanMultiSelect {
     if (!boardId) return;
     const allTilesById = this.deps.getAllTilesById();
 
-    // Build one field command per card and run them as a single BatchCommand.
-    // Each UpdateCardFieldCommand seeds the FM from disk INSIDE its own
-    // execute() (on the history chain), so save()/quit cover every card via
-    // whenChainSettled() — a quit mid-loop can't lose later cards' tags — and
-    // the whole bulk add is one undo step.
-    //
-    // The `tags` patch is computed up front from what the card shows — the
-    // note's model when open, else the vault-index snapshot. A card whose disk frontmatter carries a tag the stale index never
-    // learned would have that one external tag dropped by the additive patch —
-    // the same narrow index-staleness edge every field-edit command's patch
-    // carries; acceptable for a bulk convenience op.
+    // One tag-add command per card, run as a single BatchCommand on the
+    // history chain, so save()/quit cover every card via whenChainSettled()
+    // and the whole bulk add is one undo step. Each goes through the tag-row
+    // writer, which adds the tag to a fresh read of the note in the form its
+    // `tags:` field already has (a list, or text such as `tags: project`), so
+    // the tags the note carries are never replaced.
     const commands: Command[] = [];
     for (const tileId of selected) {
       const tile = allTilesById[tileId];
       if (!tile) continue;
       const path = this.deps.vaultPathForTile(tile);
       if (!path) continue;
-      const fm = noteFrontmatter(path);
-      const existing = Array.isArray((fm as Record<string, unknown>).tags)
-        ? ((fm as Record<string, unknown>).tags as unknown[]).map((t) => String(t).replace(/^#/, ''))
-        : [];
-      if (existing.includes(norm)) continue;
-      const nextTags = [...existing, norm];
-      const desc = `Add #${norm}`;
-      commands.push(new UpdateCardFieldCommand(boardId, path, { tags: nextTags }, { tags: existing }, desc));
+      if (noteTags(path).some((t) => sameTag(t, norm))) continue;
+      commands.push(new AddPathTagCommand(path, norm, boardId));
     }
     if (commands.length === 0) {
       uiStore.toast(`All selected cards already have #${norm}`, 'info', 2000);

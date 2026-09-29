@@ -57,9 +57,15 @@ export function withTagsAdded(current: readonly string[], added: readonly string
   return next;
 }
 
+/** The entry being typed: the text after the last comma, without a leading `#`. */
+function lastEntry(text: string): string {
+  return fold((text.split(',').pop() ?? '').trim().replace(/^#/, ''));
+}
+
 /**
  * Known tags offered for the entry being typed (the text after the last
- * comma): those containing it, ignoring case, minus tags already on the note.
+ * comma), minus tags already applied, ignoring case: the tag it names
+ * exactly first, then tags starting with it, then tags containing it.
  */
 export function tagSuggestions(
   text: string,
@@ -67,17 +73,29 @@ export function tagSuggestions(
   applied: readonly string[],
   limit = 8,
 ): string[] {
-  const query = fold((text.split(',').pop() ?? '').trim().replace(/^#/, ''));
+  const query = lastEntry(text);
   if (!query) return [];
   const skip = new Set(applied.map(fold));
-  const out: string[] = [];
-  for (const name of known) {
+  const ranked: Array<{ name: string; rank: number; order: number }> = [];
+  known.forEach((name, order) => {
     const folded = fold(name);
-    if (skip.has(folded) || !folded.includes(query)) continue;
-    out.push(name);
-    if (out.length >= limit) break;
-  }
-  return out;
+    if (skip.has(folded) || !folded.includes(query)) return;
+    const rank = folded === query ? 0 : folded.startsWith(query) ? 1 : 2;
+    ranked.push({ name, rank, order });
+  });
+  ranked.sort((a, b) => a.rank - b.rank || a.order - b.order);
+  return ranked.slice(0, limit).map((r) => r.name);
+}
+
+/**
+ * Which suggestion Enter takes before the user picks one: the first, only
+ * when it is exactly the typed entry (ignoring case). Otherwise -1, so Enter
+ * adds exactly what was typed (`urgent` never becomes `not-urgent`) and
+ * ArrowDown picks a suggestion.
+ */
+export function preselectedSuggestion(text: string, suggestions: readonly string[]): number {
+  const first = suggestions[0];
+  return first !== undefined && fold(first) === lastEntry(text) ? 0 : -1;
 }
 
 /** `text` with its last entry replaced by `name`, ready for the next entry. */

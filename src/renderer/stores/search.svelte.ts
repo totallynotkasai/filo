@@ -15,7 +15,7 @@
  */
 
 import { parseQuery, isEmptyQuery, type ParsedQuery } from '../lib/search/queryParser';
-import { runVaultSearch, MAX_MATCHES, type SearchMatch } from '../lib/search/runSearch';
+import { runVaultSearch, MAX_MATCHES, type SearchMatch, type SearchOptions } from '../lib/search/runSearch';
 import { onVaultSwap } from '../core/vaultLifecycle';
 
 export type SearchMode = 'find' | 'replace';
@@ -25,6 +25,9 @@ let replaceText = $state('');
 let mode = $state<SearchMode>('find');
 let open = $state(false);
 let currentIndex = $state(0);
+// Match case / Whole word: apply to free text, not to a /regex/ (its own flags).
+let matchCase = $state(false);
+let wholeWord = $state(false);
 // Pending "jump to this match" — surfaced to navigation listeners. Set by
 // `searchStore.next()` / `previous()` / `jumpTo(index)`; cleared when the
 // listener picks it up. Decoupled from `currentIndex` so a navigation
@@ -50,7 +53,7 @@ const searchResult = $derived.by(() => {
   if (isEmptyQuery(parsedQuery)) {
     return { matches: [] as SearchMatch[], truncated: false };
   }
-  return runVaultSearch(parsedQuery);
+  return runVaultSearch(parsedQuery, { matchCase, wholeWord });
 });
 
 /**
@@ -76,6 +79,10 @@ export const searchStore = {
   get matches(): SearchMatch[] { return searchResult.matches; },
   get truncated(): boolean { return searchResult.truncated; },
   get maxMatches(): number { return MAX_MATCHES; },
+  get matchCase(): boolean { return matchCase; },
+  get wholeWord(): boolean { return wholeWord; },
+  /** The options the matches were found with (Replace re-runs the search with them). */
+  get options(): SearchOptions { return { matchCase, wholeWord }; },
   get currentIndex() { return clampedIndex; },
   get currentMatch(): SearchMatch | null {
     const list = searchResult.matches;
@@ -93,6 +100,14 @@ export const searchStore = {
     query = next;
     // Reset the cursor to the head of the new result list, so the user isn't
     // left mid-way through the old one.
+    currentIndex = 0;
+  },
+  setMatchCase(next: boolean) {
+    matchCase = next;
+    currentIndex = 0;
+  },
+  setWholeWord(next: boolean) {
+    wholeWord = next;
     currentIndex = 0;
   },
   setReplaceText(next: string) {
@@ -155,6 +170,8 @@ export const searchStore = {
   reset() {
     query = '';
     replaceText = '';
+    matchCase = false;
+    wholeWord = false;
     currentIndex = 0;
     pendingJump = null;
     open = false;

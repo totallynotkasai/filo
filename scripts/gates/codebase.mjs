@@ -1,7 +1,7 @@
 // Codebase-wide hygiene ratchets.
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { fail, stripComments } from './lib.mjs';
+import { fail, stripComments, stripCommentsKeepLines, blank, scriptOnly, functionBody, matchBrace, lineAt } from './lib.mjs';
 
 // Per-file type-error counts for the test sources (tsconfig.tests.json) when
 // the ratchet was introduced. A file may only improve; a file not listed must
@@ -17,7 +17,7 @@ const FILE_SIZE_ALLOWLIST = {
   'src/renderer/components/boards/TaskListBoard.svelte': 1940,
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1439,
   'src/renderer/components/boards/TaskItem.svelte': 1481,
-  'src/renderer/components/boards/KanbanBoard.svelte': 1436,
+  'src/renderer/components/boards/KanbanBoard.svelte': 1416,
   'src/renderer/components/boards/KanbanColumn.svelte': 1170,
   'src/renderer/stores/vault.svelte.ts': 1467,
 };
@@ -33,8 +33,8 @@ const CHARACTERISATION_SPECS = {
   'noteModel.test.ts': 13,
   'oneModel.test.ts': 4,
   'trash.test.ts': 9,
-  'tagUndo.test.ts': 4,
-  'tagRowAndRawView.test.ts': 7,
+  'tagUndo.test.ts': 7,
+  'tagRowAndRawView.test.ts': 8,
   'undoAcrossRenames.test.ts': 6,
   'externalRenames.test.ts': 6,
   'newBoards.test.ts': 4,
@@ -57,6 +57,7 @@ const CHARACTERISATION_SPECS = {
   'editorFidelity.test.ts': 3,
   'kanbanClick.test.ts': 1,
   'taskFieldsAtOpen.test.ts': 1,
+  'explorerDrops.test.ts': 2,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are
@@ -345,6 +346,89 @@ export const checks = [
       const config = ctx.read('vitest.config.mts');
       if (config === null || !config.includes(`'${CHARACTERISATION_DIR}/**/*.test.ts'`)) {
         out.push(fail('vitest.config.mts', undefined, 'no vitest project runs the characterisation suite'));
+      }
+      return out;
+    },
+  },
+  {
+    // A note may write `tags: project` or `tags: a, b` as text. A reader that
+    // spreads `frontmatter.tags` as a list throws on it, and a writer that
+    // rebuilds the list from such a read replaces the note's tags.
+    id: 'tags-read-through-normaliser',
+    title: "a note's `tags:` is read only through the tags normaliser (noteTags / *TagsField)",
+    hint:
+      'Read tags with noteTags(path) (stores/noteMeta.ts) or pass the raw value straight to a ' +
+      'normalizeTagsField / orderPreservingTagsField / parseTagsField call; add or remove one with ' +
+      'the tag writer (AddPathTagCommand / writeTagChangeToMarkdownPath), never a whole `tags` patch.',
+    run(ctx) {
+      const out = [];
+      // The normaliser itself, the selectors built on it, the rewriter that
+      // keeps the field's own form, the index that parses it once, and the
+      // frontmatter assembler (which only drops an empty list it is writing).
+      const EXEMPT = new Set([
+        'src/renderer/lib/utils/normalizeTagsField.ts',
+        'src/renderer/stores/noteMeta.ts',
+        'src/renderer/lib/vault/tagRewriter.ts',
+        'src/renderer/lib/vault/vaultIndex.ts',
+        'src/renderer/lib/editor/markdownSync.ts',
+      ]);
+      const READ = /\b(?:frontmatter|fm)\)?\??\.tags\b|\b(?:frontmatter|fm)\)?\??\.?\[\s*['"]tags['"]\s*\]/;
+      for (const rel of ctx.files(['src/renderer'], { ext: SRC_EXT })) {
+        if (EXEMPT.has(rel)) continue;
+        stripCommentsKeepLines(ctx.read(rel)).split('\n').forEach((line, i) => {
+          if (!READ.test(line)) return;
+          // Handed straight to a normaliser, or an assignment building a new note.
+          if (/\b\w*TagsField\s*\(\s*(?:\w+\.)*(?:frontmatter|fm)\b/.test(line)) return;
+          if (/\b(?:frontmatter|fm)\.tags\s*=(?!=)/.test(line)) return;
+          out.push(fail(rel, i + 1, line.trim()));
+        });
+      }
+      return out;
+    },
+  },
+  {
+    // A file dragged from Explorer that is already in the vault must be
+    // linked by its path. Copying (or importing) it made a second note,
+    // `Plan (1).md`, that edits then went to while the original sat unused.
+    id: 'os-drops-classify-first',
+    title: 'a board drop handler copies or imports a dropped file only after classifyDroppedFile',
+    hint:
+      'Call classifyDroppedFile(file, vaultRoot) (lib/vault/droppedFiles.ts) and link an `in-vault` file by ' +
+      'its relPath; copy / import only an `OutsideDrop` (take one as the parameter of a helper that copies).',
+    run(ctx) {
+      const out = [];
+      const HANDLERS = [
+        'src/renderer/lib/canvas/dragDrop.ts',
+        'src/renderer/lib/kanban/kanbanFileDropHandler.ts',
+        'src/renderer/lib/tasklist/fileDropHandler.ts',
+        'src/renderer/components/boards/KanbanBoard.svelte',
+      ];
+      for (const rel of HANDLERS) {
+        const src = ctx.read(rel);
+        if (src === null) { out.push(fail(rel, undefined, 'file missing — re-point the check')); continue; }
+        const code = blank(rel.endsWith('.svelte') ? scriptOnly(src) : src);
+        // Every function in the file: `function name(…) {…}` and `(…) => {…}`,
+        // each with its signature, so a helper whose parameter is an
+        // `OutsideDrop` counts as classified.
+        const fns = [];
+        for (const m of code.matchAll(/\bfunction\s+(\w+)/g)) {
+          const body = functionBody(code.slice(m.index), m[1], { fnKeyword: true });
+          if (body) fns.push({ start: m.index, end: m.index + body.end, sigEnd: m.index + body.start });
+        }
+        for (const m of code.matchAll(/=>\s*\{/g)) {
+          const open = m.index + m[0].length - 1;
+          const close = matchBrace(code, open, '{', '}');
+          const lineStart = code.lastIndexOf('\n', m.index) + 1;
+          if (close > 0) fns.push({ start: lineStart, end: close + 1, sigEnd: open });
+        }
+        for (const m of code.matchAll(/\b(?:copyFileIntoVault|createUnique)\s*\(/g)) {
+          const inner = fns
+            .filter((f) => f.sigEnd < m.index && m.index < f.end)
+            .sort((a, b) => (a.end - a.start) - (b.end - b.start))[0];
+          const text = inner ? code.slice(inner.start, inner.end) : '';
+          if (/\bclassifyDroppedFile\s*\(|\bOutsideDrop\b/.test(text)) continue;
+          out.push(fail(rel, lineAt(src, m.index), `\`${m[0].replace(/\s*\($/, '')}\` in a function that never classifies the dropped file`));
+        }
       }
       return out;
     },

@@ -44,6 +44,9 @@ export interface ReadHold {
 
 let bridge: MainBridge | null = null;
 
+/** Files a test dropped "from Explorer", with their paths on disk (what `webUtils.getPathForFile` knows). */
+export const osFilePaths = new WeakMap<File, string>();
+
 export function mainBridge(): MainBridge {
   if (bridge) return bridge;
   registerAllHandlers();
@@ -60,7 +63,14 @@ export function mainBridge(): MainBridge {
 
   const filo = {
     systemLocale: 'en-GB',
-    getPathForFile: () => '',
+    // As the preload's: the path of a file dropped from disk (`dropFromExplorer`
+    // records it), registered with main as an approved copy source.
+    getPathForFile: (file: File): string => {
+      const path = osFilePaths.get(file);
+      if (!path) return '';
+      for (const l of mainListeners.get('vault:register-source-path') ?? []) l({ sender }, path);
+      return path;
+    },
     invoke: async (channel: string, ...args: unknown[]): Promise<unknown> => {
       const validation = validateIpcPayload(channel, args);
       if (!validation.ok) throw new Error(`Invalid IPC payload for ${channel}: ${validation.error}`);

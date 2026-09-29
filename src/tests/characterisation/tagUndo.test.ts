@@ -83,6 +83,60 @@ describe('tag rename, then Undo', () => {
     await waitFor(() => app.read('A.md') === a && app.read('B.md') === b, 'both notes back to the old name');
   });
 
+  it('a rename into a tag that is only in a note (not registered) is a merge, and asks first', async () => {
+    const b = '---\ntitle: B\ntags: [waiting]\n---\nBody B\n';
+    const app = await startApp({
+      'A.md': '---\ntitle: A\ntags: [blocked]\n---\nBody A\n',
+      'B.md': b,
+      '.filo/tags.json': tagsJson({ blocked: '#123456' }),
+    });
+
+    const renaming = renameTagEverywhere(app, 'blocked', 'waiting');
+    await waitFor(() => document.querySelector('.confirm-dialog') !== null, 'the merge confirm');
+    expect(document.querySelector('.confirm-dialog')?.textContent ?? '').toMatch(/merged/);
+    const confirmBtn = document.querySelector('.confirm-dialog .confirm-actions .confirm-btn:not(.cancel):not(.secondary)') as HTMLElement;
+    confirmBtn.click();
+    await renaming;
+    await waitFor(() => app.read('A.md').includes('waiting'), 'the merge on disk');
+    await quiesce(500);
+    expect(toastActions()).not.toContain('Undo');
+    expect(app.read('B.md')).toBe(b);
+  });
+
+  it('a rename into another spelling of an existing tag is a merge', async () => {
+    const app = await startApp({
+      'A.md': '---\ntitle: A\ntags: [draft]\n---\nBody A\n',
+      'B.md': '---\ntitle: B\ntags: [review]\n---\nBody B\n',
+      '.filo/tags.json': tagsJson({ draft: '#123456' }),
+    });
+
+    const renaming = renameTagEverywhere(app, 'draft', 'Review');
+    await waitFor(() => document.querySelector('.confirm-dialog') !== null, 'the merge confirm');
+    const cancelBtn = document.querySelector('.confirm-dialog .confirm-actions .confirm-btn.cancel') as HTMLElement;
+    cancelBtn.click();
+    await renaming;
+    await quiesce(300);
+    expect(app.read('A.md')).toContain('draft');
+  });
+
+  it('Undo renames back only the notes the rename changed', async () => {
+    const a = '---\ntitle: A\ntags: [old]\n---\nBody A\n';
+    const app = await startApp({ 'A.md': a, 'B.md': '---\ntitle: B\n---\nBody B\n' });
+
+    await renameTagEverywhere(app, 'old', 'fresh');
+    await waitFor(() => app.read('A.md').includes('fresh'), 'the rename on disk');
+    await closeModal();
+    // Another program tags B with the new name before the user clicks Undo.
+    const b = '---\ntitle: B\ntags: [fresh]\n---\nBody B\n';
+    app.writeExternally('B.md', b);
+    await quiesce(800);
+
+    await chooseToastAction('Undo');
+    await waitFor(() => app.read('A.md') === a, 'A back to the old name');
+    await quiesce(500);
+    expect(app.read('B.md')).toBe(b);
+  });
+
   it('a rename into an existing tag (a merge) offers no Undo', async () => {
     const app = await startApp({
       'A.md': '---\ntitle: A\ntags: [draft]\n---\nBody\n',

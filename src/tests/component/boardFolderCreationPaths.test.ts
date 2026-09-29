@@ -118,8 +118,7 @@ describe("files a board creates go in the board's folder", () => {
     await importKanbanFileTile({
       type: 'image',
       tileId: 't1',
-      sourcePath: 'D:/outside/pic.png',
-      fileName: 'pic.png',
+      drop: { kind: 'outside', file: new File([''], 'pic.png'), sourcePath: 'D:/outside/pic.png' },
       vaultRoot: 'C:/vault',
       destFolder: 'Plan',
       allTilesById: {},

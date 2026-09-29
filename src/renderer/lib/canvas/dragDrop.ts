@@ -4,7 +4,7 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { framesStore } from '../../stores/frames.svelte';
 import { reportError } from '../utils/errorBus';
-import { isInsideVault, vaultRelativeFromAbsolute } from './vaultPath';
+import { classifyDroppedFile, vaultRelativeFromAbsolute } from '../vault/droppedFiles';
 import { buildTextTileDefForNote } from './markdownTileSeed';
 import { copyFileIntoVault } from '../vault/vaultOperations';
 import type { TextTile, Tile } from '../../schema/index';
@@ -17,25 +17,6 @@ import { AddTilesCommand } from '../../commands/index';
 // view. The action takes the pane's BoardScope and creates against
 // `scope.board`/`scope.canvas`.
 import { setActiveScope, type BoardScope, type BoardScopeBoard } from '../boards/boardScope.svelte';
-
-/**
- * Electron 32+ removed the legacy `path` property from `File`, but the
- * `webUtils.getPathForFile` bridge (exposed at `window.filo.getPathForFile`)
- * still works. Older drops may still expose `path`, so probe both behind
- * a narrowing projection rather than a wholesale `any` escape hatch.
- */
-function resolveDroppedFilePath(file: File): string | undefined {
-  const legacyPath = (file as File & { path?: unknown }).path;
-  if (typeof legacyPath === 'string' && legacyPath.length > 0) return legacyPath;
-  try {
-    const resolved = window.filo.getPathForFile?.(file);
-    if (resolved) return resolved;
-  } catch {
-    // Bridge unavailable in some contexts (popout sidebar). Caller surfaces
-    // a toast when neither probe yields a path.
-  }
-  return undefined;
-}
 
 /**
  * Drag-and-drop action — handles OS file drops onto the canvas.
@@ -181,19 +162,19 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
         const fileExt = file.name.split('.').pop() || '';
         const type = file.type ? getTileTypeFromMime(file.type) : getTileTypeFromExtension(fileExt);
 
-        const sourcePath = resolveDroppedFilePath(file);
+        const dropped = classifyDroppedFile(file, vaultDir);
+        const sourcePath = dropped?.kind === 'outside' ? dropped.sourcePath : undefined;
 
-        // If the OS-dragged file is already inside the vault, do NOT copy
-        // it (which would create a duplicate like "NotesTest (1).md").
-        // Instead, link the existing file as a tile — same code path as the
-        // sidebar drop branch above.
-        if (sourcePath && isInsideVault(sourcePath, vaultDir)) {
+        // A file already inside the vault is linked, never copied (a copy
+        // would be a second note, "NotesTest (1).md"): the same code path
+        // as the sidebar drop branch above.
+        if (dropped?.kind === 'in-vault') {
           const dropPos = { x: canvasPos.x + offsetX, y: canvasPos.y };
+          const relPath = dropped.relPath;
           if (type === 'text') {
-            const created = await createTextTileFromFile(scope.board, sourcePath, dropPos);
+            const created = await createTextTileFromFile(scope.board, relPath, dropPos);
             if (created) dropTiles.push(created);
           } else {
-            const relPath = vaultRelativeFromAbsolute(sourcePath, vaultDir);
             const overrides: Record<string, unknown> = {};
             if (type === 'image' || type === 'video' || type === 'audio') {
               overrides.src = relPath;

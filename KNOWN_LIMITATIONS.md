@@ -861,7 +861,9 @@ a channel that accepts nothing but trash ids.
 
 ## 26. A tag merge can't be undone
 
-**What:** Renaming a tag into one that already exists merges the two. The
+**What:** Renaming a tag into one that already exists merges the two. A tag
+exists when it is carried anywhere, in any spelling (`Review` for `review`),
+even one that is only in a note's frontmatter and was never registered. The
 confirm says so ("This can't be undone"), and no Undo is offered afterwards.
 Undo of a plain rename is refused too if a tag with the old name has appeared
 again in the meantime, because renaming back would merge.
@@ -1280,3 +1282,56 @@ folder's reorder zone needs all its rows in the page.
 
 **Impact:** For about a second after expanding a folder of thousands of notes,
 its last rows aren't in the list yet and it can't be reordered.
+
+## 41. Plain text pasted into a note is read as Markdown (without HTML)
+
+**What:** Text pasted with no HTML on the clipboard (from Notepad, a terminal,
+a code editor) is read as Markdown with HTML off and every line break kept:
+`**x**` becomes bold and `# Title` a heading, while `List<String>` and
+`<!-- -->` stay text. **Ctrl+Shift+V** pastes it literally instead (a
+paragraph per blank-line-separated block, a line break per newline).
+
+**Where:** [src/renderer/lib/editor/pastePlainText.ts](src/renderer/lib/editor/pastePlainText.ts).
+
+**Why accepted:** Markdown copied from another app (a README, a chat) should
+paste with its formatting; that is the more common case in a Markdown
+notebook. Text that only looks like Markdown has the literal paste.
+
+**Impact:** To paste `__init__` or `*args` exactly, use Ctrl+Shift+V.
+
+## 42. A file dropped from Explorer by another spelling of the vault's path is copied
+
+**What:** A file dropped from Explorer onto a board is linked by its path when
+it is inside the open vault, and copied in otherwise. "Inside" is decided on
+the path Explorer reports, ignoring case. A path that reaches the vault
+another way (an 8.3 short name such as `C:\MYVAUL~1\`, a junction or a
+mapped drive) isn't recognised, so the file is copied as if it came from
+outside.
+
+**Where:** `classifyDroppedFile` in
+[src/renderer/lib/vault/droppedFiles.ts](src/renderer/lib/vault/droppedFiles.ts).
+
+**Why accepted:** Explorer reports the long path of the folder it shows, which
+is the one the vault was opened by in everyday use. Resolving every spelling
+would need a main-process round trip per dropped file.
+
+**Impact:** Rare. The copy is a new note (`Plan (1).md`); delete it and drop
+the original from the sidebar instead.
+
+## 43. Undoing Replace All from its notification leaves nothing to redo
+
+**What:** Replace All's notification offers **Undo**, which takes the replace
+back from any tab, even with other steps on top of it. Undone that way, it is
+taken off the undo history and can't be redone (Ctrl+Z on the tab that was
+active when it ran undoes it with a redo, while it is the last step there).
+
+**Where:** `historyStore.undoFromToast` in
+[src/renderer/stores/history.svelte.ts](src/renderer/stores/history.svelte.ts);
+`runReplaceAllCommand` in
+[src/renderer/commands/replaceAllCommand.ts](src/renderer/commands/replaceAllCommand.ts).
+
+**Why accepted:** A redo put back on some tab's stack below newer steps would
+be out of order. Run Replace All again to redo it.
+
+**Impact:** After an Undo from the notification, repeat the Replace All to
+apply it again.

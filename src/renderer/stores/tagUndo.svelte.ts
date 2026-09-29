@@ -15,14 +15,24 @@
  * file inside its write queue, so an edit made to the note in between is
  * kept. A tag that wasn't last in a note's list comes back at the end.
  *
- * Undoing a rename is the reverse rename. A rename into an existing tag
- * merges the two, which can't be split again, so it offers no Undo.
+ * Undoing a rename renames back only what the rename changed: a note tagged
+ * with the new name since keeps it. A rename into an existing tag (in any
+ * spelling, registered or not) merges the two, which can't be split again,
+ * so it offers no Undo.
  */
+import { SvelteSet } from 'svelte/reactivity';
 import { fileTagsStore } from './fileTags.svelte';
+import { vaultIndexStore } from './vaultIndex.svelte';
+import { sameTag } from '../lib/vault/sidebarTagFilter';
 import { noteStore } from './notes.svelte';
 import { uiStore } from './ui.svelte';
 import { boardCacheStore } from './boardCache.svelte';
-import { iterateBoardOnlyTiles, flushTagRewriteBoardWrites } from './fileTagsCascade.svelte';
+import {
+  iterateBoardOnlyTiles,
+  flushTagRewriteBoardWrites,
+  pushTagRewriteFailureToast,
+  runTagRewriteSweep,
+} from './fileTagsCascade.svelte';
 import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { addTagToMarkdown } from '../lib/vault/tagRewriter';
 import { isMarkdownExtension } from '../lib/vault/extension';
@@ -204,6 +214,35 @@ export async function undoRemoval(snapshot: TagRemovalSnapshot): Promise<void> {
   }
 }
 
+
+/**
+ * True when renaming `oldName` to `newName` would merge it into a tag that
+ * already exists, in any spelling, anywhere: the registry, a note (even one
+ * whose tag was never registered), an attachment or a board-only tile. A
+ * different spelling of the tag itself (`draft` → `Draft`) is not a merge.
+ */
+export function isMergingRename(oldName: string, newName: string): boolean {
+  if (sameTag(oldName, newName)) return false;
+  return fileTagsStore.tagExists(newName);
+}
+
+/**
+ * What a vault-wide rename changed, so its Undo changes back only that: the
+ * notes it rewrote, the attachments and board-only tiles that carried the
+ * old name, and the filter chips that named it. Anything tagged with the new
+ * name after the rename keeps it.
+ */
+export interface TagRenameSnapshot {
+  identity: VaultIdentity;
+  oldName: string;
+  newName: string;
+  color: string | undefined;
+  writtenPaths: string[];
+  mediaPaths: string[];
+  tiles: Array<{ boardId: string; id: string }>;
+  chips: FilterChip[];
+}
+
 /**
  * Renames `oldName` to `newName` everywhere (the caller has confirmed any
  * merge) and offers Undo when the rename can be reversed: only when
@@ -211,8 +250,24 @@ export async function undoRemoval(snapshot: TagRemovalSnapshot): Promise<void> {
  */
 export async function renameTagWithUndo(oldName: string, newName: string): Promise<boolean> {
   const identity = captureVaultIdentity();
-  const merging = fileTagsStore.allTagNames().includes(newName);
-  const color = fileTagsStore.getDefinition(oldName)?.color;
+  await vaultIndexStore.whenBuildComplete();
+  // The rename loads every board before it runs; do it first so the snapshot
+  // sees the same tiles and chips the rename will touch.
+  await boardCacheStore.ensureAllLoaded();
+  if (!isStillSameVault(identity)) return false;
+  const merging = isMergingRename(oldName, newName);
+  const snapshot: TagRenameSnapshot = {
+    identity,
+    oldName,
+    newName: newName.trim(),
+    color: fileTagsStore.getDefinition(oldName)?.color,
+    writtenPaths: [],
+    mediaPaths: fileTagsStore.filesForTag(oldName).filter((p) => !isNotePath(p)),
+    tiles: [...iterateBoardOnlyTiles()]
+      .filter((t) => t.tags.includes(oldName))
+      .map((t) => ({ boardId: t.boardId, id: t.id })),
+    chips: findFilterChips(oldName),
+  };
   const outcome = await fileTagsStore.renameTagEverywhere(oldName, newName);
   if (!outcome.committed || !isStillSameVault(identity)) return outcome.committed;
   if (merging) {
@@ -220,29 +275,96 @@ export async function renameTagWithUndo(oldName: string, newName: string): Promi
     uiStore.pushToast({ text: `Merged "#${oldName}" into "#${newName}".`, type: 'success', duration: TAG_UNDO_TOAST_MS });
     return true;
   }
+  snapshot.writtenPaths = outcome.writtenPaths;
   uiStore.pushToast({
     text: `Renamed "#${oldName}" to "#${newName}".`,
     type: 'success',
     duration: TAG_UNDO_TOAST_MS,
-    actions: [{ label: 'Undo', handler: () => undoRename(identity, oldName, newName, color) }],
+    actions: [{ label: 'Undo', handler: () => undoRename(snapshot) }],
   });
   return true;
 }
 
-/** Renames the tag back, unless that would now merge it into another. */
-export async function undoRename(
-  identity: VaultIdentity,
-  oldName: string,
-  newName: string,
-  color: string | undefined,
-): Promise<void> {
+function renamedIn(tags: readonly string[], from: string, to: string): string[] | null {
+  if (!tags.includes(from)) return null;
+  return Array.from(new SvelteSet(tags.map((t) => (t === from ? to : t))));
+}
+
+/**
+ * Renames the tag back in exactly the places the rename changed, unless the
+ * old name exists again (renaming back would then merge the two). The notes
+ * go first, each rewritten on a fresh read; the registry, attachments, tiles
+ * and chips follow only once every note is back, as in the rename itself.
+ * `retrying`: a Retry of the notes that failed, whose siblings already carry
+ * the old name again.
+ */
+export async function undoRename(snapshot: TagRenameSnapshot, retrying = false): Promise<void> {
+  const { identity, oldName, newName } = snapshot;
   if (!isStillSameVault(identity)) return;
-  if (fileTagsStore.allTagNames().includes(oldName)) {
+  if (!retrying && fileTagsStore.tagExists(oldName)) {
     uiStore.toast(`Can't undo: a tag named "#${oldName}" exists again, and renaming back would merge them.`, 'warning', 5000);
     return;
   }
-  const outcome = await fileTagsStore.renameTagEverywhere(newName, oldName);
-  if (!outcome.committed || !isStillSameVault(identity)) return;
-  if (color) fileTagsStore.setTagColor(oldName, color);
+
+  if (snapshot.writtenPaths.length > 0) {
+    const { failed: unflushed } = await noteStore.flushAll();
+    if (!isStillSameVault(identity)) return;
+    if (unflushed.length > 0) {
+      uiStore.pushToast({
+        text: `Couldn't undo the rename: pending edits to ${unflushed.length} file${unflushed.length === 1 ? '' : 's'} couldn't be saved. Resolve those errors and try again.`,
+        type: 'error',
+        duration: 0,
+      });
+      return;
+    }
+    const result = await runTagRewriteSweep(newName, oldName, identity.path, new SvelteSet(snapshot.writtenPaths));
+    if (!isStillSameVault(identity)) return;
+    if (result.failed.length > 0) {
+      pushTagRewriteFailureToast({
+        verb: 'Undo of the tag rename',
+        failedCount: result.failed.length,
+        attempted: result.attempted,
+        retry: () => undoRename({ ...snapshot, writtenPaths: result.failed }, true),
+      });
+      return;
+    }
+  }
+
+  for (const path of snapshot.mediaPaths) {
+    const next = renamedIn(fileTagsStore.tagsForFile(path), newName, oldName);
+    if (next) fileTagsStore.setFileTags(path, next);
+  }
+  const wanted = new SvelteSet(snapshot.tiles.map((t) => `${t.boardId}/${t.id}`));
+  for (const t of iterateBoardOnlyTiles()) {
+    if (!wanted.has(`${t.boardId}/${t.id}`)) continue;
+    const next = renamedIn(t.tags, newName, oldName);
+    if (next) boardCacheStore.persistUpdateTile(t.id, { tags: next }, t.boardId);
+  }
+  for (const chip of snapshot.chips) renameFilterChip(chip, newName, oldName);
+
+  fileTagsStore.ensureTag(oldName, snapshot.color);
+  if (snapshot.color) fileTagsStore.setTagColor(oldName, snapshot.color);
+  // The new name's definition goes too, unless something was tagged with it since.
+  if (!fileTagsStore.tagInUse(newName)) fileTagsStore.deleteTag(newName);
+
+  await fileTagsStore.flushPendingSave();
+  if (!isStillSameVault(identity)) return;
+  await flushTagRewriteBoardWrites('Undo of the tag rename');
 }
 
+/** Renames one filter chip back, if it still names the tag. See `restoreFilterChip`. */
+function renameFilterChip(chip: FilterChip, from: string, to: string): void {
+  const board = boardCacheStore.cache[chip.boardId]?.board;
+  if (!board) return;
+  const settings = (board.settings ?? {}) as ViewSettings;
+  const carrier = carrierAt(settings, chip.slot);
+  const next = carrier?.filterTags ? renamedIn(carrier.filterTags, from, to) : null;
+  if (!carrier || !next) return;
+  const renamed = { ...carrier, filterTags: next };
+  const slot = chip.slot;
+  board.settings = (slot === 'lastView'
+    ? { ...settings, lastView: renamed }
+    : { ...settings, savedViews: (settings.savedViews ?? []).map((v, i) => (i === slot ? renamed : v)) }) as typeof board.settings;
+  boardCacheStore.markDirty(chip.boardId);
+  bumpBoardViewRevision(chip.boardId);
+}

@@ -69,17 +69,27 @@ export interface SearchMatch {
   tags: readonly string[];
 }
 
+/** The Search panel's Match case / Whole word toggles (free text only). */
+export interface SearchOptions {
+  matchCase?: boolean;
+  wholeWord?: boolean;
+}
+
 /**
- * Builds a global RegExp from a free-text needle. Case-insensitive by default
- * so the user doesn't have to remember the original casing. Returns null when
- * the input is empty.
+ * Builds a global RegExp from a free-text needle: case-insensitive unless
+ * `matchCase`. `wholeWord` matches only where no letter, digit or `_` (in any
+ * script) touches either end, so `cat` skips `concatenate` and `café` is a
+ * word of its own. Returns null when the input is empty.
  */
-function buildNeedleRegex(needle: string): RegExp | null {
+export function buildNeedleRegex(needle: string, options: SearchOptions = {}): RegExp | null {
   if (!needle) return null;
   // Escape every metacharacter so the needle is treated as a literal string,
   // even when the user types something like "foo(bar)".
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(escaped, 'gi');
+  const flags = options.matchCase ? 'g' : 'gi';
+  if (!options.wholeWord) return new RegExp(escaped, flags);
+  // `u` for the Unicode letter / number classes.
+  return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, `${flags}u`);
 }
 
 /**
@@ -297,7 +307,10 @@ export const MAX_MATCHES = 5000;
  * most `MAX_MATCHES` results; the `truncated` flag tells the caller
  * whether more matches existed.
  */
-export function runVaultSearch(query: ParsedQuery): { matches: SearchMatch[]; truncated: boolean } {
+export function runVaultSearch(
+  query: ParsedQuery,
+  options: SearchOptions = {},
+): { matches: SearchMatch[]; truncated: boolean } {
   // Empty query: short-circuit (avoid an O(n) walk for a no-op).
   const hasOps = query.operators.length > 0;
   const hasText = query.freeText.trim().length > 0;
@@ -334,9 +347,9 @@ export function runVaultSearch(query: ParsedQuery): { matches: SearchMatch[]; tr
   }
 
   // Build the body-scan regex. When the user typed a bare /regex/, use it
-  // verbatim (already global). Otherwise treat the free text as a literal
-  // case-insensitive substring.
-  const bodyRegex = query.regex ?? buildNeedleRegex(query.freeText);
+  // verbatim (already global; its own flags decide case). Otherwise the free
+  // text is a literal, shaped by the Match case / Whole word options.
+  const bodyRegex = query.regex ?? buildNeedleRegex(query.freeText, options);
   // Title scan uses the same regex so the matched substring stays in lock-
   // step with body matches. Clone the regex so resetting `lastIndex`
   // between scans doesn't bleed across iterations.
@@ -428,4 +441,23 @@ function toTitleMatch(t: TileEnumeration, start: number, end: number, text: stri
     snippet: t.title,
     tags: t.tags,
   };
+}
+
+/**
+ * What Replace All would change: only body matches (it never renames a
+ * title), and the notes they are in, in match order.
+ */
+export function replaceableMatches(matches: readonly SearchMatch[]): { count: number; files: string[] } {
+  let count = 0;
+  const files: string[] = [];
+  const seen = new Set<VaultPath>();
+  for (const m of matches) {
+    if (m.matchKind !== 'body' || !m.filePath) continue;
+    count++;
+    const key = vaultPath(m.filePath);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    files.push(m.filePath);
+  }
+  return { count, files };
 }

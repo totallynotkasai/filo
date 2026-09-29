@@ -5,6 +5,8 @@
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import SearchFindAllPopup from './SearchFindAllPopup.svelte';
   import IconButton from '../shared/IconButton.svelte';
+  import { replaceableMatches } from '../../lib/search/runSearch';
+  import { replaceAllConfirmBody, TOO_MANY_TO_REPLACE } from '../../lib/search/replaceAllText';
 
   /**
    * Vault-wide Search panel.
@@ -160,14 +162,22 @@
   }
 
   async function handleReplaceAll(): Promise<void> {
-    const matchCount = searchStore.matches.length;
-    if (matchCount === 0) {
-      uiStore.toast('No matches to replace.', 'info', 2500);
+    if (searchStore.truncated) {
+      uiStore.toast(TOO_MANY_TO_REPLACE, 'warning', 4000);
+      return;
+    }
+    const { count, files } = replaceableMatches(searchStore.matches);
+    if (count === 0) {
+      uiStore.toast(
+        searchStore.matches.length === 0 ? 'No matches to replace.' : 'Only title matches found; Replace All leaves titles alone.',
+        'info',
+        3000,
+      );
       return;
     }
     uiStore.openConfirm({
       title: 'Replace All',
-      body: `Replace ${matchCount} match${matchCount === 1 ? '' : 'es'} across the vault? This action is undoable.`,
+      body: replaceAllConfirmBody(count, files, searchStore.matches.length - count),
       confirmLabel: 'Replace All',
       danger: false,
       onConfirm: () => {
@@ -303,6 +313,25 @@
       </div>
     </div>
 
+    <div class="row options" role="group" aria-label="Match options">
+      <label class="option" title="Match upper and lower case exactly (not for a /regex/)">
+        <input
+          type="checkbox"
+          checked={searchStore.matchCase}
+          onchange={(e) => searchStore.setMatchCase((e.currentTarget as HTMLInputElement).checked)}
+        />
+        Match case
+      </label>
+      <label class="option" title="Only whole words: 'cat' doesn't find 'concatenate' (not for a /regex/)">
+        <input
+          type="checkbox"
+          checked={searchStore.wholeWord}
+          onchange={(e) => searchStore.setWholeWord((e.currentTarget as HTMLInputElement).checked)}
+        />
+        Whole word
+      </label>
+    </div>
+
     {#if searchStore.mode === 'replace'}
       <div class="row">
         <label class="visually-hidden" for="search-replace-input">Replace</label>
@@ -330,12 +359,16 @@
             type="button"
             class="text-btn danger"
             onclick={() => void handleReplaceAll()}
-            disabled={searchStore.matches.length === 0}
+            disabled={searchStore.matches.length === 0 || searchStore.truncated}
+            title={searchStore.truncated ? TOO_MANY_TO_REPLACE : undefined}
           >
             Replace All
           </button>
         </div>
       </div>
+      {#if searchStore.truncated}
+        <p class="replace-note" role="note">{TOO_MANY_TO_REPLACE}</p>
+      {/if}
     {/if}
   </section>
 
@@ -426,6 +459,31 @@
 
   .row + .row {
     padding-top: 0;
+  }
+
+  .row.options {
+    gap: 14px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .option {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+
+  .option input {
+    margin: 0;
+    accent-color: var(--accent-primary);
+  }
+
+  .replace-note {
+    margin: 0;
+    padding: 0 10px 8px;
+    font-size: 11px;
+    color: var(--text-secondary);
   }
 
   .search-input {

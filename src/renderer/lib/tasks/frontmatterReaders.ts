@@ -11,6 +11,7 @@
  */
 
 import type { RecurrenceMode } from './recurrence';
+import { orderPreservingTagsField } from '../utils/normalizeTagsField';
 
 export type Priority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
 
@@ -87,19 +88,8 @@ export const FIELD_READERS = {
     return typeof v === 'string' ? v.trim() : '';
   },
 
+  /** Through the one tags normaliser, so a row shows the tags every other view shows. */
   tags(fm: Frontmatter): string[] {
-    const v = fm.tags;
-    if (Array.isArray(v)) {
-      return v
-        .map((t) => String(t).replace(/^#/, '').trim())
-        .filter((t) => t.length > 0);
-    }
-    if (typeof v === 'string') {
-      return v
-        .split(/[,\s]+/)
-        .map((t) => t.replace(/^#/, '').trim())
-        .filter(Boolean);
-    }
-    return [];
+    return orderPreservingTagsField(fm.tags);
   },
 } as const;

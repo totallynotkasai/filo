@@ -26,7 +26,7 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: 82 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: 84 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
@@ -36,7 +36,7 @@ Package:        npm run package
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; a handler's vault-relative path comes from the root / target pair `assertWithinVault` matched (`vaultRelativeWithin`), never `path.relative` across two spellings of the vault (an 8.3 name, a junction), so the `.filo/` guards can't be walked around; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; a command holding snapshots of boards beyond its own names them in `touchedBoardIds()`, so a board reload drops it; Task List section positions are clamped. |
 | `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts, no view or lib module reads the vault index's vault-wide `version` (it reads the notes it shows), and a Kanban card builds its editor through `LazyTextTileBody` (a static preview, the editor mounted in idle time or on a press). |
-| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; app source and build config carry no audit ids (`Audit-N`, `P0-N`, `Phase N / N.N`). |
+| `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; app source and build config carry no audit ids (`Audit-N`, `P0-N`, `Phase N / N.N`); a note's `tags:` is read only through the tags normaliser (`noteTags` / `*TagsField`), since a note may write them as text (`tags: project`); a board's drop handler copies or imports a file dropped from Explorer only after `classifyDroppedFile` (a file already in the vault is linked by its path, never copied). |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// allow-direct-write: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
 
@@ -58,7 +58,7 @@ The `coverage` job (the vitest coverage ratchet) runs on pushes to `main` and on
 | Frontend           | Svelte 5 (runes: `$state`, `$derived`, `SvelteSet`), TypeScript, Vite |
 | Rich text editor   | TipTap (ProseMirror) + tiptap-markdown for MD round-tripping          |
 | Canvas             | Custom pointer-event handlers + rbush (spatial index)                  |
-| Markdown parsing   | markdown-it (the editor, through tiptap-markdown; card previews); `yaml` package for FM |
+| Markdown parsing   | markdown-it (the editor, through tiptap-markdown; card previews; a plain-text paste, with HTML off and line breaks kept); `yaml` package for FM |
 | Full-text search   | MiniSearch (the vault index's `query()`, built on first use); the Search panel matches note bodies itself |
 | Schema validation  | Zod                                                                    |
 | List drag-and-drop | svelte-dnd-action                                                      |
@@ -188,7 +188,7 @@ filo/
 │   │   │   ├── vaultExternalPrompts.ts  # Attachment / note deleted outside Filo while tiles point at it
 │   │   │   ├── vaultExternalDriftPrompts.ts # Startup registration of the writers' drift prompts
 │   │   │   ├── openTagHousekeeping.ts # After open: seed an empty tag registry, or prune gone files' tags once the recovery prompts are answered
-│   │   │   ├── search.svelte.ts       # Search panel state: query, matches, replace
+│   │   │   ├── search.svelte.ts       # Search panel state: query, Match case / Whole word, matches, replace
 │   │   │   ├── vaultRecovery.ts       # `.filo/.dirty.<machineId>` sentinel + recovery modal
 │   │   │   ├── foreignSentinels.svelte.ts # Other machines' sentinels in a synced `.filo/`: listed / one info toast, never resumed or cleared
 │   │   │   ├── vaultLifecycleGuard.svelte.ts # One vault open or close at a time (a second returns 'busy'; Home disables its cards)
@@ -245,7 +245,7 @@ filo/
 │   │   │   ├── frames.svelte.ts
 │   │   │   ├── fileTags.svelte.ts     # `.filo/tags.json`: tag registry + media-file tags; vault-wide rename/remove
 │   │   │   ├── fileTagsCascade.svelte.ts # Tag rename / remove cascade into board-only tiles and board settings, plus the `.md` sweep
-│   │   │   ├── tagUndo.svelte.ts      # Undo toast for vault-wide tag delete / rename
+│   │   │   ├── tagUndo.svelte.ts      # Undo toast for vault-wide tag delete / rename (a rename's Undo changes back only what it changed); isMergingRename
 │   │   │   ├── tagSweepProgress.svelte.ts # A running tag sweep: "n of N notes" toast; Tags Browser Rename / Delete wait for it
 │   │   │   ├── templates.svelte.ts    # Layout-template store
 │   │   │   ├── ui.svelte.ts           # Modals, toasts, context menu state
@@ -349,6 +349,7 @@ filo/
 │   │   │   │   ├── externalChangeRegistry.ts # The one exhaustive dispatcher for `vault:files-changed`
 │   │   │   │   ├── handleFlushAndQuit.ts # The quit drain: save, then rescue copies if work is left
 │   │   │   │   ├── conventionPaths.ts # Default folders + free-name helpers for new files
+│   │   │   │   ├── droppedFiles.ts    # classifyDroppedFile: a file dropped from Explorer is in the vault (link it) or outside (copy it); isInsideVault
 │   │   │   │   ├── extension.ts
 │   │   │   │   ├── moveIntoFolder.ts
 │   │   │   │   ├── moveIntoFolderFeedback.ts # The toast wording for a failed move into a folder
@@ -426,7 +427,6 @@ filo/
 │   │   │   │   ├── layout.ts          # Auto-layout algorithms
 │   │   │   │   ├── orphanCatcher.ts
 │   │   │   │   ├── floatingToolbarDrag.ts # Shared toolbar drag: background only, pin blocks it, cancel reverts, clamp to window
-│   │   │   │   ├── vaultPath.ts
 │   │   │   │   ├── minimapBounds.ts   # Minimap window math: a local window around the viewport, tiles AABB apart
 │   │   │   │   └── smartGuides.ts     # Alignment guide calculations
 │   │   │   ├── connections/           # Connection path routing
@@ -450,6 +450,7 @@ filo/
 │   │   │   │   ├── tableMarkdown.ts   # GFM only for one-paragraph cells (`|` escaped, alignment kept); any other table is HTML
 │   │   │   │   ├── codeFence.ts       # A code fence one longer than any backtick line in the code
 │   │   │   │   ├── hardBreak.ts       # Shift+Enter: `\` at line end, `<br>` in a heading or table cell
+│   │   │   │   ├── pastePlainText.ts  # A text/plain paste: Markdown with HTML off and line breaks kept; Ctrl+Shift+V literal
 │   │   │   │   ├── blockquote.ts      # A quote is written without its empty paragraphs (no bare `>` line)
 │   │   │   │   ├── lossyChanges.ts    # The lines a read-only note would change: the banner's "Line N would change…", Take ownership's list
 │   │   │   │   ├── titleCommit.ts     # TileHeader / Frame title commit: trim, default, drop unstyled HTML
@@ -467,7 +468,7 @@ filo/
 │   │   │   ├── tags/                  # Tag editing helpers
 │   │   │   │   ├── noteTagWriter.ts   # Tile/path tag add/remove on a note (fresh-read rewrite)
 │   │   │   │   ├── tagEditConfirm.ts  # Tags-browser delete/rename confirms → tagUndo
-│   │   │   │   ├── tagRowInput.ts     # Tag-row parsing: comma list, autocomplete
+│   │   │   │   ├── tagRowInput.ts     # Tag-row parsing: comma list, autocomplete (exact → prefix → substring; Enter takes a suggestion only when it is exactly what was typed)
 │   │   │   │   └── tagBrowserFilter.ts # Tags Browser search (keeps parent rows) + one-pass tag counts
 │   │   │   ├── frames/                # Frame delete confirm + drag cancel
 │   │   │   │   ├── confirmRemoveFrame.ts # The Delete Frame confirm (frame button and context menu)
@@ -486,7 +487,7 @@ filo/
 │   │   │   │   ├── indentRules.ts     # indentProblem: one indent rule for drag and Tab (section, cycle, 3 levels)
 │   │   │   │   ├── manualSortSwitch.ts # Reorder under a non-manual sort: one undo step, a toast whose Undo undoes only that step
 │   │   │   │   ├── tocPlacement.ts    # Where the Table of Contents first opens (beside the list when there is room)
-│   │   │   │   ├── fileDropHandler.ts # OS / sidebar file drop onto a Task List → tasks
+│   │   │   │   ├── fileDropHandler.ts # OS / sidebar file drop onto a Task List → tasks (a note already in the vault by its path)
 │   │   │   │   ├── datePickerViewState.svelte.ts # TaskDatePicker's shown month (re-seeds only when the value changes)
 │   │   │   │   ├── clearStaleDndStyles.ts # Action clearing svelte-dnd-action's leftover inline styles on a section
 │   │   │   │   ├── sectionMembership.ts # A Task List as section + order per task: undo moves only the tasks a step moved, starts recomputed live
@@ -536,7 +537,8 @@ filo/
 │   │   │   │   └── layoutTemplateStore.ts
 │   │   │   ├── search/                # Query parser + search runner (matches over the vault index's bodies)
 │   │   │   │   ├── queryParser.ts     # `tag:` / `board:` / `has:` / `property:` / `type:` operators, /regex/, free text
-│   │   │   │   └── runSearch.ts       # runVaultSearch: every tile on every board plus notes on no board
+│   │   │   │   ├── runSearch.ts       # runVaultSearch: every tile on every board plus notes on no board; Match case / Whole word
+│   │   │   │   └── replaceAllText.ts  # Replace All's confirm (body matches only, the notes named) and its refusal at the match cap
 │   │   │   ├── spatialIndex.ts        # rbush wrapper
 │   │   │   └── utils/                 # Shared utilities
 │   │   │       ├── ids.ts             # nanoid wrapper
@@ -918,7 +920,8 @@ When adding a new tile type or board type: register it, implement the interface,
 - **A change a note can't take leaves no undo step.** A tag add or remove on a note whose frontmatter the rewriter won't touch (malformed YAML, an anchored `tags:`), that isn't UTF-8, is a link, or has an unsaved edit rejects with `ChangeRefusedError` (`commands/changeRefusedError.ts`); the history store shows its message and takes the step off the stack (or, for undo / redo, leaves it where it was).
 - **No command keeps a note body.** Delete undo is a restore from `.filo/trash` (a rename back); Replace All keeps only the replaced snippets and before/after hashes, and applies only while the file's bytes match. Gate `no-note-body-in-commands`.
 - Text editing undo is handled by TipTap/ProseMirror internally (separate from board undo). Board-level Ctrl+Z fires when no TipTap editor is focused.
-- **Vault-wide tag delete and rename are undone from their toast** (`stores/tagUndo.svelte.ts`, 15 s), not from board history, because they touch many files and belong to no board. A merge (rename into an existing tag) has no undo. A board delete, and a sidebar delete that no open board's stack can hold, also offer Undo on their "moved to Filo's trash" toast.
+- **Vault-wide tag delete and rename are undone from their toast** (`stores/tagUndo.svelte.ts`, 15 s), not from board history, because they touch many files and belong to no board. Each Undo changes back only what its action changed (the notes it rewrote, the attachments, board-only tiles and filter chips that carried the tag), so a note tagged with the new name in between keeps it. A merge (a rename into a tag that exists in any spelling, registered or only in a note: `isMergingRename`) asks first and has no undo.
+- **Replace All is undone from its toast too.** It sits on the stack of the tab that was active when it ran; the toast's Undo (`historyStore.undoFromToast`) takes it off whichever stack holds it and undoes it even with steps on top, which is safe only because its undo leaves any file changed since alone. A board delete, and a sidebar delete that no open board's stack can hold, also offer Undo on their "moved to Filo's trash" toast.
 
 ### Override Cascade (Styles)
 

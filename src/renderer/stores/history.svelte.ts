@@ -693,6 +693,22 @@ export const historyStore = {
   },
 
   /**
+   * The Undo on a vault-wide command's toast: takes `command` off whichever
+   * stack holds it (the tab that was active when it ran, maybe not this one)
+   * and runs its undo in the chain, even with other steps on top of it. Only
+   * for a command with no board whose undo checks what it finds and leaves a
+   * file changed since alone (Replace All). False when it is no longer on
+   * any undo stack (undone already, or dropped).
+   */
+  undoFromToast(command: Command, label: string): boolean {
+    if (command.targetBoardId) return false;
+    if (!Object.values(stacks).some((s) => s.undoStack.includes(command))) return false;
+    dropCommand(command);
+    void this.runOffStack(() => command.undo(), label);
+    return true;
+  },
+
+  /**
    * Redoes the most recently undone command on the active board.
    *
    * Same target-board guard as undo(); async via `runChained`.

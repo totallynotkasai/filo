@@ -229,8 +229,13 @@
                 type="text"
                 bind:value={editName}
                 onkeydown={(e) => {
-                  if (e.key === 'Enter') saveEdit();
-                  else if (e.key === 'Escape') {
+                  if (e.key === 'Enter') {
+                    // Without preventDefault the same key's keypress lands on the
+                    // merge confirm this opens (focus is on its Cancel) and
+                    // cancels it at once.
+                    e.preventDefault();
+                    saveEdit();
+                  } else if (e.key === 'Escape') {
                     // Cancels the rename only; the browser stays open.
                     e.stopPropagation();
                     editingTagName = null;

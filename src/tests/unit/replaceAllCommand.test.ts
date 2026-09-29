@@ -555,3 +555,61 @@ describe('ReplaceAllCommand — Audit-14 3.1 frontmatter-boundary parity', () =>
     expect(filesystem['a.md']).toBe('--- \ntitle: keep me\n--- \n# Heading\nhello sam here\n');
   });
 });
+
+describe('Replace All — match options, the cap, and the toast Undo', () => {
+  function seed(filesystem: FileMap): void {
+    installFiloStub(filesystem);
+    const defs: Record<string, unknown> = {};
+    for (const path of Object.keys(filesystem)) {
+      vaultIndexStore.restoreMetadata(path, parseMarkdown(path, filesystem[path]!));
+      defs[`t_${path}`] = makeTextDef(`t_${path}`, path, path);
+    }
+    boardCacheStore.hydrate({ mm: makeMindMap('Board', 'mm', defs) }, { mm: 'a.board.json' });
+  }
+
+  it('Match case and Whole word narrow what is replaced', async () => {
+    const filesystem: FileMap = { 'a.md': 'Cat cat concatenate café cat_x' };
+    seed(filesystem);
+    searchStore.setQuery('cat');
+    searchStore.setReplaceText('dog');
+    searchStore.setMatchCase(true);
+    searchStore.setWholeWord(true);
+    expect(searchStore.matches.filter((m) => m.matchKind === 'body')).toHaveLength(1);
+
+    await runReplaceAllCommand();
+
+    expect(filesystem['a.md']).toBe('Cat dog concatenate café cat_x');
+  });
+
+  it('refuses a result list cut short at the cap, and writes nothing', async () => {
+    const filesystem: FileMap = { 'a.md': 'x'.repeat(10) };
+    seed(filesystem);
+    searchStore.setQuery('x');
+    Object.defineProperty(searchStore, 'truncated', { configurable: true, get: () => true });
+    try {
+      await runReplaceAllCommand();
+    } finally {
+      delete (searchStore as unknown as Record<string, unknown>).truncated;
+    }
+    expect(filesystem['a.md']).toBe('x'.repeat(10));
+    expect(uiStore.toasts.map((t) => t.text)).toContain('Too many matches to replace safely; narrow the search.');
+  });
+
+  it("the toast's Undo takes it back from whichever tab is active, with a step on top of it", async () => {
+    const filesystem: FileMap = { 'a.md': 'hello frodo' };
+    seed(filesystem);
+    searchStore.setQuery('frodo');
+    searchStore.setReplaceText('sam');
+    await runReplaceAllCommand();
+    expect(filesystem['a.md']).toBe('hello sam');
+
+    // Another tab is active now, and the replace isn't the last step on its stack.
+    historyStore.pushWithoutExecute({ description: 'later', targetBoardId: 'mm', execute() {}, undo() {} } as never);
+    historyStore.setActiveBoard('other');
+    const toast = uiStore.toasts.find((t) => t.text.startsWith('Replaced'));
+    toast?.actions?.find((a) => a.label === 'Undo')?.handler();
+    await historyStore.whenChainSettled();
+
+    expect(filesystem['a.md']).toBe('hello frodo');
+  });
+});

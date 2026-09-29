@@ -43,6 +43,7 @@
     buildTileDefForVaultFile,
     importKanbanFileTile,
   } from '../../lib/kanban/kanbanFileDropHandler';
+  import { classifyDroppedFile } from '../../lib/vault/droppedFiles';
   import { makeKanbanFrontmatterWriter } from '../../lib/kanban/kanbanFrontmatterWriter';
   import { makeKanbanTileCreator, newCardFolder } from '../../lib/kanban/kanbanTileCreation';
   import { computeKanbanInsertIndex } from '../../lib/kanban/kanbanInsertPosition';
@@ -481,36 +482,21 @@
     for (const file of files) {
       try {
         const fileExt = (file.name.split('.').pop() || '').toLowerCase();
-        // Electron 32+ removed the legacy `path` property from `File`. Read
-        // it via a narrow projection and fall back to the preload bridge
-        // (`webUtils.getPathForFile`) so newer Electron versions still
-        // resolve the source path.
-        const fileWithPath = file as File & { path?: unknown };
-        let sourcePath: string | undefined =
-          typeof fileWithPath.path === 'string' ? fileWithPath.path : undefined;
-        if (!sourcePath) {
-          try {
-            sourcePath = window.filo.getPathForFile?.(file) ?? undefined;
-          } catch {
-            /* bridge unavailable in some windows */
-          }
-        }
-        if (!sourcePath) continue;
+        // A file already in the vault is linked by its path, as a sidebar
+        // drop is; only one from outside is copied in.
+        const dropped = classifyDroppedFile(file, vaultRoot);
+        if (!dropped) continue;
         const tileType = inferKanbanTileType(file.type, fileExt);
         if (!tileType) {
           uiStore.toast(`Skipped ${file.name} — unsupported in Kanban`, 'warning', 2000);
           continue;
         }
-        const tileId = createId();
-        const def = await importKanbanFileTile({
-          type: tileType,
-          tileId,
-          sourcePath,
-          fileName: file.name,
-          vaultRoot, destFolder: newCardFolder(board),
-          allTilesById,
-          refreshTree: async () => { await vaultStore.refreshTree(); },
-        });
+        const def = dropped.kind === 'in-vault'
+          ? await buildTileDefForVaultFile({ filePath: dropped.relPath, name: file.name, extension: fileExt, vaultRoot, allTilesById })
+          : await importKanbanFileTile({
+            type: tileType, tileId: createId(), drop: dropped, vaultRoot, destFolder: newCardFolder(board),
+            allTilesById, refreshTree: async () => { await vaultStore.refreshTree(); },
+          });
         if (def) {
           cmds.push(new AddCardCommand(board.id, columnId, def, baseInsertIndex + cmds.length));
         }

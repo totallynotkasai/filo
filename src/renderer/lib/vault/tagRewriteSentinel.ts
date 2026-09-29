@@ -90,6 +90,12 @@ export interface TagRewriteSentinelPayload {
    * existed read back as `[]` (forward-compatible).
    */
   committedPaths: string[];
+  /**
+   * True when the sweep was limited to some notes (the undo of a rename, a
+   * retry of the notes that failed): Resume then rewrites only `plan`, never
+   * every note carrying the tag. Absent for a vault-wide sweep.
+   */
+  scoped?: boolean;
 }
 
 export interface ReadResult {
@@ -222,6 +228,7 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
           plan: parsed.plan,
           preexistingNewNamePaths: pre ?? [],
           committedPaths: committed ?? [],
+          ...(parsed.scoped === true ? { scoped: true } : {}),
         },
       };
     } catch {

@@ -1,4 +1,4 @@
-import { vaultRelativeFromAbsolute } from '../canvas/vaultPath';
+import { vaultRelativeFromAbsolute } from '../vault/droppedFiles';
 import { stripLeadingSlash, toPosix } from './path';
 
 /**

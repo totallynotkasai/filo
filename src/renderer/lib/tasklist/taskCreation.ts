@@ -11,6 +11,7 @@ import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
+import { fileTagsStore } from '../../stores/fileTags.svelte';
 import { AddTaskCommand } from '../../commands/index';
 import type { SeededFile } from '../../commands/taskCommands';
 import { createId } from '../utils/ids';
@@ -266,6 +267,9 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     if (parsed.startDate) fm.startDate = parsed.startDate;
     if (parsed.status) fm.status = parsed.status;
     if (parsed.tags.length > 0) fm.tags = [...parsed.tags];
+    // Registered as the tag row registers what it adds, so the Tags browser
+    // (and a rename's merge check) knows them before the index reads the note.
+    for (const tag of parsed.tags) fileTagsStore.ensureTag(tag);
 
     // Materialise the default section *before* the await so we carry a real
     // section id across the seed; the index itself is recomputed afterwards

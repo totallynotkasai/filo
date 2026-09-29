@@ -1,6 +1,7 @@
 import { uiStore } from '../../stores/ui.svelte';
 import { fileTagsStore } from '../../stores/fileTags.svelte';
-import { removeTagWithUndo, renameTagWithUndo } from '../../stores/tagUndo.svelte';
+import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+import { isMergingRename, removeTagWithUndo, renameTagWithUndo } from '../../stores/tagUndo.svelte';
 
 /**
  * Confirm-then-run wrappers for the vault-wide tag actions in the Tags
@@ -36,14 +37,17 @@ export async function deleteTagWithConfirm(name: string): Promise<boolean> {
 /**
  * Renames `oldName` to `newName` everywhere. Asks first only when the rename
  * has a consequence the user can't see from the input field:
- *   - `newName` already exists → the two tags MERGE, and renaming back won't
- *     split them again;
+ *   - `newName` already exists, in any spelling and wherever it is carried
+ *     (a note's tag that was never registered counts) → the two tags MERGE,
+ *     and renaming back won't split them again;
  *   - `oldName` has child tags (`old/…`), which don't follow the rename.
  * A plain rename to a new name runs without a dialog; its toast offers Undo.
  */
 export async function renameTagWithConfirm(oldName: string, newName: string): Promise<boolean> {
+  // The merge check reads the note index, which a vault open may still be building.
+  await vaultIndexStore.whenBuildComplete();
   const all = fileTagsStore.allTagNames();
-  const merging = all.includes(newName);
+  const merging = isMergingRename(oldName, newName);
   const prefix = `${oldName}/`;
   const children = all.filter((n) => n.startsWith(prefix));
   if (merging || children.length > 0) {

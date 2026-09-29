@@ -3,7 +3,7 @@ import { defaultTileStyleSnapshot } from '../../constants/defaults';
 import { createId } from '../utils/ids';
 import { buildTextTileDefForNote } from '../canvas/markdownTileSeed';
 import { isMarkdownExtension, normalizeExtension } from '../vault/extension';
-import { vaultRelativeFromAbsolute } from '../canvas/vaultPath';
+import { vaultRelativeFromAbsolute, type OutsideDrop } from '../vault/droppedFiles';
 import { toPosix } from '../utils/path';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { copyFileIntoVault } from '../vault/vaultOperations';
@@ -111,18 +111,23 @@ export async function buildTileDefForVaultFile(args: {
   return mediaTileDef(tileType, tileId, titleFromFileName(name), relPath, now);
 }
 
+/**
+ * Copies a file dropped from outside the vault into the board's folder and
+ * builds its card. Only an `OutsideDrop` gets here: a file already in the
+ * vault is linked by path (`buildTileDefForVaultFile`), never copied.
+ */
 export async function importKanbanFileTile(args: {
   type: KanbanFileTileType;
   tileId: string;
-  sourcePath: string;
-  fileName: string;
+  drop: OutsideDrop;
   vaultRoot: string;
   /** The board's folder for new files ('' = vault root). */
   destFolder: string;
   allTilesById: Record<string, Tile>;
   refreshTree: () => Promise<void>;
 }): Promise<TileDefinition | null> {
-  const { type, tileId, sourcePath, fileName, vaultRoot, destFolder, allTilesById, refreshTree } = args;
+  const { type, tileId, drop, vaultRoot, destFolder, allTilesById, refreshTree } = args;
+  const { sourcePath, file: { name: fileName } } = drop;
   const now = Date.now();
 
   // Drain-before-IPC lives in copyFileIntoVault, so a debounced `.board.json`

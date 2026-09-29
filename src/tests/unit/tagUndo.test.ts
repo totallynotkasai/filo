@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { undoRemoval, undoRename, type TagRemovalSnapshot } from '@renderer/stores/tagUndo.svelte';
+import { undoRemoval, undoRename, isMergingRename, type TagRemovalSnapshot, type TagRenameSnapshot } from '@renderer/stores/tagUndo.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -84,25 +84,75 @@ describe('undo of a tag delete', () => {
 });
 
 describe('undo of a tag rename', () => {
-  it('refuses when the old name exists again, since renaming back would merge', async () => {
-    vi.spyOn(fileTagsStore, 'allTagNames').mockReturnValue(['old', 'fresh']);
-    const rename = vi.spyOn(fileTagsStore, 'renameTagEverywhere');
+  function renameSnapshot(overrides: Partial<TagRenameSnapshot> = {}): TagRenameSnapshot {
+    return {
+      identity: captureVaultIdentity(),
+      oldName: 'old',
+      newName: 'fresh',
+      color: undefined,
+      writtenPaths: [],
+      mediaPaths: [],
+      tiles: [],
+      chips: [],
+      ...overrides,
+    };
+  }
+
+  afterEach(() => fileTagsStore.reset());
+
+  it('refuses when the old name exists again, in any spelling, since renaming back would merge', async () => {
+    vi.spyOn(fileTagsStore, 'allTagNames').mockReturnValue(['Old', 'fresh']);
+    const setFileTags = vi.spyOn(fileTagsStore, 'setFileTags');
     const toast = vi.spyOn(uiStore, 'toast');
 
-    await undoRename(captureVaultIdentity(), 'old', 'fresh', undefined);
+    await undoRename(renameSnapshot({ mediaPaths: ['pic.png'] }));
 
-    expect(rename).not.toHaveBeenCalled();
+    expect(setFileTags).not.toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith(expect.stringContaining('exists again'), 'warning', expect.any(Number));
   });
 
+  it('renames back only the attachments the rename changed', async () => {
+    fileTagsStore.commitFromCandidate('/vault', {
+      version: 1,
+      tags: { fresh: { color: '#3a86ff', createdAt: 0 } },
+      fileTags: { 'a.png': ['fresh'], 'b.png': ['fresh'] },
+    } as unknown as Parameters<typeof fileTagsStore.commitFromCandidate>[1]);
+
+    await undoRename(renameSnapshot({ mediaPaths: ['a.png'], color: '#123456' }));
+
+    expect(fileTagsStore.tagsForFile('a.png')).toEqual(['old']);
+    expect(fileTagsStore.tagsForFile('b.png')).toEqual(['fresh']);
+    expect(fileTagsStore.getDefinition('old').color).toBe('#123456');
+    // Still carried by b.png, so its definition stays.
+    expect(fileTagsStore.allTagNames()).toContain('fresh');
+  });
+
   it('after a vault swap, Undo renames nothing', async () => {
-    const identity = captureVaultIdentity();
+    const snap = renameSnapshot({ mediaPaths: ['pic.png'] });
     beginVaultGeneration('/other');
-    const rename = vi.spyOn(fileTagsStore, 'renameTagEverywhere');
+    const setFileTags = vi.spyOn(fileTagsStore, 'setFileTags');
 
-    await undoRename(identity, 'old', 'fresh', undefined);
+    await undoRename(snap);
 
-    expect(rename).not.toHaveBeenCalled();
+    expect(setFileTags).not.toHaveBeenCalled();
+  });
+});
+
+describe('tagExists', () => {
+  afterEach(() => fileTagsStore.reset());
+
+  it('is case-folded, and counts a tag carried but never registered', () => {
+    fileTagsStore.commitFromCandidate('/vault', {
+      version: 1,
+      tags: { review: { color: '#3a86ff', createdAt: 0 } },
+      fileTags: { 'a.png': ['Waiting'] },
+    } as unknown as Parameters<typeof fileTagsStore.commitFromCandidate>[1]);
+
+    expect(fileTagsStore.tagExists('Review')).toBe(true);
+    expect(fileTagsStore.tagExists('waiting')).toBe(true);
+    expect(fileTagsStore.tagExists('blocked')).toBe(false);
+    expect(isMergingRename('review', 'Review')).toBe(false);
+    expect(isMergingRename('blocked', 'WAITING')).toBe(true);
   });
 });
 

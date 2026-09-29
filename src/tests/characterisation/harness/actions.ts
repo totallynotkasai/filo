@@ -6,7 +6,8 @@
  */
 import type { Editor } from '@tiptap/core';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { osFilePaths } from './mainBridge';
 import { settle, waitFor, quiesce, type CharApp } from './app';
 
 export type BoardKind = 'mindmap' | 'kanban' | 'tasklist';
@@ -273,7 +274,8 @@ class RecordingDataTransfer {
   files: File[] = [];
   items: unknown[] = [];
   get types(): string[] {
-    return Array.from(this.data.keys());
+    // A drag carrying files lists `Files`, as the browser's does.
+    return [...this.data.keys(), ...(this.files.length > 0 ? ['Files'] : [])];
   }
   setData(type: string, value: string): void {
     this.data.set(type, value);
@@ -370,6 +372,26 @@ export async function placeNoteOnBoard(app: CharApp, kind: BoardKind, rel: strin
     : kind === 'tasklist' ? $(app.el, '.tasklist-section')
     : $(app.el, '.mindmap-board');
   await dragFromSidebar(app, rel, target);
+}
+
+/**
+ * Drag `absPath` from Explorer and drop it on the visible board of the given
+ * kind: an OS file drop, with the file's bytes and its path on disk (as
+ * Electron's `webUtils.getPathForFile` reports it).
+ */
+export async function dropFromExplorer(app: CharApp, kind: BoardKind, absPath: string): Promise<void> {
+  const file = new File([readFileSync(absPath)], basename(absPath), { type: absPath.endsWith('.md') ? 'text/markdown' : '' });
+  osFilePaths.set(file, absPath);
+  const dt = new RecordingDataTransfer();
+  dt.files = [file];
+  const target =
+    kind === 'kanban' ? $(app.el, '.kanban-column .column-cards-zone')
+    : kind === 'tasklist' ? $(app.el, '.tasklist-section')
+    : $(app.el, '.mindmap-board');
+  target.dispatchEvent(dragEvent('dragenter', dt));
+  target.dispatchEvent(dragEvent('dragover', dt));
+  target.dispatchEvent(dragEvent('drop', dt));
+  await quiesce(800);
 }
 
 // ── Reading what the boards show ─────────────────────────────────────────────

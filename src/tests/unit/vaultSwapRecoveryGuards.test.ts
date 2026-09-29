@@ -159,7 +159,7 @@ describe('Audit-16 3.2 — recovery sequencer step-2 handlers are vault-identity
     await fireDialog('cancel');
     await seq;
 
-    expect(remove).toHaveBeenCalledWith('oldTag');
+    expect(remove).toHaveBeenCalledWith('oldTag', undefined);
     expect(prune).toHaveBeenCalledTimes(1);
   });
 });

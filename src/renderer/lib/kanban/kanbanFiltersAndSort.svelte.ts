@@ -6,6 +6,7 @@ import type {
 } from '../../schema/index';
 import { noteStore } from '../../stores/notes.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
+import { noteTags } from '../../stores/noteMeta';
 import { vaultPathForTile } from './kanbanFrontmatterWriter';
 
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
@@ -58,12 +59,11 @@ export class KanbanFiltersAndSort {
     const tags = tile.tags ?? [];
     if (this.activeFilterTags.length > 0) {
       const path = vaultPathForTile(tile);
-      const fmTags = path
-        ? ((vaultIndexStore.getMetadata(path)?.frontmatter?.tags ?? []) as unknown[])
-        : [];
+      // Through the tags normaliser: a note may write its tags as text.
+      const fmTags = path ? noteTags(path) : [];
       const allTags = new SvelteSet<string>([
         ...tags.map((t) => String(t).replace(/^#/, '')),
-        ...fmTags.map((t) => String(t).replace(/^#/, '')),
+        ...fmTags.map((t) => t.replace(/^#/, '')),
       ]);
       const wanted = this.activeFilterTags.map((t) => t.replace(/^#/, ''));
       const ok = wanted.every((w) => allTags.has(w));
@@ -89,8 +89,7 @@ export class KanbanFiltersAndSort {
       }
       const path = vaultPathForTile(tile);
       if (path) {
-        const fmTags = (vaultIndexStore.getMetadata(path)?.frontmatter?.tags ?? []) as unknown[];
-        for (const t of fmTags) haystack.push(String(t).toLowerCase());
+        for (const t of noteTags(path)) haystack.push(t.toLowerCase());
       }
       if (!haystack.some((s) => s.includes(query))) return false;
     }

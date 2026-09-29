@@ -3,6 +3,7 @@ import {
   parseTagInput,
   withTagsAdded,
   tagSuggestions,
+  preselectedSuggestion,
   completeLastEntry,
 } from '../../renderer/lib/tags/tagRowInput';
 
@@ -59,6 +60,25 @@ describe('tagSuggestions', () => {
 
   it('suggests nothing for an empty entry', () => {
     expect(tagSuggestions('alpha, ', known, [])).toEqual([]);
+  });
+
+  it('ranks the exact tag first, then tags starting with the entry, then tags containing it', () => {
+    const vault = ['not-urgent', 'urgently', 'Urgent', 'semi-urgent-2'];
+    expect(tagSuggestions('urgent', vault, [])).toEqual(['Urgent', 'urgently', 'not-urgent', 'semi-urgent-2']);
+    expect(tagSuggestions('urg', vault, [])).toEqual(['urgently', 'Urgent', 'not-urgent', 'semi-urgent-2']);
+  });
+});
+
+describe('preselectedSuggestion', () => {
+  it('preselects only a suggestion that is exactly the typed entry, ignoring case', () => {
+    expect(preselectedSuggestion('urgent', ['Urgent', 'not-urgent'])).toBe(0);
+    expect(preselectedSuggestion('a, #URGENT', ['urgent'])).toBe(0);
+  });
+
+  it('preselects nothing otherwise, so Enter adds what was typed', () => {
+    expect(preselectedSuggestion('urgent', ['not-urgent'])).toBe(-1);
+    expect(preselectedSuggestion('urg', ['urgent'])).toBe(-1);
+    expect(preselectedSuggestion('urgent', [])).toBe(-1);
   });
 });
 

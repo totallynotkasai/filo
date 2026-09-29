@@ -430,6 +430,31 @@ export const fileTagsStore = {
     return pureAllTagNames(file);
   },
 
+  /**
+   * True when `tagName` is carried anywhere, in any spelling: a note's
+   * frontmatter, an attachment, or a board-only tile. The registry isn't
+   * consulted, since a tag typed into a note by another program (or by
+   * quick-add before it registered its tags) is never in it.
+   */
+  tagInUse(tagName: string): boolean {
+    const has = (tags: Iterable<string>): boolean => {
+      for (const t of tags) if (sameTag(t, tagName)) return true;
+      return false;
+    };
+    return has(vaultIndexStore.allTags().keys())
+      || Object.values(file.fileTags).some(has)
+      || [...iterateBoardOnlyTiles()].some((t) => has(t.tags));
+  },
+
+  /**
+   * True when a tag named `tagName` exists in any spelling: in the registry
+   * or anywhere it is carried. A rename into a name this finds is a merge,
+   * which can't be split again.
+   */
+  tagExists(tagName: string): boolean {
+    return this.allTagNames().some((t) => sameTag(t, tagName)) || this.tagInUse(tagName);
+  },
+
   getDefinition(tagName: string) {
     return pureGetTagDefinition(file, tagName);
   },
@@ -741,8 +766,11 @@ export const fileTagsStore = {
    * scoped to the unwritten files — re-running with the same arguments
    * naturally targets only those, since the metadata of the succeeded
    * files no longer mentions `oldName`.
+   *
+   * `onlyNotes` limits the `.md` sweep to those notes: the Resume of a sweep
+   * that was itself limited (a rename's undo) must not reach every note.
    */
-  async renameTagEverywhere(oldName: string, newName: string): Promise<TagSweepOutcome> {
+  async renameTagEverywhere(oldName: string, newName: string, onlyNotes?: readonly string[]): Promise<TagSweepOutcome> {
     const trimmed = newName.trim();
     if (!oldName || !trimmed || oldName === trimmed) return notCommitted();
 
@@ -766,7 +794,7 @@ export const fileTagsStore = {
       return notCommitted();
     }
 
-    const result = await runTagRewriteSweep(oldName, trimmed, identity.path);
+    const result = await runTagRewriteSweep(oldName, trimmed, identity.path, onlyNotes && new SvelteSet(onlyNotes));
     if (result.failed.length > 0) {
       const failedSet = new SvelteSet(result.failed);
       pushTagRewriteFailureToast({
@@ -800,7 +828,7 @@ export const fileTagsStore = {
    * See {@link renameTagEverywhere} for the atomicity rationale — same
    * shape applies here.
    */
-  async removeTagEverywhere(tagName: string): Promise<TagSweepOutcome> {
+  async removeTagEverywhere(tagName: string, onlyNotes?: readonly string[]): Promise<TagSweepOutcome> {
     if (!tagName) return notCommitted();
 
     // See renameTagEverywhere: capture identity so a vault swap mid-sweep/commit
@@ -819,7 +847,7 @@ export const fileTagsStore = {
       return notCommitted();
     }
 
-    const result = await runTagRewriteSweep(tagName, null, identity.path);
+    const result = await runTagRewriteSweep(tagName, null, identity.path, onlyNotes && new SvelteSet(onlyNotes));
     if (result.failed.length > 0) {
       const failedSet = new SvelteSet(result.failed);
       pushTagRewriteFailureToast({

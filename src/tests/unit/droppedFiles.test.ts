@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   isInsideVault,
   vaultRelativeFromAbsolute,
-} from '@renderer/lib/canvas/vaultPath';
+  classifyDroppedFile,
+} from '@renderer/lib/vault/droppedFiles';
 import { samePath } from '@renderer/lib/utils/path';
 
 describe('isInsideVault', () => {
@@ -102,5 +103,37 @@ describe('samePath', () => {
     expect(samePath('Foo.md', '')).toBe(false);
     expect(samePath(null, 'Foo.md')).toBe(false);
     expect(samePath('Foo.md', undefined)).toBe(false);
+  });
+});
+
+describe('classifyDroppedFile', () => {
+  function dropped(path: string): File {
+    const file = new File(['x'], path.split(/[\/]/).pop() ?? 'f');
+    (window as unknown as { filo: unknown }).filo = { getPathForFile: (f: File) => (f === file ? path : '') };
+    return file;
+  }
+
+  afterEach(() => {
+    delete (window as unknown as { filo?: unknown }).filo;
+  });
+
+  it('a file inside the vault, in any case and either separator, is linked by its own-cased relative path', () => {
+    const file = dropped('c:\\VAULT\\Notes\\Plan.md');
+    expect(classifyDroppedFile(file, 'C:/Vault')).toEqual({ kind: 'in-vault', file, relPath: 'Notes/Plan.md' });
+  });
+
+  it('a file outside the vault is the only kind to copy', () => {
+    const file = dropped('D:\\Downloads\\Plan.md');
+    expect(classifyDroppedFile(file, 'C:\\Vault')).toEqual({ kind: 'outside', file, sourcePath: 'D:\\Downloads\\Plan.md' });
+  });
+
+  it('a sibling folder sharing the prefix is outside', () => {
+    const file = dropped('C:\\Vault2\\Plan.md');
+    expect(classifyDroppedFile(file, 'C:\\Vault')?.kind).toBe('outside');
+  });
+
+  it('no path for the file, or the vault folder itself, is neither', () => {
+    expect(classifyDroppedFile(dropped(''), 'C:\\Vault')).toBeNull();
+    expect(classifyDroppedFile(dropped('C:\\Vault\\'), 'C:\\Vault')).toBeNull();
   });
 });

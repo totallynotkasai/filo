@@ -2,7 +2,9 @@ import { SvelteMap } from 'svelte/reactivity';
 import type { BoardType } from '../../shared/types';
 import { createId } from '../lib/utils/ids';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
-import { registerPathRenamable } from '../lib/vault/renamePathKeys';
+import { rebasePath, registerPathRenamable } from '../lib/vault/renamePathKeys';
+import { boardNameFromPath } from '../lib/boards/boardNaming';
+import { unloadedBoardPaths } from './unloadedBoards';
 import type { Board, WorkspaceState } from '../schema/index';
 import type { FileTreeNode } from '../../shared/types';
 import { collectMarkdownPaths } from '../lib/vault/vaultIndex';
@@ -142,7 +144,15 @@ export interface TabData {
    * id (it keys the tab's undo stack), so a rename only rewrites this path.
    */
   notePath?: string;
+  /**
+   * A board tab whose file couldn't be loaded (broken, locked, from another
+   * version): the tab stays, showing why and a Retry, so a board repaired or
+   * re-synced comes back where it was. Cleared once the board loads.
+   */
+  unloadedPath?: string;
 }
+
+const BOARD_TYPES: readonly BoardType[] = ['mindmap', 'kanban', 'tasklist', 'document'];
 
 /**
  * Tab store — manages open tabs, active tab, add/remove/rename/reorder.
@@ -425,13 +435,34 @@ export const tabStore = {
   },
 
   /**
-   * Returns the minimal workspace snapshot for persistence.
-   * Only tab id + board id are stored, plus a Document tab's note path;
-   * display data (name, emoji, type) is re-derived when tabs are restored.
+   * The board of `relPath` loaded: its placeholder tabs become its tabs.
+   */
+  resolveUnloaded(relPath: string, board: Board) {
+    const key = vaultPath(relPath);
+    let changed = false;
+    tabs = tabs.map((t) => {
+      if (t.unloadedPath === undefined || vaultPath(t.unloadedPath) !== key) return t;
+      changed = true;
+      return { id: t.id, boardId: board.id, name: board.name, boardType: board.type as BoardType, emoji: board.emoji || '' };
+    });
+    if (changed) notifyChange();
+  },
+
+  /**
+   * Returns the minimal workspace snapshot for persistence: tab id and board
+   * id, a Document tab's note path, and a board tab's file and type, so a tab
+   * whose board fails to load next time can stay open (as a placeholder).
+   * Display data (name, emoji) is re-derived when tabs are restored.
    */
   serialize(): WorkspaceState {
     return {
-      openTabs: tabs.map((t) => (t.notePath ? { id: t.id, boardId: t.boardId, notePath: t.notePath } : { id: t.id, boardId: t.boardId })),
+      openTabs: tabs.map((t) => {
+        if (t.notePath) return { id: t.id, boardId: t.boardId, notePath: t.notePath };
+        const boardPath = t.unloadedPath ?? boardCacheStore.paths[t.boardId];
+        return boardPath
+          ? { id: t.id, boardId: t.boardId, boardPath, boardType: t.boardType }
+          : { id: t.id, boardId: t.boardId };
+      }),
       activeTabId,
     };
   },
@@ -440,9 +471,10 @@ export const tabStore = {
    * Restores tabs from a saved workspace snapshot. Tab display data is pulled
    * from the project's boards. A Document tab comes back only while its note
    * is in the vault tree (`notes`), under the tree's spelling, so a path in a
-   * hand-edited workspace.json can't name anything outside the vault. Any
-   * other saved tab whose board no longer exists is silently dropped. Does
-   * NOT notify the change listener.
+   * hand-edited workspace.json can't name anything outside the vault. A tab
+   * whose board file is there but couldn't be loaded comes back as a
+   * placeholder (`unloadedPath`); any other saved tab whose board no longer
+   * exists is dropped. Does NOT notify the change listener.
    */
   hydrateFromWorkspace(workspace: WorkspaceState | undefined, boards: Board[], notes?: { tree: FileTreeNode[]; root: string }) {
     tabs = [];
@@ -455,6 +487,7 @@ export const tabStore = {
     const boardById = new SvelteMap(boards.map((b) => [b.id, b]));
     const noteByKey = new SvelteMap<VaultPath, string>();
     if (notes) for (const rel of collectMarkdownPaths(notes.tree, notes.root)) noteByKey.set(vaultPath(rel), rel);
+    const unloadedByKey = new SvelteMap(unloadedBoardPaths().map((rel) => [vaultPath(rel), rel]));
     const restored: TabData[] = [];
 
     for (const saved of workspace.openTabs) {
@@ -465,7 +498,13 @@ export const tabStore = {
         continue;
       }
       const board = boardById.get(saved.boardId);
-      if (!board) continue;
+      if (!board) {
+        const savedPath = typeof saved.boardPath === 'string' ? unloadedByKey.get(vaultPath(saved.boardPath)) : undefined;
+        if (!savedPath || restored.some((t) => t.unloadedPath === savedPath)) continue;
+        const savedType = BOARD_TYPES.find((type) => type === saved.boardType) ?? 'mindmap';
+        restored.push({ id: saved.id || createId(), boardId: saved.boardId, name: boardNameFromPath(savedPath), boardType: savedType, emoji: '', unloadedPath: savedPath });
+        continue;
+      }
       restored.push({
         id: saved.id || createId(),
         boardId: board.id,
@@ -496,6 +535,12 @@ function renameDocumentTabs(oldRel: string, newRel: string): void {
   const oldPrefix = `${oldKey}/`;
   let changed = false;
   const next = tabs.map((t) => {
+    if (t.unloadedPath !== undefined) {
+      const moved = rebasePath(t.unloadedPath, oldRel, newRel);
+      if (moved === null || moved === t.unloadedPath) return t;
+      changed = true;
+      return { ...t, unloadedPath: moved, name: boardNameFromPath(moved) };
+    }
     if (!t.notePath) return t;
     const key = vaultPath(t.notePath);
     let notePath: string | null = null;

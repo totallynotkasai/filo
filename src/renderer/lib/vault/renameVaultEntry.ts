@@ -9,8 +9,10 @@ import { BOARD_FILE_SUFFIX, boardNameFromPath } from '../boards/boardNaming';
  * `fileNameProblem`). When the sidebar hides extensions the user typed only
  * the stem, so the extension is re-attached unless they typed it anyway.
  *
- * A rename never overwrites silently: `fs.rename` replaces the target on POSIX
- * (Windows surfaces EEXIST), so an existing destination is confirmed first.
+ * A rename never overwrites: main refuses a name another entry already has,
+ * so a clash is said up front (OK only) and nothing changes. The same entry
+ * under another case (`plan.md` → `Plan.md`) is not a clash, although the
+ * existence probe reports it, and is renamed directly.
  */
 export async function renameVaultEntry(node: FileTreeNode, draft: string): Promise<void> {
   const ext = node.isDirectory ? '' : node.extension ?? '';
@@ -25,28 +27,23 @@ export async function renameVaultEntry(node: FileTreeNode, draft: string): Promi
     const newRel = toVaultRelative(newAbsPath, vaultRoot) ?? toPosix(newAbsPath);
     try {
       const exists = await window.filo.invoke('vault:file-exists', vaultRoot, newRel);
-      // A board's file name is its name, so another board's name is refused
-      // like it is everywhere else, never offered as an overwrite. The same
-      // file under another case is not a clash.
-      if (exists && ext === BOARD_FILE_SUFFIX && !samePath(finalName, node.name)) {
-        uiStore.toast(`A board named "${boardNameFromPath(finalName)}" already exists in this folder.`, 'error');
+      if (exists && !samePath(finalName, node.name)) {
+        // A board's file name is its name: refused as everywhere else.
+        if (ext === BOARD_FILE_SUFFIX) {
+          uiStore.toast(`A board named "${boardNameFromPath(finalName)}" already exists in this folder.`, 'error');
+          return;
+        }
+        await uiStore.confirmAsync({
+          title: 'Name already taken',
+          body: `"${finalName}" already exists in this folder. Choose another name; nothing was renamed.`,
+          confirmLabel: 'OK',
+          notice: true,
+        });
         return;
       }
-      if (exists) {
-        // The in-app ConfirmDialog inherits focus management, reduced motion
-        // and the unified Esc/Enter handling.
-        const ok = await uiStore.confirmAsync({
-          title: 'Overwrite file?',
-          body: `"${finalName}" already exists in this folder. The existing file will be replaced and cannot be recovered.`,
-          confirmLabel: 'Overwrite',
-          danger: true,
-        });
-        // Declined — preserve both files by aborting the rename.
-        if (!ok) return;
-      }
     } catch (err) {
-      // Probe failure isn't fatal — the OS-level rename will surface
-      // EEXIST on Windows / overwrite on POSIX. Log and proceed.
+      // Probe failure isn't fatal: main refuses a taken name anyway, and the
+      // rename's failure is reported below.
       console.warn('[renameVaultEntry] file-exists probe failed:', err);
     }
   }

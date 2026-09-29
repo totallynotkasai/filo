@@ -57,7 +57,8 @@ const CHARACTERISATION_SPECS = {
   'editorFidelity.test.ts': 3,
   'kanbanClick.test.ts': 1,
   'taskFieldsAtOpen.test.ts': 1,
-  'explorerDrops.test.ts': 2,
+  'explorerDrops.test.ts': 3,
+  'taskSubtasks.test.ts': 2,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

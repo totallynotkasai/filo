@@ -95,6 +95,7 @@ const LIFECYCLE_EXEMPT = new Map([
   ['src/renderer/stores/canvas.svelte.ts', 'per-BoardScope factory'],
   ['src/renderer/stores/spatial.svelte.ts', 'per-BoardScope factory'],
   ['src/renderer/stores/toolbar.svelte.ts', 'TipTap toolbar mirror; resets per editor focus'],
+  ['src/renderer/stores/clock.svelte.ts', 'the calendar day, the same for every vault'],
   ['src/renderer/lib/boards/boardScope.svelte.ts', 'per-pane scope factory'],
   ['src/renderer/lib/boards/boardToolbar.svelte.ts', 'per-toolbar drag state; the saved state is the workspace store'],
   ['src/renderer/lib/kanban/kanbanDragController.svelte.ts', 'per-board controller'],

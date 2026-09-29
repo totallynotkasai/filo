@@ -369,6 +369,9 @@ const COMMANDS: Command[] = [
   { name: 'Enter, then type "[ ] " and a task', run: (e) => { pressKey(e, 'Enter'); typeText(e, '[ ] task'); } },
   { name: 'Enter, then type four spaces and text', run: (e) => { pressKey(e, 'Enter'); typeText(e, '    indented'); } },
   { name: 'type a pipe', run: (e) => typeText(e, ' yes|no') },
+  { name: 'insert a horizontal rule', run: (e) => void e.chain().setHorizontalRule().run() },
+  { name: 'type " ##"', run: (e) => typeText(e, ' ##') },
+  { name: 'Enter, then type "1."', run: (e) => { pressKey(e, 'Enter'); typeText(e, '1.'); } },
 ];
 
 describe('list, table and line-break commands in context survive save and reload', () => {

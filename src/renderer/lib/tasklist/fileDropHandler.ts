@@ -11,6 +11,7 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { AddTaskCommand } from '../../commands/index';
 import { noteStore } from '../../stores/notes.svelte';
 import { reportError } from '../utils/errorBus';
+import { samePath } from '../utils/path';
 import { buildTextTileDefForNote } from '../canvas/markdownTileSeed';
 import { classifyDroppedFile, vaultRelativeFromAbsolute, type OutsideDrop } from '../vault/droppedFiles';
 import { isMarkdownExtension } from '../vault/extension';
@@ -167,11 +168,18 @@ export function makeFileDropHandler(deps: FileDropDeps): FileDropHandler {
   async function addNoteAsTask(relPath: string, sectionId: string | null, clientY: number | null): Promise<void> {
     const board = getBoard();
     if (!board) return;
+    const existingTiles = Object.values(getTilesById());
+    const { def, duplicate } = buildTextTileDefForNote({ vaultRelPath: relPath, existingTiles });
+    // A task is on a list once: a second row would be the same note twice.
+    if (duplicate) {
+      const existing = existingTiles.find((t) => t.type === 'text' && samePath(t.filePath, def.filePath));
+      const row = existing ? document.querySelector<HTMLElement>(`.task-item[data-task-id="${existing.id}"]`) : null;
+      row?.scrollIntoView({ block: 'nearest' });
+      row?.focus();
+      uiStore.toast('Already on this list', 'info', 2200);
+      return;
+    }
     const realTargetId = resolveTargetId(sectionId);
-    const { def } = buildTextTileDefForNote({
-      vaultRelPath: relPath,
-      existingTiles: Object.values(getTilesById()),
-    });
     // Thread the resolved target section into the command so
     // persistAddTaskPlacement pins it (parity with createTaskInSection). Without
     // it the placement lands by raw numeric position only, misrouting a drop onto

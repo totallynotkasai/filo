@@ -18,6 +18,8 @@ import {
   kanbanCards,
   taskRows,
   mindMapTiles,
+  placeNoteOnBoard,
+  toastTexts,
   type BoardKind,
 } from './harness/actions';
 
@@ -51,6 +53,21 @@ describe('a note from inside the vault, dropped from Explorer', () => {
       expect(app.read('Notes/Plan.md')).toBe(PLAN);
     });
   }
+});
+
+describe('a note dropped on a Task List it is already on', () => {
+  it('is not added a second time', async () => {
+    const app = await startApp({ 'Notes/Plan.md': PLAN });
+    await createBoard(app, 'tasklist');
+    await dropFromExplorer(app, 'tasklist', app.abs('Notes/Plan.md'));
+    await waitFor(() => taskRows(app).length === 1, 'the task');
+
+    await dropFromExplorer(app, 'tasklist', app.abs('Notes/Plan.md'));
+    await placeNoteOnBoard(app, 'tasklist', 'Notes/Plan.md');
+    await quiesce(500);
+    expect(taskRows(app)).toHaveLength(1);
+    expect(toastTexts().some((t) => t.includes('Already on this list'))).toBe(true);
+  });
 });
 
 describe('a note from outside the vault, dropped from Explorer', () => {

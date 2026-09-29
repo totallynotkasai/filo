@@ -2,6 +2,8 @@
   import { tick } from 'svelte';
   import { createFocusTrap, type FocusTrap } from 'focus-trap';
   import { historyStore } from '../../stores/history.svelte';
+  import { toolbarStore } from '../../stores/toolbar.svelte';
+  import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { uiStore } from '../../stores/ui.svelte';
   import { saveStateStore } from '../../stores/saveState.svelte';
   import { reopenDecision } from '../../stores/heldDecisions';
@@ -281,11 +283,12 @@
 
     <div class="toolbar-divider"></div>
 
+    <!-- With a text editor focused these act on its typing, as Ctrl+Z does. -->
     <IconButton
-      title="Undo (Ctrl+Z)"
-      ariaLabel="Undo"
-      disabled={!historyStore.canUndo}
-      onclick={() => historyStore.undo()}
+      title={toolbarStore.editorHistory ? 'Undo typing (Ctrl+Z)' : 'Undo (Ctrl+Z)'}
+      ariaLabel={toolbarStore.editorHistory ? 'Undo typing' : 'Undo'}
+      disabled={toolbarStore.editorHistory ? !toolbarStore.editorHistory.canUndo : !historyStore.canUndo}
+      onclick={() => { if (!tiptapToolbar.undoInEditor()) void historyStore.undo(); }}
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <polyline points="1 4 1 10 7 10"/>
@@ -294,10 +297,10 @@
     </IconButton>
 
     <IconButton
-      title="Redo (Ctrl+Y)"
-      ariaLabel="Redo"
-      disabled={!historyStore.canRedo}
-      onclick={() => historyStore.redo()}
+      title={toolbarStore.editorHistory ? 'Redo typing (Ctrl+Y)' : 'Redo (Ctrl+Y)'}
+      ariaLabel={toolbarStore.editorHistory ? 'Redo typing' : 'Redo'}
+      disabled={toolbarStore.editorHistory ? !toolbarStore.editorHistory.canRedo : !historyStore.canRedo}
+      onclick={() => { if (!tiptapToolbar.redoInEditor()) void historyStore.redo(); }}
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <polyline points="23 4 23 10 17 10"/>

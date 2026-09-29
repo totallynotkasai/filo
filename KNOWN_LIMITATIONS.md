@@ -1219,7 +1219,9 @@ isn't in memory, so a rename or move of a file it links to can't rewrite its
 links. Filo keeps a list of every rename made while it is unloaded, and if the
 board loads later in the same session (Retry, the file changing, the sidebar),
 those renames are applied to it before it opens, and it is saved. A notice
-names the boards a rename or delete didn't reach, once per board.
+names the boards a rename or delete didn't reach, once per board. Its tab
+stays open meanwhile, saying why it can't show the board and offering
+**Retry**, so a board that is repaired or finishes syncing comes back in place.
 
 **Where:** [src/renderer/stores/unloadedBoards.ts](src/renderer/stores/unloadedBoards.ts),
 `adoptBoardAtRuntime` in [src/renderer/stores/boardDiscovery.ts](src/renderer/stores/boardDiscovery.ts),
@@ -1353,3 +1355,39 @@ be out of order. Run Replace All again to redo it.
 
 **Impact:** After an Undo from the notification, repeat the Replace All to
 apply it again.
+
+## 44. A subtask's `parent:` in a note written by an older build is read, never removed
+
+**What:** A Task List keeps its subtask hierarchy on the board: each task's
+parent is `parentTileId` on its placement in the `.board.json`, a tile id of
+that board. Older builds wrote the parent into the note instead
+(`parent: <tile id>`). Filo still reads that field when the placement names no
+parent, and never writes or removes it: an outdent of such a task records
+`parentTileId: ""` on the board, which wins over the note.
+
+**Where:** [src/renderer/lib/tasklist/taskParent.ts](src/renderer/lib/tasklist/taskParent.ts),
+`TaskPlacementSchema` in [src/renderer/schema/placement.ts](src/renderer/schema/placement.ts).
+
+**Why accepted:** Removing the field would rewrite every such note just to
+move it, and a tile id means nothing outside its board anyway.
+
+**Impact:** The old `parent:` line stays in those notes (harmless; another
+app shows it as a plain property). The same note on a second Task List shows
+at the top level there, since the id names a tile of the first list.
+
+## 45. A recording whose tile is deleted while it records isn't put back on the board
+
+**What:** Deleting an Audio tile ends its take. The recording is still saved
+(in the board's folder), but its tile is gone, so it isn't linked to anything;
+a notice names the file and offers **Show in folder**. Undoing the delete
+brings the tile back as it was when deleted, without the recording.
+
+**Where:** `saveRecording` in
+[src/renderer/lib/media/audioRecording.ts](src/renderer/lib/media/audioRecording.ts).
+
+**Why accepted:** The take finishes after the delete has already been
+recorded on the undo stack; changing that step afterwards would make undo
+depend on the order of two asynchronous saves. Nothing is lost: the file is in
+the vault, and the notice says where.
+
+**Impact:** Drag the recording from the sidebar onto a board to use it.

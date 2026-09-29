@@ -4,9 +4,12 @@ import { sectionIdForPlacementIndex } from '@renderer/lib/tasklist/sectionMath';
 import {
   AddTaskCommand,
   TogglePlacementLockCommand,
+  SetTaskParentCommand,
   ReorderTaskWithinSectionCommand,
 } from '@renderer/commands/index';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
+import { buildSetParentCommand, taskParent } from '@renderer/lib/tasklist/taskParent';
+import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
 import type {
   TaskListBoard,
   TaskListSection,
@@ -109,6 +112,71 @@ describe('TogglePlacementLockCommand', () => {
   it('description reflects the target state', () => {
     expect(new TogglePlacementLockCommand('tl', 't2', false, true).description).toBe('Lock task');
     expect(new TogglePlacementLockCommand('tl', 't2', true, false).description).toBe('Unlock task');
+  });
+});
+
+describe('SetTaskParentCommand', () => {
+  beforeEach(() => {
+    installFiloStub();
+    boardCacheStore.clear();
+    boardCacheStore.hydrate({ tl: makeFixture() }, { tl: 'tasks.board.json' });
+  });
+  afterEach(() => boardCacheStore.clear());
+
+  it('execute records the parent on the placement; undo takes it off', () => {
+    const cmd = new SetTaskParentCommand('tl', 't2', undefined, 't1');
+    cmd.execute();
+    expect(placement('t2')?.parentTileId).toBe('t1');
+    cmd.undo();
+    expect(placement('t2')).not.toHaveProperty('parentTileId');
+    cmd.execute();
+    expect(placement('t2')?.parentTileId).toBe('t1');
+  });
+
+  it('an outdent over a note parent keeps an explicit top level', () => {
+    const cmd = new SetTaskParentCommand('tl', 't2', undefined, '');
+    cmd.execute();
+    expect(placement('t2')?.parentTileId).toBe('');
+    cmd.undo();
+    expect(placement('t2')).not.toHaveProperty('parentTileId');
+  });
+});
+
+describe('taskParent / buildSetParentCommand', () => {
+  beforeEach(() => {
+    installFiloStub();
+    boardCacheStore.clear();
+    boardCacheStore.hydrate({ tl: makeFixture() }, { tl: 'tasks.board.json' });
+  });
+  afterEach(() => boardCacheStore.clear());
+
+  function row(placementFields: Partial<TaskPlacement>, noteParent = ''): TaskRow {
+    return {
+      placement: { tileId: 't2', position: 1, ...placementFields },
+      tile: { id: 't2' },
+      noteParent,
+    } as unknown as TaskRow;
+  }
+
+  it('the placement wins over the note; with none, the note is read', () => {
+    expect(taskParent({ tileId: 't2', position: 1, parentTileId: 't1' }, 't3')).toBe('t1');
+    expect(taskParent({ tileId: 't2', position: 1, parentTileId: '' }, 't3')).toBe('');
+    expect(taskParent({ tileId: 't2', position: 1 }, 't3')).toBe('t3');
+  });
+
+  it('outdent writes an empty parent only when the note names one', () => {
+    expect(buildSetParentCommand('tl', row({ parentTileId: 't1' }), '')).not.toBeNull();
+    const plain = buildSetParentCommand('tl', row({ parentTileId: 't1' }), '');
+    plain?.execute();
+    expect(placement('t2')).not.toHaveProperty('parentTileId');
+    const overNote = buildSetParentCommand('tl', row({}, 't1'), '');
+    overNote?.execute();
+    expect(placement('t2')?.parentTileId).toBe('');
+  });
+
+  it('is null when the board already says so', () => {
+    expect(buildSetParentCommand('tl', row({ parentTileId: 't1' }), 't1')).toBeNull();
+    expect(buildSetParentCommand('tl', row({}), '')).toBeNull();
   });
 });
 

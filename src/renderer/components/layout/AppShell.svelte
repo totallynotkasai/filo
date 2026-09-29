@@ -34,7 +34,8 @@
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { createTile } from '../../stores/tiles.svelte';
   import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
-  import { requestDeleteSelected, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
+  import { requestDeleteSelected, selectableTileIds, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
+  import { framesStore } from '../../stores/frames.svelte';
   import { isCanvasKeyBlocked } from '../../lib/mindmap/mindMapKeyboard';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
@@ -98,6 +99,7 @@
     board: boardStore,
     selection: selectionStore,
     vaultPath: () => (vaultStore.project === null ? null : vaultStore.path),
+    hiddenTileIds: () => framesStore.hiddenTileIds,
   };
 
   function goHome() {
@@ -331,8 +333,7 @@
         enabled: onMindMap,
         execute: () => {
           if (!boardStore.current) return;
-          const allIds = Object.values(boardStore.tiles).map(t => t.id);
-          selectionStore.selectMultiple(allIds);
+          selectionStore.selectMultiple(selectableTileIds(boardStore.tiles, framesStore.hiddenTileIds));
         },
       }),
 

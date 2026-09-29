@@ -21,6 +21,8 @@ interface UnloadedBoard {
   relPath: string;
   /** The journal length when it failed: the renames it missed come after. */
   since: number;
+  /** Why it didn't load, as the loader put it (its tab shows it). */
+  message?: string;
 }
 
 const unloaded = new Map<VaultPath, UnloadedBoard>();
@@ -45,10 +47,17 @@ registerPathRenamable('unloadedBoards', (oldRel, newRel) => {
   }
 });
 
-/** A board file at `relPath` couldn't be loaded. */
-export function markBoardUnloaded(relPath: string): void {
+/** A board file at `relPath` couldn't be loaded (`message`: why). */
+export function markBoardUnloaded(relPath: string, message?: string): void {
   const key = vaultPath(relPath);
-  if (!unloaded.has(key)) unloaded.set(key, { relPath, since: journal.length });
+  const entry = unloaded.get(key);
+  if (!entry) unloaded.set(key, { relPath, since: journal.length, ...(message ? { message } : {}) });
+  else if (message) entry.message = message;
+}
+
+/** Why the board at `relPath` didn't load, when it is unloaded and that is known. */
+export function unloadedBoardMessage(relPath: string): string | undefined {
+  return unloaded.get(vaultPath(relPath))?.message;
 }
 
 /** The unloaded boards' paths. */

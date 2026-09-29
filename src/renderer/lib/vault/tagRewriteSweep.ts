@@ -272,7 +272,7 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
     try {
       await writePendingRewrite(vaultRoot, sentinelPayload);
     } catch (err) {
-      reportError('tagRewriteSweep', err, 'Failed to write recovery sentinel, aborting');
+      reportError('tagRewriteSweep', err, "Filo couldn't write its crash-recovery note for this tag change, so it didn't start it. No note was changed.");
       // Treat every planned path as failed so the caller knows the rewrite
       // didn't run. No writes have happened yet.
       for (const p of plan) failed.push(p.path);

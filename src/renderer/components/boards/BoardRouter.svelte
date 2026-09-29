@@ -18,6 +18,7 @@
   import { reportError } from '../../lib/utils/errorBus';
   import { themeStore } from '../../stores/theme.svelte';
   import type { Board } from '../../schema/index';
+  import UnloadedBoardTab from './UnloadedBoardTab.svelte';
 
   interface Props {
     tabId: string;
@@ -56,6 +57,18 @@
       // clear currentBoardId so subsequent transform mutations can't
       // bleed into a stale board.
       scope.canvas.setBoard(null);
+      return;
+    }
+
+    // A tab whose board file couldn't be loaded: the scope is emptied, and
+    // no default board is made for it (it would be saved over the file).
+    if (t.unloadedPath !== undefined) {
+      untrack(() => {
+        scope.board.clearBoard();
+        scope.selection.clear();
+        scope.canvas.setBoard(null);
+      });
+      pinnedTabId = t.id;
       return;
     }
 
@@ -130,7 +143,9 @@
 {#if tab}
   {#key tab.id}
     <div class="board-transition" data-theme={themeStore.boardTheme ?? undefined}>
-      {#if boardModule && pinnedTabId !== tab.id}
+      {#if tab.unloadedPath !== undefined}
+        <UnloadedBoardTab {tab} />
+      {:else if boardModule && pinnedTabId !== tab.id}
         <!-- Only until the effect above has pinned the scope; that runs in
              the same flush, before the browser paints. -->
         {@render loading()}

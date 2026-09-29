@@ -4,7 +4,10 @@
  *
  * While a sweep runs, a sticky toast says what it is doing and how far it has
  * got ("n of N notes"), updated a few times a second at most, and
- * `tagSweepStatus.running` lets the Tags Browser disable Rename and Delete.
+ * `tagSweepStatus.running` lets the Tags Browser disable Rename and Delete,
+ * and every other way into a sweep (a double-click rename, the Tags popup, a
+ * toast's Undo or Retry) waits for the running one (`whenTagSweepsIdle`):
+ * two sweeps over the same notes would interleave their rewrites.
  * When it ends the progress toast goes; the caller's own toast (the done
  * toast with its Undo, or the failure toast with Retry) takes its place.
  *
@@ -23,7 +26,26 @@ const TOAST_KEY = 'tag-sweep-progress';
 
 /** One token per sweep running. A sweep of the vault being left writes nothing more, so a swap forgets it. */
 const running = new SvelteSet<symbol>();
-onVaultSwap('pre-swap', 'tagSweepProgress', () => running.clear());
+/** Callers waiting for every running sweep to end. */
+let idleWaiters: Array<() => void> = [];
+
+function wakeIdleWaiters(): void {
+  if (running.size > 0) return;
+  const waiters = idleWaiters;
+  idleWaiters = [];
+  for (const wake of waiters) wake();
+}
+
+onVaultSwap('pre-swap', 'tagSweepProgress', () => {
+  running.clear();
+  wakeIdleWaiters();
+});
+
+/** Resolves once no tag sweep is running (at once when none is). */
+export function whenTagSweepsIdle(): Promise<void> {
+  if (running.size === 0) return Promise.resolve();
+  return new Promise((resolve) => idleWaiters.push(resolve));
+}
 
 export const tagSweepStatus = {
   /** True while a tag rename, delete or restore is rewriting notes. */
@@ -87,5 +109,6 @@ export async function withTagSweepProgress<T>(
     if (timer !== null) clearTimeout(timer);
     running.delete(token);
     uiStore.dismissToast(toastId, { silent: true });
+    wakeIdleWaiters();
   }
 }

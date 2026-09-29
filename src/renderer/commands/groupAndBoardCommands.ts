@@ -16,27 +16,26 @@ import { restoreClearedPins, type ClearedPin } from '../lib/vault/folderPins';
 import { captureTileMemberships, restoreTileMemberships, type TileMemberships } from '../lib/boards/tileMemberships';
 
 /**
- * Opens the inconsistent-state modal when one or more rollback children threw
- * inside `BatchCommand`. A toast is too easy to miss for a half-applied state,
- * so a danger modal forces acknowledgement; the user should typically close
- * without saving.
+ * Opens a notice when one or more rollback children threw inside
+ * `BatchCommand`: part of the change stayed in place. A toast is too easy to
+ * miss for that, so the notice waits for OK. There is nothing to choose: what
+ * the board shows is what is saved, so it says which parts to look over.
  */
 function openBatchRollbackFailureModal(
   batchDescription: string,
   failures: { description: string; phase: 'execute' | 'undo' }[],
 ): void {
   const summary = failures
-    .map((f) => `• ${f.description} (${f.phase})`)
+    .map((f) => `• ${f.description} (while ${f.phase === 'undo' ? 'undoing' : 'redoing'} it)`)
     .join('\n');
-  const direction = failures[0]?.phase === 'undo' ? 'undo' : 'forward';
   uiStore.openConfirm({
-    title: 'Inconsistent state',
+    title: 'Part of a change stayed in place',
     body:
-      `"${batchDescription}" was partially applied and could not be fully rolled back during ${direction}.\n\n` +
-      `Failed steps:\n${summary}\n\n` +
-      'Consider closing without saving to avoid persisting the half-applied state.',
-    confirmLabel: 'Acknowledge',
-    danger: true,
+      `"${batchDescription}" stopped partway, and Filo couldn't put every part of it back.\n\n` +
+      `Parts left as they are now:\n${summary}\n\n` +
+      'What the board shows now is what is saved. Look over these parts and change back by hand anything that looks wrong.',
+    confirmLabel: 'OK',
+    notice: true,
     onConfirm: () => {},
   });
 }

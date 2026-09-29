@@ -244,7 +244,7 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
               reportError(
                 'vault.handleRename.sentinel',
                 sentinelErr,
-                "Couldn't record a rename-recovery sentinel after the pre-rename flush failed — board references and attachment tags for the renamed file may need manual repair.",
+                "Filo couldn't save before following the rename, nor note it for crash recovery. Board tiles and tags for the renamed file may need fixing by hand.",
               );
             }
           }
@@ -412,7 +412,7 @@ async function runExternalRenameCascade(
     reportError(
       'vault.handleRename.tagsFlush',
       err,
-      "Couldn't persist the tag-membership rename during the external rename; the recovery sentinel will re-assert it on next vault open.",
+      "Filo couldn't save the renamed file's tags. It applies them again the next time the vault opens.",
     );
   }
   // Re-check after the flush await: a swap there means the mutations below
@@ -458,7 +458,7 @@ async function runExternalRenameCascade(
         reportError(
           'vault.handleRename.tagsOnlySentinel',
           err,
-          "Couldn't record a tags-only rename-recovery sentinel; if the tag-membership rename didn't persist you may need to re-apply it.",
+          "Filo couldn't note the renamed file's tags for crash recovery. If they don't show on the new name, add them again.",
         );
       }
     }
@@ -481,7 +481,7 @@ async function runExternalRenameCascade(
         reportError(
           'vault.handleRename.sentinel',
           err,
-          "Couldn't update rename-cascade sentinel with failed paths",
+          "Filo couldn't note which boards still need the renamed file's new name. If a board shows a tile as missing, re-link it.",
         );
       });
     }
@@ -491,7 +491,7 @@ async function runExternalRenameCascade(
         reportError(
           'vault.handleRename.sentinel',
           err,
-          "Couldn't clear completed rename-cascade sentinel",
+          "Filo couldn't remove its note about a finished rename from .filo/. You may be asked about that rename again when the vault next opens.",
         );
       });
     }
@@ -529,7 +529,7 @@ async function layRenameBreadcrumb(
     reportError(
       'vault.handleRename.sentinel',
       err,
-      "Couldn't record a rename-recovery sentinel for the external rename — the cascade will proceed without crash protection",
+      "Filo couldn't note this rename for crash recovery. It goes ahead; if Filo stops before it finishes, some board tiles may need re-linking.",
     );
     return null;
   }

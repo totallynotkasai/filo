@@ -59,7 +59,7 @@ export async function renameTagWithConfirm(oldName: string, newName: string): Pr
       const shown = children.slice(0, 5).map((n) => `• ${n}`).join('\n');
       const extra = children.length > 5 ? `\n…and ${children.length - 5} more` : '';
       parts.push(
-        `${plural(children.length, 'child tag')} won't be renamed (nested tags don't cascade):\n` +
+        `${plural(children.length, 'child tag')} won't be renamed (nested tags don't follow):\n` +
           `${shown}${extra}\n` +
           `They'll stay under "${oldName}/…" until you rename them individually.`,
       );

@@ -26,7 +26,7 @@ Package:        npm run package
 
 `npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. A second job, `verify-windows`, runs `test:unit:strict` and `typecheck:main` on `windows-latest`.
 
-`ci:gates` runs `node scripts/gates/run.mjs`: 85 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
+`ci:gates` runs `node scripts/gates/run.mjs`: 87 small static checks that pin invariants which past data-loss bugs broke. They share one helper module ([scripts/gates/lib.mjs](scripts/gates/lib.mjs)) and are grouped by subsystem. `--list` shows every check, `--only <id,id>` / `--group <name>` narrow a run, and each failure prints `file:line` plus a fix hint.
 
 | Group | Protects |
 |---|---|
@@ -35,7 +35,7 @@ Package:        npm run package
 | `vaultIdentity` | A vault swap mid-`await` can't apply the outgoing vault's data to the new one (`isStillSameVault`); vault-scoped state resets on swap; path-keyed stores use `VaultPath` keys, case-fold compares, and follow renames (path keys in `boardDiscovery` / `vaultDeleteOps` / `folderPins` / `tagsStorage` go through `vaultPath()`, and "the item or inside it" is `isAtOrUnder`); crash sentinels are per-machine; disk-shape IPC goes through `vaultOperations.ts`; one vault open or close runs at a time, and every `vault:close` names the vault it releases (main releases only that one). |
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; a handler's vault-relative path comes from the root / target pair `assertWithinVault` matched (`vaultRelativeWithin`), never `path.relative` across two spellings of the vault (an 8.3 name, a junction), so the `.filo/` guards can't be walked around; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; a command holding snapshots of boards beyond its own names them in `touchedBoardIds()`, so a board reload drops it; Task List section positions are clamped. |
-| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts, no view or lib module reads the vault index's vault-wide `version` (it reads the notes it shows), and a Kanban card builds its editor through `LazyTextTileBody` (a static preview, the editor mounted in idle time or on a press). |
+| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, pointer capture + spatial batches handle `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts, no view or lib module reads the vault index's vault-wide `version` (it reads the notes it shows), a Kanban card builds its editor through `LazyTextTileBody` (a static preview, the editor mounted in idle time or on a press), toasts, notices, confirms and `reportError` messages say what happened in the user's words (no `sentinel`, `cascade`, `drain`, `baseline`, `IPC`, `envelope`), and every Enter handler in a component calls `preventDefault` (else its keypress presses the button of a dialog it opens). |
 | `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; app source and build config carry no audit ids (`Audit-N`, `P0-N`, `Phase N / N.N`); a note's `tags:` is read only through the tags normaliser (`noteTags` / `*TagsField`), since a note may write them as text (`tags: project`); a board's drop handler copies or imports a file dropped from Explorer only after `classifyDroppedFile` (a file already in the vault is linked by its path, never copied). |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// allow-direct-write: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
@@ -260,7 +260,8 @@ filo/
 │   │   │   ├── links.svelte.ts        # filo:// internal link handling
 │   │   │   ├── tiles.svelte.ts        # Tile factory + drop-type detection; recordingTiles (runtime: Audio tiles recording now)
 │   │   │   ├── saveState.svelte.ts    # Saved / saving / failed / waiting-for-a-decision indicator
-│   │   │   └── toolbar.svelte.ts      # Toolbar undo/redo state
+│   │   │   ├── clock.svelte.ts        # The local calendar day as a rune (moves on at midnight and on wake): Task List Today / Overdue
+│   │   │   └── toolbar.svelte.ts      # Toolbar formatting state; the focused editor's own undo / redo (the toolbar Undo acts on it, as Ctrl+Z does)
 │   │   │
 │   │   ├── schema/                    # Zod schemas + inferred TypeScript types
 │   │   │   ├── index.ts               # Re-exports
@@ -420,6 +421,8 @@ filo/
 │   │   │   │   ├── componentFlush.ts  # registerComponentFlush: what a mounted view holds, handed over by a save or a leave
 │   │   │   │   ├── componentWriteRetry.ts # A locked theme / template save kept for Retry and for a rescue copy
 │   │   │   │   ├── boardModulePreload.ts # Loads every board type's code while idle after a vault opens
+│   │   │   │   ├── unloadedBoardTab.ts # Retry for a tab kept open while its board couldn't load (a gone file closes the tab)
+│   │   │   │   ├── writeFailureToasts.ts # A "Board save failed" toast closes once its boards are saved or owe nothing
 │   │   │   │   └── writeStateTracking.ts # trackComponentWrite + counters
 │   │   │   ├── canvas/                # Canvas engine (custom pointer events)
 │   │   │   │   ├── coordinates.ts     # screenToCanvas, getCanvasPointFromEvent
@@ -486,6 +489,7 @@ filo/
 │   │   │   │   └── kanbanTileCreation.ts, kanbanFileDropHandler.ts, kanbanInsertPosition.ts
 │   │   │   ├── tasklist/              # Task List logic
 │   │   │   │   ├── notesBox.svelte.ts # The row notes box draft; an unsaved draft counts for leave / quit (rescue copy, held conflict)
+│   │   │   │   ├── taskParent.ts      # A subtask's parent: the placement's `parentTileId`, else an older note's `parent:` (read, never written)
 │   │   │   │   ├── notesBoxMarkdown.ts # A newline typed in the notes box is a line break in the note (and shown back as a newline)
 │   │   │   │   ├── taskContextMenus.ts
 │   │   │   │   ├── frontmatterWriter.ts # Task field edits → note frontmatter deltas
@@ -510,7 +514,8 @@ filo/
 │   │   │   │   ├── marqueeSelectionController.svelte.ts # Per-pane shift-drag marquee selection
 │   │   │   │   ├── visibleTilesViewModel.svelte.ts # Per-pane viewport culling of tiles
 │   │   │   │   ├── frameHitTest.ts    # Topmost frame under a point (a collapsed frame: its header only)
-│   │   │   │   └── selectionActions.ts # Lock / Tags / Style / Delete on the selection (the Delete key too)
+│   │   │   │   ├── selectionActions.ts # Lock / Tags / Style / Delete on the selection (the Delete key too); Select All skips tiles in collapsed frames
+│   │   │   │   └── tileHitTest.ts     # Right-click hits the tile drawn on top (DOM target, else paint order), never one in a collapsed frame
 │   │   │   ├── settings/              # Settings dialog helpers
 │   │   │   │   ├── settingsSalvage.ts # app.json / defaults.json load: a bad field resets alone, unknown keys kept
 │   │   │   │   ├── currentBoardHelpers.ts # Current Board fields: dotted-path read / write, boolean selects
@@ -610,6 +615,7 @@ filo/
 │   │       │   └── FileTagChips.svelte # A row's tag chips; a click filters the tree by that tag
 │   │       ├── boards/                # Board-type root components
 │   │       │   ├── BoardRouter.svelte
+│   │       │   ├── UnloadedBoardTab.svelte # A tab whose board couldn't load: why, and Retry (never a default board made over the file)
 │   │       │   ├── MindMapBoard.svelte
 │   │       │   ├── MindMapPopups.svelte # The Mind Map's frame / connection / tile style and tag-editor popups
 │   │       │   ├── KanbanBoard.svelte
@@ -801,7 +807,7 @@ External file change → fs.watch (main) → IPC → Store update → Reactive U
 
 1. **File system** is the ultimate source of truth.
 2. **The `.md` file is the only copy of a note's title, tags, fields and body.** The title is frontmatter `title:`, or the filename stem when there is no `title:`. Tags are frontmatter `tags:`. Task and card fields (`completed`, due date, priority, status, recurrence…) are frontmatter keys, and so is the note's Line Spacing (`lineSpacing:`).
-3. **Board JSON holds visuals only.** A note-backed tile def stores its `filePath` (vault-relative) plus position, size, style, lock/fade, column or section and order, and optional `titleHtml` (formatting, shown only while its text matches the note's title). It never stores a note's title, tags or body, so there is nothing to keep in sync (gate `board-schema-no-note-copies`). Board-only tiles (link, iframe, timer) keep their own `title` and `tags`, because they have no file.
+3. **Board JSON holds visuals only.** A note-backed tile def stores its `filePath` (vault-relative) plus position, size, style, lock/fade, column or section and order (a Kanban card's lock and a Task List subtask's parent, `parentTileId`, are on its placement), and optional `titleHtml` (formatting, shown only while its text matches the note's title). It never stores a note's title, tags or body, so there is nothing to keep in sync (gate `board-schema-no-note-copies`). Board-only tiles (link, iframe, timer) keep their own `title` and `tags`, because they have no file.
 4. **Media and other non-Markdown files** keep their tags in `.filo/tags.json:fileTags[path]`, their only copy.
 5. **In-memory stores** reflect the file system state. They are caches, not sources. One note open in several views is one `NoteModel` in `noteStore`; closed notes are read from the vault index.
 

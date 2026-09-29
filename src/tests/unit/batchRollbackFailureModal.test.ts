@@ -1,8 +1,7 @@
 /**
- * D.5 — when `BatchCommand`'s rollback path itself throws on one or more
- * undo() calls, the user gets a danger-tinted modal instead of (or in
- * addition to) per-child toasts. The modal forces acknowledgement of the
- * inconsistent state so the user knows to close without saving.
+ * When `BatchCommand`'s rollback path itself throws on one or more
+ * undo() calls, the user gets a notice (OK only) on top of the per-child
+ * toasts, naming the parts left in place so they can be looked over.
  *
  * Per-child reportError → toast still fires for every individual rollback
  * failure; the modal is a higher-priority *summary* surface.
@@ -61,11 +60,11 @@ describe('BatchCommand — D.5 rollback failure modal', () => {
 
     const modal = uiStore.confirmDialog;
     expect(modal).toBeDefined();
-    expect(modal?.title).toBe('Inconsistent state');
-    expect(modal?.danger).toBe(true);
+    expect(modal?.title).toBe('Part of a change stayed in place');
+    expect(modal?.notice).toBe(true);
     expect(modal?.body).toContain('test-batch');
-    expect(modal?.body).toContain('flaky');
-    expect(modal?.body).toContain('undo');
+    expect(modal?.body).toContain('flaky (while undoing it)');
+    expect(modal?.body).not.toMatch(/without saving/);
   });
 
   it('does NOT open the modal when execute() throws but rollback succeeds', async () => {
@@ -112,9 +111,8 @@ describe('BatchCommand — D.5 rollback failure modal', () => {
 
     const modal = uiStore.confirmDialog;
     expect(modal).toBeDefined();
-    expect(modal?.title).toBe('Inconsistent state');
+    expect(modal?.title).toBe('Part of a change stayed in place');
     expect(modal?.body).toContain('undo-batch');
-    expect(modal?.body).toContain('c-throws-reexec');
-    expect(modal?.body).toContain('execute');
+    expect(modal?.body).toContain('c-throws-reexec (while redoing it)');
   });
 });

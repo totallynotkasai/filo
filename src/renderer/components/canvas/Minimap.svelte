@@ -257,7 +257,7 @@
                   size="1"
                   bind:value={renameValue}
                   onblur={commitRenameWaypoint}
-                  onkeydown={(e) => { if (e.key === 'Enter') commitRenameWaypoint(); else if (e.key === 'Escape') { renamingWpId = null; } }}
+                  onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitRenameWaypoint(); } else if (e.key === 'Escape') { renamingWpId = null; } }}
                 />
               {:else}
                 <button

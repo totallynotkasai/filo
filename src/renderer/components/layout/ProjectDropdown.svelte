@@ -75,7 +75,7 @@
         class="rename-input"
         type="text"
         bind:value={renameValue}
-        onkeydown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') cancelRename(); }}
+        onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitRename(); } else if (e.key === 'Escape') cancelRename(); }}
         onblur={commitRename}
         placeholder="Untitled vault"
       />

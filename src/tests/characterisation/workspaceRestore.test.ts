@@ -13,6 +13,8 @@ import {
   openNoteFromSidebar,
   openTabs,
   renameInSidebar,
+  unloadedBoardShown,
+  retryUnloadedBoardTab,
 } from './harness/actions';
 
 afterEach(async () => {
@@ -57,5 +59,27 @@ describe('Document tabs across a relaunch', () => {
     await reopenVaultAfter(app, () => app.deleteExternally('Beta.md'));
     expect(openTabs(app)).toEqual(['Alpha (document)']);
     expect(activeTabName(app)).toBe('Alpha');
+  });
+});
+
+describe('a board tab whose board fails to load', () => {
+  it('stays open, saying so, and Retry brings the board back once the file is fixed', async () => {
+    const app = await startApp();
+    await createBoard(app, 'mindmap');
+    const rel = 'Mind Map 1.board.json';
+    await waitFor(() => app.exists(rel) && app.read('.filo/workspace.json').includes(rel), 'workspace.json names the board file');
+    const good = app.read(rel);
+    const tabsBefore = openTabs(app);
+
+    await reopenVaultAfter(app, () => app.writeExternally(rel, '{ "version": 8, "board": '));
+    expect(openTabs(app)).toEqual(tabsBefore);
+    expect(unloadedBoardShown(app)).toBe(`Filo couldn't open "Mind Map 1"`);
+    expect(app.read(rel)).toBe('{ "version": 8, "board": ');
+
+    app.writeExternally(rel, good);
+    await retryUnloadedBoardTab(app);
+    await waitFor(() => app.el.querySelector('.mindmap-board') !== null, 'the board shown in its tab');
+    expect(unloadedBoardShown(app)).toBeNull();
+    expect(openTabs(app)).toEqual(tabsBefore);
   });
 });

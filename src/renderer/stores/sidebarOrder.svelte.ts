@@ -10,8 +10,9 @@
  */
 import { scheduleMiscWrite } from '../lib/boards/miscWriteScheduler';
 import { objectEntries, readOutsideVersion, saveMiscConfig } from '../lib/boards/miscConfigDrift';
-import { normalizePath } from '../lib/utils/path';
+import { normalizePath, samePath } from '../lib/utils/path';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 
 const SIDEBAR_ORDER_KEY = 'config:.filo/sidebar-order.json';
 const SIDEBAR_ORDER_PATH = '.filo/sidebar-order.json';
@@ -34,9 +35,31 @@ export function sanitizeSidebarOrder(raw: unknown): Record<string, string[]> {
   return Object.fromEntries(objectEntries(raw, isStringList));
 }
 
+/** The key a folder's order is saved under: '' for the vault root, as the tree reads it. */
+function folderKey(parentAbs: string, vaultRoot: string): string {
+  const key = normalizePath(parentAbs);
+  return vaultRoot !== '' && samePath(key, normalizePath(vaultRoot)) ? '' : key;
+}
+
+/**
+ * The top-level order under '' only. A file may hold it under the vault's
+ * own path (how it was once written, where the tree never read it); that
+ * order is taken as the root's unless one is already under ''.
+ */
+function withRootKey(order: Record<string, string[]>, vaultRoot: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  let fromPath: string[] | undefined;
+  for (const [key, list] of Object.entries(order)) {
+    if (folderKey(key, vaultRoot) === '' && key !== '') fromPath = list;
+    else out[key] = list;
+  }
+  if (fromPath && !out['']) out[''] = fromPath;
+  return out;
+}
+
 /** Takes another copy of the file in, keeping this session's reordered folders. */
 export function mergeSidebarOrderFromDisk(disk: unknown): void {
-  const merged: Record<string, string[]> = sanitizeSidebarOrder(disk);
+  const merged: Record<string, string[]> = withRootKey(sanitizeSidebarOrder(disk), getActiveVaultPath());
   for (const key of changedFolders) {
     const local = manualOrder[key];
     if (local) merged[key] = local;
@@ -63,13 +86,13 @@ export const sidebarOrderStore = {
     return manualOrder;
   },
   /** The order read at vault open. */
-  seed(order: Record<string, string[]>): void {
-    manualOrder = order;
+  seed(order: Record<string, string[]>, vaultRoot: string = getActiveVaultPath()): void {
+    manualOrder = withRootKey(order, vaultRoot);
     changedFolders.clear();
   },
   /** Reassigns the whole record so Svelte's reactive tracking fires. */
   set(vaultRoot: string, parentAbs: string, orderedChildPaths: string[]): void {
-    const key = normalizePath(parentAbs);
+    const key = folderKey(parentAbs, vaultRoot);
     manualOrder = { ...manualOrder, [key]: orderedChildPaths.slice() };
     changedFolders.add(key);
     scheduleSidebarOrderWrite(vaultRoot);

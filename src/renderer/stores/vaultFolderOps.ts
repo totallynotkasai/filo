@@ -320,7 +320,7 @@ async function runRename(
           reportError(
             'vault.rename.sentinel',
             err,
-            "Couldn't record a rename-recovery sentinel — the rename will proceed without crash protection",
+            "Filo couldn't note this rename for crash recovery. It goes ahead; if Filo stops before it finishes, some board tiles may need re-linking.",
           );
         }
       }
@@ -368,7 +368,7 @@ async function runRename(
         // the recovery breadcrumb has nothing to replay.
         if (sentinelId) {
           await clearPendingRenameCascade(vaultPath, sentinelId).catch((err) => {
-            reportError('vault.rename.sentinel', err, "Couldn't clear stale rename-cascade sentinel");
+            reportError('vault.rename.sentinel', err, "Filo couldn't remove its note about a finished rename from .filo/. You may be asked about that rename again when the vault next opens.");
           });
         }
         // Refresh the sidebar tree so directory state matches disk reality
@@ -425,7 +425,7 @@ async function runRename(
           reportError(
             'vault.rename.tagsFlush',
             err,
-            "Couldn't persist the tag-membership rename; the recovery sentinel will re-assert it on next vault open.",
+            "Filo couldn't save the renamed file's tags. It applies them again the next time the vault opens.",
           );
         }
         // Rebind the vault-search index so global search
@@ -481,7 +481,7 @@ async function runRename(
               sentinelId,
               renameCascadeFlush.failed.slice(),
             ).catch((err) => {
-              reportError('vault.rename.sentinel', err, "Couldn't update rename-cascade sentinel with failed paths");
+              reportError('vault.rename.sentinel', err, "Filo couldn't note which boards still need the renamed file's new name. If a board shows a tile as missing, re-link it.");
             });
           }
         } else if (sentinelId && tagsFlushOk && pathKeysOk && configFailed.length === 0) {
@@ -492,7 +492,7 @@ async function runRename(
           // re-asserts the tag rename (idempotently, independently of the
           // already-flushed board IDs).
           await clearPendingRenameCascade(vaultPath, sentinelId).catch((err) => {
-            reportError('vault.rename.sentinel', err, "Couldn't clear completed rename-cascade sentinel");
+            reportError('vault.rename.sentinel', err, "Filo couldn't remove its note about a finished rename from .filo/. You may be asked about that rename again when the vault next opens.");
           });
         }
       } else if (sentinelId) {

@@ -137,6 +137,8 @@ export class AddTaskCommand extends Command {
   // file-drop) whose `.md` already exists. May resolve the FINAL path it created
   // (the create-exclusive helper bumps to ` (n)` when the name exists).
   private seedBackingFile?: () => Promise<SeededFile | void>;
+  // A new subtask's parent, set on its placement (the hierarchy is the board's).
+  private parentTileId?: string;
   private hasExecuted = false;
 
   constructor(
@@ -146,6 +148,7 @@ export class AddTaskCommand extends Command {
     style?: PartialTaskStyle,
     targetSectionId?: string,
     seedBackingFile?: () => Promise<SeededFile | void>,
+    parentTileId?: string,
   ) {
     super();
     this.targetBoardId = boardId;
@@ -157,6 +160,7 @@ export class AddTaskCommand extends Command {
     this.style = style ? this.snapshot(style) : style;
     this.targetSectionId = targetSectionId;
     this.seedBackingFile = seedBackingFile;
+    this.parentTileId = parentTileId;
     this.description = `Add task "${defTitle(def)}"`;
   }
 
@@ -172,6 +176,9 @@ export class AddTaskCommand extends Command {
       this.position,
       this.style,
       this.targetSectionId,
+      this.parentTileId
+        ? { tileId: this.def.id, position: this.position, parentTileId: this.parentTileId }
+        : undefined,
     );
     // A redo lands on a board other changes may have reshaped since: the task
     // goes into its section and every other task stays in its own.
@@ -489,6 +496,45 @@ export class TogglePlacementLockCommand extends Command {
 
   undo() {
     boardCacheStore.setTaskPlacementLocked(this.boardId, this.tileId, this.before);
+  }
+}
+
+/**
+ * Sets a task's parent (indent / outdent / unparent) on its Task List
+ * placement. The hierarchy is board structure, so the note isn't written;
+ * `undefined` leaves the placement without the field, where the note's own
+ * `parent:` (from older builds) is read instead.
+ */
+export class SetTaskParentCommand extends Command {
+  description: string;
+  readonly targetBoardId: string;
+  private boardId: string;
+  private tileId: string;
+  private before: string | undefined;
+  private after: string | undefined;
+
+  constructor(
+    boardId: string,
+    tileId: string,
+    before: string | undefined,
+    after: string | undefined,
+    description?: string,
+  ) {
+    super();
+    this.targetBoardId = boardId;
+    this.boardId = boardId;
+    this.tileId = tileId;
+    this.before = before;
+    this.after = after;
+    this.description = description ?? (after ? 'Indent task' : 'Outdent task');
+  }
+
+  execute() {
+    boardCacheStore.setTaskPlacementParent(this.boardId, this.tileId, this.after);
+  }
+
+  undo() {
+    boardCacheStore.setTaskPlacementParent(this.boardId, this.tileId, this.before);
   }
 }
 

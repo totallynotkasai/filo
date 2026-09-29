@@ -381,7 +381,7 @@
 
   function onTitleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
-      commitTitle();
+      e.preventDefault(); commitTitle();
     } else if (e.key === 'Escape') {
       isEditingTitle = false;
       editTitle = column.title;

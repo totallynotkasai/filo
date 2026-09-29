@@ -158,7 +158,7 @@ export function clearPendingRewrite(vaultRoot: string): Promise<void> {
       reportError(
         'tagRewriteSentinel.clear',
         err,
-        "Could not delete the tag-rewrite sentinel — you'll see the resume prompt again on next open",
+        "Filo couldn't remove its note about a finished tag change from .filo/. You may be asked to resume it when the vault next opens.",
       );
     }
   });
@@ -187,7 +187,7 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
       reportError(
         'tagRewriteSentinel.read',
         err,
-        "Couldn't read the tag-rewrite sentinel — Filo can't verify the previous rename completed",
+        "Filo couldn't read its note about an unfinished tag change in .filo/, so it can't tell whether the last tag rename or delete reached every note.",
       );
       return { unreadable: true };
     }

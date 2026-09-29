@@ -29,6 +29,20 @@ export interface DeleteSelectionDeps {
   selection: DeletableSelection;
   /** The open vault's root, or null with no vault open. */
   vaultPath(): string | null;
+  /** Tiles inside a collapsed frame, which the canvas doesn't draw. */
+  hiddenTileIds?(): ReadonlySet<string>;
+}
+
+/**
+ * The tiles Select All picks: every tile the canvas draws. A tile inside a
+ * collapsed frame is left out, so a Delete after Ctrl+A can't remove tiles
+ * the user can't see.
+ */
+export function selectableTileIds(
+  tiles: Readonly<Record<string, Tile>>,
+  hidden: ReadonlySet<string>,
+): string[] {
+  return Object.values(tiles).map((t) => t.id).filter((id) => !hidden.has(id));
 }
 
 /**
@@ -53,11 +67,18 @@ export function requestDeleteSelected(deps: DeleteSelectionDeps): void {
   if (tiles.length === 0) return;
   const count = tiles.length;
   const notePaths = deps.vaultPath() ? textTileNotePaths(tiles) : [];
+  const hidden = deps.hiddenTileIds?.();
+  const hiddenCount = hidden ? tiles.filter((t) => hidden.has(t.id)).length : 0;
+  const hiddenNote = hiddenCount === 0
+    ? ''
+    : count === 1
+      ? ' It is inside a collapsed frame.'
+      : ` ${hiddenCount} of them ${hiddenCount === 1 ? 'is' : 'are'} inside collapsed frames.`;
   uiStore.openConfirm({
     // Worded like the menus' "Remove from board": the files stay unless the
     // extra option below is ticked.
     title: count === 1 ? 'Remove tile from board?' : `Remove ${count} tiles from board?`,
-    body: `${count === 1 ? 'The tile is' : `${count} tiles are`} removed from this board. You can undo this.`,
+    body: `${count === 1 ? 'The tile is' : `${count} tiles are`} removed from this board.${hiddenNote} You can undo this.`,
     confirmLabel: 'Remove',
     danger: true,
     extraOption: notePaths.length > 0

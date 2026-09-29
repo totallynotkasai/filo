@@ -319,7 +319,8 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const folder = getActiveContentFolder(board);
     const { def, relPath, title } = buildTaskDef({ title: nextSubtaskTitle(parentTileId), folder });
 
-    const fm: Record<string, unknown> = { completed: false, parent: parentTileId };
+    // The parent is recorded on the placement (board structure), not in the note.
+    const fm: Record<string, unknown> = { completed: false };
 
     // Compute the parent index here, then fold the `.md` seed INTO
     // AddTaskCommand.execute() so placement and seed both ride the history chain
@@ -333,7 +334,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const parentSection = parentIdx >= 0 ? sectionIdForPlacementIndex(sectionsNow, parentIdx) : null;
     // Success announcement gated on the chain resolving (see createTaskInSection).
     const cmd = new AddTaskCommand(board.id, def, insertAt, undefined, parentSection ?? undefined, () =>
-      seedMdFile({ relPath, title, folder, fm }, 'subtask'),
+      seedMdFile({ relPath, title, folder, fm }, 'subtask'), parentTileId,
     );
     const ok = await historyStore.execute(cmd).then(() => true, () => false);
 

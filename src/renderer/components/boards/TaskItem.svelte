@@ -289,7 +289,7 @@
   }
 
   function onTitleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') commitEdit();
+    if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
     else if (e.key === 'Escape') {
       cancelEdit();
     }

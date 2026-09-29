@@ -45,6 +45,7 @@ const EXEMPT_MODULES = new Set([
   'src/renderer/stores/canvas.svelte.ts',
   'src/renderer/stores/spatial.svelte.ts',
   'src/renderer/stores/toolbar.svelte.ts',
+  'src/renderer/stores/clock.svelte.ts',
   'src/renderer/lib/boards/boardScope.svelte.ts',
   'src/renderer/lib/boards/boardToolbar.svelte.ts',
   'src/renderer/lib/kanban/kanbanDragController.svelte.ts',

@@ -1,9 +1,41 @@
 // Svelte component / UI ratchets.
 import {
   fail, blank, blankMatches, blankHtmlComments, scriptBlocks, scriptOnly, matchBrace, lineAt, markerNear,
+  stripCommentsKeepOffsets,
 } from './lib.mjs';
 
 const COMPONENTS = 'src/renderer/components';
+
+/**
+ * The top-level arguments of the call whose `(` is at `open`, each with its
+ * offset: commas inside nested brackets and string literals don't split.
+ */
+function callArgs(code, open) {
+  const args = [];
+  let depth = 0;
+  let quote = '';
+  let start = open + 1;
+  for (let i = open; i < code.length; i++) {
+    const c = code[i];
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = '';
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') quote = c;
+    else if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') {
+      if (--depth === 0) {
+        args.push({ start, text: code.slice(start, i) });
+        return args;
+      }
+    } else if (c === ',' && depth === 1) {
+      args.push({ start, text: code.slice(start, i) });
+      start = i + 1;
+    }
+  }
+  return args;
+}
 
 /** Brace depth before each char of already-blanked code. */
 function depthMap(code) {
@@ -505,6 +537,74 @@ export const checks = [
       if (!/<LazyTextTileBody\b/.test(cardCode)) out.push(fail(card, undefined, 'does not render <LazyTextTileBody>'));
       if (!/\bqueueEditorMount\s*\(/.test(blank(scriptOnly(lazyCode)))) {
         out.push(fail(lazy, undefined, 'no longer queues its editor on the mount queue (queueEditorMount)'));
+      }
+      return out;
+    },
+  },
+  {
+    // A notice reaches every user, so it speaks their language: what happened
+    // to their file, and what they can do. These words name Filo's internals.
+    id: 'toast-plain-language',
+    title: "toasts, notices and confirms say what happened in the user's words, not Filo's internals",
+    hint:
+      'sentinel, cascade, drain, baseline, IPC and envelope name how Filo works, not what the user sees. Say what ' +
+      'happened to which file, and what the user can do. reportError\'s third argument is shown too. ' +
+      'Escape (rare): `// allow-jargon: <reason>` on the line.',
+    run(ctx) {
+      const out = [];
+      const JARGON = /\b(sentinels?|cascad(?:e|es|ed|ing)|drain(?:s|ed|ing)?|baselines?|IPC|envelopes?)\b/i;
+      // reportError(source, err, message): only the message is shown.
+      const CALL = /\b(?:uiStore\s*\.\s*(?:toast|pushToast|openConfirm|confirmAsync)|pushToast|(reportError))\s*\(/g;
+      const LITERAL = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g;
+      for (const rel of ctx.files('src/renderer', { ext: ['.ts', '.svelte'] })) {
+        const raw = ctx.read(rel);
+        if (!/toast|openConfirm|confirmAsync|reportError/i.test(raw)) continue;
+        const rawLines = raw.split(/\r?\n/);
+        const code = stripCommentsKeepOffsets(rel.endsWith('.svelte') ? blankHtmlComments(raw) : raw);
+        for (const m of code.matchAll(CALL)) {
+          const open = code.indexOf('(', m.index);
+          const shown = callArgs(code, open).slice(m[1] ? 2 : 0);
+          for (const arg of shown) for (const lit of arg.text.matchAll(LITERAL)) {
+            // Only words the user reads: a literal with a space in it (keys
+            // and ids such as 'tag-sweep' have none); ${…} parts are code.
+            const text = lit[0].slice(1, -1).replace(/\$\{[^}]*\}/g, '');
+            if (!text.includes(' ')) continue;
+            const word = JARGON.exec(text);
+            if (!word) continue;
+            const line = lineAt(code, arg.start + lit.index);
+            if (markerNear(rawLines, line - 1, /\/\/\s*allow-jargon:\s*\S+/)) continue;
+            out.push(fail(rel, line, `user-facing text says "${word[0]}"`));
+          }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    // Chromium delivers the keypress of an Enter to whatever has the focus
+    // once the keydown is handled. A handler that opens an in-app confirm or
+    // notice moves the focus to its button, which that keypress then presses:
+    // the dialog closes before it is seen (a tag merge couldn't be confirmed).
+    id: 'enter-keeps-the-key',
+    title: 'an Enter handler in a component calls preventDefault, so its keypress never presses a dialog it opens',
+    hint:
+      'Call e.preventDefault() in the Enter branch. Where the default must run (an Enter that ' +
+      'only moves focus to a real button), mark the line `// allow-enter-default: <reason>`.',
+    run(ctx) {
+      const out = [];
+      for (const rel of ctx.files(COMPONENTS, { ext: ['.svelte'] })) {
+        const raw = ctx.read(rel);
+        if (!raw.includes("'Enter'")) continue;
+        const lines = raw.split(/\r?\n/);
+        lines.forEach((line, i) => {
+          if (!/\bkey\s*===\s*'Enter'/.test(line)) return;
+          if (/allow-enter-default:\s*\S+/.test(line) || /allow-enter-default:\s*\S+/.test(lines[i - 1] ?? '')) return;
+          // The branch: up to the next else / other key test, at most 16 lines.
+          let end = i + 1;
+          while (end < lines.length && end < i + 16 && !/\}\s*else\b|\bkey\s*===/.test(lines[end] ?? '')) end++;
+          if (/preventDefault\s*\(/.test(lines.slice(i, end).join('\n'))) return;
+          out.push(fail(rel, i + 1, 'an Enter branch without preventDefault()'));
+        });
       }
       return out;
     },

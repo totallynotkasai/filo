@@ -264,6 +264,22 @@ export function makeTaskListSlice(ctx: CacheContext) {
       ctx.markDirty(boardId);
     },
 
+    /** Sets a task's parent on its placement; `undefined` removes the field. */
+    setTaskPlacementParent(boardId: string, tileId: string, parentTileId: string | undefined): void {
+      const tl = ctx.tasklistBoardOrWarn(boardId, 'setTaskPlacementParent');
+      if (!tl) return;
+      const placements = [...((tl.tasks ?? []) as TaskPlacement[])];
+      const idx = placements.findIndex((p) => p.tileId === tileId);
+      const current = placements[idx];
+      if (!current) return;
+      const next: TaskPlacement = { ...current };
+      if (parentTileId === undefined) delete next.parentTileId;
+      else next.parentTileId = parentTileId;
+      placements[idx] = next;
+      (tl as Record<string, unknown>).tasks = placements;
+      ctx.markDirty(boardId);
+    },
+
     updateTaskPlacementStyle(
       boardId: string,
       tileId: string,

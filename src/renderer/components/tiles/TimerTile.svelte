@@ -6,6 +6,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { UpdateTimerConfigCommand, type TimerMode, type TimerConfigSnapshot } from '../../commands/index';
   import { timerRemainingAt, startTimerPatch, stopTimerPatch } from '../../lib/utils/timerCountdown';
+  import { runningTimerTiles } from '../../stores/tiles.svelte';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const boardStore = scope.board;
@@ -268,6 +269,15 @@
     });
   });
 
+  // A running countdown keeps its tile mounted when it leaves the screen
+  // (see runningTimerTiles), so its end is still announced.
+  $effect(() => {
+    if (tile.mode === 'clock' || !tile.isRunning) return;
+    const id = tile.id;
+    untrack(() => runningTimerTiles.add(id));
+    return () => { runningTimerTiles.delete(id); };
+  });
+
   onDestroy(() => {
     // Clear the end-of-timer flash handle so it can't fire after unmount.
     if (flashTimer) clearTimeout(flashTimer);
@@ -284,7 +294,7 @@
         bind:this={customInputEl}
         bind:value={customInput}
         placeholder="mm:ss"
-        onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') applyCustomInput(); if (e.key === 'Escape') editingCustom = false; }}
+        onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); applyCustomInput(); } if (e.key === 'Escape') editingCustom = false; }}
       />
       <button class="apply-btn" onclick={applyCustomInput}>Set</button>
     </div>

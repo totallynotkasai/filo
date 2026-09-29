@@ -114,6 +114,7 @@
   function handleRenameKeydown(e: KeyboardEvent) {
     // Enter on a refused name keeps the field open so it can be fixed.
     if (e.key === 'Enter') {
+      e.preventDefault();
       if (!renameProblem) commitRename();
     } else if (e.key === 'Escape') isRenaming = false;
   }

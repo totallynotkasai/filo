@@ -508,7 +508,7 @@
           class="hex-input"
           placeholder="#rrggbb"
           onblur={commitHexInput}
-          onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
           maxlength="7"
         />
         {#if hasEyeDropper}

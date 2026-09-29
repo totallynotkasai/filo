@@ -154,7 +154,7 @@
           type="text" 
           bind:value={inputUrl} 
           placeholder="Paste image URL here..." 
-          onkeydown={(e) => e.key === 'Enter' && handleUrlSubmit()}
+          onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleUrlSubmit(); } }}
         />
         <button class="btn btn-primary" onclick={handleUrlSubmit}>Add</button>
       </div>

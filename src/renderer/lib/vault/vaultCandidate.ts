@@ -45,7 +45,7 @@ import { salvageSlice } from '../settings/settingsSalvage';
 import { loadAllBoards, isTransientBoardLoadError } from '../boards/boardLoader';
 import { adoptLoadedBoardBaseline } from '../boards/boardBaseline';
 import { boardLoadRetryToast } from '../boards/boardLoadRetryPrompt';
-import { boardLoadFailedToast } from '../boards/boardLoadFailedNotice';
+import { boardLoadFailedToast, boardLoadReason } from '../boards/boardLoadFailedNotice';
 import { syncConflictToast, groupByCanonical } from './syncConflictNotices';
 import { invokeOk } from '../utils/invokeOk';
 import { assertIpcOk } from '@shared/ipcEnvelope';
@@ -160,6 +160,8 @@ export interface VaultCandidate {
   seededConfigBaselinePaths: string[];
   /** Board files that failed to load (not a duplicate id): a later load catches up on renames. */
   unloadedBoardPaths: string[];
+  /** Why each unloaded board didn't load, by its path (its kept tab says so). */
+  unloadedBoardMessages: Record<string, string>;
 }
 
 /**
@@ -335,9 +337,10 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     }
     if (!duplicate) warnings.push(boardLoadFailedToast(newVaultPath, failed, snapshotAbs));
   }
-  const unloadedBoardPaths = failedBoards
-    .filter((b) => b.errorKind !== 'duplicate-board-id' && b.errorKind !== 'sync-conflict-copy')
-    .map((b) => b.path);
+  const unloadedBoards = failedBoards
+    .filter((b) => b.errorKind !== 'duplicate-board-id' && b.errorKind !== 'sync-conflict-copy');
+  const unloadedBoardPaths = unloadedBoards.map((b) => b.path);
+  const unloadedBoardMessages = Object.fromEntries(unloadedBoards.map((b) => [b.path, boardLoadReason(b.errorKind, b.message)]));
 
   // Board files a sync client forked
   // (`Plan.board-HOST.json`) never appear in `board:list`; surface them once,
@@ -547,6 +550,7 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     salvagedSettings,
     seededConfigBaselinePaths,
     unloadedBoardPaths,
+    unloadedBoardMessages,
   };
 }
 

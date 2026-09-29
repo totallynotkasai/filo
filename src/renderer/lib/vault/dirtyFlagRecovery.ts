@@ -181,7 +181,7 @@ export function markDirty(
       reportError(
         'dirtyFlag.mark',
         err,
-        'Could not write the crash-recovery sentinel — a crash before save lands may lose data without warning',
+        "Filo couldn't write its crash-recovery note in .filo/. If Filo stops before your changes are saved, it won't be able to tell you which files had unsaved changes.",
       );
     }
   });
@@ -208,7 +208,7 @@ export function markClean(vaultRoot: string): Promise<void> {
       reportError(
         'dirtyFlag.clean',
         err,
-        'Could not delete the crash-recovery sentinel — a phantom recovery prompt may appear on next vault open',
+        "Filo couldn't remove its crash-recovery note from .filo/. The next time this vault opens, Filo may ask about unsaved changes that were in fact saved.",
       );
     }
   });
@@ -299,7 +299,7 @@ async function readRecoveryStatus(
       reportError(
         'dirtyFlag.check',
         err,
-        "Couldn't read the crash-recovery sentinel — Filo can't verify the previous session shut down cleanly",
+        "Filo couldn't read its crash-recovery note in .filo/, so it can't tell whether the last session closed cleanly. Check that your recent edits are there.",
       );
       // Defensive: copy the raw sentinel bytes into
       // `.filo/recovery/<ts>/.dirty` before any session-side markDirty
@@ -324,7 +324,7 @@ async function readRecoveryStatus(
       reportError(
         'dirtyFlag.check',
         new Error('zero-byte .filo/.dirty sentinel (truncated mid-write)'),
-        "Filo found a truncated crash-recovery sentinel — it can't verify the previous session shut down cleanly. Check whether any recent edits are missing.",
+        "Filo's crash-recovery note in .filo/ was cut short, so Filo can't tell whether the last session closed cleanly. Check whether any recent edits are missing.",
       );
     }
     return { needsRecovery: true, reason: 'sentinel-unreadable' };

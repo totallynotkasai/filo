@@ -132,7 +132,7 @@
         type="text"
         bind:value={inputUrl}
         placeholder="https://example.com"
-        onkeydown={(e) => e.key === 'Enter' && handleUrlSubmit()}
+        onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleUrlSubmit(); } }}
         onblur={handleUrlSubmit}
       />
     </div>
@@ -164,7 +164,7 @@
         </div>
       </div>
     {:else if metadata && tile.url}
-      <div class="metadata-preview" onclick={openLink} role="button" tabindex="0" onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && openLink()}>
+      <div class="metadata-preview" onclick={openLink} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openLink(); } }}>
         {#if metadata.image}
           <div class="meta-image-container">
             <img

@@ -7,6 +7,7 @@
  */
 import type { FailedBoardEntry } from './boardLoader';
 import { normalizePath } from '../utils/path';
+import { uiStore } from '../../stores/ui.svelte';
 
 export interface BoardLoadFailedToast {
   text: string;
@@ -15,6 +16,23 @@ export interface BoardLoadFailedToast {
   sticky: true;
   dedupeKey: string;
   actions: Array<{ label: string; handler: () => void }>;
+}
+
+/**
+ * Why a board didn't load, in plain words (the loader's own message for a
+ * broken file names the parser's error). Shown in the notice and in the tab
+ * kept open for the board.
+ */
+export function boardLoadReason(errorKind: FailedBoardEntry['errorKind'], message: string): string {
+  switch (errorKind) {
+    case 'parse-error':
+      return "The file isn't valid JSON (it may have been cut short or edited by hand).";
+    case 'schema-invalid':
+      return `A value in it isn't one Filo understands (${message}).`;
+    default:
+      // The version, size, lock and snapshot messages are already plain words.
+      return message;
+  }
 }
 
 /** What went wrong, in words that don't need the error kind to make sense. */
@@ -26,8 +44,7 @@ function whatWentWrong(entry: FailedBoardEntry): string {
     case 'schema-invalid':
       return `Filo couldn't open the board ${name}: a value in it isn't one Filo understands (${entry.message}).`;
     default:
-      // The version, size and snapshot messages are already plain words.
-      return `Filo couldn't open the board ${name}. ${entry.message}`;
+      return `Filo couldn't open the board ${name}. ${boardLoadReason(entry.errorKind, entry.message)}`;
   }
 }
 
@@ -40,6 +57,22 @@ function nextStep(entry: FailedBoardEntry, copyKept: boolean): string {
   }
   if (!copyKept) return 'Fix the file in a text editor, then reopen the vault.';
   return 'A copy is in .filo/recovery. Fix the file in a text editor, then reopen the vault.';
+}
+
+/**
+ * The whole list of a board's validation problems, one per line, for pasting
+ * into a text editor next to the file (the notice names only the first few).
+ */
+function copyProblemsAction(problems: readonly string[]): { label: string; handler: () => void } {
+  return {
+    label: 'Copy all problems',
+    handler: () => {
+      void navigator.clipboard.writeText(problems.join('\n')).then(
+        () => uiStore.toast(`Copied ${problems.length} problems`, 'info', 2000),
+        () => uiStore.toast('Couldn\'t copy the problems', 'error', 3000),
+      );
+    },
+  };
 }
 
 /**
@@ -66,6 +99,7 @@ export function boardLoadFailedToast(
           void window.filo.invoke('shell:show-item-in-folder', target);
         },
       },
+      ...(entry.problems && entry.problems.length > 3 ? [copyProblemsAction(entry.problems)] : []),
     ],
   };
 }

@@ -157,7 +157,6 @@ function deleteCompleted(completed: string[]): Command {
     getBoard: () => board(),
     getRows: () => rows(completed),
     getTilesById: () => ({}),
-    buildTaskFieldCommand: () => null,
     tickAndPersist: () => {},
     announce: () => {},
   });

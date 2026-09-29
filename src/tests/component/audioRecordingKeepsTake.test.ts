@@ -11,6 +11,7 @@ import { BOARD_SCOPE_KEY, type BoardScope } from '@renderer/lib/boards/boardScop
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { recordingTiles } from '@renderer/stores/tiles.svelte';
+import { uiStore } from '@renderer/stores/ui.svelte';
 import { flushAllComponents, __resetComponentFlushesForTests } from '@renderer/lib/boards/componentFlush';
 import { holdCloseDrainUntilSwap } from '@renderer/lib/editor/closeDrainGate.svelte';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
@@ -137,6 +138,24 @@ describe('an Audio tile recording', () => {
     await vi.waitFor(() => expect(linkedSrc('b1')).toBe('rec.webm'));
     expect(recordingTiles.has('a1')).toBe(false);
     expect(boardCacheStore.cache.b2!.tileDefs.a1).toBeUndefined();
+  });
+
+  it('deleted while recording: the take is kept, and the user is told where it is', async () => {
+    const root = mountTile();
+    await startTake(root);
+    const push = vi.spyOn(uiStore, 'pushToast');
+
+    // The tile is deleted: it leaves the board, then unmounts, which ends the take.
+    boardCacheStore.persistRemoveTile('a1');
+    unmount(instance!);
+    instance = null;
+
+    await vi.waitFor(() => expect(push).toHaveBeenCalled());
+    const toast = push.mock.calls.at(-1)![0];
+    expect(toast.text).toContain('"rec.webm"');
+    expect(toast.text).toContain('its tile was deleted');
+    expect(toast.actions?.map((a) => a.label)).toEqual(['Show in folder']);
+    expect(boardCacheStore.cache.b1!.tileDefs.a1).toBeUndefined();
   });
 
   it('a board file never records that a tile is recording', async () => {

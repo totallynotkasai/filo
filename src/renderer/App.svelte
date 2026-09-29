@@ -12,6 +12,7 @@
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
   import { buildWriteErrorToast } from './lib/boards/writeErrorToast';
+  import { settleBoardFailureToasts, trackBoardFailureToast } from './lib/boards/writeFailureToasts';
   import { retryAllFailedWrites } from './lib/boards/writeSchedulerFailures';
   import { retryAndReport } from './lib/boards/retryFeedback';
   import { hasOpenSettingsEdits, settleOpenSettings } from './lib/settings/settleOpenSettings';
@@ -86,7 +87,9 @@
       ? [{ label: 'Retry', handler: () => retryAndReport() }]
       : undefined;
     // Retry re-fires every failed write, so it fits a toast that names several files.
-    writeErrorAggregator({ context, error: info.error, message, coalesceKey, path: info.path, sharedActions: actions });
+    const toastId = writeErrorAggregator({ context, error: info.error, message, coalesceKey, path: info.path, sharedActions: actions });
+    // Closed once the board is saved, or nothing is owed for it any more.
+    if (info.kind === 'board' && info.path) trackBoardFailureToast(toastId, info.path);
   });
 
   // On every write-state change, feed the save-state store the same answer
@@ -121,6 +124,7 @@
   setBoardWriteStateListener(() => {
     unsavedStateReport.nudge();
     pushSaveState();
+    settleBoardFailureToasts((id) => uiStore.dismissToast(id, { silent: true }));
     saveStateRecheck ??= setTimeout(() => {
       saveStateRecheck = null;
       pushSaveState();

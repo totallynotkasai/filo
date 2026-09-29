@@ -385,6 +385,21 @@ export interface LoadBoardError {
     | 'offline'
     | 'too-large';
   message: string;
+  /** Every validation problem (`schema-invalid`); `message` names the first few. */
+  problems?: string[];
+}
+
+/** How many validation problems a message names before "and N more". */
+const PROBLEMS_SHOWN = 3;
+
+/**
+ * The first few problems and how many more: a big board with one bad field
+ * per tile has hundreds, which no notice can show.
+ */
+export function summariseProblems(problems: readonly string[]): string {
+  const shown = problems.slice(0, PROBLEMS_SHOWN).join('; ');
+  const more = problems.length - PROBLEMS_SHOWN;
+  return more > 0 ? `${shown}; and ${more} more` : shown;
 }
 
 /**
@@ -435,6 +450,7 @@ export interface FailedBoardEntry {
   // sync-client conflict copy of another board file.
   errorKind: LoadBoardError['error'] | 'duplicate-board-id' | 'sync-conflict-copy';
   message: string;
+  problems?: string[];
 }
 
 /**
@@ -595,16 +611,15 @@ export async function loadBoard(
   }
 
   if (loaded.status === 'invalid') {
-    return {
-      ok: false,
-      error: 'schema-invalid',
-      // Prefix each issue with its path: Zod 4 messages are generic
-      // ("Invalid input: expected number, received undefined"), so without
-      // the path the recovery toast can't point at the broken field.
-      message: loaded.error.issues
-        .map((i) => (i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message))
-        .join('; '),
-    };
+    // Prefix each issue with its path: Zod 4 messages are generic
+    // ("Invalid input: expected number, received undefined"), so without
+    // the path the recovery toast can't point at the broken field.
+    const problems = loaded.error.issues
+      .map((i) => (i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message));
+    if (problems.length > PROBLEMS_SHOWN) {
+      console.warn(`[boardLoader] ${relPath}: ${problems.length} problems\n${problems.join('\n')}`);
+    }
+    return { ok: false, error: 'schema-invalid', message: summariseProblems(problems), problems };
   }
 
   const data = loaded.data;
@@ -830,7 +845,12 @@ export async function loadAllBoards(
       // No toast here: vaultCandidate shows one per failed board after the
       // open, once it knows whether a recovery copy was kept (a Retry notice
       // for a transient failure, a what-to-do-next notice otherwise).
-      failedBoards.push({ path: relPath, errorKind: result.error, message: result.message });
+      failedBoards.push({
+        path: relPath,
+        errorKind: result.error,
+        message: result.message,
+        ...(result.problems ? { problems: result.problems } : {}),
+      });
       console.warn(`[boardLoader] ${relPath} not loaded (${result.error}): ${result.message}`);
       continue;
     }

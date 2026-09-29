@@ -22,7 +22,7 @@ vi.mock('@renderer/stores/frames.svelte', () => ({
 }));
 
 import { VisibleTilesViewModel } from '@renderer/lib/mindmap/visibleTilesViewModel.svelte';
-import { recordingTiles } from '@renderer/stores/tiles.svelte';
+import { recordingTiles, runningTimerTiles } from '@renderer/stores/tiles.svelte';
 import type { Tile } from '@renderer/schema/index';
 
 function tile(id: string): Tile {
@@ -84,6 +84,17 @@ describe('VisibleTilesViewModel.visibleTiles (Audit-10 M6)', () => {
       expect(vm.visibleTiles.map((t) => t.id)).toEqual(['a', 'b']);
     } finally {
       recordingTiles.delete('b');
+    }
+  });
+
+  it('keeps a running timer mounted off screen, so it still says when it finishes', () => {
+    const tiles = { a: tile('a'), t: tile('t') };
+    runningTimerTiles.add('t');
+    try {
+      const vm = makeViewModel(tiles, ['a']);
+      expect(vm.visibleTiles.map((x) => x.id)).toEqual(['a', 't']);
+    } finally {
+      runningTimerTiles.delete('t');
     }
   });
 });

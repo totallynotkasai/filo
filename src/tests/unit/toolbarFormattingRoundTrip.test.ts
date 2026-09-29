@@ -77,6 +77,13 @@ const CASES: Case[] = [
   { name: 'align centre', run: (e) => e.chain().setTextAlign('center').run(), saved: 'text-align: center' },
   { name: 'align right', run: (e) => e.chain().setTextAlign('right').run(), saved: 'text-align: right' },
   { name: 'justify', run: (e) => e.chain().setTextAlign('justify').run(), saved: 'text-align: justify' },
+  // The toolbar's Undo / Redo while an editor has the focus.
+  { name: 'bold, then undo', run: (e) => e.chain().toggleBold().run() && e.chain().undo().run(), saved: 'Alpha beta gamma' },
+  {
+    name: 'bold, undo, then redo',
+    run: (e) => e.chain().toggleBold().run() && e.chain().undo().run() && e.chain().redo().run(),
+    saved: '**Alpha beta gamma**',
+  },
   { name: 'indent', run: (e) => e.chain().increaseIndent().run(), saved: 'margin-left: 24px' },
   { name: 'indent twice', run: (e) => e.chain().increaseIndent().increaseIndent().run(), saved: 'margin-left: 48px' },
   { name: 'indent then outdent', run: (e) => e.chain().increaseIndent().decreaseIndent().run() },

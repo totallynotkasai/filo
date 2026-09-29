@@ -784,6 +784,68 @@ Each item gets a component or unit test unless noted.
 - `ci:verify` green.
 - Real app: a Kanban lock, a sidebar root reorder then relaunch, a case-only rename, a broken board file then fix and Retry from its tab.
 
+### Phase 5 outcome (2026-09-29)
+
+**Done.** Every item (A25-20 … A25-26 except A25-22, done in Phase 1), plus N8 and N9 from earlier phases, D9 taken at its default, and two new gates (87 in all). Each fix started from a test that fails without it (checked by running the new spec with the fix switched off, or, for new helpers, by the failing import), except where noted.
+
+**Checks.** `npm run ci:verify` green: 760 test files, 7,096 tests (5 skipped, as before); 87/87 gates. One full run before that timed out once in `boardFolders.test.ts` ("renaming the .board.json … renames the board", waiting for the tab to follow); it passed alone (11/11) and in the next full run, so it reads as a load-dependent timeout, not a regression.
+
+**Real-app check** (built app, a session-scratchpad Playwright script driving `dist/main/main.js`):
+
+| Scenario | Result |
+|---|---|
+| Kanban: add a card, press its Lock, quit, relaunch | The placement has `locked: true` on disk; after the relaunch the card still shows Unlock and the locked style |
+| Sidebar (Sort By None): Alpha, Bravo, Charlie; move Alpha down twice with the drag handle's keyboard reorder; quit, relaunch | Bravo, Charlie, Alpha before and after the relaunch; `.filo/sidebar-order.json` holds it under `""` |
+| Rename `plan.md` to `Plan` in the sidebar, then `other.md` to `Plan` | The first renames at once, no dialog (`Plan.md` on disk). The second shows "Name already taken … nothing was renamed" with OK only, and it stays up after the real Enter (its keypress no longer presses the button); both files unchanged |
+| A Mind Map tab; quit; the board file cut short (`{ "version": 8, "board": `); relaunch; the file put back; Retry in the tab | The tab is still there, saying "Filo couldn't open "Mind Map 1"" and why in plain words (the parse error's wording was replaced by the notice's), with Retry; the broken file is left byte-for-byte; `workspace.json` keeps the tab; after Retry the board shows in the same tab |
+
+**What changed, by item.**
+
+| Item | Where | Tests |
+|---|---|---|
+| A25-20.1 Kanban lock | `KanbanTilePlacementSchema.locked`; `kanbanTileOps.updateTile` writes a lock to the card's placement (`setPlacementLocked`) and the projection reads it; `getFullTilesForKanbanBoard` now delegates to `kanbanTileOps.getFullTiles` (the two copies of the projection were one) | unit `kanbanCardLock.test.ts` (lock → placement and card; unlock removes the field; the schema keeps it) |
+| A25-20.2 Ctrl+A | `selectableTileIds` (skips `framesStore.hiddenTileIds`); the Delete confirm says how many selected tiles are inside collapsed frames | unit `selectAllCollapsedFrames.test.ts` |
+| A25-20.3 right-click | `lib/mindmap/tileHitTest.ts`: the tile under the pointer (`data-canvas-tile-id` on the tile shell), else the spatial hits by paint order (a selected tile on top, then board tile order); a tile inside a collapsed frame is never hit | unit `tileHitTest.test.ts` |
+| A25-20.4 subtask parent (D9) | `TaskPlacementSchema.parentTileId`; `lib/tasklist/taskParent.ts` (`taskParent`, `buildSetParentCommand`); `SetTaskParentCommand`; `boardCacheStore.setTaskPlacementParent`; indent / outdent (drag, Tab), "keep subtasks" on delete and Add Subtask (a new `AddTaskCommand` argument) write the placement; `TaskRow.noteParent` keeps the note's own field for the fallback | characterisation `taskSubtasks.test.ts` (Tab writes the board, not the note, and Undo takes it back; a note's `parent:` shows nested and Shift+Tab outdents without touching it); unit `taskListPlacementCommands.test.ts` (+5) |
+| A25-20.5 section delete undo | `DeleteSectionCommand` records the layout before the delete and the section's tasks; undo puts the marker back at its array slot, tied with its successor, and `applyMove`s the tasks into it | unit `sectionDeleteUndoMembership.test.ts` (keep-tasks with a task added above; delete-tasks with a task removed / added above) |
+| A25-20.6 Today after midnight | `stores/clock.svelte.ts` (`clockStore.today`: a midnight timer, window focus / visibility, a 5-minute recheck); the Task List view model's three "today"s read it | unit `clockStore.test.ts` (midnight; a sleep through midnight caught up on focus) |
+| A25-20.7 duplicate drop | `addNoteAsTask` honours `duplicate`: focuses the existing row and toasts "Already on this list" (every drop path: Explorer, sidebar) | characterisation `explorerDrops.test.ts` (+1: Explorer twice and a sidebar drop leave one row) |
+| A25-20.8 toolbar Undo / Redo | `toolbarStore.editorHistory` (the focused editor's can-undo / can-redo, from `syncStateToToolbar`); `tiptapToolbar.undoInEditor` / `redoInEditor`; the buttons read "Undo typing" / "Redo typing" then | characterisation `toolbarUndo.test.ts` |
+| A25-21.1 sidebar root order | `sidebarOrderStore.set` saves the root under `''`; `seed` and the merge take an order saved under the vault's own path as the root's | unit `sidebarRootOrder.test.ts` |
+| A25-21.2 rename clash | a case-only rename renames directly; a taken name gets a notice ("Name already taken", OK only, nothing renamed); `ConfirmDialogConfig.notice` (no Cancel) | unit `renameVaultEntryClash.test.ts` |
+| A25-23 schema problems | `summariseProblems` (three and "and N more"); `LoadBoardError.problems` / `FailedBoardEntry.problems`; the notice's **Copy all problems** | unit `boardSchemaProblems.test.ts` (300 problems: a short message, the whole list copied) |
+| A25-24 failed board's tab | a board tab saves `boardPath` and `boardType` in `workspace.json`; a tab whose board is in `unloadedBoards` comes back as a placeholder (`TabData.unloadedPath`, `UnloadedBoardTab.svelte`: why, and **Retry**); `adoptBoardAtRuntime` turns it back into the board's tab (`tabStore.resolveUnloaded`); a file gone at Retry closes the tab; `BoardRouter` never makes a default board for such a tab | characterisation `workspaceRestore.test.ts` (+1: broken → tab kept, file untouched → fixed → Retry shows the board) |
+| A25-25 wording | the rollback notice ("Part of a change stayed in place", OK only, no "close without saving"); 28 messages reworded | unit `batchRollbackFailureModal.test.ts` (updated); gate `components/toast-plain-language` |
+| A25-26.1 tag sweep guard | `whenTagSweepsIdle`; every tag rename / delete / restore / undo waits for a running sweep (`afterRunningSweeps` in `tagUndo`), so a double-click, the Tags popup or a toast's Undo / Retry can't start a second sweep over the same notes; the double-click rename is disabled while busy, like the button | unit `tagSweepOneAtATime.test.ts` |
+| A25-26.2 audio take | a take whose tile was deleted is kept and named in a notice with **Show in folder** (KL #45) | component `audioRecordingKeepsTake.test.ts` (+1) |
+| A25-26.3 timer off screen | `runningTimerTiles` (like `recordingTiles`): a running countdown stays mounted when panned off screen, so it still announces | unit `visibleTilesViewModel.test.ts` (+1) |
+| A25-26.4 editor minors | none reproduces (all fixed by Phase 1); three commands added to the property test's commands-in-context (insert a horizontal rule, type " ##", Enter then "1."), 18 new cases | unit `editorRoundTripProperty.test.ts` |
+| N8 Enter + keypress | `preventDefault()` in 17 Enter handlers (sidebar, tab and board renames, vault name, Kanban column and task titles, waypoint rename, the media URL fields, the timer's custom time, the Board Browser row, the colour hex field, the vault name setting) | gate `components/enter-keeps-the-key` |
+| N9 stale failure toast | `lib/boards/writeFailureToasts.ts`: a board-save failure toast closes once none of its boards is failed or pending (saved, or deleted and its write dropped); the write-error aggregator returns its toast id | unit `boardFailureToastSettles.test.ts` |
+
+**Deviations from the plan.**
+
+1. **A25-20.3 was reproduced by reading, not in the app.** The spatial index (rbush) returns hits in tree order, so the last hit was arbitrary. The tile under the pointer is now read off the event target; the attribute is `data-canvas-tile-id`, not `data-tile-id`, because the Kanban insert-position walk counts `[data-tile-id]` elements and a nested second one would be counted twice. The fix also stops a right-click from hitting a tile hidden in a collapsed frame.
+2. **A25-20.4: outdenting a task whose note names a parent writes `parentTileId: ""`** (only that overrides the note); an indent / outdent is otherwise one `SetTaskParentCommand` whose undo restores the field exactly (including its absence). The note's `parent:` is never removed (KL #44). A new subtask gets its parent on its placement through `AddTaskCommand` (a new last argument), so the placement and the parent are one step.
+3. **A25-20.6: no main-process resume event.** A timer delayed by sleep fires on wake anyway, and focus / visibility plus a 5-minute recheck cover the rest. Only the Task List's lists and groups read the clock; see N10.
+4. **A25-20.8: "the focused editor", not "the last focus inside the pane".** The active editor is cleared 300 ms after it loses focus, so once focus leaves the text the buttons act on the board again, as Ctrl+Z does (it acts on the board whenever no editor is focused). A read-only editor's typing isn't undoable, so the buttons are disabled there.
+5. **A25-21.2: the clash is a notice, not a toast.** `ConfirmDialog` gained `notice: true` (the confirm button only; Escape still closes it). The rollback notice (A25-25) uses it too.
+6. **A25-23: no `…-problems.txt` file.** A text file in `.filo/recovery/` would be counted by the snapshot prunes and listed by the recovery modal, and needs a new IPC argument. Instead the notice names three problems and offers **Copy all problems** (the whole list, one per line), and the renderer console logs it. The message is capped at the source (`loadBoard`), so the adoption path's error toast is capped too.
+7. **A25-24: a tab saved by an earlier build has no board path** and is dropped once, as before. From now on board tabs save `boardPath` and `boardType` (so `workspace.json` is written once more after the upgrade, at the next change).
+8. **A25-25: the gate also checks `reportError`'s message** (its third argument is what the toast shows). That found 28 messages, not the 6 listed; all were reworded to say what happened and what to do. The rollback modal's wording is not caught by the word list; it was rewritten by hand.
+9. **A25-26.1: a second sweep waits instead of being refused.** A toast's Undo is gone once pressed, so refusing it would lose the undo; waiting (with a short "Waiting for the tag change…" toast) keeps it. The wait is in the store functions, so every entry point is covered.
+10. **A25-26.2: the take is kept and named, not trashed or re-linked on undo** (KL #45). The delete's undo step is recorded before the take finishes; changing it afterwards would make undo depend on two asynchronous saves.
+11. **N8 is a gate, not only a sweep**: `components/enter-keeps-the-key` (an Enter branch in a component must call `preventDefault`; escape `// allow-enter-default:`). Proved to bite: removing the sidebar rename fix fails it.
+12. **N9 tracks board failures only.** A settings or file failure toast is keyed by names the write ledger doesn't use, so closing it on "nothing pending" could close it while the failure stands.
+13. **Found by the real-app check, fixed: the kept tab showed the loader's raw error** ("IpcEnvelopeError: SyntaxError: Unexpected end of JSON input"). `boardLoadReason` (in `boardLoadFailedNotice.ts`) now gives the notice's plain words for a broken or unrecognised file, and the kept tab, the adoption's Retry prompt and `ensureAllLoaded` all record that reason.
+14. **The `toolbar-formatting-saved` gate counts the toolbar's new undo / redo** (it reads every `chainIfEditable()` chain), so `toolbarFormattingRoundTrip.test.ts` gained "bold, then undo" and "bold, undo, then redo" cases. The `unloaded-board-catches-up` gate's pattern now allows the reason argument to `markBoardUnloaded(relPath, …)`.
+15. **Gates:** `components/toast-plain-language` (proved to bite: 28 violations before the rewording) and `components/enter-keeps-the-key` (7 violations before the sweep's last fixes; 1 with the sidebar fix removed). 85 → 87.
+
+**New findings (for later phases).**
+
+- **N10** — a Kanban card's and a Task List row's "overdue" colour and "Today" / "Tomorrow" label read the date when they render (`isOverdue`, `dueDateFormat`), so they also go stale over midnight until the card re-renders. `clockStore.todayDate()` can feed their `now`. Phase 6.
+- **N11** — `.filo/sidebar-order.json` keys and lists are absolute paths (`C:\…\Vault\Alpha.md`), so the manual order is lost when the vault is opened from another path or on another machine (Syncthing). Store vault-relative paths, reading absolute ones once. Phase 6.
+
 ---
 
 ## Phase 6: Hygiene
@@ -899,6 +961,8 @@ Taken in Phase 2: D3 at its default (the queue runs in idle time, Phase 2 deviat
 
 Taken in Phase 4: D8 at its default (the session is held only while there is something to rescue, about 4 s at most, no dialog; Phase 4 deviation 1).
 
+Taken in Phase 5: D9 at its default (`parentTileId` on the placement; an older note's `parent:` read as a fallback, never written; KNOWN_LIMITATIONS #44).
+
 Taken in Phase 3: D7 at its default (Markdown with HTML off and line breaks kept; Ctrl+Shift+V literal; KNOWN_LIMITATIONS #41).
 
 ## Not included
@@ -916,4 +980,5 @@ Plan written 2026-09-29.
 - **Phase 2: done** 2026-09-29 (see "Phase 2 outcome": before / after numbers, 12 deviations, new findings N5–N7).
 - **Phase 3: done** 2026-09-29 (see "Phase 3 outcome": the real-app check, 10 deviations including a pre-existing merge-confirm bug fixed, new finding N8).
 - **Phase 4: done** 2026-09-29 (see "Phase 4 outcome": the real-app check, 9 deviations, new finding N9; A25-19 recorded in KNOWN_LIMITATIONS #15 and deferred).
-- Phases 5–8: not started.
+- **Phase 5: done** 2026-09-29 (see "Phase 5 outcome": the real-app check, 15 deviations, N8 and N9 done, new findings N10–N11; two gates added, 87 in all).
+- Phases 6–8: not started.

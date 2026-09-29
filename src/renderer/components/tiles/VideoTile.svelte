@@ -110,7 +110,7 @@
           type="text" 
           bind:value={inputUrl} 
           placeholder="Paste video URL..." 
-          onkeydown={(e) => e.key === 'Enter' && handleUrlSubmit()}
+          onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleUrlSubmit(); } }}
         />
         <button class="btn btn-primary" onclick={handleUrlSubmit}>Add</button>
       </div>

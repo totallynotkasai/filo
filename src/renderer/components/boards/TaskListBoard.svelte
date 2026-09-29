@@ -105,6 +105,7 @@
   import { MultiSelectController } from '../../lib/tasklist/multiSelectController.svelte';
   import { TaskListKeyboardNav } from '../../lib/tasklist/taskListKeyboardNav.svelte';
   import { makeSectionOps } from '../../lib/tasklist/sectionOps';
+  import { buildSetParentCommand } from '../../lib/tasklist/taskParent';
 
   let board = $derived(boardStore.current as TaskListBoardType | null);
   let placements = $derived<TaskPlacement[]>(((board?.tasks ?? []) as TaskPlacement[]));
@@ -630,7 +631,6 @@
     announce,
   });
   const buildTaskFieldCommand = frontmatterWriter.buildTaskFieldCommand;
-  const updateRowField = frontmatterWriter.updateRowField;
   function markAllIncomplete(): void {
     frontmatterWriter.markAllIncomplete(viewModel.rows);
   }
@@ -658,7 +658,6 @@
     getBoard: () => board,
     getRows: () => viewModel.rows,
     getTilesById: () => tilesById,
-    buildTaskFieldCommand,
     tickAndPersist,
     announce,
     pruneSelection: (ids) => multiSelect.pruneSelection(ids),
@@ -713,7 +712,7 @@
   // The controller owns the transient drag transaction (which tile is moving,
   // multi-select block ids, per-section dndzone items mirror, drag-handle
   // arming gate). Below lives only the wiring that bridges the controller to
-  // the board's commit infrastructure — `updateRowField` for indent/outdent,
+  // the board's commit infrastructure — `buildSetParentCommand` for indent/outdent,
   // `MoveTaskBlockCommand` for reorder, plus snapshot derivation from
   // `sectionedView`.
 
@@ -784,20 +783,13 @@
     commitIndent: (tileId: string, newParent: string): void => {
       const row = viewModel.rows.find((r) => r.tile.id === tileId);
       if (!row || !board) return;
-      // Expand a collapsed new parent, else the child vanishes under it. The
-      // command path batches the expand into the same undo step.
-      const expandParent = collapsedSubtasks.has(newParent);
-      const cmd = buildTaskFieldCommand(row, { parent: newParent }, 'Indent task');
-      if (!cmd) {
-        if (expandParent) toggleSubtaskCollapsed(newParent);
-        updateRowField(row, { parent: newParent });
-        return;
-      }
-      if (expandParent) {
+      const cmd = buildSetParentCommand(board.id, row, newParent);
+      if (!cmd) return;
+      // Expand a collapsed new parent in the same undo step, else the child
+      // vanishes under it.
+      if (collapsedSubtasks.has(newParent)) {
         const before = Array.from(collapsedSubtasks);
-        const afterSet = new SvelteSet(collapsedSubtasks);
-        afterSet.delete(newParent);
-        const after = Array.from(afterSet);
+        const after = before.filter((id) => id !== newParent);
         const collapseCmd = new ToggleSubtaskCollapsedCommand(
           board.id,
           before,
@@ -808,11 +800,12 @@
       } else {
         historyStore.execute(cmd);
       }
-      cacheVersion++;
+      tickAndPersist();
     },
     commitOutdent: (tileId: string): void => {
       const row = viewModel.rows.find((r) => r.tile.id === tileId);
-      if (row) updateRowField(row, { parent: '' });
+      const cmd = row && board ? buildSetParentCommand(board.id, row, '') : null;
+      if (cmd) { historyStore.execute(cmd); tickAndPersist(); }
     },
   };
 

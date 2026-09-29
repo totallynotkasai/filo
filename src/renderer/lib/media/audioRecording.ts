@@ -18,6 +18,7 @@ import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { getActiveContentFolder } from '../vault/conventionPaths';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../vault/vaultIdentity';
 import { reportError } from '../utils/errorBus';
+import { uiStore } from '../../stores/ui.svelte';
 
 /** Where a take started: saved and linked there, whatever is active when it stops. */
 export interface RecordingTarget {
@@ -67,6 +68,19 @@ export async function saveRecording(target: RecordingTarget, blob: Blob, fileNam
     // Saved, but the vault it belongs to is gone: its board can't be written
     // now. The file stays in that vault's folder.
     if (!isStillSameVault(target.identity)) return null;
+    // The tile was deleted while it recorded (which ends the take): the file
+    // is kept, and the user is told where, rather than left in a folder with
+    // nothing pointing at it.
+    if (!boardCacheStore.cache[target.boardId]?.tileDefs[target.tileId]) {
+      const absPath = `${target.vaultRoot.replace(/[\\/]+$/, '')}/${res.path}`;
+      uiStore.pushToast({
+        text: `The recording was saved as "${res.path}", but its tile was deleted, so it isn't on a board. Drag it from the sidebar onto a board to use it.`,
+        type: 'info',
+        duration: 0,
+        actions: [{ label: 'Show in folder', handler: () => { void window.filo.invoke('shell:show-item-in-folder', absPath); } }],
+      });
+      return res.path;
+    }
     boardCacheStore.persistUpdateTile(target.tileId, { src: res.path }, target.boardId);
     return res.path;
   } catch (err) {

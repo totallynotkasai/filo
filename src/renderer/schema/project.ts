@@ -21,6 +21,9 @@ export const WorkspaceStateSchema = z.object({
         boardId: z.string().min(1),
         /** A Document tab's note (vault-relative); the tab's boardId is then an opaque id. */
         notePath: z.string().optional().catch(undefined),
+        /** A board tab's file and type, so the tab outlives a failed load. */
+        boardPath: z.string().optional().catch(undefined),
+        boardType: z.string().optional().catch(undefined),
       }).passthrough(),
     )
     .default(() => []),

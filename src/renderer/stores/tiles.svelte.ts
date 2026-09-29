@@ -16,6 +16,14 @@ import { SvelteSet } from 'svelte/reactivity';
 export const recordingTiles = new SvelteSet<string>();
 
 /**
+ * Timer tiles counting down on a mounted board. Like a recording tile, one
+ * stays mounted when a pan takes it off screen, so it still says when it
+ * finishes (components/tiles/TimerTile.svelte).
+ */
+// allow-module-state: runtime only; each entry is removed when its countdown stops or its tile unmounts
+export const runningTimerTiles = new SvelteSet<string>();
+
+/**
  * Tile factory — centralised tile creation with correct defaults per type.
  * Uses the tile registry for type-specific defaults.
  */

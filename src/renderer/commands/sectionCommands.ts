@@ -3,6 +3,7 @@ import { boardCacheStore } from '../stores/boardCache.svelte';
 import type { TaskListSection, TileDefinition } from '../schema/index';
 import type { TaskPlacement } from '../schema/placement';
 import { snapshotTaskListSlice } from './taskCommands';
+import { applyMove, layoutOf, type TaskLayout } from '../lib/tasklist/sectionMembership';
 
 export class AddSectionCommand extends Command {
   description: string;
@@ -128,6 +129,15 @@ export class DeleteSectionCommand extends Command {
    * successor, or appends when none survive (the original tail slot).
    */
   private successorIds: string[];
+  /**
+   * Where every task sat before the delete, and which of them were the
+   * section's. Undo puts those back in the section beside their old
+   * neighbours on the board as it is then; section starts are absolute
+   * indices, so restoring the recorded start would re-home whatever tasks
+   * an add or remove elsewhere had shifted there.
+   */
+  private beforeLayout: TaskLayout;
+  private memberIds: string[];
 
   constructor(
     boardId: string,
@@ -163,6 +173,10 @@ export class DeleteSectionCommand extends Command {
       if (def) removedDefs[p.tileId] = def;
     }
     this.removedDefs = this.snapshot(removedDefs);
+    this.beforeLayout = layoutOf(beforeSections, before?.tasks ?? []);
+    this.memberIds = this.beforeLayout.order.filter(
+      (id) => removed !== undefined && this.beforeLayout.sectionOf[id] === removed.id,
+    );
     this.description = `Delete section "${title}"`;
   }
 
@@ -201,41 +215,28 @@ export class DeleteSectionCommand extends Command {
       sections?: TaskListSection[];
       tasks?: TaskPlacement[];
     };
-    const liveTasks = [...((board.tasks ?? []) as TaskPlacement[])];
-    const liveSections = (board.sections ?? []) as TaskListSection[];
-    // Re-insert the section's tasks as a contiguous block at the section's
-    // original start, shift live sections at/after that point, then re-insert
-    // the marker. Full placement objects are spliced back (style/locked and any
-    // passthrough field intact), unlike a persistAddTaskPlacement re-add.
-    const insertAt = Math.min(Math.max(this.removedSection.position, 0), liveTasks.length);
-    const block = this.removedPlacements.map((p) => ({ ...p }));
-    const shiftedSections = liveSections.map((s) =>
-      s.position >= insertAt ? { ...s, position: s.position + block.length } : { ...s },
-    );
-    // Splice the marker back at its ORIGINAL array slot (before the first
-    // surviving successor), not at the end — see `successorIds`.
+    // The section's own placements come back whole (style, lock and any
+    // passthrough field intact), appended for now; applyMove places them.
+    const live = new Set(((board.tasks ?? []) as TaskPlacement[]).map((p) => p.tileId));
+    const tasks = [
+      ...((board.tasks ?? []) as TaskPlacement[]),
+      ...this.removedPlacements.filter((p) => !live.has(p.tileId)).map((p) => ({ ...p })),
+    ];
+    const liveSections = ((board.sections ?? []) as TaskListSection[]).map((s) => ({ ...s }));
+    // The marker goes back at its original array slot (before the first
+    // surviving successor, see `successorIds`), starting where that
+    // successor starts: tied, the later section owns the rows, so the
+    // marker owns nothing until applyMove moves its tasks into it.
     const successorSet = new Set(this.successorIds);
-    const markerIdx = shiftedSections.findIndex((s) => successorSet.has(s.id));
-    const marker = { ...this.removedSection, position: insertAt };
-    const nextSections =
+    const markerIdx = liveSections.findIndex((s) => successorSet.has(s.id));
+    const successor = markerIdx >= 0 ? liveSections[markerIdx] : undefined;
+    const marker = { ...this.removedSection, position: successor?.position ?? tasks.length };
+    const sections =
       markerIdx >= 0
-        ? [
-            ...shiftedSections.slice(0, markerIdx),
-            marker,
-            ...shiftedSections.slice(markerIdx),
-          ]
-        : [...shiftedSections, marker];
-    if (block.length > 0) {
-      const nextTasks = [
-        ...liveTasks.slice(0, insertAt),
-        ...block,
-        ...liveTasks.slice(insertAt),
-      ];
-      boardCacheStore.persistTaskListStructure(this.boardId, nextSections, nextTasks);
-    } else {
-      // keep-tasks mode: leave the tasks array untouched (no tasks arg).
-      boardCacheStore.persistTaskListStructure(this.boardId, nextSections);
-    }
+        ? [...liveSections.slice(0, markerIdx), marker, ...liveSections.slice(markerIdx)]
+        : [...liveSections, marker];
+    const next = applyMove(sections, tasks, this.memberIds, this.beforeLayout);
+    boardCacheStore.persistTaskListStructure(this.boardId, next.sections, next.tasks);
   }
 }
 

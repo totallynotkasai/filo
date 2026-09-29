@@ -9,7 +9,7 @@ import type {
 type PartialColumnStyle = Record<string, unknown>;
 import { TileDefinitionSchema } from '../schema/index';
 import type { CacheContext } from './boardCacheTypes';
-import { projectDef } from '../core/boardTileOps/projectTile';
+import { kanbanTileOps } from '../core/boardTileOps/kanban';
 
 /**
  * Cache slice — Kanban board mutations (columns, placements, cover images,
@@ -53,33 +53,7 @@ export function makeKanbanSlice(ctx: CacheContext) {
     getFullTilesForKanbanBoard(boardId: string): Record<string, Tile> {
       const cached = ctx.getCache()[boardId];
       if (!cached || cached.board.type !== 'kanban') return {};
-
-      const kb = cached.board as KanbanBoard;
-      const defs = cached.tileDefs ?? {};
-      const result: Record<string, Tile> = {};
-
-      for (const col of kb.columns ?? []) {
-        const placements = (col.tilePlacements ?? []) as KanbanTilePlacement[];
-        for (const p of placements) {
-          const def = defs[p.tileId];
-          if (!def) continue;
-          // Preserve def-level locked/faded flags (set by TileHeader's lock
-          // toggle / fade affordance) so the flow-layout card honours them;
-          // hardcoding false would erase the lock when the same note
-          // surfaces on a Kanban board.
-          const defLocked = (def as Partial<Tile>).locked === true;
-          const defFaded = (def as Partial<Tile>).faded === true;
-          result[p.tileId] = {
-            ...projectDef(def),
-            position: { x: 0, y: 0 },
-            size: { width: 240, height: 160 },
-            locked: defLocked,
-            faded: defFaded,
-            boardId,
-          } as Tile;
-        }
-      }
-      return result;
+      return kanbanTileOps.getFullTiles(cached, boardId);
     },
 
     addKanbanColumn(

@@ -115,14 +115,18 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
     const def = cached.tileDefs[tileId];
     if (!def) return;
 
+    if (updates.locked !== undefined) setPlacementLocked(ctx, cached, boardId, tileId, updates.locked);
+
     const defPatch = defPatchFor(def, updates);
     if (Object.keys(defPatch).length === 0) {
       ctx.markDirty(boardId);
       return;
     }
 
-    cached.tileDefs = {
-      ...cached.tileDefs,
+    // The lock write replaces the cache entry; patch the current one.
+    const entry = ctx.getCache()[boardId] ?? cached;
+    entry.tileDefs = {
+      ...entry.tileDefs,
       [tileId]: { ...def, ...defPatch, updatedAt: Date.now() } as TileDefinition,
     };
 
@@ -141,15 +145,16 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
       for (const p of placements) {
         const def = defs[p.tileId];
         if (!def) continue;
-        // Preserve def-level locked/faded flags (set by TileHeader's lock
-        // toggle / fade affordance) so the flow-layout card honours them.
+        // The lock is the placement's (the def schema has none); a flag an
+        // in-memory def still carries counts too, so the card's drag guard
+        // honours it either way.
         const defLocked = (def as Partial<Tile>).locked === true;
         const defFaded = (def as Partial<Tile>).faded === true;
         result[p.tileId] = {
           ...projectDef(def),
           position: { x: 0, y: 0 },
           size: { width: 240, height: 160 },
-          locked: defLocked,
+          locked: p.locked === true || defLocked,
           faded: defFaded,
           boardId,
         } as Tile;
@@ -171,3 +176,34 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
     return ids;
   },
 };
+
+/**
+ * Sets or clears one card's lock on its placement. The board identity is
+ * refreshed (cache-identity convention) so the projection re-derives.
+ */
+function setPlacementLocked(
+  ctx: CacheContext,
+  cached: BoardFileData,
+  boardId: string,
+  tileId: string,
+  locked: boolean,
+): void {
+  const kb = cached.board as KanbanBoard;
+  let changed = false;
+  const columns = (kb.columns ?? []).map((c) => {
+    if (!(c.tilePlacements ?? []).some((p) => p.tileId === tileId)) return c;
+    return {
+      ...c,
+      tilePlacements: c.tilePlacements.map((p) => {
+        if (p.tileId !== tileId || (p.locked === true) === locked) return p;
+        changed = true;
+        const next: KanbanTilePlacement = { ...p };
+        if (locked) next.locked = true;
+        else delete next.locked;
+        return next;
+      }),
+    };
+  });
+  if (!changed) return;
+  ctx.updateEntry(boardId, { board: { ...kb, columns } as KanbanBoard });
+}

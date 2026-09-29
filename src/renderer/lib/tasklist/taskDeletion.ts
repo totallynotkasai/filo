@@ -9,13 +9,13 @@ import { vaultStore } from '../../stores/vault.svelte';
 import {
   BatchCommand,
   DeleteTaskCommand,
-  UpdateTaskFieldCommand,
 } from '../../commands/index';
 import { collectDescendantIds } from './blockMove';
 import { buildRemoveWithSubtasksMenu } from './taskContextMenus';
 import { withDrainedWrites, PendingWritesFailedError } from '../vault/vaultOperations';
 import { normalizePath } from '../utils/path';
 import type { TaskRow } from '../tasks/taskListModel';
+import { buildSetParentCommand } from './taskParent';
 
 /**
  * Task-deletion slice for TaskListBoard. Owns single-row deletion (with the
@@ -25,9 +25,8 @@ import type { TaskRow } from '../tasks/taskListModel';
  * in the orchestrator because it depends on transient `selectedTaskIds`.
  *
  * Mirrors the kanban deletion pattern: factory takes accessors so it never
- * captures stale board / rows state. `buildTaskFieldCommand` is injected
- * because it's owned by the frontmatter writer slice and reused here for
- * the cascade's "keep subtasks" branch (clears `parent` on each child).
+ * captures stale board / rows state. The cascade's "keep subtasks" branch
+ * moves each child to the top level on its placement (`taskParent.ts`).
  */
 
 /**
@@ -47,16 +46,6 @@ export interface TaskDeletionDeps {
   getBoard: () => TaskListBoardType | null;
   getRows: () => TaskRow[];
   getTilesById: () => Record<string, Tile>;
-  /**
-   * Builds an UpdateTaskFieldCommand for the "keep subtasks" branch.
-   * Returns null when the tile has no notePath (predates live-cache
-   * architecture); callers fall back to the placement-only delete.
-   */
-  buildTaskFieldCommand: (
-    row: TaskRow,
-    patch: Record<string, unknown>,
-    description?: string,
-  ) => UpdateTaskFieldCommand | null;
   tickAndPersist: () => void;
   announce: (message: string) => void;
   /**
@@ -80,7 +69,6 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     getBoard,
     getRows,
     getTilesById,
-    buildTaskFieldCommand,
     tickAndPersist,
     announce,
     pruneSelection,
@@ -98,16 +86,17 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
   }
 
   /**
-   * Removes a child's `parent` frontmatter pointer so it surfaces as a
+   * Moves a child to the top level (on its placement) so it surfaces as a
    * top-level task. Used by the cascade-delete prompt's "keep subtasks"
    * branch — clearing the dangling reference avoids leaving children with
    * a pointer to a tile that no longer exists.
    */
   function unparentChildren(parentId: string): void {
-    const rows = getRows();
-    const directKids = rows.filter((r) => r.parent === parentId);
+    const board = getBoard();
+    if (!board) return;
+    const directKids = getRows().filter((r) => r.parent === parentId);
     for (const child of directKids) {
-      const cmd = buildTaskFieldCommand(child, { parent: '' });
+      const cmd = buildSetParentCommand(board.id, child, '');
       if (cmd) historyStore.execute(cmd);
     }
   }
@@ -145,7 +134,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
         const directKids = liveRows.filter((r) => r.parent === tileId);
         const cmds: Command[] = [];
         for (const child of directKids) {
-          const cmd = buildTaskFieldCommand(child, { parent: '' }, 'Unparent subtask');
+          const cmd = buildSetParentCommand(b.id, child, '', 'Unparent subtask');
           if (cmd) cmds.push(cmd);
         }
         cmds.push(new DeleteTaskCommand(b.id, tileId));

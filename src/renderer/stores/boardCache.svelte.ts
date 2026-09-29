@@ -40,6 +40,7 @@ import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { boardDefaults } from '../core/boardDefaults';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { catchUpLoadedBoard, markBoardUnloaded } from './unloadedBoards';
+import { boardLoadReason } from '../lib/boards/boardLoadFailedNotice';
 
 /**
  * Board cache store — owns the per-board on-disk snapshot used to schedule
@@ -515,7 +516,7 @@ export const boardCacheStore = {
         console.warn(
           `[boardCache.ensureAllLoaded] Failed to load ${relPath}: ${result.error} — ${result.message}`,
         );
-        markBoardUnloaded(relPath);
+        markBoardUnloaded(relPath, boardLoadReason(result.error, result.message));
         failed.push(relPath);
         continue;
       }

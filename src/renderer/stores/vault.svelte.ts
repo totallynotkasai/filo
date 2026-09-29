@@ -265,7 +265,7 @@ function commitVaultCandidate(
   // to .filo/recovery/ before its next write.
   for (const target of candidate.corruptionTargets) markCorruptConfigTarget(target);
   for (const file of candidate.salvagedSettings) markSalvagedSettingsFile(file);
-  for (const rel of candidate.unloadedBoardPaths) markBoardUnloaded(rel);
+  for (const rel of candidate.unloadedBoardPaths) markBoardUnloaded(rel, candidate.unloadedBoardMessages[rel]);
   // Drain warning toasts the candidate buffered. We surface them
   // post-commit so a candidate that ultimately FAILS doesn't leave the
   // user staring at warning toasts for a vault they never opened.
@@ -280,7 +280,7 @@ function commitVaultCandidate(
   // that captured the OUTGOING vault's identity reads as stale when it resumes
   // (close→reopen of the same path still bumps the generation).
   beginVaultGeneration(candidate.path);
-  sidebarOrderStore.seed(candidate.manualOrder);
+  sidebarOrderStore.seed(candidate.manualOrder, candidate.path);
   fileTree = candidate.tree;
 
   // ── Hydrate dependent stores (each method accepts data directly) ──
@@ -572,7 +572,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
     reportError(
       'vault.recovery-check',
       err,
-      'Failed to check the crash-recovery sentinel — unflushed files may not be surfaced',
+      "Filo couldn't check its crash-recovery note, so files left unsaved by an earlier crash may not be listed.",
     );
   }
 
@@ -669,7 +669,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
     reportError(
       'vault.tag-rewrite-recovery',
       err,
-      'Failed to check the tag-rewrite recovery sentinel',
+      "Filo couldn't check whether a tag change was left unfinished last time.",
     );
   }
 
@@ -703,7 +703,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
       });
     } else if (res.unreadable) {
       uiStore.pushToast({
-        text: "Filo found a rename-cascade breadcrumb but couldn't read it. Check this machine's `.filo/rename-cascade-pending.*.json` manually if a previous rename looks incomplete.",
+        text: "Filo found a note about an unfinished rename in .filo/ but couldn't read it. If an earlier rename looks unfinished, re-link the board tiles shown as missing.",
         type: 'warning',
         duration: 0,
       });
@@ -712,7 +712,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
     reportError(
       'vault.rename-cascade-recovery',
       err,
-      'Failed to check the rename-cascade recovery sentinel',
+      "Filo couldn't check whether a rename was left unfinished last time.",
     );
   }
 

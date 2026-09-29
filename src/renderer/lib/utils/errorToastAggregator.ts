@@ -26,6 +26,9 @@
  * The error bus's aggregator runs `readable` (see the option): one toast per
  * context and file, showing the message rather than the context id.
  *
+ * Returns the id of the toast the report went to, so a caller can close it
+ * once what it reports is resolved.
+ *
  * Separated from the `App.svelte` wiring so the aggregation behaviour can be
  * unit-tested without mounting the component.
  */
@@ -119,7 +122,7 @@ function fileList(paths: readonly string[]): string {
 export function createErrorToastAggregator(
   api: AggregatorToastApi,
   options: ErrorToastAggregatorOptions = {},
-): (err: AggregatedReport) => void {
+): (err: AggregatedReport) => string {
   const windowMs = options.windowMs ?? 1000;
   const recent = new Map<string, AggregatedToast>();
 
@@ -152,7 +155,7 @@ export function createErrorToastAggregator(
         existing.paths = paths;
         clearTimeout(existing.expiryTimer);
         existing.expiryTimer = setTimeout(() => recent.delete(key), windowMs);
-        return;
+        return existing.toastId;
       }
       // Existing entry was dismissed by the user — fall through and push fresh.
       clearTimeout(existing.expiryTimer);
@@ -175,5 +178,6 @@ export function createErrorToastAggregator(
     });
     const expiryTimer = setTimeout(() => recent.delete(key), windowMs);
     recent.set(key, { toastId, count: 1, expiryTimer, paths: path !== undefined && !options.readable ? [path] : [] });
+    return toastId;
   };
 }

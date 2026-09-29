@@ -122,7 +122,7 @@ async function readSentinelInternal(vaultRoot: string): Promise<ReadResult> {
     reportError(
       'renameCascadeSentinel.read',
       err,
-      "Couldn't read the rename-cascade sentinel — Filo can't verify the previous rename completed",
+      "Filo couldn't read its note about an unfinished rename in .filo/, so it can't tell whether the last rename updated every board. A tile shown as missing can be re-linked.",
     );
     return { unreadable: true };
   }
@@ -178,7 +178,7 @@ async function writeSentinelInternal(vaultRoot: string, entries: RenameCascadeEn
       reportError(
         'renameCascadeSentinel.clear',
         err,
-        "Could not delete the rename-cascade sentinel — you'll see the retry prompt again on next open",
+        "Filo couldn't remove its note about a finished rename from .filo/. You may be asked about that rename again when the vault next opens.",
       );
     }
     return;
@@ -251,7 +251,7 @@ export function writePendingRenameCascade(
       reportError(
         'renameCascadeSentinel.append',
         err,
-        "Couldn't record the rename in this machine's `.filo/rename-cascade-pending.*.json` — the existing file is unreadable and was preserved. Check it manually if a previous rename looks incomplete.",
+        "Filo couldn't note this rename for crash recovery: its earlier note about renames in .filo/ can't be read, so it was left as it is. If an earlier rename looks unfinished, re-link the tiles shown as missing.",
       );
       throw err;
     }

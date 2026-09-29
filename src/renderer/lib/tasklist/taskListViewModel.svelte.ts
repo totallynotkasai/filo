@@ -51,6 +51,8 @@ import { noteFieldsKnown } from '../../stores/noteMeta';
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
 import { buildTaskDepths } from './blockMove';
 import { FIELD_READERS } from '../tasks/frontmatterReaders';
+import { taskParent } from './taskParent';
+import { clockStore } from '../../stores/clock.svelte';
 import type {
   TaskListSection,
   TaskPlacement,
@@ -153,6 +155,7 @@ export class TaskListViewModel {
       const tile = tilesById[placement.tileId];
       if (!tile) continue;
       const fm = this.deps.readFrontmatter(tile);
+      const noteParent = FIELD_READERS.parent(fm);
       const path = indexing ? resolveTextTileVaultPath(tile) : null;
       const row: TaskRow = {
         fieldsPending: path ? !noteFieldsKnown(path) : false,
@@ -165,7 +168,8 @@ export class TaskListViewModel {
         startDate: FIELD_READERS.startDate(fm),
         status: FIELD_READERS.status(fm),
         tags: FIELD_READERS.tags(fm),
-        parent: FIELD_READERS.parent(fm),
+        parent: taskParent(placement, noteParent),
+        noteParent,
         recurrence: FIELD_READERS.recurrence(fm),
         recurrenceMode: FIELD_READERS.recurrenceMode(fm),
         recurrenceAnchor: FIELD_READERS.recurrenceAnchor(fm),
@@ -181,13 +185,10 @@ export class TaskListViewModel {
 
   // ── Smart-list date bucket helpers ──
   //
-  // `today` is computed lazily inside the $derived so re-renders pick up the
-  // current date — relevant when the app stays open across midnight.
+  // `today` is the clock store's day, so the lists move on at midnight.
   smartListCounts = $derived.by<Record<SmartListId, number>>(() => {
     void this.deps.getCacheVersion();
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = clockStore.todayDate();
     const counts: Record<SmartListId, number> = {
       all: 0,
       today: 0,
@@ -208,9 +209,7 @@ export class TaskListViewModel {
   });
 
   filteredRows = $derived.by<TaskRow[]>(() => {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = clockStore.todayDate();
     return filterTaskRows(this.rows, today, {
       smartList: this.deps.getActiveSmartList(),
       showCompleted: this.deps.getShowCompleted(),
@@ -270,9 +269,7 @@ export class TaskListViewModel {
     // Local midnight — mirrors `filteredRows` / `smartListCounts` so due-date
     // grouping agrees with the smart lists, and is passed explicitly to keep
     // `groupKey` deterministic rather than reading `new Date()` itself.
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch Date; reactivity is the enclosing $derived
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = clockStore.todayDate();
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local grouping scratch; reactivity is the enclosing $derived
     const buckets = new Map<string, TaskGroup>();
     for (const row of this.topLevelRows) {

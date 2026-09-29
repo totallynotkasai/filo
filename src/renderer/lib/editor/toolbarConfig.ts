@@ -88,6 +88,10 @@ function syncStateToToolbar(editor: Editor) {
     fontSize: parseInt(editor.getAttributes('textStyle').fontSize) || 14,
     textAlign,
     heading,
+    editorHistory: {
+      canUndo: editor.isEditable && editor.can().undo(),
+      canRedo: editor.isEditable && editor.can().redo(),
+    },
   };
 
   queueMicrotask(() => toolbarStore.updateFromEditor(next));
@@ -161,6 +165,25 @@ export const tiptapToolbar = {
   },
 
   // ── Command functions called by GlobalToolbar buttons ──
+
+  /**
+   * The toolbar's Undo / Redo while a text editor is focused: the editor's
+   * own history, as Ctrl+Z does there (board undo runs only with no editor
+   * focused). Returns false with no editor focused, for the board's undo.
+   */
+  undoInEditor(): boolean {
+    if (!activeEditor) return false;
+    this.keepActiveEditor();
+    chainIfEditable()?.focus().undo().run();
+    return true;
+  },
+
+  redoInEditor(): boolean {
+    if (!activeEditor) return false;
+    this.keepActiveEditor();
+    chainIfEditable()?.focus().redo().run();
+    return true;
+  },
 
   toggleBold() {
     this.keepActiveEditor();

@@ -69,6 +69,11 @@ export interface ConfirmDialogConfig {
    * dialog and calls `onClick` — neither onConfirm nor onCancel fires.
    */
   secondaryAction?: { label: string; onClick: () => void };
+  /**
+   * A notice, not a question: only the confirm button (its label, e.g. "OK")
+   * is shown. Escape still closes it through `onCancel`.
+   */
+  notice?: boolean;
 }
 
 let confirmDialog = $state<ConfirmDialogConfig | null>(null);

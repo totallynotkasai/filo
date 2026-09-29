@@ -6,7 +6,7 @@ import type { Tile } from '../../schema/index';
 import { vaultStore } from '../../stores/vault.svelte';
 import { pendingSettingsStore } from '../../stores/pendingSettings.svelte';
 import { framesStore } from '../../stores/frames.svelte';
-import { recordingTiles } from '../../stores/tiles.svelte';
+import { recordingTiles, runningTimerTiles } from '../../stores/tiles.svelte';
 
 const VIEWPORT_CULL_BUFFER = 200;
 
@@ -50,6 +50,10 @@ export class VisibleTilesViewModel {
     // A recording tile stays mounted off screen: unmounting it would stop the
     // take in the middle of a pan.
     for (const id of recordingTiles) {
+      if (this.deps.board.tiles[id]) visible.add(id);
+    }
+    // So does a running countdown: culled, it would end without a word.
+    for (const id of runningTimerTiles) {
       if (this.deps.board.tiles[id]) visible.add(id);
     }
     return visible;

@@ -36,6 +36,7 @@
 
   function onNameKeydown(e: KeyboardEvent): void {
     if (e.key === 'Enter') {
+      e.preventDefault();
       (e.currentTarget as HTMLInputElement).blur();
     } else if (e.key === 'Escape') {
       // Keep the Settings dialog open: Escape only drops the typed name.

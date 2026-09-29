@@ -30,7 +30,7 @@ async function renameOnDisk(vaultPath: string, entry: RenameCascadeEntry): Promi
 async function clearEntries(vaultPath: string, entries: readonly RenameCascadeEntry[]): Promise<void> {
   for (const entry of entries) {
     await clearPendingRenameCascade(vaultPath, entry.id).catch((err) => {
-      reportError('vault.rename-cascade-recovery', err, 'Failed to clear the rename-cascade sentinel');
+      reportError('vault.rename-cascade-recovery', err, "Filo couldn't remove its note about a finished rename from .filo/. You may be asked about that rename again when the vault next opens.");
     });
   }
 }
@@ -117,7 +117,7 @@ export async function repairRenameCascade(
       reportError(
         'vault.rename-cascade-recovery',
         err,
-        `Failed to re-apply rename cascade for ${entry.oldPath} → ${entry.newPath}`,
+        `Filo couldn't finish updating board tiles for the rename of "${entry.oldPath}" to "${entry.newPath}". A tile shown as missing can be re-linked.`,
       );
     }
   }

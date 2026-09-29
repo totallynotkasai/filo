@@ -324,7 +324,7 @@
         type="text"
         placeholder="Board name..."
         bind:value={newBoardName}
-        onkeydown={(e) => { if (e.key === 'Enter' && canCreateBoard) createBoard(); }}
+        onkeydown={(e) => { if (e.key === 'Enter' && canCreateBoard) { e.preventDefault(); createBoard(); } }}
         aria-invalid={newBoardNameError !== null}
         aria-describedby={newBoardNameError ? 'new-board-name-error' : undefined}
       />
@@ -372,6 +372,7 @@
               e.preventDefault();
               moveBoard(board.id, e.key === 'ArrowUp' ? -1 : 1);
             } else if (e.key === 'Enter') {
+              e.preventDefault();
               handleBoardClick(board, e);
             }
           }}
@@ -395,6 +396,7 @@
                     // Stop the Enter from bubbling to the surrounding row's
                     // `onkeydown` (which would re-open the board on commit).
                     e.stopPropagation();
+                    e.preventDefault();
                     // A refused name keeps the field open so it can be fixed.
                     if (!renameProblem) void commitRename();
                   } else if (e.key === 'Escape') {

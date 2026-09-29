@@ -35,7 +35,10 @@ export interface TaskRow {
   startDate: string;
   status: string;
   tags: string[];
+  /** The parent task's tile id on this board ('' at top level). */
   parent: string;
+  /** The note's own `parent:` (older builds wrote it); read only when the placement has none. */
+  noteParent?: string;
   recurrence: string;
   recurrenceMode: RecurrenceMode;
   recurrenceAnchor?: string;

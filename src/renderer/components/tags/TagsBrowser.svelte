@@ -251,7 +251,7 @@
                 title="Show files and tiles tagged with {t.name}"
                 aria-label={t.depth > 0 ? `${t.name} (child of ${t.name.slice(0, t.name.lastIndexOf('/'))})` : t.name}
                 onclick={(e) => openTagMenu(t.name, e)}
-                ondblclick={() => startEditByName(t.name)}
+                ondblclick={() => { if (!busy) startEditByName(t.name); }}
                 onkeydown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();

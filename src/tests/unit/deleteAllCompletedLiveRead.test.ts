@@ -54,7 +54,6 @@ function makeDeleter(rows: TaskRow[]) {
       }) as unknown as TaskListBoard,
     getRows: () => rows,
     getTilesById: () => ({}),
-    buildTaskFieldCommand: () => null,
     tickAndPersist: () => {},
     announce: () => {},
   });

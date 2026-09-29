@@ -989,7 +989,7 @@ export const checks = [
         if (raw === null) { out.push(fail(rel, undefined, 'file missing')); continue; }
         out.push(...tokenChecks(rel, stripComments(raw), {
           required: [
-            { token: /\bmarkBoardUnloaded\s*\(\s*relPath\s*\)/, why: 'a failed load is recorded' },
+            { token: /\bmarkBoardUnloaded\s*\(\s*relPath\b/, why: 'a failed load is recorded' },
             { token: /\bcatchUpLoadedBoard\s*\(\s*relPath\s*,/, why: 'a later load replays the renames it missed' },
           ],
         }));

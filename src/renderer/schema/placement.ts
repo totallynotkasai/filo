@@ -98,6 +98,9 @@ export const KanbanTilePlacementSchema = z.object({
   position: z.number().int().nonnegative().default(0),
   style: PartialKanbanCardStyleSchema.optional(),
   coverImage: z.string().optional(),
+  // Placement-level lock, as on a Task List placement: a locked card can't be
+  // dragged on this board, and the same note stays movable on other boards.
+  locked: z.boolean().optional(),
 }).passthrough();
 
 export type KanbanTilePlacement = z.infer<typeof KanbanTilePlacementSchema>;
@@ -117,6 +120,11 @@ export const TaskPlacementSchema = z.object({
   // the same task can be locked on this board without affecting other
   // boards that reference the same `.md` file.
   locked: z.boolean().optional(),
+  // The task this one is a subtask of: a tile id on this board, so the
+  // hierarchy is board structure (like sections and order), never written
+  // into the note. Absent: the note's own `parent:` (written by older builds)
+  // is read instead; '' means top level whatever the note says.
+  parentTileId: z.string().optional(),
 }).passthrough();
 
 export type TaskPlacement = z.infer<typeof TaskPlacementSchema>;

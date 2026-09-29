@@ -24,6 +24,11 @@ let spellcheck = $state(true);
  * toolbar reads the note's line spacing from it, so an undo shows at once.
  */
 let lineSpacingNote = $state<string | null>(null);
+/**
+ * The focused editor's own undo history, or null with no editor focused. The
+ * toolbar's Undo / Redo act on it then, as Ctrl+Z does.
+ */
+let editorHistory = $state<{ canUndo: boolean; canRedo: boolean } | null>(null);
 
 export const toolbarStore = {
   get bold() { return bold; },
@@ -39,6 +44,7 @@ export const toolbarStore = {
   get spellcheck() { return spellcheck; },
   get lineSpacingNote() { return lineSpacingNote; },
   get lineSpacingAvailable() { return lineSpacingNote !== null; },
+  get editorHistory() { return editorHistory; },
 
   /**
    * Updates all formatting state at once (called by the active Tiptap editor).
@@ -55,6 +61,7 @@ export const toolbarStore = {
     textAlign?: 'left' | 'center' | 'right' | 'justify';
     heading?: 'normal' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
     lineSpacingNote?: string | null;
+    editorHistory?: { canUndo: boolean; canRedo: boolean } | null;
   }) {
     if (state.bold !== undefined) bold = state.bold;
     if (state.italic !== undefined) italic = state.italic;
@@ -67,6 +74,7 @@ export const toolbarStore = {
     if (state.textAlign !== undefined) textAlign = state.textAlign;
     if (state.heading !== undefined) heading = state.heading;
     if (state.lineSpacingNote !== undefined) lineSpacingNote = state.lineSpacingNote;
+    if (state.editorHistory !== undefined) editorHistory = state.editorHistory;
   },
 
   toggleSpellcheck() {
@@ -92,5 +100,6 @@ export const toolbarStore = {
     textAlign = 'left';
     heading = 'normal';
     lineSpacingNote = null;
+    editorHistory = null;
   },
 };

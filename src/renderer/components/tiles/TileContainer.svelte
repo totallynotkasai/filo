@@ -276,7 +276,7 @@
 -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div class="tile-shell" style={shellStyle}>
+<div class="tile-shell" style={shellStyle} data-canvas-tile-id={tile.id}>
   {#if groupNumber !== null}
     <div class="tile-group-badge" aria-label="Group {groupNumber}">{groupNumber}</div>
   {/if}

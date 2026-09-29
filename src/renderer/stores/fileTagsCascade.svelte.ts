@@ -201,7 +201,7 @@ export async function flushTagRewriteBoardWrites(verb: string): Promise<void> {
     ? ` (+${result.failed.length - previewLimit} more)`
     : '';
   uiStore.pushToast({
-    text: `${verb} reached every .md file but ${result.failed.length} .board.json write${result.failed.length === 1 ? '' : 's'} failed: ${preview}${extras}. The change is in memory and your recovery sentinel will retry on next save.`,
+    text: `${verb} reached every note, but ${result.failed.length} board${result.failed.length === 1 ? '' : 's'} couldn't be saved: ${preview}${extras}. Filo keeps the change and tries those boards again on the next save.`,
     type: 'error',
     duration: 0,
   });

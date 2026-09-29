@@ -422,6 +422,8 @@
 
   function handleRenameKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
+      // The rename may open a notice; this key's keypress must not press it.
+      e.preventDefault();
       // Keep editing while the name is unusable; the message says why.
       if (renameProblem) return;
       commitRename();

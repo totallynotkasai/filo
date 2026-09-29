@@ -22,6 +22,7 @@ import { loadBoard, isTransientBoardLoadError } from '../lib/boards/boardLoader'
 import { adoptLoadedBoardBaseline } from '../lib/boards/boardBaseline';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 import { promptBoardLoadRetry } from '../lib/boards/boardLoadRetryPrompt';
+import { boardLoadReason } from '../lib/boards/boardLoadFailedNotice';
 import type { Board } from '../schema/index';
 import { samePath } from '../lib/utils/path';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
@@ -31,6 +32,7 @@ import { vaultStore } from './vault.svelte';
 import { uiStore } from './ui.svelte';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
 import { catchUpLoadedBoard, markBoardUnloaded } from './unloadedBoards';
+import { tabStore } from './tabs.svelte';
 
 export type AdoptOutcome = 'adopted' | 'already' | 'duplicate' | 'renamed' | 'failed';
 
@@ -85,8 +87,8 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
   if (!isStillSameVault(captured)) return 'failed';
   if (!result.ok) {
     const transient = isTransientBoardLoadError(result.error);
-    lastFailure.set(vaultPath(relPath), { message: result.message, transient });
-    markBoardUnloaded(relPath);
+    lastFailure.set(vaultPath(relPath), { message: boardLoadReason(result.error, result.message), transient });
+    markBoardUnloaded(relPath, boardLoadReason(result.error, result.message));
     // A transient failure is re-offered by the caller's Retry prompt; anything
     // else (parse / schema / version) is surfaced once here.
     if (!transient && !opts.quiet) {
@@ -150,6 +152,8 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
     boardCacheStore.markDirty(id);
   }
   vaultStore.recomputeBrokenRefsNow();
+  // A tab kept open for it while it couldn't load now shows it.
+  tabStore.resolveUnloaded(relPath, data.board);
   return 'adopted';
 }
 

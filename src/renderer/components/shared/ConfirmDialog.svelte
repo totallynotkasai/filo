@@ -150,9 +150,11 @@
         </label>
       {/if}
       <div class="confirm-actions">
-        <button class="confirm-btn cancel" bind:this={cancelBtn} onclick={cancel}>
-          {config.cancelLabel ?? 'Cancel'}
-        </button>
+        {#if !config.notice}
+          <button class="confirm-btn cancel" bind:this={cancelBtn} onclick={cancel}>
+            {config.cancelLabel ?? 'Cancel'}
+          </button>
+        {/if}
         {#if config.secondaryAction}
           <button class="confirm-btn secondary" onclick={secondary}>
             {config.secondaryAction.label}

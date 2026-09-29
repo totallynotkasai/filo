@@ -39,7 +39,7 @@ import { isMarkdownExtension } from '../lib/vault/extension';
 import { isMissingFileError } from '../lib/notes/noteWriter';
 import { reportError } from '../lib/utils/errorBus';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
-import { withTagSweepProgress } from './tagSweepProgress.svelte';
+import { tagSweepStatus, whenTagSweepsIdle, withTagSweepProgress } from './tagSweepProgress.svelte';
 
 /** How long the Undo stays on offer. */
 export const TAG_UNDO_TOAST_MS = 15_000;
@@ -128,11 +128,25 @@ function restoreFilterChip(chip: FilterChip, tagName: string): void {
 }
 
 /**
+ * Waits for a running tag sweep to end before another starts: two sweeps
+ * would rewrite the same notes in turns. Says so when it has to wait.
+ * Resolves false when the vault was left meanwhile.
+ */
+async function afterRunningSweeps(identity: VaultIdentity): Promise<boolean> {
+  if (tagSweepStatus.running) {
+    uiStore.toast('Waiting for the tag change that is running to finish…', 'info', 2500);
+    await whenTagSweepsIdle();
+  }
+  return isStillSameVault(identity);
+}
+
+/**
  * Deletes `tagName` everywhere (the caller has confirmed) and, once the
  * delete has committed, offers Undo on a toast. Resolves true when it committed.
  */
 export async function removeTagWithUndo(tagName: string): Promise<boolean> {
   const identity = captureVaultIdentity();
+  if (!(await afterRunningSweeps(identity))) return false;
   // The sweep loads every board before it runs; do it first so the snapshot
   // sees the same tiles and chips the delete will touch.
   await boardCacheStore.ensureAllLoaded();
@@ -164,7 +178,7 @@ export async function removeTagWithUndo(tagName: string): Promise<boolean> {
 /** Puts a deleted tag back exactly where the delete took it from. */
 export async function undoRemoval(snapshot: TagRemovalSnapshot): Promise<void> {
   const { identity, tagName } = snapshot;
-  if (!isStillSameVault(identity)) return;
+  if (!(await afterRunningSweeps(identity))) return;
 
   fileTagsStore.ensureTag(tagName, snapshot.color);
   if (snapshot.color) fileTagsStore.setTagColor(tagName, snapshot.color);
@@ -250,6 +264,7 @@ export interface TagRenameSnapshot {
  */
 export async function renameTagWithUndo(oldName: string, newName: string): Promise<boolean> {
   const identity = captureVaultIdentity();
+  if (!(await afterRunningSweeps(identity))) return false;
   await vaultIndexStore.whenBuildComplete();
   // The rename loads every board before it runs; do it first so the snapshot
   // sees the same tiles and chips the rename will touch.
@@ -300,7 +315,7 @@ function renamedIn(tags: readonly string[], from: string, to: string): string[] 
  */
 export async function undoRename(snapshot: TagRenameSnapshot, retrying = false): Promise<void> {
   const { identity, oldName, newName } = snapshot;
-  if (!isStillSameVault(identity)) return;
+  if (!(await afterRunningSweeps(identity))) return;
   if (!retrying && fileTagsStore.tagExists(oldName)) {
     uiStore.toast(`Can't undo: a tag named "#${oldName}" exists again, and renaming back would merge them.`, 'warning', 5000);
     return;

@@ -255,6 +255,18 @@ export function openTabs(app: CharApp): string[] {
   return $$(app.el, '.tab[title]').map((t) => (t.getAttribute('title') ?? '').replace(/ — .*$/, ''));
 }
 
+/** The kept tab of a board that couldn't load: its heading, or null when none is shown. */
+export function unloadedBoardShown(app: CharApp): string | null {
+  return app.el.querySelector('.unloaded-board .unloaded-title')?.textContent?.trim() ?? null;
+}
+
+/** The kept tab's Retry, when it is still shown. */
+export async function retryUnloadedBoardTab(app: CharApp): Promise<void> {
+  const button = app.el.querySelector('.unloaded-board .unloaded-retry') as HTMLButtonElement | null;
+  if (button) click(button);
+  await quiesce(800);
+}
+
 /** Right-click the active tab → Split Right. */
 export async function splitActiveTabRight(app: CharApp): Promise<void> {
   contextMenu($(app.el, '.tab.active, .tab[aria-selected="true"]'));
@@ -504,6 +516,19 @@ export async function addTag(app: CharApp, tileRoot: HTMLElement, tag: string): 
   await settle();
 }
 
+/** Focus a Task List row and press Tab (Shift+Tab to outdent). */
+export async function indentTask(row: HTMLElement, outdent = false): Promise<void> {
+  const item = $(row, '.task-item');
+  item.focus();
+  key(item, 'Tab', { shiftKey: outdent });
+  await quiesce(600);
+}
+
+/** True when the row is shown as a subtask of the row above it. */
+export function taskIsSubtask(row: HTMLElement): boolean {
+  return row.querySelector('.task-item.is-subtask') !== null;
+}
+
 /** Click a task's completion checkbox. */
 export async function toggleTask(row: HTMLElement): Promise<void> {
   click($(row, '.task-checkbox'));
@@ -720,6 +745,19 @@ export async function undo(_app: CharApp): Promise<void> {
 export function undoAvailable(app: CharApp): boolean {
   const button = $$(app.el, 'button[aria-label="Undo"]')[0] as HTMLButtonElement | undefined;
   return button !== undefined && !button.disabled;
+}
+
+/** The toolbar's Undo button: its label, and a click on it (focus stays where it is). */
+export function toolbarUndoLabel(app: CharApp): string {
+  const button = $$(app.el, 'button[aria-label^="Undo"]')[0];
+  return button?.getAttribute('aria-label') ?? '';
+}
+
+export async function clickToolbarUndo(app: CharApp): Promise<void> {
+  const button = $$(app.el, 'button[aria-label^="Undo"]')[0] as HTMLButtonElement | undefined;
+  if (!button) throw new Error('no toolbar Undo button');
+  button.click();
+  await settle();
 }
 
 /** Ctrl+Y with nothing focused (board redo). */

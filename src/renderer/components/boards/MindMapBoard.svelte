@@ -55,6 +55,7 @@
   import { MarqueeSelectionController } from '../../lib/mindmap/marqueeSelectionController.svelte';
   import { confirmRemoveFrame } from '../../lib/frames/confirmRemoveFrame';
   import { createSelectionActions } from '../../lib/mindmap/selectionActions';
+  import { tileIdFromTarget, topmostHitTile } from '../../lib/mindmap/tileHitTest';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import type { Frame } from '../../schema/index';
@@ -216,6 +217,7 @@
     board: boardStore,
     selection: selectionStore,
     vaultPath: () => (vaultStore.project === null ? null : vaultStore.path),
+    hiddenTileIds: () => viewModel.hiddenByFrame,
     openTileStyle: (tile, x, y, tileIds) => popups?.openTileStyle(tile, x, y, tileIds),
     openTagEditor: (args) => popups?.openTagEditor(args),
   });
@@ -238,9 +240,16 @@
       bottom: canvasPos.y + 1,
     });
 
-    if (hitIds.length > 0) {
-      const tileId = hitIds[hitIds.length - 1];
-      if (tileId === undefined) return; // hitIds non-empty (checked above)
+    // The tile drawn on top, as a left click there would pick.
+    const targetId = tileIdFromTarget(e.target);
+    const tileId = targetId && boardStore.getTile(targetId) && !viewModel.hiddenByFrame.has(targetId)
+      ? targetId
+      : topmostHitTile(hitIds, {
+          paintOrder: Object.keys(boardStore.tiles),
+          isSelected: (id) => selectionStore.isSelected(id),
+          hidden: viewModel.hiddenByFrame,
+        });
+    if (tileId !== null) {
       if (!selectionStore.isSelected(tileId)) {
         selectionStore.select(tileId);
       }

@@ -7,7 +7,7 @@ import os from 'os';
 /**
  * Audit-15 Phase 0 / P0.2 — crash-recovery kill-relaunch E2E.
  *
- * The `.filo/.dirty` sentinel is the backstop the Phase-1 write races rely on:
+ * The `.filo/.dirty.<machineId>` sentinel is the backstop the Phase-1 write races rely on:
  * if the process dies inside a debounced-write window, the next vault open must
  * surface the Recovery modal listing the files that were mid-write. This spec
  * proves that wiring fires end-to-end against a real Electron binary — the one
@@ -29,7 +29,7 @@ import os from 'os';
  *
  * Faithfulness of the "kill mid-write"
  * ------------------------------------
- * A real mid-write kill leaves a `.filo/.dirty` sentinel on disk carrying the
+ * A real mid-write kill leaves a `.filo/.dirty.<machineId>` sentinel carrying the
  * crashed session's pending paths and (since Audit-14 1.3) that session's
  * `launchId`. We reproduce that exact on-disk artifact: open the vault in a
  * first instance (so `.filo/` config exists, matching a normal prior session),
@@ -64,13 +64,21 @@ test.afterAll(() => {
  * `dialog.showOpenDialog`; everything downstream (`vault:select` → `openVault`
  * → recovery sequencer) is the real app.
  */
-async function launchApp(vaultPath: string): Promise<{ app: ElectronApplication; window: Page }> {
+async function launchApp(
+  vaultPath: string,
+  sameMachineAs?: string,
+): Promise<{ app: ElectronApplication; window: Page; userDataDir: string }> {
   // Fresh per-launch `userData` so recent-vaults / launch-preference state can't
   // leak across launches. Otherwise a prior open lands in `recent-vaults.json`
   // (a per-machine file outside the vault) and `maybeAutoOpenLastVault` reopens
   // it on the next launch — detaching the home screen before we can drive the
   // stubbed "Open Vault" flow.
   const userDataDir = fs.mkdtempSync(path.join(tempRoot, 'udd-'));
+  // Crash sentinels are per machine, and the machine id lives in userData: a
+  // relaunch on "the same machine" carries the earlier launch's id over.
+  if (sameMachineAs) {
+    fs.copyFileSync(path.join(sameMachineAs, 'machine-id.json'), path.join(userDataDir, 'machine-id.json'));
+  }
   const app = await electron.launch({
     args: [MAIN, `--user-data-dir=${userDataDir}`],
     env: { ...process.env, NODE_ENV: 'test' },
@@ -83,7 +91,13 @@ async function launchApp(vaultPath: string): Promise<{ app: ElectronApplication;
   }, vaultPath);
   const window = await app.firstWindow();
   await window.waitForLoadState('domcontentloaded');
-  return { app, window };
+  return { app, window, userDataDir };
+}
+
+/** A launch's machine id (created in its userData on first launch). */
+function machineIdOf(userDataDir: string): string {
+  const { id } = JSON.parse(fs.readFileSync(path.join(userDataDir, 'machine-id.json'), 'utf8')) as { id: string };
+  return id;
 }
 
 /** Clicks the home-screen "Open Vault" action card. */
@@ -127,7 +141,6 @@ test.describe('Filo E2E — crash recovery (kill mid-write → relaunch)', () =>
     const vault = path.join(tempRoot, 'crash');
     fs.mkdirSync(vault, { recursive: true });
     fs.writeFileSync(path.join(vault, 'Notes.md'), '---\ntitle: Notes\n---\noriginal body\n', 'utf8');
-    const sentinelPath = path.join(vault, '.filo', '.dirty');
 
     // ── Phase A — open the vault once (seeds `.filo/` config like a normal
     //    prior session), reproduce an armed-but-unflushed write, then kill
@@ -136,8 +149,9 @@ test.describe('Filo E2E — crash recovery (kill mid-write → relaunch)', () =>
     await clickOpenVault(a.window);
     await expectVaultOpened(a.window);
     // Let the first-open writes flush and clear their own (self-stamped)
-    // sentinel, so the only `.filo/.dirty` left on disk is the one we write.
+    // sentinel, so the only one left on disk is the one we write.
     await a.window.waitForTimeout(1500);
+    const sentinelPath = path.join(vault, '.filo', `.dirty.${machineIdOf(a.userDataDir)}`);
 
     // The exact shape the dirty-flag tracker persists for an in-flight write:
     // a vault-relative pending path. No `launchId` → the next launch treats it
@@ -157,7 +171,7 @@ test.describe('Filo E2E — crash recovery (kill mid-write → relaunch)', () =>
     await new Promise((resolve) => setTimeout(resolve, 750));
 
     // ── Phase B — relaunch, reopen the same vault, and assert recovery. ──
-    const b = await launchApp(vault);
+    const b = await launchApp(vault, a.userDataDir);
     try {
       await clickOpenVault(b.window);
 
@@ -171,7 +185,7 @@ test.describe('Filo E2E — crash recovery (kill mid-write → relaunch)', () =>
       await expect
         .poll(() => fs.existsSync(sentinelPath), {
           timeout: 10_000,
-          message: 'Dismiss must clear the `.filo/.dirty` sentinel',
+          message: 'Dismiss must clear this machine\'s `.filo/.dirty.<machineId>` sentinel',
         })
         .toBe(false);
     } finally {

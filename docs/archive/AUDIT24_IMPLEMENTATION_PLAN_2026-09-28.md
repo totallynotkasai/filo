@@ -164,6 +164,18 @@ Both are unregistered on destroy after a final save. The conflict toast becomes 
 - Unit: two concurrent `openVault` calls; the second returns `'busy'` and the first commits with its registry armed.
 - Main unit: `vault:close` with a different root leaves the registry alone.
 
+### Phase 1 outcome
+
+*Written in Phase 7 from the `4ae8858` commit message, since Phase 1 recorded no outcome here.*
+
+All seven items are fixed in `4ae8858`. Two gates were added: `writePath/board-baseline-after-adopt` (A24-01) and `vaultIdentity/vault-open-one-at-a-time` (A24-07). KNOWN_LIMITATIONS #1 was corrected in the same commit.
+
+**Deviations from the plan**
+
+- **A24-02.** `isRecording` became runtime state (`recordingTiles` in `tiles.svelte.ts`) and was dropped from the tile def schema and builder, so a board file never holds a stuck `isRecording`. `media:save-audio` now creates exclusively (` (n)` on a taken name) and answers failures with `errorResult`. Ctrl+S leaves a take running; only leave and quit stop it and wait for its save.
+- **A24-03.** Besides the held decision, a notes-box draft the note doesn't have is counted as unsaved work for the leave dialog, and its rescue copy carries the note's frontmatter.
+- **A24-04.** The uncommitted label is written on unmount through the cache, by the connection's own board, not the active one.
+
 ---
 
 ## Phase 2: Undo / redo across boards
@@ -625,6 +637,42 @@ Each new test was run against the pre-fix source and failed there (the passing c
 3. Update KNOWN_LIMITATIONS (#1 corrected; entries for any gap this plan accepts instead of fixing), CLAUDE.md (the new gates and the `loadBoard` stamping rule) and the gates count.
 4. Move this plan to `docs/archive/`.
 
+### Phase 7 outcome
+
+**1. Automated checks.**
+- `npm run ci:verify` passes on `bc28e7d`: lint, svelte-check (837 files, 0 errors), `typecheck:main`, `test:unit:strict` (717 files; 6,782 passed, 5 skipped), build, and 77/77 gates. The 5 skips are platform-gated: 4 are the symlink cases, which this Windows account can't create links for.
+- `npm run test:e2e`: 13 of 48 pass, run with `--workers=1` (see the deviations). The failures are the harness gap known since Audit-15, not regressions from this plan (details below).
+
+**2. Real-app check.** Run on the built app (`dist/main/main.js`) through Playwright `_electron`, with the folder picker stubbed in main, on fresh vaults in the session scratchpad. All six scenarios pass on data safety, and no renderer errors were logged apart from the expected `from-future` board error.
+- **Audio.** A take is saved and linked when its tab is switched mid-recording. Panning 6,600 px away keeps the recording tile mounted and recording. Nothing was left stuck in "Recording…".
+- **Connection label.** Text typed and not committed, then the window closed: the label text is in the board file on disk.
+- **Notes box.** A draft plus a body changed on disk from outside, then open another vault. The leave dialog names the note as "waiting for your answer". **Open anyway** writes `.filo/recovery/<ts>-unsaved/Alpha task.md` with the draft, keeps the other version on disk and keeps the sentinel.
+- **v9 board.** A board overwritten with `version: 9` stays byte-identical through a tile move and through **Quit anyway**. The drift toast offers Reload / Keep local, and a rescue copy of Filo's version is written.
+- **Raw view then Task List tick.** `completed: true` stays on disk after the raw view saves. The raw view shows its conflict banner, and quit is held by a dialog.
+- **Tag rename during the open (3,000 notes).** Rename and Delete are disabled with "Indexing notes…" for the first ~5–7 s. Once enabled, a rename reached all 3,000 notes (0 left with the old tag). The sweep took about 180 s with no progress shown.
+
+**3. Docs.** KNOWN_LIMITATIONS #1 was already corrected in Phase 1, and CLAUDE.md already carries every new gate, the `loadBoard` stamping rule and the count of 77 (checked against `node scripts/gates/run.mjs --list`). KNOWN_LIMITATIONS #5 gained the gap found in step 2 (below).
+
+**4.** This plan moved to `docs/archive/`.
+
+**Deviations from the plan**
+
+- **No CI run.** The commits are not pushed, so the GitHub Windows job has not run. Its two commands (`test:unit:strict`, `typecheck:main`) passed locally on Windows 11 as part of `ci:verify`. The next push runs both jobs.
+- **No Book Vault or Syncthing folder.** The Book Vault's location is unknown, and no Syncthing folder was available to the check. Each scenario built its own vault, and "sync" was simulated by writing files from the test script. The Syncthing-specific timing paths stay covered by the characterisation spec `syncedVault` and the unit tests from Phases 4 and 5.
+- **E2E.** 35 of 48 failed on the first single-worker run, all for harness reasons:
+  - Most specs `import('/src/…')` inside the page, which only resolves against a Vite dev server; the built app loads `file://`. This has been so since Audit-15 Phase 0, and the weekly Full E2E job has failed on it.
+  - The axe scan throws `Target.createTarget: Not supported` in Electron.
+  - `app.test.ts` checks old Home-screen text.
+  - The default parallel workers make the Electron instances fight over `DevToolsActivePort`.
+  - Two specs had gone stale since earlier UI and sentinel changes, and were fixed here (test-only changes). `documentOpenNoWrite` now double-clicks the row's name, because the row's centre now lands on a tag chip, which filters instead of opening. `recoveryRelaunch` writes this machine's `.dirty.<machineId>` sentinel and carries the machine id into the relaunch; per-machine sentinels replaced the shared `.filo/.dirty`. Both files pass.
+  - Rewriting the rest to drive the built app is a separate task, suggested at the end of this session.
+- **Findings from the real-app check, not fixed here** (Phase 7 changes no app code):
+  - **A24-51 (LOW, messaging).** Only note prompts are held decisions. A board drift prompt and a raw-view conflict banner are not. So when one of them is all that's left at quit, the dialog is still "Save failed" with **Retry now**, and it gives the cause "another program … may be holding it". For a board it also says "keeps a copy of each unsaved note". A24-38's quit dialog works as built for held note decisions (the notes-box scenario above).
+  - **A24-52 (LOW, UX).** Quitting with a held board drift took about 16 s to show its dialog, and "Board not saved (9×)" toasts pushed the Reload / Keep local toast out of view. The save loop keeps retrying a board whose write is held for a drift decision.
+  - **A24-53 (LOW, accepted).** Another program's board write within main's time-only suppression window (about 7 s after a Filo save on Windows) raises no notice. It is still never overwritten: the next save's drift check asks. Recorded in KNOWN_LIMITATIONS #5.
+  - A24-51 and A24-52 are a separate suggested task. Neither loses data.
+- **Not covered.** A crash in the middle of a vault-wide tag sweep was not exercised in the real app. The recovery sentinel for it (`tag-rewrite-pending.<machineId>.json`) has unit coverage.
+
 ## Decisions
 
 - `DECISION:` A24-15 has no raw-view autosave (see above).
@@ -641,4 +689,4 @@ Each new test was run against the pre-fix source and failed there (the passing c
 | 4 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 4"` |
 | 5 | Done (2026-09-28) | see `git log --grep "Audit-24 Phase 5"` |
 | 6 | Done (2026-09-29) | see `git log --grep "Audit-24 Phase 6"` |
-| 7 | Not started | |
+| 7 | Done (2026-09-29); A24-51 and A24-52 open as a follow-up | see `git log --grep "Audit-24 Phase 7"` |

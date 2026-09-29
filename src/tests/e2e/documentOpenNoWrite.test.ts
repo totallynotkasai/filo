@@ -68,7 +68,8 @@ for (const [fileName, content] of Object.entries(FIXTURES)) {
       const stem = fileName.replace(/\.md$/, '');
       const row = win.locator('.vault-file-item', { hasText: stem }).first();
       await expect(row).toBeVisible({ timeout: 10_000 });
-      await row.dblclick();
+      // On the name: the row's centre can land on a tag chip, which filters instead.
+      await row.locator('.file-name').dblclick();
       await expect(win.locator('.document-board .ProseMirror').first()).toContainText(
         /Hello|Heading/,
         { timeout: 10_000 },

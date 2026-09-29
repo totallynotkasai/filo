@@ -245,6 +245,18 @@ recent-self-write TTL can still expire first; for boards the baseline-divergence
 tie-break (Audit-15 P2.4) then drops the echo because the disk stat matches what
 Filo wrote. Notes use the content-hash check above.
 
+**Another program's board write inside main's window goes unannounced until
+the next save.** Main's `suppress` for a board is time-only
+(`LOCK_AWARE_SUPPRESS_MS`, about 7 s on Windows), unlike a note's
+`suppressWrite`, which drops only its own bytes. So a board rewritten by
+another program within those seconds of a Filo save raises no event: the
+renderer's content-aware check above never sees it, and no toast appears. It
+is still never overwritten. The board's next save compares the file with its
+drift baseline, finds the other version and asks **Reload** / **Keep local**
+(a real-app check wrote a `version: 9` board 2.5 s after a Filo save: nothing
+was shown until the next tile move, and the file stayed as written). Giving
+boards a byte-aware `suppressWrite` would close the silent gap.
+
 ---
 
 ## 6. Minimap recomputes the whole board every drag frame (large boards)

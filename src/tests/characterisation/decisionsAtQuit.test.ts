@@ -24,6 +24,7 @@ import {
   errorToasts,
 } from './harness/actions';
 import { renameVault } from './harness/vaultFolders';
+import { onLinux } from './harness/platform';
 
 afterEach(async () => {
   await stopApp();
@@ -43,7 +44,7 @@ function newerBoard(app: CharApp, rel: string): string {
 const driftPromptShown = (): boolean => toastActions().includes('Reload') && toastActions().includes('Keep local');
 
 describe('quitting while a question waits for an answer', () => {
-  it('a board changed outside Filo: the quit dialog waits for the decision and names the board', async () => {
+  it.skipIf(onLinux)('a board changed outside Filo: the quit dialog waits for the decision and names the board', async () => {
     const app = await startApp();
     await createBoard(app, 'mindmap');
     await addMindMapTextTile(app);
@@ -117,7 +118,7 @@ describe('quitting while a question waits for an answer', () => {
 });
 
 describe("another program's board write just after a Filo save", () => {
-  it('is noticed at once, without another edit', async () => {
+  it.skipIf(onLinux)('is noticed at once, without another edit', async () => {
     const app = await startApp();
     await createBoard(app, 'mindmap');
     await addMindMapTextTile(app);

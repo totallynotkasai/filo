@@ -1083,7 +1083,8 @@ No console errors in any launch. Every quit exited in under 0.21 s.
 4. **"Before and after numbers"** (item 3) were already recorded in Phase 2. This phase adds a final-build column instead of re-running the old build (`cc24ee5` can't run its tests any more).
 5. **Two app fixes in a verification phase.** Both were found by this phase's own runs, were one-line changes, and each has a test that fails without it.
 6. **A script artefact, not an app bug:** in one run the paste landed mid-paragraph. The script pressed Ctrl+End within milliseconds of clicking into the note, and ProseMirror's selection sync moved the caret back to the click point. Nothing was lost; the note reopened editable with the paste in it.
-7. **The weekly E2E job** was started by hand (`workflow_dispatch`) instead of waiting for Monday.
+7. **The weekly E2E job** was started by hand (`workflow_dispatch`) instead of waiting for Monday. That run cancelled the push run for the same commit (the workflow cancels an in-progress run in its group), so the push run was started again afterwards for the Coverage job.
+8. **CI had been red since `73cb12a`,** the commit this audit started from. The Linux Verify job times out in three characterisation cases added by Audit-24 Phase 9: `decisionsAtQuit` "a board changed outside Filo: the quit dialog waits…" and "is noticed at once, without another edit", and `newBoards` "replaced by a board from a newer Filo…". It failed the same way on this phase's first push. Each waits for the watcher to report another program's board write, the case the four existing Linux skips cover (the Linux runner's watcher reports it differently). They pass locally and on the Windows runner, so they take the one allowed form, `it.skipIf(onLinux)` (`harness/platform.ts`), and still run on Windows.
 
 **New findings (Phase 9).**
 

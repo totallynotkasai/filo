@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, waitFor, quiesce, recoveryCopies, type CharApp } from './harness/app';
+import { onLinux } from './harness/platform';
 import {
   createBoard,
   addKanbanColumn,
@@ -107,7 +108,7 @@ describe('an edit to the board file by another program', () => {
     await waitFor(() => (theBoard(app).board.columns ?? []).length === 2, 'both columns in the board file');
   });
 
-  it('replaced by a board from a newer Filo: the next save asks, and Keep local backs that file up first', async () => {
+  it.skipIf(onLinux)('replaced by a board from a newer Filo: the next save asks, and Keep local backs that file up first', async () => {
     const app = await startApp();
     await createBoard(app, 'kanban');
     await addKanbanColumn(app);

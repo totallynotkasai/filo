@@ -5,7 +5,9 @@
  *
  * A board write held for a drift answer (`BOARD_DRIFT_HELD`) is retained so
  * Keep local can re-fire it, but the scheduler's `holdRetained` keeps it from
- * re-firing (and re-asking) until the answer is in.
+ * re-firing (and re-asking) until the answer is in. A `.filo/` settings or
+ * shortcuts write held the same way (`CONFIG_DRIFT_HELD`) is retained too; a
+ * re-fire of it is refused at once without asking again.
  *
  * Attribution: a per-failure-id Set populated by `fireWrite` on rejection /
  * partial failure, drained by `flush(key)` / `flushAll()` so the Ctrl+S
@@ -32,6 +34,7 @@ export const RETAINABLE: ReadonlySet<string> = new Set([
   'EIO',
   'BOARD_PATH_HELD',
   'BOARD_DRIFT_HELD',
+  'CONFIG_DRIFT_HELD',
   'WRITE_TIMEOUT',
 ]);
 

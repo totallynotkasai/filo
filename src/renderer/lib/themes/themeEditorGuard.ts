@@ -15,6 +15,8 @@ export interface OpenThemeEditor {
   isDirty(): boolean;
   /** Saves; resolves false when nothing was saved (a problem is shown). */
   save(): Promise<boolean>;
+  /** The theme as edited so far, as a theme file's JSON: kept when Windows ends the session. */
+  draft(): string;
 }
 
 let openEditor: OpenThemeEditor | null = null;
@@ -30,6 +32,18 @@ export function registerThemeEditor(editor: OpenThemeEditor): () => void {
 /** Whether an open theme editor holds changes that aren't saved. */
 export function themeEditorHasChanges(): boolean {
   return openEditor?.isDirty() ?? false;
+}
+
+/** The open editor's unsaved theme as JSON, or null when nothing is changed. */
+export function themeEditorDraft(): string | null {
+  const editor = openEditor;
+  if (!editor?.isDirty()) return null;
+  try {
+    return editor.draft();
+  } catch (err) {
+    console.error('[themeEditorGuard] reading the draft failed:', err);
+    return null;
+  }
 }
 
 /**

@@ -13,7 +13,7 @@ import { unsavedWork } from './writeStateTracking';
 import { componentRetryPaths } from './componentWriteRetry';
 import { retryResultText } from '../vault/unsavedMessages';
 import { describeUnsaved } from '../../stores/unsavedRescue';
-import { heldDecisions } from '../../stores/heldDecisions';
+import { heldDecisionPaths } from '../../stores/heldDecisions';
 import { uiStore } from '../../stores/ui.svelte';
 
 /** How long the "still not saved" toast stays. */
@@ -27,7 +27,7 @@ export async function retryAndReport(): Promise<void> {
   const items = await describeUnsaved({ pending: [], failed, inflight: 0 });
   const result = retryResultText(items, saved, {
     componentKeys: new Set(componentRetryPaths().map((p) => vaultPath(p))),
-    decisionKeys: new Set(heldDecisions().map((d) => vaultPath(d.relPath()))),
+    decisionKeys: new Set(heldDecisionPaths().map((p) => vaultPath(p))),
   });
   uiStore.pushToast({
     text: result.text,

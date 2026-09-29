@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import AppShell from './components/layout/AppShell.svelte';
   import { themeStore } from './stores/theme.svelte';
   import { vaultStore } from './stores/vault.svelte';
@@ -31,7 +32,9 @@
   import { registerNewNotesInTree } from './stores/newNotesInTree';
   import { registerBoardNamesFollowFiles } from './stores/boardIdentity';
   import { pushSaveState } from './stores/saveStateFeed';
-  import { heldDecisions, setHeldDecisionsListener } from './stores/heldDecisions';
+  import { heldDecisionPaths, heldDecisions, setHeldDecisionsListener } from './stores/heldDecisions';
+  import { handleSessionEnding } from './lib/vault/handleSessionEnding';
+  import { startUnsavedStateReport } from './lib/vault/unsavedStateReport';
 
   // The markdown and board writers ask before overwriting a file another
   // program changed; without this they keep the local version silently.
@@ -101,9 +104,22 @@
   // the next task, once those continuations have run, settles it.
   // A prompt held or answered changes what the indicator shows, with or
   // without a write.
-  setHeldDecisionsListener(() => pushSaveState());
+  // Main is kept told whether leaving now could lose work, so it can answer
+  // Windows at once when the session ends (see handleSessionEnding).
+  const unsavedStateSources = {
+    nothingUnsaved: () => isUnsavedWorkEmpty(unsavedWork()),
+    heldDecisionCount: () => heldDecisions().length,
+    openSettingsEdits: () => hasOpenSettingsEdits(),
+  };
+  const unsavedStateReport = startUnsavedStateReport(unsavedStateSources, (flag) => window.filo.send('app:unsaved-state', flag));
+  onDestroy(() => unsavedStateReport.stop());
+  setHeldDecisionsListener(() => {
+    pushSaveState();
+    unsavedStateReport.nudge();
+  });
   let saveStateRecheck: ReturnType<typeof setTimeout> | null = null;
   setBoardWriteStateListener(() => {
+    unsavedStateReport.nudge();
     pushSaveState();
     saveStateRecheck ??= setTimeout(() => {
       saveStateRecheck = null;
@@ -164,8 +180,22 @@
       openSettingsEdits: () => hasOpenSettingsEdits(),
       settleOpenSettings: () => settleOpenSettings('quit'),
       // When only decisions are left, the dialog offers to show them.
-      heldDecisionPaths: () => heldDecisions().map((d) => d.relPath()),
+      heldDecisionPaths: () => heldDecisionPaths(),
       showDecisions: () => saveStateStore.requestDetails(),
+    });
+  });
+
+  // Windows is ending the session and main is holding it back: save, keep
+  // rescue copies of what is left (unapplied Settings too), no dialog.
+  window.filo.on('app:session-ending', () => {
+    void handleSessionEnding({
+      save: () => saveUntilSettled(() => vaultStore.save()),
+      freeze: () => holdCloseDrainUntilSwap(),
+      ...unsavedStateSources,
+      keepRescueCopies: (opts) => keepRescueCopies(unsavedWork(), opts),
+      flushSentinel: () => flushDirtyFlagSentinel(),
+      send: (channel) => window.filo.send(channel),
+      reportError,
     });
   });
 

@@ -15,13 +15,14 @@ export type UnsavedCause =
   | 'conflict'
   | 'raw-conflict'
   | 'board-drift'
+  | 'config-drift'
   | 'missing'
   | 'non-utf8'
   | 'write-failed';
 
 /** The causes that wait for the user's answer: no retry saves them. */
 // allow-module-state: a constant, never changed
-const ANSWER_CAUSES: ReadonlySet<UnsavedCause> = new Set(['conflict', 'raw-conflict', 'board-drift']);
+const ANSWER_CAUSES: ReadonlySet<UnsavedCause> = new Set(['conflict', 'raw-conflict', 'board-drift', 'config-drift']);
 
 export interface UnsavedItem {
   /** Vault path, in its on-disk spelling where known. */
@@ -47,6 +48,7 @@ const CAUSE_TEXT: Record<UnsavedCause, string> = {
   conflict: 'waiting for your answer: another program changed it while you were editing',
   'raw-conflict': 'changed while you were editing it as text: Show the new version or Keep mine',
   'board-drift': 'changed outside Filo, waiting for Reload or Keep local',
+  'config-drift': 'these settings were changed outside Filo, waiting for Reload or Keep local',
   missing: 'the file no longer exists',
   'non-utf8': "it isn't UTF-8 text, so Filo won't overwrite it",
   'write-failed': "the file couldn't be written (another program, such as OneDrive or antivirus, may be holding it)",

@@ -12,7 +12,9 @@
  *  - Filo's own `.filo/` state (the tag registry, the only copy of attachment
  *    tags; settings, layout, viewports, hotkeys, sidebar order): each file's
  *    unsaved content as `_filo__<name>.json`, a name outside `.filo/` so
- *    the rescue channel accepts it.
+ *    the rescue channel accepts it;
+ *  - when Windows ends the session (no chance to ask), unapplied Settings
+ *    and theme-editor edits too, as `_filo__*.unapplied.json`.
  */
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { noteStore } from './notes.svelte';
@@ -26,6 +28,9 @@ import { dirtyRawViews, rawViewInConflict, takeRawRescueItems } from '../lib/not
 import { notesBoxDraftPath, notesBoxInConflict, takeNotesBoxRescueItems } from '../lib/tasklist/notesBox.svelte';
 import { unsavedConfigPayloads } from '../lib/boards/configWriteScheduler';
 import { isBoardDriftHeld } from '../lib/boards/boardDriftHold';
+import { configDriftHeldFiles } from '../lib/boards/configDriftHold';
+import { pendingSettingsStore } from './pendingSettings.svelte';
+import { themeEditorDraft } from '../lib/themes/themeEditorGuard';
 import { unsavedMiscPayloads } from '../lib/boards/miscWriteScheduler';
 import { unsavedComponentPayloads } from '../lib/boards/componentWriteRetry';
 
@@ -56,6 +61,32 @@ function filoRescueItems(unsaved: Set<VaultPath>): { items: Array<{ relPath: str
     console.error('[unsavedRescue] collecting unsaved .filo/ state failed:', err);
   }
   return { items, covers };
+}
+
+/**
+ * Settings edits not yet applied (a Settings tab's fields, the theme editor's
+ * colours), as rescue items. They are in no writer, so nothing else keeps
+ * them; kept only when there is no chance to ask (Windows ending the session).
+ */
+function unappliedSettingsItems(): Array<{ relPath: string; text: string }> {
+  const items: Array<{ relPath: string; text: string }> = [];
+  try {
+    const defaults = pendingSettingsStore.pending;
+    if (pendingSettingsStore.hasGlobalChanges() && defaults) {
+      items.push({ relPath: filoRescueName('.filo/defaults.unapplied.json'), text: `${JSON.stringify(defaults, null, 2)}\n` });
+    }
+    const boardId = pendingSettingsStore.pendingBoardId;
+    const board = pendingSettingsStore.pendingBoardSettings;
+    if (pendingSettingsStore.hasBoardChanges() && boardId && board) {
+      const text = `${JSON.stringify({ board: boardCacheStore.paths[boardId] ?? boardId, settings: board }, null, 2)}\n`;
+      items.push({ relPath: filoRescueName('.filo/board-settings.unapplied.json'), text });
+    }
+    const theme = themeEditorDraft();
+    if (theme !== null) items.push({ relPath: filoRescueName('.filo/themes/theme.unapplied.json'), text: `${theme}\n` });
+  } catch (err) {
+    console.error('[unsavedRescue] collecting unapplied settings failed:', err);
+  }
+  return items;
 }
 
 /** Board paths (on-disk spelling) by case-folded key. */
@@ -107,6 +138,14 @@ export function unsavedPathsAsSpelled(work: UnsavedWork = unsavedWork()): string
   return [...new Set([...work.failed, ...work.pending])].map((key) => raw.get(key) ?? displayPath(key, boards));
 }
 
+/**
+ * A `.filo/` settings or shortcuts file waiting for Reload / Keep local, named
+ * as itself (the settings bundle's writes are tracked under `.filo/`).
+ */
+function configDriftItems(path: string): UnsavedItem[] {
+  return configDriftHeldFiles(path).map((file): UnsavedItem => ({ path: `.filo/${file}`, cause: 'config-drift' }));
+}
+
 /** Each unsaved path with the reason it isn't on disk. */
 export async function describeUnsaved(work: UnsavedWork = unsavedWork()): Promise<UnsavedItem[]> {
   const vaultRoot = getActiveVaultPath() || null;
@@ -114,10 +153,20 @@ export async function describeUnsaved(work: UnsavedWork = unsavedWork()): Promis
   const items: UnsavedItem[] = [];
   for (const key of work.failed) {
     const path = displayPath(key, boards);
+    const held = configDriftItems(path);
+    if (held.length > 0) {
+      items.push(...held);
+      continue;
+    }
     items.push({ path, cause: await causeOf(key, path, vaultRoot) });
   }
   for (const key of work.pending) {
     const path = displayPath(key, boards);
+    const held = configDriftItems(path);
+    if (held.length > 0) {
+      items.push(...held);
+      continue;
+    }
     // A held body shows as pending to the ledger; say what holds it.
     items.push({ path, cause: answerCause(key, path) ?? 'pending' });
   }
@@ -129,7 +178,10 @@ export async function describeUnsaved(work: UnsavedWork = unsavedWork()): Promis
  * whatever couldn't be copied is in `notKept`, so the caller can ask again
  * before letting it go.
  */
-export async function keepRescueCopies(work: UnsavedWork = unsavedWork()): Promise<RescueResult> {
+export async function keepRescueCopies(
+  work: UnsavedWork = unsavedWork(),
+  opts: { unappliedSettings?: boolean } = {},
+): Promise<RescueResult> {
   const vaultRoot = getActiveVaultPath();
   const boards = boardPathsByKey();
   const items: Array<{ relPath: string; text: string }> = [];
@@ -158,6 +210,7 @@ export async function keepRescueCopies(work: UnsavedWork = unsavedWork()): Promi
   const filo = filoRescueItems(new Set([...work.failed, ...work.pending]));
   items.push(...filo.items);
   for (const key of filo.covers) covered.add(key);
+  if (opts.unappliedSettings) items.push(...unappliedSettingsItems());
   for (const key of [...work.failed, ...work.pending]) {
     if (covered.has(key)) continue;
     covered.add(key);

@@ -211,6 +211,10 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'app:quit-awaiting-user': z.tuple([]),
   // Periodic drain heartbeat (no args); main re-arms its timer.
   'app:drain-heartbeat': z.tuple([]),
+  // The session-end rescue is done (no args); main lets Windows go on.
+  'app:session-ending-done': z.tuple([]),
+  // Whether leaving now could lose work.
+  'app:unsaved-state': z.tuple([z.boolean()]),
 
   // ── Sidebar geometry ──────────────────────────────────────────────────
   'sidebar:get-state': z.tuple([]),

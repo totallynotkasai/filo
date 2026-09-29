@@ -20,6 +20,7 @@ import { vaultRegistry } from './services/vaultRegistry';
 import { writeQuitFailureBreadcrumb } from './services/quitFailureBreadcrumb';
 import { attachRendererCrashHandlers, isRendererGone } from './services/rendererCrashHandler';
 import { decideWindowClose } from './utils/windowCloseDecision';
+import { createSessionEndHandlers } from './services/sessionEnd';
 import { buildAppContentSecurityPolicy } from './utils/contentSecurityPolicy';
 import { installPermissionHandlers } from './utils/permissionPolicy';
 import { SYSTEM_LOCALE_ARG } from '../shared/systemLocale';
@@ -74,6 +75,40 @@ let isFlushingForQuit = false;
 const FLUSH_TIMEOUT_MS = 5000;
 // Ceiling on the teardown before a window close destroys the window.
 const TEARDOWN_BOUND_MS = 2000;
+
+// Windows ending the session (shutdown, restart, sign-out): see sessionEnd.ts.
+const sessionEnd = createSessionEndHandlers({
+  rendererAlive: () => !!mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && !isRendererGone(),
+  sendSessionEnding: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) throw new Error('no window');
+    mainWindow.webContents.send('app:session-ending');
+  },
+  onceDone: (listener) => {
+    const once = (): void => listener();
+    ipcMain.once('app:session-ending-done', once);
+    return () => ipcMain.removeListener('app:session-ending-done', once);
+  },
+  markQuitting: () => {
+    isFlushingForQuit = true;
+  },
+  teardown: () => {
+    captureAndSaveWindowState();
+    return Promise.allSettled([
+      flushWindowStateNow(),
+      flushSidebarStateNow(),
+      stopActiveWatcher(),
+      writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
+    ]);
+  },
+  teardownBoundMs: TEARDOWN_BOUND_MS,
+  exit: () => app.exit(0),
+  writeBreadcrumb: () => writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+});
+ipcMain.on('app:unsaved-state', (_event, mayLoseWork: unknown) => {
+  sessionEnd.noteUnsavedState(mayLoseWork === true);
+});
 
 function scheduleWindowStateSave(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -312,6 +347,15 @@ async function createWindow(): Promise<void> {
       logMainError('main:flush-and-quit-on-close', err);
       mainWindow?.destroy();
     }
+  });
+
+  // Windows is ending the session: neither `close` nor `before-quit` runs.
+  // Held back only while the renderer saves and keeps rescue copies.
+  mainWindow.on('query-session-end', (event) => {
+    if (sessionEnd.onQuerySessionEnd()) event.preventDefault();
+  });
+  mainWindow.on('session-end', () => {
+    sessionEnd.onSessionEnd();
   });
 
   mainWindow.on('closed', () => {

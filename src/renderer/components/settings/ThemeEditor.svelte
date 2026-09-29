@@ -137,7 +137,12 @@
     }
   }
 
-  const unregister = registerThemeEditor({ name: () => name, isDirty, save: () => save(false) });
+  const unregister = registerThemeEditor({
+    name: () => name,
+    isDirty,
+    save: () => save(false),
+    draft: () => JSON.stringify(buildThemeFile(name, initial.base, variables), null, 2),
+  });
 
   async function cancel(): Promise<void> {
     finished = true;

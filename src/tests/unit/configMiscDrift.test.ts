@@ -10,6 +10,7 @@ import {
 } from '@renderer/lib/vault/fileBaselineRegistry';
 import { seedConfigBaselines, statConfigsBeforeRead } from '@renderer/lib/vault/configBaselineSeed';
 import { flushAllMisc } from '@renderer/lib/boards/miscWriteScheduler';
+import { __configDriftSettledForTests, isConfigDriftHeld } from '@renderer/lib/boards/configDriftHold';
 import { seedViewportsCache, setViewport, getViewportFromCache } from '@renderer/lib/boards/viewportCache';
 import { __resetDirtyTrackingForTests, unsavedWork, hasFailedWrites } from '@renderer/lib/boards/writeStateTracking';
 import { sidebarOrderStore } from '@renderer/stores/sidebarOrder.svelte';
@@ -136,13 +137,19 @@ describe('config baselines at open are pinned by a stat on both sides of the rea
     markBaselineUnverified('.filo/defaults.json');
     const log = handlers('keep-local');
 
+    // Held and asked; nothing written over it until the answer.
     const result = await writeConfigs(VAULT, settings(2), 'light', workspace);
-
-    expect(result.failed).toEqual([]);
+    expect(result.failed).toEqual(['defaults.json']);
+    expect(disk.saves.map((s) => s.file)).not.toContain('defaults.json');
+    await __configDriftSettledForTests();
+    expect(isConfigDriftHeld('defaults.json')).toBe(false);
     expect(log.prompts).toEqual(['defaults.json']);
     expect(disk.snapshots).toEqual(['.filo/defaults.json']);
-    expect(disk.saves.map((s) => s.file)).toContain('defaults.json');
     expect(isBaselineUnverified('.filo/defaults.json')).toBe(false);
+
+    const again = await writeConfigs(VAULT, settings(2), 'light', workspace);
+    expect(again.failed).toEqual([]);
+    expect(disk.saves.map((s) => s.file)).toContain('defaults.json');
   });
 });
 
@@ -230,10 +237,17 @@ describe('hotkeys.json changed outside Filo asks Reload / Keep local', () => {
     const log = handlers('keep-local');
     setHotkeyOverride('tile:add', { key: 'a', ctrl: true, shift: true });
     saveHotkeyOverrides(VAULT);
-    expect((await flushAllMisc()).failed).toEqual([]);
+    // The write doesn't wait for the answer: it is held and refused at once.
+    expect((await flushAllMisc()).failed).toEqual(['.filo/hotkeys.json']);
+    expect(disk.saves).toEqual([]);
+    await __configDriftSettledForTests();
+    expect(isConfigDriftHeld('hotkeys.json')).toBe(false);
     expect(log.prompts).toEqual(['hotkeys.json']);
     expect(disk.snapshots).toEqual(['.filo/hotkeys.json']);
+    // Keep local re-fires the held write.
+    expect((await flushAllMisc()).failed).toEqual([]);
     expect(JSON.parse(disk.saves.at(-1)!.json)).toEqual({ 'tile:add': 'Ctrl+Shift+A' });
+    expect(unsavedWork().failed).toEqual([]);
   });
 
   it('Reload takes the file\'s shortcuts and writes nothing', async () => {
@@ -241,9 +255,13 @@ describe('hotkeys.json changed outside Filo asks Reload / Keep local', () => {
     handlers('reload');
     setHotkeyOverride('tile:add', { key: 'a', ctrl: true, shift: true });
     saveHotkeyOverrides(VAULT);
+    expect((await flushAllMisc()).failed).toEqual(['.filo/hotkeys.json']);
+    await __configDriftSettledForTests();
+    expect(isConfigDriftHeld('hotkeys.json')).toBe(false);
     expect((await flushAllMisc()).failed).toEqual([]);
     expect(disk.saves).toEqual([]);
     expect(Object.keys(getHotkeyOverrides())).toEqual(['tile:lock']);
+    expect(unsavedWork().failed).toEqual([]);
   });
 
   it('no answer yet: nothing is written over the file', async () => {

@@ -30,7 +30,8 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
 import { isRetainableWriteError } from './writeSchedulerFailures';
 import { refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
-import { backupConfig, checkConfigDisk, noticeConfig, type BundledConfigFile } from './configDrift';
+import { backupConfig, checkConfigDisk, noticeConfig, reloadConfigFromDisk, type BundledConfigFile } from './configDrift';
+import { isConfigDriftHeld, refuseHeldConfigWrite, registerConfigDriftTarget } from './configDriftHold';
 
 export interface ConfigWriteArgs {
   vaultRoot: string;
@@ -351,7 +352,22 @@ export async function writeConfigs(
     // configDrift.ts); nothing here leaves a file blocked for the session.
     const file: BundledConfigFile = target === 'config:save-workspace' ? 'workspace.json' : target;
     const sentinelPath = `.filo/${file}`;
-    const verdict = await checkConfigDisk({ vaultRoot, file, payload, lastWritten: lastWrittenConfigs.get(target) });
+    // Waiting for a Reload / Keep local answer, or another version just found:
+    // this file's write is refused at once (no prompt awaited) and kept for
+    // the answer; the bundle's other files are still written.
+    const verdict = isConfigDriftHeld(file)
+      ? ({ kind: 'drifted' } as const)
+      : await checkConfigDisk({ vaultRoot, file, payload, lastWritten: lastWrittenConfigs.get(target) });
+    if (verdict.kind === 'drifted') {
+      try {
+        refuseHeldConfigWrite(file, vaultRoot, payload);
+      } catch (held) {
+        failed.push(target);
+        retryError ??= held;
+        lastWrittenConfigs.delete(target);
+      }
+      continue;
+    }
     if (verdict.kind === 'adopted') {
       lastWrittenConfigs.set(target, verdict.json);
       const now = live?.();
@@ -480,8 +496,26 @@ const configScheduler = createScheduler<ConfigWriteArgs>({
   // SMB) can still wedge those IPCs and hang `flushAll` / quit. Bound for
   // uniformity with the board scheduler and the note writer.
   writeTimeoutMs: WRITE_TIMEOUT_MS,
+  // A settings file waiting for Reload / Keep local is refused at once, with
+  // no stat and no prompt, so a re-fire (Retry, the quit drain) costs nothing
+  // and still writes the bundle's other files; the answer re-fires it.
   retainIoError: true,
 });
+
+for (const file of ['app.json', 'defaults.json', 'appearance.json'] as const) {
+  registerConfigDriftTarget(file, {
+    ledgerPath: CONFIG_SENTINEL_PATH,
+    reload: (disk, json) => {
+      if (!reloadConfigFromDisk(file, disk)) return false;
+      lastWrittenConfigs.set(file, json);
+      return true;
+    },
+    // Keep local writes Filo's version; after a Reload the file reads as
+    // written (unless memory normalised it), and the bundle's other files may
+    // still be owed, so the held bundle is re-fired either way.
+    resume: () => void configScheduler.retryFailed(CONFIG_KEY),
+  });
+}
 
 /**
  * Schedules a debounced write of the `.filo/` config bundle.

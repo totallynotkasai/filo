@@ -29,6 +29,7 @@ import {
   isConfigTargetCorrupt,
 } from '@renderer/lib/boards/configWriteScheduler';
 import { setConfigExternalHandlers } from '@renderer/lib/boards/configDrift';
+import { __configDriftSettledForTests, isConfigDriftHeld } from '@renderer/lib/boards/configDriftHold';
 import { noteBaseline, isBaselineUnverified, __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
 import { seedViewportsCache, getViewportFromCache } from '@renderer/lib/boards/viewportCache';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
@@ -132,7 +133,7 @@ describe('Reload of an app.json changed outside Filo', () => {
     expect(JSON.parse(app!.json).name).toBe('New Name');
   });
 
-  it('a Reload mid-save rebuilds the files still to write from the settings now in memory', async () => {
+  it('a Reload takes the file into memory; the next save writes the others from it and leaves the reloaded file alone', async () => {
     const workspace: WorkspaceState = { openTabs: [], activeTabId: '' };
     let settings = { general: { globalFont: 'A' }, mindmap: { x: 1 }, kanban: {}, tasklist: {}, document: {} } as unknown as ProjectSettings;
     seedConfigSnapshots(settings, 'light', workspace, undefined, 'Vault');
@@ -157,16 +158,18 @@ describe('Reload of an app.json changed outside Filo', () => {
       notice: () => {},
     });
     const edited = { ...settings, mindmap: { x: 2 }, general: { globalFont: 'A2' } } as unknown as ProjectSettings;
-    await writeConfigs(VAULT, edited, 'light', workspace, undefined, 'Vault', () => ({
-      vaultRoot: VAULT,
-      settings,
-      theme: 'light',
-      workspace,
-      layout: { paneTree: null, activePaneId: null, sidebarWidth: 260, boardToolbars: {} },
-      name: 'Vault',
-    }));
-    // app.json is written after defaults.json: from the settings the Reload left.
+    const first = await writeConfigs(VAULT, edited, 'light', workspace, undefined, 'Vault');
+    // defaults.json is held for the answer; the rest of the bundle is written.
+    expect(first.failed).toEqual(['defaults.json']);
+    expect(saves.map((s) => s.file)).toContain('app.json');
+    expect(saves.map((s) => s.file)).not.toContain('defaults.json');
+    await __configDriftSettledForTests();
+    expect(isConfigDriftHeld('defaults.json')).toBe(false);
+
+    saves.length = 0;
+    await writeConfigs(VAULT, settings, 'light', workspace, undefined, 'Vault');
     const app = saves.find((s) => s.file === 'app.json');
     expect(JSON.parse(app!.json).globalFont).toBe('B');
+    expect(saves.map((s) => s.file)).not.toContain('defaults.json');
   });
 });

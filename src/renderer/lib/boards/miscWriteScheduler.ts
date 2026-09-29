@@ -21,10 +21,12 @@ import {
   notifyWriteError,
   registerResetCallback,
   registerTestResetCallback,
+  clearFailedPathAfterLateSuccess,
 } from './writeStateTracking';
 import { isConfigPathCorrupt } from './configWriteScheduler';
 import { createScheduler } from './writeScheduler';
 import { noticeConfig } from './configDrift';
+import { ConfigDriftHeldError } from './configDriftHold';
 
 export interface MiscWriteArgs {
   vaultRoot: string;
@@ -83,8 +85,11 @@ const miscScheduler = createScheduler<MiscWriteArgs>({
         );
         return;
       }
-      console.error(`[boardSaver] misc write failed for ${args.path}:`, err);
-      notifyWriteError({ kind: 'config', path: args.path, error: err });
+      // Waiting for Reload / Keep local: the question is the only notice.
+      if (!(err instanceof ConfigDriftHeldError)) {
+        console.error(`[boardSaver] misc write failed for ${args.path}:`, err);
+        notifyWriteError({ kind: 'config', path: args.path, error: err });
+      }
       throw err;
     }
   },
@@ -137,6 +142,21 @@ export function scheduleMiscWrite(
 ): void {
   latestMiscArgs.set(key, getWriteArgs);
   miscScheduler.schedule(key, getWriteArgs, debounceMs);
+}
+
+/** Re-fires `key`'s write kept for Retry (a drift answered Keep local). */
+export function retryMiscWrite(key: string): void {
+  void miscScheduler.retryFailed(key);
+}
+
+/**
+ * Drops `key`'s write kept for Retry, and its failed mark: the file on disk
+ * was read into memory instead (a drift answered Reload).
+ */
+export function discardMiscWrite(key: string, vaultRoot: string, path: string): void {
+  miscScheduler.cancel(key, path);
+  miscScheduler.discardRetained(key);
+  clearFailedPathAfterLateSuccess(vaultRoot, path);
 }
 
 /**

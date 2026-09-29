@@ -10,7 +10,8 @@
  *    other version goes to `.filo/recovery/`, with one info toast;
  *  - settings (`app.json`, `defaults.json`, `appearance.json`): the user
  *    chooses Reload (Filo takes the file's settings) or Keep local (a copy of
- *    the file first, then Filo's settings are written);
+ *    the file first, then Filo's settings are written). The write doesn't wait
+ *    for the answer: the file is held (`configDriftHold`) until it comes;
  *  - the file was deleted: it is created again (exclusively, so a copy put
  *    back meanwhile is never overwritten), with one info toast.
  */
@@ -62,6 +63,8 @@ export type ConfigDiskVerdict =
   | { kind: 'adopted'; json: string }
   /** The file was deleted outside Filo: create it again, exclusively. */
   | { kind: 'recreate' }
+  /** Another version of a settings file: hold it for Reload / Keep local. */
+  | { kind: 'drifted' }
   /** Don't write, and report the failure. */
   | { kind: 'fail'; error: Error };
 
@@ -176,20 +179,12 @@ export async function checkConfigDisk(args: {
     return { kind: 'write' };
   }
 
-  const choice = handlers ? await handlers.prompt(file) : 'defer';
-  if (choice === 'keep-local') {
-    if (!(await backupConfig(vaultRoot, rel))) {
-      return {
-        kind: 'fail',
-        error: codedError(`${rel} was changed outside Filo, and Filo couldn't copy that version before overwriting it.`, 'EXTERNAL_EDIT'),
-      };
-    }
-    noteBaseline(rel, stat.mtimeMs, stat.size, { ifUnchangedSince: seq });
-    return { kind: 'write' };
-  }
-  if (choice === 'reload' && disk.object && disk.json !== undefined && handlers?.reload(file, disk.object)) {
-    noteBaseline(rel, stat.mtimeMs, stat.size, { ifUnchangedSince: seq });
-    return { kind: 'adopted', json: disk.json };
-  }
-  return { kind: 'fail', error: codedError(`${rel} was changed outside Filo; your change wasn't saved over it.`, 'EXTERNAL_EDIT') };
+  // A settings file: the user decides. The writer holds it and asks
+  // (`configDriftHold`); nothing waits here for the answer.
+  return { kind: 'drifted' };
+}
+
+/** Takes `file`'s settings from disk into memory (a Reload). False when they can't be applied. */
+export function reloadConfigFromDisk(file: BundledConfigFile, disk: Record<string, unknown>): boolean {
+  return handlers ? handlers.reload(file, disk) : false;
 }

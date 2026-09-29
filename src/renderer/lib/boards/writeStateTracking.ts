@@ -420,6 +420,11 @@ export function isPathPending(path: string): boolean {
   return pendingVaultPaths.has(key) || failedVaultPaths.has(key);
 }
 
+/** True when the path's last write failed and nothing has landed since. */
+export function isPathFailed(path: string): boolean {
+  return failedVaultPaths.has(vaultPath(path));
+}
+
 /**
  * "Is a write for this path armed or mid-flight RIGHT NOW?"
  * Distinct from {@link isPathPending}: deliberately EXCLUDES

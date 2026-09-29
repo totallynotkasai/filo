@@ -116,12 +116,12 @@ export function renameBaselinePath(oldRel: string, newRel: string): void {
   // began before the move must still yield to a write made after it.
   rekey(baselines, oldKey, newKey);
   rekey(writeSeqs, oldKey, newKey);
-  if (unverified.delete(oldKey)) unverified.add(newKey);
+  rekey(unverified, oldKey, newKey);
 }
 
 function rekey<V>(map: Map<string, V>, oldKey: string, newKey: string): void {
-  const exact = map.get(oldKey);
-  if (exact !== undefined) {
+  if (map.has(oldKey)) {
+    const exact = map.get(oldKey) as V;
     map.delete(oldKey);
     map.set(newKey, exact);
   }
@@ -190,17 +190,24 @@ export function noteBaseline(
  * Paths whose version on disk no load pinned: the file changed while it was
  * read, or couldn't be read at all. A writer reads such a file before it
  * writes over it, as if its baseline had drifted. A stamp clears the mark.
+ * The value is what the load read (a board's JSON), when it read anything:
+ * a file that still holds it is the version Filo has.
  */
 // allow-module-state: reset on vault swap (resetAllBaselines, registered below)
-const unverified = new Set<string>();
+const unverified = new Map<string, string | undefined>();
 
-export function markBaselineUnverified(path: string): void {
+export function markBaselineUnverified(path: string, loadedContent?: string): void {
   const key = path ? normaliseKey(path) : '';
-  if (key) unverified.add(key);
+  if (key) unverified.set(key, loadedContent);
 }
 
 export function isBaselineUnverified(path: string): boolean {
   return !!path && unverified.has(normaliseKey(path));
+}
+
+/** What the load of an unverified path read, if it read anything. */
+export function unverifiedLoadedContent(path: string): string | undefined {
+  return path ? unverified.get(normaliseKey(path)) : undefined;
 }
 
 /**

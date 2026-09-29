@@ -592,6 +592,49 @@ export const checks = [
     },
   },
   {
+    id: 'config-drift-held',
+    title: 'the .filo/ settings and shortcuts writers never wait for the drift question: they hold the file and refuse at once',
+    hint:
+      'A write that met another version of app.json / defaults.json / appearance.json / hotkeys.json calls ' +
+      'refuseHeldConfigWrite() (configDriftHold.ts), which holds the file, asks without waiting and throws ' +
+      'ConfigDriftHeldError (CONFIG_DRIFT_HELD, kept for Retry). Only configDriftHold.ts asks (promptConfigDrift); ' +
+      'its answer re-fires or drops the held write.',
+    run(ctx) {
+      const out = [];
+      const HOLD = 'src/renderer/lib/boards/configDriftHold.ts';
+      for (const rel of ctx.files(RENDERER, { ext: TS_SVELTE })) {
+        if (rel === HOLD) continue;
+        const raw = ctx.read(rel);
+        if (!raw.includes('prompt')) continue;
+        const code = stripCommentsStateful(raw);
+        for (const m of code.matchAll(/\b(?:promptConfigDrift|handlers\??\.prompt)\s*\(/g)) {
+          const before = code.slice(0, m.index);
+          const isDefinition = /export\s+function\s+$/.test(before) || /return\s+handlers\s*\?\s*$/.test(before);
+          if (!isDefinition) out.push(fail(rel, lineAt(code, m.index), 'asks the config drift question outside configDriftHold.ts; call refuseHeldConfigWrite instead'));
+        }
+      }
+      const need = [
+        ['src/renderer/lib/boards/configWriteScheduler.ts', /\brefuseHeldConfigWrite\s*\(/, 'the settings bundle must hold a drifted file (refuseHeldConfigWrite)'],
+        ['src/renderer/lib/boards/configWriteScheduler.ts', /\bisConfigDriftHeld\s*\(/, 'the settings bundle must refuse a held file before checking the disk (isConfigDriftHeld)'],
+        ['src/renderer/lib/boards/miscConfigDrift.ts', /\brefuseHeldConfigWrite\s*\(/, 'hotkeys.json must be held on drift (refuseHeldConfigWrite)'],
+        ['src/renderer/core/hotkeys.ts', /\bisConfigDriftHeld\s*\(/, 'the hotkeys write must refuse a held file before reading it (isConfigDriftHeld)'],
+        [HOLD, /\bbackupConfig\s*\(/, 'Keep local must copy the other version first (backupConfig)'],
+        [HOLD, /\.resume\s*\(/, "the answer must re-fire or drop the held write (target.resume)"],
+      ];
+      for (const [file, re, msg] of need) {
+        const raw = ctx.read(file);
+        if (raw === null) out.push(fail(file, undefined, 'file missing'));
+        else if (!re.test(stripCommentsStateful(raw))) out.push(fail(file, undefined, msg));
+      }
+      const FAILS = 'src/renderer/lib/boards/writeSchedulerFailures.ts';
+      const fails = ctx.read(FAILS);
+      if (fails === null || !/['"`]CONFIG_DRIFT_HELD['"`]/.test(stripCommentsStateful(fails))) {
+        out.push(fail(FAILS, undefined, 'RETAINABLE must keep a held config write (CONFIG_DRIFT_HELD) for Retry'));
+      }
+      return out;
+    },
+  },
+  {
     id: 'note-write-expects-stat',
     title: 'a note overwrite names the stat of the read it builds on, and the main process refuses it (STALE) if the file changed since',
     hint:
@@ -857,7 +900,8 @@ export const checks = [
     hint:
       'loadBoard / loadAllBoards return the stat (result.baseline / loadedBaselines) and never stamp it. The caller calls ' +
       'adoptLoadedBoardBaseline(path, baseline) after it puts the data in the cache. A stamp from a load that then fails ' +
-      '(newer format, schema error) names the outside file, so the next save overwrites it without a prompt.',
+      '(newer format, schema error) names the outside file, so the next save overwrites it without a prompt. A load with ' +
+      'no pinned stat marks the board unverified (markBaselineUnverified), and writeBoardFile reads such a board first.',
     run(ctx) {
       const out = [];
       const LOADER = 'src/renderer/lib/boards/boardLoader.ts';
@@ -876,6 +920,21 @@ export const checks = [
         if (call && !/\badoptLoadedBoardBaseline\s*\(/.test(code)) {
           out.push(fail(rel, lineAt(code, call.index), 'loads a board but never adopts its baseline (adoptLoadedBoardBaseline)'));
         }
+      }
+      // A load no stat pinned must leave the path unverified, and the writer
+      // must read an unverified board before writing over it; otherwise its
+      // first save skips the drift check.
+      const ADOPT = 'src/renderer/lib/boards/boardBaseline.ts';
+      const adoptRaw = ctx.read(ADOPT);
+      if (adoptRaw === null) out.push(fail(ADOPT, undefined, 'file missing'));
+      else if (!/\bmarkBaselineUnverified\s*\(/.test(stripCommentsKeepLines(adoptRaw))) {
+        out.push(fail(ADOPT, undefined, 'a load with no pinned stat must mark the board unverified (markBaselineUnverified)'));
+      }
+      const WRITER = 'src/renderer/lib/boards/boardWriteScheduler.ts';
+      const writerRaw = ctx.read(WRITER);
+      if (writerRaw === null) out.push(fail(WRITER, undefined, 'file missing'));
+      else if (!/\bisBaselineUnverified\s*\(/.test(stripCommentsKeepLines(writerRaw))) {
+        out.push(fail(WRITER, undefined, 'the board writer must read an unverified board before writing over it (isBaselineUnverified)'));
       }
       return out;
     },

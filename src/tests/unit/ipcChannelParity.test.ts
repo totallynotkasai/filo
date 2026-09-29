@@ -109,6 +109,11 @@ describe('IPC channel parity', () => {
       // Audit5 2.1 — renderer → main periodic drain heartbeat; registered via
       // ipcMain.on in main.ts (not an ipcMain.handle in src/main/ipc).
       'app:drain-heartbeat',
+      // Windows session end: main → renderer request, and the renderer's
+      // reply and unsaved-state push, registered via ipcMain.on in main.ts.
+      'app:session-ending',
+      'app:session-ending-done',
+      'app:unsaved-state',
       // Audit-12 S1 — preload-internal approved-source registration; registered
       // via ipcMain.on in dialog.ipc.ts (not an ipcMain.handle), fired by the
       // preload's getPathForFile through a direct ipcRenderer.send.

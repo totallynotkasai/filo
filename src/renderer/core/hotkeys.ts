@@ -15,6 +15,8 @@ import { CONFIG_LOAD_RETRY_DELAYS_MS } from '../lib/vault/vaultCandidate';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { reportError } from '../lib/utils/errorBus';
 import { readOutsideVersion, saveMiscConfig, settleOutsideVersion } from '../lib/boards/miscConfigDrift';
+import { isConfigDriftHeld, refuseHeldConfigWrite, registerConfigDriftTarget } from '../lib/boards/configDriftHold';
+import { discardMiscWrite, retryMiscWrite } from '../lib/boards/miscWriteScheduler';
 import { seedConfigBaselines, statConfigsBeforeRead } from '../lib/vault/configBaselineSeed';
 
 /** Shape of `.filo/hotkeys.json` — a flat command-id → shortcut-string map. */
@@ -200,6 +202,20 @@ export function hotkeysUnreadFor(vaultRoot: string): boolean {
 export function applyHotkeysFromDisk(disk: Record<string, unknown>): void {
   setHotkeyOverrides(deserializeOverrides(disk as HotkeysConfig));
 }
+
+// A `hotkeys.json` changed outside Filo while a shortcut change waits: Reload
+// takes the file's bindings and drops the held write; Keep local re-fires it.
+registerConfigDriftTarget('hotkeys.json', {
+  ledgerPath: HOTKEYS_PATH,
+  reload: (disk) => {
+    applyHotkeysFromDisk(disk);
+    return true;
+  },
+  resume: (choice, vaultRoot) => {
+    if (choice === 'reload') discardMiscWrite('hotkeys', vaultRoot, HOTKEYS_PATH);
+    else retryMiscWrite('hotkeys');
+  },
+});
 
 /**
  * Returns the currently applied override map (commandId → binding).
@@ -395,20 +411,23 @@ export function saveHotkeyOverrides(vaultRoot: string): void {
       path: HOTKEYS_PATH,
       json: JSON.stringify(payload, null, 2),
       write: async () => {
+        // Waiting for Reload / Keep local: refused at once, without a read.
+        if (isConfigDriftHeld('hotkeys.json')) {
+          refuseHeldConfigWrite('hotkeys.json', vaultRoot, JSON.stringify(serializeOverrides(overrides), null, 2));
+        }
         if (unreadHotkeysVault === vaultRoot) {
           await readHotkeysBeforeWrite(vaultRoot);
         } else {
-          // Changed outside Filo since it was read: Reload / Keep local.
+          // Changed outside Filo since it was read: held for Reload / Keep local.
           const outside = await readOutsideVersion(vaultRoot, 'hotkeys.json');
           if (outside.kind === 'changed') {
-            const verdict = await settleOutsideVersion({
+            settleOutsideVersion({
               vaultRoot,
               file: 'hotkeys.json',
               outside,
               json: JSON.stringify(serializeOverrides(overrides), null, 2),
-              reload: applyHotkeysFromDisk,
             });
-            if (verdict === 'adopted') return;
+            return;
           }
         }
         await saveMiscConfig(vaultRoot, 'hotkeys.json', JSON.stringify(serializeOverrides(overrides), null, 2));

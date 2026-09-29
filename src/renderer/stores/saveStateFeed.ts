@@ -9,13 +9,13 @@
  */
 import { vaultPath } from '@shared/vaultPath';
 import { saveStateStore } from './saveState.svelte';
-import { heldDecisions } from './heldDecisions';
+import { heldDecisionPaths, heldDecisions } from './heldDecisions';
 import { reportedFailedPaths, unsavedWork } from '../lib/boards/writeStateTracking';
 
 export function pushSaveState(): void {
   const work = unsavedWork();
   const decisions = heldDecisions();
-  const held = new Set(decisions.map((d) => vaultPath(d.relPath())));
+  const held = new Set(heldDecisionPaths().map((p) => vaultPath(p)));
   const failed = work.failed.filter((p) => !held.has(p));
   const pending = work.pending.filter((p) => !held.has(p));
   saveStateStore.setDecisions(decisions.map((d) => ({ key: d.key, relPath: d.relPath(), text: d.text })));

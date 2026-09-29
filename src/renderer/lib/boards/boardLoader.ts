@@ -337,8 +337,9 @@ export interface LoadBoardResult {
   mtimeMs?: number;
   /**
    * The stat of the bytes loaded, when the stats bracketing the read agreed,
-   * plus the baseline ticket taken before the read. The loader never stamps
-   * it: only a caller that adopts `data` into the cache may
+   * plus the baseline ticket taken before the read; otherwise the JSON read,
+   * so the first save can tell whether the file still holds it. The loader
+   * never stamps it: only a caller that adopts `data` into the cache may
    * (`adoptLoadedBoardBaseline`). A load that fails, or whose data is set
    * aside, must leave the old baseline in place, or the next save would take
    * the outside version as Filo's own and overwrite it without asking.
@@ -347,11 +348,21 @@ export interface LoadBoardResult {
 }
 
 /** The stat a successful load read, and the ticket to stamp it with. */
-export interface LoadedBoardBaseline {
+export interface PinnedBoardBaseline {
   mtimeMs: number;
   size: number;
   seq: BaselineSeq;
 }
+
+/**
+ * A load whose version on disk no stat pinned (the first stat failed, or a
+ * write landed around the read): the JSON it read, re-serialised.
+ */
+export interface UnpinnedBoardLoad {
+  readJson: string;
+}
+
+export type LoadedBoardBaseline = PinnedBoardBaseline | UnpinnedBoardLoad;
 
 export interface LoadBoardError {
   ok: false;
@@ -439,8 +450,8 @@ export async function loadBoard(
   // Stat the file BEFORE the content read so the post-read stat below can be
   // BRACKETED. The baseline must reflect the bytes we actually loaded; a foreign
   // write in the read→stat gap would otherwise become "our" baseline and the
-  // next save would clobber it with no drift prompt. Best-effort — a failed
-  // pre-stat just skips the baseline (no drift check for this board).
+  // next save would clobber it with no drift prompt. A failed
+  // pre-stat offers no baseline (the path is then read before its first save).
   //
   // The ticket is taken before the first stat: a save of this board that lands
   // while the load is in flight refreshes the baseline, and this load's older
@@ -470,12 +481,14 @@ export async function loadBoard(
 
   // The file's stat, for the caller to stamp as the drift baseline once it
   // adopts the data (`writeBoardFile`'s pre-write check compares against it).
-  // Best-effort: a failed stat means no baseline.
   //
-  // Stat-read-stat: offered ONLY when the bracketing stats match
+  // Stat-read-stat: a stat is offered ONLY when the bracketing stats match
   // (mtime + size). A mismatch means a write landed around the content read, so
-  // this stat reflects bytes we didn't load; with no baseline offered, the next
-  // save's drift check re-detects and prompts rather than adopting foreign bytes.
+  // this stat reflects bytes we didn't load. Then (or when a stat failed) the
+  // JSON read is offered instead: the adopter marks the path unverified
+  // (`adoptLoadedBoardBaseline`), and the first save reads the file and asks
+  // unless it still holds this JSON or already holds Filo's bytes. Taken here,
+  // before the prune below edits `raw` in place.
   let baseline: LoadedBoardBaseline | undefined;
   try {
     const stat = await invokeOk('vault:stat', vaultRoot, relPath);
@@ -483,8 +496,9 @@ export async function loadBoard(
       baseline = { mtimeMs: stat.mtimeMs, size: stat.size, seq };
     }
   } catch {
-    // Non-fatal — no baseline, no pre-write drift check for this board.
+    // Non-fatal: the JSON read stands in for the stat below.
   }
+  if (!baseline) baseline = { readJson: JSON.stringify(raw) };
 
   // Anything that isn't the current format (including a non-object) is
   // classified by the version gate in `migrateBoardFile` below.

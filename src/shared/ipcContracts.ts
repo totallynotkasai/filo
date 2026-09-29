@@ -510,6 +510,17 @@ export interface IpcChannelMap {
     args: [];
     result: void;
   };
+  // The renderer saved and kept rescue copies for a Windows session end.
+  'app:session-ending-done': {
+    args: [];
+    result: void;
+  };
+  // Whether leaving now could lose work; main reads it when Windows asks to
+  // end the session.
+  'app:unsaved-state': {
+    args: [mayLoseWork: boolean];
+    result: void;
+  };
 
   // ── Sidebar geometry ─────────────────────────────────────────────
   'sidebar:get-state': {

@@ -14,7 +14,7 @@ import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { invokeOk } from '../utils/invokeOk';
 import { writtenByteLength } from './boardWriteDebounce';
 import { markRecentSelfWrite } from './writeStateTracking';
-import { backupConfig, promptConfigDrift } from './configDrift';
+import { refuseHeldConfigWrite } from './configDriftHold';
 import { clearCorruptConfigTarget, isConfigLoadFailed, isConfigPathCorrupt, markCorruptConfigTarget } from './configWriteScheduler';
 import {
   baselineSeq,
@@ -88,38 +88,24 @@ export async function readOutsideVersion(
 
 /**
  * Settles another version of a file the user decides about (`hotkeys.json`).
- * Returns `write` when Filo's version goes on disk (Keep local, after a copy of
- * the other one), or `adopted` when the disk version is now Filo's (Reload,
- * or it already says what Filo would write). Throws `EXTERNAL_EDIT` while the
- * user hasn't decided, so nothing is written over the file.
+ * Returns `adopted` when the disk version already says what Filo would write.
+ * Otherwise the file is held for Reload / Keep local (`configDriftHold`) and
+ * the write refused at once with `CONFIG_DRIFT_HELD`: nothing waits for the
+ * answer, and nothing is written over the file until it comes.
  */
-export async function settleOutsideVersion(args: {
+export function settleOutsideVersion(args: {
   vaultRoot: string;
   file: MiscConfigFile;
   outside: Extract<OutsideVersion, { kind: 'changed' }>;
   json: string;
-  reload: (disk: Record<string, unknown>) => void;
-}): Promise<'write' | 'adopted'> {
-  const { vaultRoot, file, outside, json, reload } = args;
-  const rel = `.filo/${file}`;
+}): 'adopted' {
+  const { vaultRoot, file, outside, json } = args;
   if (JSON.stringify(outside.disk, null, 2) === json) {
     outside.adopt();
     return 'adopted';
   }
-  const choice = file === 'hotkeys.json' ? await promptConfigDrift(file) : 'defer';
-  if (choice === 'keep-local') {
-    if (!(await backupConfig(vaultRoot, rel))) {
-      throw codedError(`${rel} was changed outside Filo, and Filo couldn't copy that version before overwriting it.`, 'EXTERNAL_EDIT');
-    }
-    outside.adopt();
-    return 'write';
-  }
-  if (choice === 'reload') {
-    reload(outside.disk);
-    outside.adopt();
-    return 'adopted';
-  }
-  throw codedError(`${rel} was changed outside Filo; your change wasn't saved over it.`, 'EXTERNAL_EDIT');
+  if (file === 'hotkeys.json') refuseHeldConfigWrite(file, vaultRoot, json);
+  throw codedError(`.filo/${file} was changed outside Filo; your change wasn't saved over it.`, 'EXTERNAL_EDIT');
 }
 
 /**

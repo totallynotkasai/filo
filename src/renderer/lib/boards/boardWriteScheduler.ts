@@ -38,7 +38,7 @@ import { backupExternalVersion } from '../vault/keepLocalBackup';
 export { backupExternalVersion };
 import { createScheduler } from './writeScheduler';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
-import { getBaseline, hasBaselineDrifted, refreshBaselineAfterWrite } from '../vault/fileBaselineRegistry';
+import { getBaseline, hasBaselineDrifted, isBaselineUnverified, refreshBaselineAfterWrite, unverifiedLoadedContent } from '../vault/fileBaselineRegistry';
 
 /**
  * Listener slot for the "board file changed externally" notification. Drift
@@ -262,16 +262,19 @@ export async function writeBoardFile(
   // current shape (defs are built by `buildTileDefinition`), so nothing else
   // needs cleaning on the way to disk.
   fileData.version = CURRENT_BOARD_FILE_VERSION;
+  const payload = JSON.stringify(fileData, null, 2);
 
   // Pre-write drift check. If the on-disk mtime no longer
   // matches the baseline captured at load (or after the last successful
   // self-write), an external tool wrote to the .board.json since we last
   // knew about it. Hold the board and surface a Reload / Keep-local choice;
-  // this write is refused meanwhile. No baseline = no comparison
-  // anchor (e.g. a freshly-created board that the loader's stat probe
-  // happened to miss), fall through to the unguarded write.
+  // this write is refused meanwhile. A board whose load couldn't pin the
+  // version on disk (unverified) is read and counts as drifted unless the file
+  // already holds what Filo is about to write. No baseline and not unverified:
+  // the file was never loaded (a first write), so there is nothing to compare.
   const baseline = getBaseline(boardPath);
-  if (baseline !== undefined) {
+  const unverified = baseline === undefined && isBaselineUnverified(boardPath);
+  if (baseline !== undefined || unverified) {
     let preWriteStat: { mtimeMs: number; size: number } | undefined;
     try {
       preWriteStat = await invokeOk('vault:stat', vaultRoot, boardPath);
@@ -281,8 +284,8 @@ export async function writeBoardFile(
       // would resurrect it and fight the sync, so abort as a clean no-op
       // (return, not throw) — the same outcome as `cancelBoardWrite`.
       //
-      // Gated on `baseline !== undefined`: the file was known to exist, so its
-      // absence is a deletion. A freshly-created board has no baseline yet and
+      // Only for a file known to exist (it has a baseline or was loaded), so
+      // its absence is a deletion. A freshly-created board has neither and
       // skips this block, so first writes are unaffected.
       if (err instanceof IpcEnvelopeError && err.code === 'ENOENT') {
         // Re-stat ONCE before treating the ENOENT as a delete: a sync client /
@@ -307,7 +310,16 @@ export async function writeBoardFile(
       // — the save IPC below surfaces a genuine IO problem through the failure
       // attribution pipeline.
     }
-    if (preWriteStat !== undefined && hasBaselineDrifted(baseline, preWriteStat)) {
+    if (unverified && preWriteStat === undefined) {
+      // Kept for a retry: the file may hold a version Filo never read.
+      throwRetainable(boardPath, `Couldn't check ${boardPath} before saving.`);
+    }
+    const drifted =
+      preWriteStat !== undefined &&
+      (baseline !== undefined
+        ? hasBaselineDrifted(baseline, preWriteStat)
+        : !(await diskIsFilosVersion(vaultRoot, boardPath, payload)));
+    if (drifted) {
       const handler = boardExternalEditHandler;
       if (handler) {
         // The question is the only notice: the write is retained, not
@@ -338,7 +350,6 @@ export async function writeBoardFile(
   // resolves; marking after the await would let `vault:files-changed` see
   // the path as unknown-self-write and route it into the external-edit
   // pipeline. Re-marked on success below to refresh the TTL.
-  const payload = JSON.stringify(fileData, null, 2);
   markRecentSelfWrite(boardPath);
   try {
     await invokeOk('board:save', vaultRoot, boardPath, payload);
@@ -380,6 +391,32 @@ export async function writeBoardFile(
     // as failed and keeps the recovery sentinel marked dirty.
     throw err;
   }
+}
+
+/** Reports the failure and throws it with a code the scheduler keeps for Retry. */
+function throwRetainable(boardPath: string, message: string): never {
+  const error = Object.assign(new Error(message), { code: 'EBUSY' });
+  notifyWriteError({ kind: 'board', path: boardPath, error });
+  throw error;
+}
+
+/**
+ * For a board no load pinned: true when its file holds nothing Filo would lose
+ * by writing `payload` over it, i.e. it still holds what the load read, or it
+ * already holds `payload`. Throws a retainable error when the file can't be
+ * read to check.
+ */
+async function diskIsFilosVersion(vaultRoot: string, boardPath: string, payload: string): Promise<boolean> {
+  let disk: unknown;
+  try {
+    const res: unknown = await invokeOk('board:load', vaultRoot, boardPath);
+    disk = res !== null && typeof res === 'object' && 'success' in res ? (res as { data?: unknown }).data : res;
+  } catch {
+    throwRetainable(boardPath, `Couldn't read ${boardPath} to check it before saving.`);
+  }
+  if (disk == null) return false;
+  const loaded = unverifiedLoadedContent(boardPath);
+  return (loaded !== undefined && JSON.stringify(disk) === loaded) || JSON.stringify(disk, null, 2) === payload;
 }
 
 /**

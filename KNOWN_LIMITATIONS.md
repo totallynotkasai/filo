@@ -192,6 +192,21 @@ anyway** or **Stay open**. The dialog names each file and why it wasn't saved
 **Quit anyway** first writes rescue copies of the unsaved text to
 `.filo/recovery/<timestamp>-unsaved/` (#33).
 
+**Windows shutdown, restart or sign-out** closes neither the window nor the
+app first, so the quit flush above doesn't run. The renderer keeps main told
+whether leaving now could lose work (anything unsaved, a question waiting for
+an answer, unapplied Settings, a focused text field). Only then does main hold
+the session back (Windows shows its "Filo is preventing shutdown" screen) for
+at most about 4 s, while the renderer saves and writes rescue copies of what
+is left, unapplied Settings and theme-editor edits included
+(`_filo__*.unapplied.json`), with no dialog; then Filo exits and Windows goes
+on. Choosing **Shut down anyway** on that screen, or a shutdown Windows
+doesn't let apps delay, ends Filo mid-save: whatever wasn't written is named
+by the dirty sentinel, as after a crash. Text typed in the last second before a
+forced shutdown may not have been reported yet
+([src/main/services/sessionEnd.ts](src/main/services/sessionEnd.ts),
+[src/renderer/lib/vault/handleSessionEnding.ts](src/renderer/lib/vault/handleSessionEnding.ts)).
+
 ---
 
 ## 5. Self-write suppression window can misfire on a very slow disk (board and `.filo/` files)
@@ -518,30 +533,33 @@ Upgrade to a size-gated or hashed read-back if this ever bites in practice.
 serialised payload verbatim, so the size check above actually matches). A
 double-encoded board (a JSON string literal) is not loaded; see #29.
 
-## 15. A note write can overwrite a foreign write that lands in the last milliseconds before it
+## 15. A foreign write in the last milliseconds before Filo's can be overwritten (boards and `.filo/` settings)
 
-**What:** Each note-writer flush reads the file fresh, builds the new bytes, then
-re-stats the file and starts over if its mtime or size changed since the read
-([src/renderer/lib/notes/noteWriter.ts](src/renderer/lib/notes/noteWriter.ts),
-`writePending`). A foreign write that lands *after* that re-stat and *before* the
-atomic rename of Filo's write is overwritten. Its watcher event then carries
-Filo's own bytes, so nothing is prompted. There is no post-write read-back of
-notes.
+**What:** Notes are covered by a compare-and-swap in the main process: the
+note writer passes the stat (and, up to 2 MB, the hash) of the read it builds
+on to `vault:write-existing-file-text`, and `atomicWriteFile` re-checks it just
+before every rename, refusing with `STALE` if the file changed (gate
+`note-write-expects-stat`). What remains there is the gap between that check
+and the rename itself, inside one main-process call.
 
-**Where:** the `vault:stat` re-check just before `vault:write-existing-file-text`
-in `writePending`.
+Boards (`board:save`) and `.filo/` settings (`config:save`) have no such check
+in main. Their writers stat the file in the renderer against its drift
+baseline before writing
+([boardWriteScheduler.ts](src/renderer/lib/boards/boardWriteScheduler.ts),
+[configDrift.ts](src/renderer/lib/boards/configDrift.ts)); a foreign write that
+lands after that stat and before the write's rename is overwritten. The board's
+post-write check sees only a size (#14), so a same-size write in that gap goes
+unnoticed.
 
-**Why accepted:** The window is the time between one stat and one rename on the
-same machine, typically well under a millisecond. Closing it fully would need a
-compare-and-swap write in the main process. Everything outside that window is
-covered: a change that lands before the read is part of what Filo patches, a
-change between the read and the re-stat restarts the flush, and a change after
-the write shows up as a new disk change (a body change meeting an unsaved edit
-becomes the Reload / Keep mine prompt).
+**Why accepted:** The gap is one IPC round trip plus one atomic rename on the
+same machine, a few milliseconds. A second writer would have to save the same
+board or settings file in that window; with one editing machine and a sync
+client that delivers whole files, that doesn't happen in practice.
 
-**Impact:** Extraordinarily narrow. A sync client or editor would have to write
-the same note within that sub-millisecond gap. If it ever bites, move the
-compare-and-swap into the main-process write handler.
+**Impact:** Very narrow. If it ever bites, pass the pre-write `{ mtimeMs, size }`
+(and the hash under 2 MB) into `board:save` / `config:save`, have
+`atomicWriteFile({ expectStat })` refuse with `STALE`, and route `STALE` into
+the drift question.
 
 ## 16. (Closed) `documentStore` mutation-version maps grew per note until vault swap
 

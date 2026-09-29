@@ -674,6 +674,46 @@ It needs a second writer inside a few milliseconds, which is not this setup. It 
 - `ci:verify` green.
 - Real app: board delete with a locked file (hold the file open with a PowerShell `FileStream`), the `WM_QUERYENDSESSION` check, and an outside `app.json` edit before quit.
 
+### Phase 4 outcome (2026-09-29)
+
+**Done.** A25-15 … A25-18 fixed, A25-19 recorded (deferred as planned), D8 taken at its default, one gate added and one extended (85 in all). `ci:verify` green (748 test files, 7,035 tests; 85/85 gates).
+
+**Real-app check** (built app, a session-scratchpad Playwright script driving `dist/main/main.js`; `WM_QUERYENDSESSION` sent with a PowerShell `SendMessage` to the window's native handle):
+
+| Scenario | Result |
+|---|---|
+| Board file held open with a `FileStream` (share None), a tile added: the save fails and is kept; lock released; board deleted from the Board Browser | The kept write lands first: the trashed board has both tiles, no rescue copy needed, quit exits with no dialog |
+| Board changed by another program while a Filo edit waits (the drift question shows); board deleted | Rescue copy `.filo/recovery/<ts>-unsaved/Mind Map 1.board.json` holds Filo's 2 tiles; the trash holds the other program's version; quit exits with no dialog |
+| Text typed in a note, the note deleted outside Filo, then `WM_QUERYENDSESSION` | `SendMessage` returns 0 (held); Filo exits 1.3 s later; the rescue copy holds every typed word; the dirty sentinel stays |
+| Nothing unsaved, no field focused, then `WM_QUERYENDSESSION` | Returns 1 (not held); Filo keeps running |
+| `app.json` changed by another program, then Rename Vault, then close the window | The Reload / Keep local toast shows at once; the quit dialog appears in 50 ms: "Waiting for your decision … .filo/app.json: these settings were changed outside Filo"; `app.json` keeps the other program's name |
+
+**What changed, by item.**
+
+| Item | Where | Tests |
+|---|---|---|
+| A25-15 | Main: `services/sessionEnd.ts` (`createSessionEndHandlers`: holds `query-session-end` only when the renderer last reported that leaving could lose work, sends `app:session-ending`, exits on `app:session-ending-done` or after 4 s, teardown bounded; `session-end` asks the renderer anyway and writes the breadcrumb) and `utils/sessionEndDecision.ts` (`decideSessionEnd`); wired in `main.ts`. Renderer: `lib/vault/unsavedStateReport.ts` pushes `app:unsaved-state` (anything unsaved, a held decision, unapplied Settings, a focused text field) on write-state / decision changes, focus moves and a 1 s poll; `lib/vault/handleSessionEnding.ts` freezes the editors, saves (`saveUntilSettled`, 2.5 s bound), keeps rescue copies (1.2 s bound) including unapplied Settings and the theme editor's draft (`_filo__defaults.unapplied.json`, `_filo__board-settings.unapplied.json`, `_filo__themes__theme.unapplied.json`), flushes the sentinel, replies. Three new IPC channels. KNOWN_LIMITATIONS #4 | unit `sessionEnd.test.ts` (decision table; hold, reply → exit; no reply → exit at the bound; a hung teardown still exits; `session-end`), `handleSessionEnding.test.ts` (order, rescue only when something is left, unapplied Settings, a hung save, a throwing rescue; the theme draft kept only when asked); characterisation `sessionEnd.test.ts` (the report goes true then false; typed text saved; a change that can't be saved is kept in `.filo/recovery`, no dialog) |
+| A25-16 | `boardCacheDelete.ts`: `saveBeforeDelete` re-fires a write kept for Retry (unless the board is drift-held) and counts the board saved only when nothing is left, it isn't failed (`isPathFailed`, new) and it isn't held; after the move `discardBoardWrite` clears the kept write and the failed mark | unit `boardDeleteRescue.test.ts` (kept write that fails again → rescue copy, nothing owed after; kept write that lands now → no rescue, two saves; drift-held → rescue copy, no write, nothing owed). All three fail on the old code |
+| A25-17 | `loadBoard` offers the JSON it read (`UnpinnedBoardLoad`) when no stat pins the version; `adoptLoadedBoardBaseline` marks the board unverified with it (`markBaselineUnverified(path, content)`; the registry's unverified set is now a map, and rekeys descendants on a folder rename); `writeBoardFile` reads an unverified board before its first save (`diskIsFilosVersion`): the version the load read, or Filo's own bytes, are written over; anything else goes to the drift question; unreadable → kept for Retry (`EBUSY`). Loader comments rewritten | unit `boardUnverifiedBaseline.test.ts` (marked unverified; another version asks and writes nothing; the loaded version is written over after an edit; unreadable is kept, not written). Gate `writePath/board-baseline-after-adopt` extended (proved to bite: the old no-baseline branch fails it) |
+| A25-18 | `lib/boards/configDriftHold.ts`: `refuseHeldConfigWrite` holds the file, asks without waiting (re-asks only for a different change) and throws `ConfigDriftHeldError` (`CONFIG_DRIFT_HELD`, retainable); `resolveConfigDrift` carries out the answer (Keep local: `backupConfig`, baseline to the other version, re-fire; Reload: read into memory, baseline moves); per-file targets registered by the settings bundle and `hotkeys.ts`. `checkConfigDisk` returns `drifted` instead of awaiting the prompt; `settleOutsideVersion` is synchronous. Held decisions gain `ledgerPath` (`heldDecisionPaths()`), so the `.filo/` ledger key counts as a decision; quit names the held file with cause `config-drift` | unit `configExternalChanges`, `configMiscDrift`, `configFileReconciler` (7 cases rewritten for the new flow: refused and held, the answer carries it out, a dismissed one re-asks only for a new change); characterisation `decisionsAtQuit.test.ts` (+1: an outside `app.json` edit then a rename, quit says "Waiting for your decision" within 5 s; fails on the old code). Gate `writePath/config-drift-held` (proved to bite: 7 violations on the old code) |
+| A25-19 | Not implemented (deferred as planned). KNOWN_LIMITATIONS #15 rewritten: the note compare-and-swap already lives in main; the board / config gap is recorded with the fix to take if it bites | — |
+
+**Deviations from the plan.**
+
+1. **A25-15: main can't make a round trip inside `query-session-end`,** which must be answered synchronously. So the renderer keeps main told (`app:unsaved-state`, pushed on change) and main decides from the last report; the save and rescue run after main has already held the session. The report is generous on purpose (a focused text field counts). Text typed in the last second before a forced shutdown may not have been reported yet (KNOWN_LIMITATIONS #4).
+2. **A25-15: the pure helper sits in `main/utils/sessionEndDecision.ts` as planned, but the hold/exit sequencing is its own service** (`main/services/sessionEnd.ts`, deps injected) so it is unit-tested without Electron; `main.ts` only wires it.
+3. **A25-15: the renderer releases its editor freeze once it replies,** so if Windows doesn't end the session after all (only `session-end` fire-and-forget could hit that), Filo stays usable.
+4. **A25-15: unapplied Settings are kept as three fixed rescue names** (`_filo__defaults.unapplied.json`, `_filo__board-settings.unapplied.json` naming its board, `_filo__themes__theme.unapplied.json` from a new `draft()` on the theme editor's registration). Only a Windows session end keeps them; close / quit still ask as before.
+5. **A25-16: the delete re-fires a kept write before deciding,** rather than only checking. When the lock has gone meanwhile the trashed file then has the changes and no rescue copy is needed (the real-app check shows this); a drift-held board is never written.
+6. **A25-17: the check compares against the JSON the load read, not only against the cache.** A freshly loaded board doesn't serialise byte-equal to its file (schema defaults), so comparing disk with Filo's payload alone would have asked on every first save of an unverified board. The loader now offers `{ readJson }` in place of a stat, and the check accepts either that JSON or Filo's own bytes.
+7. **A25-18: a held settings write is re-fired freely rather than kept un-fired** (no `holdRetained` for the config and misc schedulers). The refusal is immediate, with no stat and no prompt, so a re-fire costs nothing and lets the bundle's other files (a layout change) still be written; the question is asked again only for a different change. **Reload re-fires the bundle** rather than dropping it (the other files may be owed; the reloaded file is skipped when memory now says what disk says); for `hotkeys.json` Reload drops the held write, as planned.
+8. **A25-18: the quit test is a characterisation spec** through a vault rename (the harness has no Settings-field action), which writes `app.json` the same way. Tests calling `writeConfigs` directly wait for the answer with a test-only `__configDriftSettledForTests()`.
+9. **A25-18: in the quit dialog, a held settings file hides any other failure of the same bundle** (the bundle is tracked as `.filo/` as a whole); the rescue copy still covers every unsaved settings file.
+
+**New findings (for later phases).**
+
+- **N9** — a "Board save failed" toast stays up after that board's kept write has landed (and after the board was deleted). Worth clearing a write-failure toast once its path saves, in Phase 5.
+
 ---
 
 ## Phase 5: UX lows
@@ -857,6 +897,8 @@ Taken in Phase 1, all at their defaults: D1 (with the differences in deviation 1
 
 Taken in Phase 2: D3 at its default (the queue runs in idle time, Phase 2 deviation 2); D5 at its default, with the remark packages uninstalled (deviation 10); D6 measured over its threshold (443–585 ms) and resolved by progressive rendering instead of windowing (deviation 9).
 
+Taken in Phase 4: D8 at its default (the session is held only while there is something to rescue, about 4 s at most, no dialog; Phase 4 deviation 1).
+
 Taken in Phase 3: D7 at its default (Markdown with HTML off and line breaks kept; Ctrl+Shift+V literal; KNOWN_LIMITATIONS #41).
 
 ## Not included
@@ -873,4 +915,5 @@ Plan written 2026-09-29.
 - **Phase 1: done** 2026-09-29 (see "Phase 1 outcome" for the deviations and four new findings, N1–N4). The report and this plan are committed with it.
 - **Phase 2: done** 2026-09-29 (see "Phase 2 outcome": before / after numbers, 12 deviations, new findings N5–N7).
 - **Phase 3: done** 2026-09-29 (see "Phase 3 outcome": the real-app check, 10 deviations including a pre-existing merge-confirm bug fixed, new finding N8).
-- Phases 4–8: not started.
+- **Phase 4: done** 2026-09-29 (see "Phase 4 outcome": the real-app check, 9 deviations, new finding N9; A25-19 recorded in KNOWN_LIMITATIONS #15 and deferred).
+- Phases 5–8: not started.

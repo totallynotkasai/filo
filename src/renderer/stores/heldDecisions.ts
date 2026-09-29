@@ -14,8 +14,13 @@ import { onVaultSwap } from '../core/vaultLifecycle';
 export interface HeldDecision {
   /** The prompt's toast key; one entry per prompt. */
   key: string;
-  /** The note it is about. */
+  /** The file it is about. */
   relPath(): string;
+  /**
+   * The unsaved-work path its held change is tracked under, when that isn't
+   * `relPath` (the `.filo/` settings bundle is tracked as `.filo/`).
+   */
+  ledgerPath?(): string;
   /** One line for the save popover. */
   text: string;
   /** False once the decision has been made (by the prompt or otherwise). */
@@ -61,6 +66,17 @@ export function heldDecisions(): HeldDecision[] {
     if (!still) held.delete(key);
   }
   return [...held.values()];
+}
+
+/** Every path a held decision covers: its file, and the path its change is tracked under. */
+export function heldDecisionPaths(): string[] {
+  const out: string[] = [];
+  for (const decision of heldDecisions()) {
+    out.push(decision.relPath());
+    const ledger = decision.ledgerPath?.();
+    if (ledger !== undefined) out.push(ledger);
+  }
+  return out;
 }
 
 /** Re-opens the prompt for `key`, if it is still waiting. */

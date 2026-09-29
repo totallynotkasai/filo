@@ -134,6 +134,15 @@ export type IpcChannel =
   // re-arms its auto-destroy timer on each beat, so the ceiling bounds
   // inter-beat silence (a wedged renderer), not total honest drain time.
   | 'app:drain-heartbeat'
+  // Windows is ending the session (shutdown, restart, sign-out) and main is
+  // holding it back: save, keep rescue copies, then reply (main -> renderer).
+  | 'app:session-ending'
+  // The renderer replies: whatever could be saved or copied is (renderer -> main).
+  | 'app:session-ending-done'
+  // Whether leaving now could lose work (unsaved changes, a held decision,
+  // unapplied Settings, a focused field), pushed when it changes, so main can
+  // decide at once whether to hold a Windows shutdown back.
+  | 'app:unsaved-state'
   // Sidebar — per-machine state (width, in-app floating mode, bounds)
   | 'sidebar:get-state'
   | 'sidebar:set-state';
@@ -155,7 +164,9 @@ export type SendChannel =
   | 'app:ready-to-quit'
   | 'app:cancel-quit'
   | 'app:quit-awaiting-user'
-  | 'app:drain-heartbeat';
+  | 'app:drain-heartbeat'
+  | 'app:session-ending-done'
+  | 'app:unsaved-state';
 
 /**
  * Channels the renderer may SUBSCRIBE to via `window.filo.on`: the pure
@@ -179,6 +190,7 @@ export const RECEIVE_CHANNELS: readonly IpcChannel[] = [
   'vault:tree-too-large',
   'vault:sync-conflict',
   'app:flush-and-quit',
+  'app:session-ending',
 ];
 
 /**

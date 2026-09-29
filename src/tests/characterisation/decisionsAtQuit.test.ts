@@ -23,6 +23,7 @@ import {
   toastActions,
   errorToasts,
 } from './harness/actions';
+import { renameVault } from './harness/vaultFolders';
 
 afterEach(async () => {
   await stopApp();
@@ -70,6 +71,31 @@ describe('quitting while a question waits for an answer', () => {
     await answerConfirm(app, { confirm: false });
     expect(await quit.quitDone).toBe('cancel');
     expect(app.read(rel)).toBe(newer);
+  });
+
+  it('settings changed outside Filo while a settings change waits: the quit dialog waits for the decision', async () => {
+    const app = await startApp();
+    await quiesce(1500);
+    const theirs = JSON.stringify({ ...JSON.parse(app.read('.filo/app.json')), name: 'Their Name' }, null, 2);
+    app.writeExternally('.filo/app.json', theirs);
+    await quiesce(800);
+
+    // Saving the new name meets the other version: it asks, and nothing waits.
+    await renameVault(app, 'My Name');
+    await waitFor(driftPromptShown, 'the Reload / Keep local question');
+
+    const started = Date.now();
+    const quit = await quitFromWindow(app);
+    expect(quit.answer).toBe('awaiting-user');
+    await waitFor(() => confirmText().includes('Waiting for your decision'), 'the decision form of the quit dialog');
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(confirmText()).toContain('.filo/app.json: these settings were changed outside Filo, waiting for Reload or Keep local');
+    expect(confirmText()).not.toContain('OneDrive');
+    expect(errorToasts().filter((t) => t.includes('not saved') || t.includes('Save failed'))).toEqual([]);
+
+    await answerConfirm(app, { confirm: false });
+    expect(await quit.quitDone).toBe('cancel');
+    expect(app.read('.filo/app.json')).toBe(theirs);
   });
 
   it('a raw view whose note changed elsewhere: the quit dialog waits for the decision', async () => {

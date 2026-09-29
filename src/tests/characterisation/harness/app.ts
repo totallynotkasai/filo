@@ -307,6 +307,41 @@ export async function quitFromWindow(app: CharApp): Promise<{ answer: 'ready' | 
   return { answer, quitDone };
 }
 
+/**
+ * Windows ends the session while Filo is open: main asks the renderer to save
+ * and keep rescue copies. Resolves when the renderer says it is done (or
+ * rejects after `timeoutMs`).
+ */
+export async function endWindowsSession(app: CharApp, timeoutMs = 6000): Promise<void> {
+  app.bridge.attach();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('the renderer never finished the session end')), timeoutMs);
+    const once = (): void => {
+      mainListeners.set('app:session-ending-done', (mainListeners.get('app:session-ending-done') ?? []).filter((l) => l !== once));
+      clearTimeout(timer);
+      resolve();
+    };
+    mainListeners.set('app:session-ending-done', [...(mainListeners.get('app:session-ending-done') ?? []), once]);
+    rendererSink.send('app:session-ending');
+  });
+}
+
+/**
+ * What the renderer last told main about whether leaving now could lose work
+ * (main decides from it whether to hold a Windows shutdown back). Starts
+ * listening on first call; null until a report arrives.
+ */
+export function unsavedStateReports(app: CharApp): { last(): boolean | null } {
+  app.bridge.attach();
+  let last: boolean | null = null;
+  const list = mainListeners.get('app:unsaved-state') ?? [];
+  list.push((_event: unknown, flag: unknown) => {
+    last = flag === true;
+  });
+  mainListeners.set('app:unsaved-state', list);
+  return { last: () => last };
+}
+
 /** What happened when the user closed the vault or opened another one. */
 export interface LeaveVaultResult {
   /** False when the app stayed on the vault (the user cancelled). */

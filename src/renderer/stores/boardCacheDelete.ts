@@ -8,8 +8,15 @@ import {
   removeViewport,
   setViewport,
 } from '../lib/boards/boardSaver';
-import { markBoardPathDeleting, clearBoardPathDeleting } from '../lib/boards/boardWriteScheduler';
-import { releaseBoardDrift } from '../lib/boards/boardDriftHold';
+import {
+  markBoardPathDeleting,
+  clearBoardPathDeleting,
+  boardHasUnsavedWrite,
+  discardBoardWrite,
+  retryFailedBoardWrite,
+} from '../lib/boards/boardWriteScheduler';
+import { isBoardDriftHeld, releaseBoardDrift } from '../lib/boards/boardDriftHold';
+import { isPathFailed } from '../lib/boards/writeStateTracking';
 import { trashVaultPath } from '../lib/vault/vaultOperations';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
@@ -57,6 +64,20 @@ async function keepBoardRescueCopy(vaultRoot: string, boardPath: string, data: B
     console.error('[boardCache] keeping a copy of the board before delete failed:', err);
     return null;
   }
+}
+
+/**
+ * Writes the board's last changes before it goes to the trash. True only when
+ * the file on disk now holds them. A flush alone doesn't say so: it reports
+ * success when all that is left is a write kept for Retry (a locked file),
+ * which it doesn't re-fire, and a board held for a Reload / Keep local answer
+ * must not be written at all (that would overwrite the other version).
+ */
+async function saveBeforeDelete(ctx: BoardDeleteContext, boardId: string, boardPath: string): Promise<boolean> {
+  if (!(await ctx.flushWrite(boardId)).ok) return false;
+  if (isBoardDriftHeld(boardPath)) return false;
+  if (boardHasUnsavedWrite(boardId)) await retryFailedBoardWrite(boardId);
+  return !boardHasUnsavedWrite(boardId) && !isPathFailed(boardPath) && !isBoardDriftHeld(boardPath);
 }
 
 /**
@@ -118,7 +139,7 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
       // the board as it is in memory is kept in .filo/recovery/ before the
       // move; with neither, the board stays.
       let rescueDir: string | undefined;
-      if (!(await ctx.flushWrite(boardId)).ok) {
+      if (!(await saveBeforeDelete(ctx, boardId, boardPath))) {
         const dir = await keepBoardRescueCopy(vaultRoot, boardPath, ctx.getCache()[boardId]);
         if (!dir) {
           reportError(
@@ -147,6 +168,10 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
           throw new Error(result.error ?? result.code ?? 'vault:trash-move failed');
         }
         this.removeBoardFromCache(boardId);
+        // A write kept for Retry and the failed mark go too: the board is in
+        // the trash (and its unsaved state in the rescue copy), so quit has
+        // nothing left to save for it.
+        discardBoardWrite(boardId, boardPath, vaultRoot);
         // Drain the in-flight write (neutralised by the mark above), then
         // clear — fire-and-forget so the delete returns promptly.
         void flushBoardWrite(boardId, () => null).finally(() => clearBoardPathDeleting(boardPath));

@@ -118,7 +118,7 @@ describe('quitting with unapplied Settings edits', () => {
   });
 
   it('a theme being edited asks Save / Discard / Keep editing first', async () => {
-    const unregister = registerThemeEditor({ name: () => 'Dusk', isDirty: () => true, save: async () => true });
+    const unregister = registerThemeEditor({ name: () => 'Dusk', isDirty: () => true, save: async () => true, draft: () => '{}' });
     const sent: string[] = [];
     try {
       const done = quit(async () => true, sent);

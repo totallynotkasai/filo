@@ -8,12 +8,20 @@
  * baseline in place: stamped, it would name the outside version, the next
  * save's drift check would find nothing, and Filo's copy would overwrite that
  * version with no prompt and no recovery copy.
+ *
+ * A load that no stat pinned (its first stat failed, or a write landed around
+ * the read) marks the path unverified, with the JSON it read: nothing says
+ * which version on disk the cache holds, so the first save reads the file
+ * before it writes over it (`writeBoardFile`).
  */
 
-import { noteBaseline } from '../vault/fileBaselineRegistry';
+import { markBaselineUnverified, noteBaseline } from '../vault/fileBaselineRegistry';
 import type { LoadedBoardBaseline } from './boardLoader';
 
 export function adoptLoadedBoardBaseline(relPath: string, baseline: LoadedBoardBaseline | undefined): void {
-  if (!baseline) return;
+  if (!baseline || 'readJson' in baseline) {
+    markBaselineUnverified(relPath, baseline?.readJson);
+    return;
+  }
   noteBaseline(relPath, baseline.mtimeMs, baseline.size, { ifUnchangedSince: baseline.seq });
 }

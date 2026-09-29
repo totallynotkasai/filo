@@ -67,4 +67,20 @@ describe('context menu headings', () => {
     }
     expect(seen).toEqual(['Remove from board', 'Todo', 'Done', 'Add tag…', 'Remove from board']);
   });
+
+  it('takes focus as it opens, so a key pressed before the next frame reaches it', () => {
+    const trigger = document.createElement('button');
+    document.body.appendChild(trigger);
+    trigger.focus();
+    try {
+      const menu = open();
+      // No animation frame has run yet.
+      expect(document.activeElement).toBe(menu);
+      uiStore.hideContextMenu();
+      flushSync();
+      expect(document.activeElement).toBe(trigger);
+    } finally {
+      trigger.remove();
+    }
+  });
 });

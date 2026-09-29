@@ -2,7 +2,7 @@
 
 Audited: `main` @ 73cb12a (all of Audit-24 included).
 Owner's setup: Windows 11, Syncthing on one machine, no other editors, all four board types, 500–5,000 notes.
-Status: report and plan only. No code has been changed.
+Status: Phases 1–8 of the [implementation plan](AUDIT25_IMPLEMENTATION_PLAN_2026-09-29.md) are done (2026-09-29); Phase 9 (single newlines and literal asterisks, found on the owner's own vault) is open. See "After remediation" below the ratings.
 
 ## Verdict
 
@@ -43,6 +43,29 @@ Fix Phase 1 before relying on Filo day to day, or start now with the workarounds
 | UI polish and accessibility | 6 | Good keyboard and reduced-motion handling. Confusing read-only banner, a false "Overwrite" dialog, jargon in toasts. |
 | Code health and tests | 8.5 | 6,803 unit/component/characterisation tests, 79 gates, CI green. The E2E suite still needs its rewrite; stale comments and some dead code. |
 | **Overall** | **7** | Data integrity is about 9. Day-to-day usability is about 6 until Phase 1 lands. |
+
+### After remediation (Phases 1–8, 2026-09-29)
+
+Scored after the plan's Phase 8: `ci:verify` green (89 gates), the built-app E2E suite green (scale budgets included), and a real-app pass on a copy of the owner's vault.
+
+| Area | Audit | Target | Now | Why |
+|---|---|---|---|---|
+| Notes: write safety | 9 | 9 | 9 | Unchanged design. Opening every note of the owner's vault and 1,000 generated ones, then quitting, changed no byte (E2E `noBytesByLooking`). |
+| Boards: write safety | 8.5 | 9 | 9 | A25-16 / 17 fixed. Showing a Task List no longer rewrites its file. A25-19 deferred (KNOWN_LIMITATIONS #15). |
+| Sync and outside changes | 9 | 9 | 9 | The Syncthing cases are now E2E specs, and the held decision was checked on the owner's vault. |
+| Open / close / quit / recovery | 8 | 8.5 | 8.5 | Windows shutdown saves and keeps rescue copies (A25-15). Config drift no longer blocks the writer (A25-18). |
+| Error handling and messages | 7 | 8.5 | 8.5 | Plain-language toasts (gate), the read-only banner names the line and offers the Raw view, one validation message per board. |
+| Document editor and Markdown fidelity | 5 | 8.5 | 7 | Everything Filo writes now reads back (property test, 500+ documents). But **5 of the owner's 13 notes open read-only**: single newlines and literal asterisks (plan N14 / N15, Phase 9). |
+| Undo / redo | 8 | 8.5 | 8.5 | Tag-rename undo touches only what it changed (checked on the owner's vault); Replace All undo from its toast. |
+| Mind Map | 7.5 | 8 | 8 | Selection and hit-test lows fixed. |
+| Kanban | 4.5 | 8.5 | 8.5 | The click bug is gone, 300 cards open in 0.4 s, lock and text-form tags work, and a long column's Add Card is reachable (fixed in Phase 8). |
+| Task List | 7 | 8.5 | 8.5 | Fields are right 0.6 s after the rows appear, a recurring task ticked at once rolls forward, and the subtask hierarchy lives on the board. |
+| Tags and search | 6.5 | 8 | 8 | Merge detection, autocomplete, Replace All Match case / Whole word and the count are fixed. |
+| Settings and themes | 7.5 | | 7.5 | Not re-audited. |
+| Performance at 5,000 notes | 7 | 8.5 | 8.5 | All budgets met on the final build (plan, Phase 8 table). |
+| UI polish and accessibility | 6 | 8 | 7.5 | An axe scan of every view runs in E2E. Board Browser row structure (N12) and tertiary text contrast (N13) are open (KNOWN_LIMITATIONS #46, #47). |
+| Code health and tests | 8.5 | 9 | 9 | 7,100+ unit / component / characterisation tests, 89 gates, and an E2E suite that drives the built app (it found five app bugs on its first runs). |
+| **Overall** | **7** | **8.5** | **8** | Data integrity about 9. Day-to-day use about 8, held back by read-only notes on the owner's real vault until Phase 9. |
 
 ## How this was audited
 

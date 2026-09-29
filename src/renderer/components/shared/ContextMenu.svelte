@@ -148,11 +148,14 @@
       focusedIndex = firstEnabledIndex();
       // Capture the previously-focused element so we can restore it on close.
       triggerEl = (document.activeElement as HTMLElement | null) ?? null;
-      // Focus the menu on open, and reposition using its measured size so a
-      // menu opened near a viewport edge isn't clipped (L4b — the store's
-      // items×32 height guess under-counts real row height + padding).
+      // Focus the menu now, not in the frame below: a key pressed before that
+      // frame would otherwise go to whatever opened the menu (the sidebar
+      // tree moves its own focus on an arrow) and be lost to the menu.
+      menuEl?.focus();
+      // Reposition using the measured size so a menu opened near a viewport
+      // edge isn't clipped (the store's items×32 height guess under-counts
+      // real row height + padding).
       requestAnimationFrame(() => {
-        menuEl?.focus();
         if (menuEl) {
           const rect = menuEl.getBoundingClientRect();
           const clamped = clampToViewport(

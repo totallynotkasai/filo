@@ -1060,14 +1060,14 @@
     border-bottom-right-radius: 10px;
   }
 
-  /* Card dndzone wrapper. Inherits the vertical-flow gap from `.column-body`
-     but keeps its own gap too so dnd-action's FLIP animations have stable
-     row spacing when items reflow on consider/finalize. */
+  /* Card dndzone wrapper. Keeps its own gap so dnd-action's FLIP animations
+     have stable row spacing when items reflow on consider/finalize. */
   .column-cards-zone {
     display: flex;
     flex-direction: column;
     gap: 6px;
     min-height: 4px; /* gives dnd-action a positive bounding box when empty */
+    flex-shrink: 0; /* that min-height would let a long list shrink and overflow onto Add Card */
   }
 
   .column-cards-zone.is-empty {

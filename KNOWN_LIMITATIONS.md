@@ -585,11 +585,16 @@ Filo can't preserve.
 Formats that still trigger read-only (each is a real byte or semantic change the
 serializer can't preserve cheaply):
 
-- hard-wrapped paragraphs (soft line breaks are joined onto one line);
+- hard-wrapped paragraphs (soft line breaks are joined onto one line). This
+  is common in notes typed one line per thought or exported from Keep: 4 of
+  the 13 notes in the owner's vault. A change is planned (Audit-25 plan,
+  Phase 9);
 - multi-line blockquotes (joined);
 - `<` / `&` written raw (re-emitted as entities);
 - characters Markdown would read as formatting, written unescaped: `5 * 3`,
-  `[TODO]`, `C:\Users` (Filo writes `5 \* 3`, `\[TODO\]`, `C:\\Users`);
+  `[TODO]`, `C:\Users` (Filo writes `5 \* 3`, `\[TODO\]`, `C:\\Users`),
+  including a lone `**` after a word and a `***` placeholder in running text
+  (also planned for Phase 9);
 - `[[wiki links]]` and footnotes `[^1]` (brackets escaped);
 - a tab at the start of a heading or list item, or directly before a hard
   line break (a tab inside a line, or inside inline code, round-trips);
@@ -1391,3 +1396,38 @@ depend on the order of two asynchronous saves. Nothing is lost: the file is in
 the vault, and the notice says where.
 
 **Impact:** Drag the recording from the sidebar onto a board to use it.
+
+## 46. Board Browser rows are buttons with buttons inside
+
+**What:** Each row of the Board Browser is a `role="button"` (a click or
+Enter opens the board) that holds its own Rename and Delete buttons. A screen
+reader treats a button's contents as one label, so in browse mode those two
+buttons can be unreachable (axe `nested-interactive`). With the keyboard they
+work: Tab reaches each one.
+
+**Where:** [src/renderer/components/modals/BoardBrowser.svelte](src/renderer/components/modals/BoardBrowser.svelte);
+the E2E axe scan turns the rule off for this view only
+([src/tests/e2e/a11y.e2e.ts](src/tests/e2e/a11y.e2e.ts)).
+
+**Why accepted (for now):** The fix is a new row structure, with opening the
+board as its own control, and that touches the row's drag and Alt+Arrow
+reorder. It waits for a UI pass.
+
+**Impact:** Screen-reader users rename or delete a board from the sidebar
+instead.
+
+## 47. Tertiary text is below 4.5:1 contrast in the Light theme
+
+**What:** Hints, counts, dates and the Raw toggle's label use
+`--text-tertiary` (`#80868b` in Light), which is 3.7:1 on white. WCAG AA asks
+4.5:1 for small text, and the project's own bar for tertiary text is 3:1
+(`themeContrast.test.ts`). The Task List's keyboard-hint strip (tertiary at
+55% opacity, hidden from screen readers) is about 1.8:1, under either bar.
+
+**Where:** the theme palettes in [src/css/style.css](src/css/style.css);
+the E2E axe scan leaves colour contrast to `themeContrast.test.ts`.
+
+**Why accepted (for now):** A darker tertiary makes the secondary /
+tertiary hierarchy harder to see. The palette is the owner's decision.
+
+**Impact:** Small grey text can be hard to read on some screens.

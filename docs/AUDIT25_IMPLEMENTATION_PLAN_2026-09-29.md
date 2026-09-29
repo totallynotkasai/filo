@@ -1024,6 +1024,87 @@ No behaviour changes. Each commit is small, and `ci:verify` stays green.
 4. Update the report's scorecard, CLAUDE.md (gate count and new gates), and KNOWN_LIMITATIONS.
 5. Move this plan and the report to `docs/archive/`.
 
+### Phase 8 outcome (2026-09-29)
+
+**Done:** items 1–4. Item 5 waits for Phase 9 (deviation 1). The real-app pass on the owner's vault passed every checklist item. It also found that 5 of the vault's 13 notes open read-only (N14, N15), which became Phase 9, and two small app bugs, fixed here.
+
+**Checks.**
+- `npm run ci:verify` at the start (Phase 7 still uncommitted, then committed as `b8492df`): lint, svelte-check, typecheck:main, 765 test files / 7,107 tests (5 skipped), build, 89/89 gates. All green.
+- `npm run test:e2e` with `FILO_E2E_SCALE=1`: 22 passed, 1 failed, 1 didn't run. The failure was a real race (fixed below). After the fixes: 25 passed, including the new Kanban test, and `keyboardAccess` passed 20 of 20 repeated runs.
+- `npm run ci:verify` again after this phase's changes: 765 files / 7,108 tests (5 skipped), 89/89 gates, green. Then `npm run test:e2e` with `FILO_E2E_SCALE=1`: 25 passed.
+
+**Real-app pass on the Book Vault.** The owner's copy, `Vaults/Dilletante's in the Interim - Copy`, has 13 notes, no frontmatter, no boards and no `.filo/`. It was snapshotted first, and the scratch script restored it before each run. The script (session scratchpad `phase8/bookVault.pass.ts`, on `helpers/app.ts`) runs three launches:
+
+| Checklist item | Where | Result |
+|---|---|---|
+| Every real note opened, then quit | all 13 notes | 8 open editable, 5 read-only (N14, N15). **No file changed** (SHA-1 before and after) |
+| A checklist with an empty last item; an indented paragraph | typed into `Random ideas.md` (real) | saved as `&#32;   Indented…` and `- [ ] Reread chapter 3` / `- [ ] `; reopened editable, showing both |
+| A table with `\|` | `Week One check/Table.md` (the real notes hold no table) | saved as `lead \| narrator`; reopened editable |
+| A Kanban click, then Add Card | `Big Kanban`, 150 cards | no `.drag-active` after the click; 151 cards on screen and in the file |
+| A 150-card Kanban | the same board | opened in 167–185 ms; see N-fix 1 for the column bug it found |
+| Tick a recurring task right after open | `Week Tasks`, restored as the active tab at launch | the row showed 763 ms after launch and was ticked at once: `dueDate: 2026-09-29` → `2026-10-06`, `completed: false`; after a relaunch its box is unticked |
+| A tag rename, then Undo | `plot` → `storyline` on two notes, Undo from the toast | both notes renamed, then back to `[plot]` and `[plot, world]`; no real note touched |
+| An Explorer drop of an in-vault note | `Week One check/Drop me.md` onto a column | linked by its path, no new `.md`, no toast |
+| Paste `List<String>` | `From Keep.md` (real) | the editor shows `List<String> of <names>`; the file holds `List&lt;String&gt;` (KNOWN_LIMITATIONS #17); reopened editable |
+| Quit with a held decision | a Syncthing-style delivery (temp file with an hour-old mtime, renamed in) into `Plot Overview.md` while typing | the note's Reload / Keep mine toast; quit showed "Waiting for your decision" (Stay open / Show decisions / Quit anyway); Stay open, Keep mine → typed text on disk, the delivered version in `.filo/recovery/<ts>-keep/`; then quit in 0.14 s |
+
+No console errors in any launch. Every quit exited in under 0.21 s.
+
+**Performance on the final build** (`scripts/perf/measure.mjs boards fields typing` on a fresh `genVault.mjs` 5,021-note vault). This is a third column beside Phase 2's before / after, to show the later phases didn't regress anything:
+
+| Measure | Budget | Before (Phase 1) | After Phase 2 | Final build |
+|---|---|---|---|---|
+| Kanban 300: open | < 1 s | 21,582 ms | 305–411 ms | 410 ms (14 editors mounted in idle time within 3 s) |
+| Kanban 300: switch back | < 0.5 s | 24,886 ms | 208–268 ms | 278 ms |
+| Kanban 102: open / switch back | | 1,367 / 1,156 ms | 73–114 / 104–109 ms | 120 / 117 ms |
+| Task List 400: open / switch back | | 493 / 720 ms | 254–334 / 284–438 ms | 239 / 341 ms |
+| Mind Map 400: open | | 456 ms | 319–412 ms | 383 ms |
+| Task List fields right after the rows appear | < 1 s | 3,489 ms | 749–939 ms | 636 ms |
+| Typing beside Task List 400, then its autosave | frames < 16 ms | 1 long task (94 ms) | longest frame 8–13 ms | 1,854 frames, none over 16 ms, no long task |
+| Sidebar: 2,000-note folder, first rows / all | D6: 300 ms | 585 ms | 51–81 ms / 1.25–1.85 s | 55 ms / 1.44 s, no long task |
+| Search | | 89 ms | 74 ms | 79 ms |
+| Vault open → sidebar | | 944 ms | 873–955 ms | 538 ms |
+| JS heap after the board run | | 290 MB | 117–133 MB | 125 MB |
+
+**Found in this phase and fixed.**
+
+| Finding | Fix | Tests |
+|---|---|---|
+| **In a Kanban column taller than the window, Add Card sat among the cards** (under the fourth card), and the rest of the column scrolled over it. The Book Vault pass couldn't click it. `.column-cards-zone` has an explicit `min-height: 4px`, which lets a flex item shrink below its content: the zone shrank to the column's height (612 px for 6,500 px of cards), and the cards overflowed it onto the button | `KanbanColumn.svelte`: `flex-shrink: 0` on the zone, so the column body scrolls and Add Card comes after the last card. A comment was folded to keep the file under its line ceiling | E2E `kanbanClick.e2e.ts` +1: a 10-card column on a generated vault overflows, Add Card is below the last card, and clicking it adds an 11th card (fails without the fix: button top 748 px, last card bottom 3,092 px) |
+| **A key pressed in the first frame after a context menu opened was lost.** The menu took focus in a `requestAnimationFrame`, so an arrow pressed before then went to the sidebar tree. `keyboardAccess.e2e.ts` failed once in the first full run | `ContextMenu.svelte`: focus the menu as soon as it's mounted; the frame only measures and repositions | component `contextMenuHeadings.test.ts` +1 (the menu has focus before any frame runs, and focus returns to the trigger on close; fails without the fix) |
+
+**Pushed.** `main` went to `origin` with Phases 1–8. See the Status section for the CI runs.
+
+**Deviations from the plan.**
+
+1. **Not archived.** The owner asked for a Phase 9 (below), so this plan and the report stay in `docs/` until it is done. Item 5 moves to Phase 9's end.
+2. **No Syncthing folder.** Syncthing isn't installed on this machine (no process, no config, no `.stfolder`). The pass ran on the copy the owner named, in `Vaults/`, and the sync delivery was simulated the way `syncDeliveries.e2e.ts` does it.
+3. **Checklist items the real notes can't hold went into `Week One check/`** inside the copy: the 150-card board and its cards, the recurring task and its Task List, two tagged notes, a table note and the note to drop. The notes have no frontmatter, tags, tables or tasks. The checklist, indent and paste items were typed into real notes. The paste and held-decision steps were moved off `Magic System.md` and `General.md`, which open read-only.
+4. **"Before and after numbers"** (item 3) were already recorded in Phase 2. This phase adds a final-build column instead of re-running the old build (`cc24ee5` can't run its tests any more).
+5. **Two app fixes in a verification phase.** Both were found by this phase's own runs, were one-line changes, and each has a test that fails without it.
+6. **A script artefact, not an app bug:** in one run the paste landed mid-paragraph. The script pressed Ctrl+End within milliseconds of clicking into the note, and ProseMirror's selection sync moved the caret back to the click point. Nothing was lost; the note reopened editable with the paste in it.
+7. **The weekly E2E job** was started by hand (`workflow_dispatch`) instead of waiting for Monday.
+
+**New findings (Phase 9).**
+
+- **N14:** lines separated by a single newline (a soft line break) are joined onto one line on save, so a note that has them opens read-only (KNOWN_LIMITATIONS #17, "hard-wrapped paragraphs"). This was accepted as a rare case from other apps. On the owner's vault it is 4 of 13 notes (`General`, `Magic System`, `Leveling System Ideas`, `From Canvas`): Keep and Canvas exports and plain typing all write one line per thought. A throwaway round-trip check found that with only this fixed, `General`, `Magic System` and `Leveling System Ideas` open editable.
+- **N15:** literal asterisks that Markdown doesn't read as emphasis are escaped on save: `Chapter 1 and 2** - …` becomes `\*\*` (`Chapter Specific`), and a `***` placeholder in running text (`she's from the *** and hes from ***`) becomes `\__\_` (`From Canvas`, alongside N14). The second is also wrong output, not just an escape. Both notes stay read-only, so nothing is written.
+- Seen, not new: a pasted `<` is written `&lt;` (KNOWN_LIMITATIONS #17); the file reads back the same in Filo and in other Markdown apps.
+
+---
+
+## Phase 9: Single newlines and literal asterisks (from the Book Vault pass)
+
+**Why.** Five of the owner's 13 real notes open read-only on day one (N14, N15). "Take ownership" would join their lines for good, and the Raw view is the only other way to edit them.
+
+**Build.**
+1. **A soft line break node.** A newline inside a paragraph loads as its own inline node. It shows as a line break, the way Obsidian and Keep show it, and is written back as a bare newline, so the note round-trips byte for byte. `keepSpaces.ts` stops joining soft breaks. Shift+Enter still writes a hard break (`\`). **DECISION D12:** show a soft break as a line break (default), or as a space the way CommonMark renders it (the file keeps the newline either way).
+2. **Escape only what needs it.** Asterisks and underscores in text are written unescaped when the unescaped line parses to the same document: a lone `**` after a word, a `***` placeholder between spaces. Find and fix where `***` turns into `\__\_`.
+3. **Round-trip safety,** as in Phase 1: the byte-identity corpus run (repo fixtures, the realapp vaults, `node_modules` READMEs, the Book Vault copy) before and after. Every note that round-tripped before must produce identical bytes. The property test (`editorRoundTripProperty.test.ts`) gains soft breaks and literal asterisk runs in its generator.
+4. **Tests:** named cases in `markdownBodyRoundTrip.test.ts` for each Book Vault shape (a list of titles on consecutive lines, a bold heading line followed by text, `2** - `, `the *** and`); a toolbar round trip for typing on a line after a soft break; the E2E `editorFidelity` gains a note with soft breaks that reopens editable and unchanged after an edit elsewhere in it.
+5. **Docs:** KNOWN_LIMITATIONS #17 loses "hard-wrapped paragraphs" and the literal-asterisk case; CLAUDE.md's editor gotchas name the new node.
+6. **Real-app check:** the Book Vault pass again, where all 13 notes should open editable, then finish Phase 8 item 5 (archive the plan and the report).
+
 ---
 
 ## Decisions
@@ -1041,6 +1122,7 @@ No behaviour changes. Each commit is small, and `ci:verify` stays green.
 | D9 | Subtask hierarchy | `parentTileId` on the Task List placement (board file); `parent:` in a note read as a fallback, never written | The parent note's vault path in frontmatter, with a rename cascade |
 | D10 | Table column alignment | Keep it (store and write `:--` / `:-:` / `--:`) | Leave aligned tables read-only |
 | D11 | Checklist toolbar button | Add one (today only Ctrl+Shift+9 or typing `[ ] ` makes a checklist) | Keep it keyboard-only |
+| D12 | A single newline inside a paragraph (Phase 9) | Show it as a line break; write it back as a bare newline | Show it as a space (CommonMark), still writing the newline back |
 
 Taken in Phase 1, all at their defaults: D1 (with the differences in deviation 1), D2 (a loose mixed list now opens editable, deviation 3), D4 (implemented textually, deviation 7), D10, D11.
 
@@ -1070,4 +1152,5 @@ Plan written 2026-09-29.
 - **Phase 5: done** 2026-09-29 (see "Phase 5 outcome": the real-app check, 15 deviations, N8 and N9 done, new findings N10–N11; two gates added, 87 in all).
 - **Phase 6: done** 2026-09-29 (see "Phase 6 outcome": the real-app check, 8 deviations, N4, N5, N10 and N11 done; N1–N3 left as recorded; one gate added, 88 in all).
 - **Phase 7: done** 2026-09-29 (see "Phase 7 outcome": 11 spec files on the built app, 9 deviations, three app bugs the suite found and fixed, new findings N12–N13; one gate added, 89 in all).
-- Phase 8: not started.
+- **Phase 8: done** 2026-09-29 (see "Phase 8 outcome": the Book Vault pass, final-build performance, two app bugs found and fixed, 7 deviations, new findings N14–N15). The report's scorecard is updated. The archive step waits for Phase 9.
+- **Phase 9: not started.** Added 2026-09-29 at the owner's request, from N14 / N15.

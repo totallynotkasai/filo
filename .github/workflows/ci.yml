@@ -1,26 +1,31 @@
 name: CI
 
-# `verify` runs the full `npm run ci:verify` chain (lint, svelte-check, main
-# type-check, strict unit tests, build, every gate) on Linux. `verify-windows`
-# runs the parts that behave differently on Windows: the unit tests (the
-# `itOnWindows` cases and case-insensitive path handling) and the main-process
-# type-check. `coverage` enforces the coverage ratchet on pushes to main
-# (work lands there directly, without PRs) and on PRs. `e2e` runs weekly, and
-# on demand (Actions tab -> CI -> Run workflow): the Playwright suite drives the
-# built app in the real Electron shell, which nothing else exercises (the axe
-# scan and the 5,000-note scale budgets included). It runs on Windows, the
-# platform Filo targets.
+# GitHub runs only the Linux jobs. Every push and PR runs `verify`: the full
+# `npm run ci:verify` chain (lint, svelte-check, main type-check, strict unit
+# tests, build, every gate). `coverage` (the coverage ratchet) repeats the
+# whole suite instrumented, so it runs weekly and on demand (Actions tab -> CI
+# -> Run workflow). A push that touches only `docs/` runs nothing: no gate
+# reads it.
+#
+# The Windows checks run on the developer's Windows machine before pushing,
+# not here (Windows minutes bill double): `npm run test:unit:strict` covers
+# the `itOnWindows` cases, case-insensitive path handling and the
+# characterisation cases skipped on Linux; `npm run build && npm run test:e2e`
+# drives the built app. See "CI gates" in CLAUDE.md.
 
 on:
   push:
     branches: ['**']
+    paths-ignore: ['docs/**']
   pull_request:
+    paths-ignore: ['docs/**']
   workflow_dispatch:
   schedule:
     - cron: '0 6 * * 1'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # The event is in the key so a push to main never cancels the weekly run.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -38,34 +43,18 @@ jobs:
       # can't drift apart.
       - run: npm run ci:verify
 
-  verify-windows:
-    # Not the full chain: the gates and the build are platform-agnostic, so
-    # repeating them here would only double the runtime.
-    name: Verify on Windows (unit tests, main type-check)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run test:unit:strict
-      - run: npm run typecheck:main
-
   coverage:
     # Its own job because v8 coverage instrumentation roughly doubles the
-    # vitest runtime, so `verify` stays fast; other branch pushes skip it.
+    # vitest runtime, so `verify` stays fast.
     # Thresholds live in vitest.config.mts under `test.coverage.thresholds`;
     # raise them whenever new tests push the floor up (ratchet, never lower).
     # `test:unit:coverage` passes --disableConsoleIntercept: under the
     # instrumented suite's load, a worker could close while a captured console
     # line was still in flight, an unhandled error that fails the run with
     # every test green. The strict runner, which reads that output, is `verify`.
-    name: Coverage (main and PRs)
+    name: Coverage (weekly and manual)
     runs-on: ubuntu-latest
-    needs: verify
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -79,33 +68,4 @@ jobs:
         with:
           name: coverage-report
           path: coverage/
-          retention-days: 7
-
-  e2e:
-    name: E2E on the built app (weekly and manual)
-    runs-on: windows-latest
-    needs: verify
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-    env:
-      # scaleBudgets.e2e.ts runs only here. A hosted runner measured about 3.7
-      # times slower than a desktop on the Kanban switch back, so its budgets
-      # get four times the room; the regressions they guard against were 20x.
-      FILO_E2E_SCALE: '1'
-      FILO_E2E_BUDGET_FACTOR: '4'
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run build
-      - run: npm run test:e2e
-      - if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-results
-          path: |
-            test-results/
-            playwright-report/
           retention-days: 7

@@ -9,8 +9,8 @@ import type { LaunchedApp } from './helpers/app';
 /**
  * The performance budgets on a 5,000-note vault (`scripts/perf/genVault.mjs`:
  * Kanban 300, Task List 400, a 2,000-note folder). Slow, so it runs only when
- * FILO_E2E_SCALE is set (the weekly CI job sets it). FILO_E2E_BUDGET_FACTOR
- * scales every budget for a slower machine (CI runners are).
+ * FILO_E2E_SCALE is set (a local run, on request). FILO_E2E_BUDGET_FACTOR
+ * scales every budget for a slower machine (a hosted CI runner needs about 4).
  *
  * A board "opens" when the page answers a probe and shows the board's rows: a
  * probe can't run while a long synchronous mount holds the main thread, so
@@ -20,7 +20,7 @@ import type { LaunchedApp } from './helpers/app';
 const FACTOR = Number(process.env.FILO_E2E_BUDGET_FACTOR ?? '1') || 1;
 const budget = (ms: number): number => ms * FACTOR;
 
-test.skip(!process.env.FILO_E2E_SCALE, 'scale budgets run weekly (set FILO_E2E_SCALE=1 to run them here)');
+test.skip(!process.env.FILO_E2E_SCALE, 'scale budgets are slow (set FILO_E2E_SCALE=1 to run them)');
 // Not serial: each budget is measured on its own launch, so one over budget
 // must not hide the others.
 

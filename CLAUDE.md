@@ -44,7 +44,7 @@ Package:        npm run package
 
 `test:unit:strict` ([scripts/test-unit-strict.mjs](scripts/test-unit-strict.mjs)) runs vitest and also fails on known noise patterns in its output: a missing `window.filo` mock, a duplicate object key, the `yaml` collection-key warning, and Svelte effect-loop / unsafe-mutation warnings.
 
-The `coverage` job (the vitest coverage ratchet) runs on pushes to `main` and on PRs. The `e2e` job runs the Playwright suite against the built app on `windows-latest`, weekly (Monday 06:00 UTC) and on demand (Actions tab → CI → Run workflow): the axe scan and, with `FILO_E2E_SCALE=1` and `FILO_E2E_BUDGET_FACTOR=2`, the 5,000-note scale budgets included.
+The `coverage` job (the vitest coverage ratchet) runs on pushes to `main` and on PRs. The `e2e` job runs the Playwright suite against the built app on `windows-latest`, weekly (Monday 06:00 UTC) and on demand (Actions tab → CI → Run workflow): the axe scan and, with `FILO_E2E_SCALE=1` and `FILO_E2E_BUDGET_FACTOR=4`, the 5,000-note scale budgets included.
 
 **Comments:** explain *why* (the invariant, the hazard a guard prevents), never history. No audit IDs, phases, dates or "used to…" in code: that belongs in commit messages. Plans and audit reports live in `docs/` (active) and `docs/archive/` (done), not the repo root.
 

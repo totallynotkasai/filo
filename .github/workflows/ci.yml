@@ -87,10 +87,11 @@ jobs:
     needs: verify
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     env:
-      # scaleBudgets.e2e.ts runs only here; a hosted runner is slower than a
-      # desktop, so its budgets get twice the room.
+      # scaleBudgets.e2e.ts runs only here. A hosted runner measured about 3.7
+      # times slower than a desktop on the Kanban switch back, so its budgets
+      # get four times the room; the regressions they guard against were 20x.
       FILO_E2E_SCALE: '1'
-      FILO_E2E_BUDGET_FACTOR: '2'
+      FILO_E2E_BUDGET_FACTOR: '4'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

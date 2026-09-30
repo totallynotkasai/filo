@@ -21,7 +21,8 @@ const FACTOR = Number(process.env.FILO_E2E_BUDGET_FACTOR ?? '1') || 1;
 const budget = (ms: number): number => ms * FACTOR;
 
 test.skip(!process.env.FILO_E2E_SCALE, 'scale budgets run weekly (set FILO_E2E_SCALE=1 to run them here)');
-test.describe.configure({ mode: 'serial' });
+// Not serial: each budget is measured on its own launch, so one over budget
+// must not hide the others.
 
 let root: string;
 let vault: string;
@@ -86,8 +87,8 @@ test('Kanban 300 opens in under 1 s and its tab comes back in under 0.5 s', asyn
     await clickTab(win, 'Kanban 300');
     const backMs = await until(win, cardsShown);
     test.info().annotations.push({ type: 'measure', description: `Kanban 300 open ${openMs} ms, switch back ${backMs} ms` });
-    expect(openMs).toBeLessThan(budget(1000));
-    expect(backMs).toBeLessThan(budget(500));
+    expect.soft(openMs, 'Kanban 300 open').toBeLessThan(budget(1000));
+    expect.soft(backMs, 'Kanban 300 switch back').toBeLessThan(budget(500));
   } finally {
     await quitLikeUser(launched);
   }

@@ -5,6 +5,8 @@ import type { Mark, Node as ProseMirrorNode, Schema } from '@tiptap/pm/model';
 import { TextSelection } from '@tiptap/pm/state';
 import { createTiptapEditor } from '../../renderer/lib/editor/createEditor';
 import { editorMarkdown, loadMarkdownIntoEditor } from '../../renderer/lib/editor/markdownSync';
+import { withMinimalEscapes, type MarkdownRenderer } from '../../renderer/lib/editor/minimalEscapes';
+import { isLineBreak } from '../../renderer/lib/editor/softBreak';
 
 /**
  * Whatever the editor can hold, it writes in a form it reads back.
@@ -15,7 +17,8 @@ import { editorMarkdown, loadMarkdownIntoEditor } from '../../renderer/lib/edito
  * (`markdownBodyRoundTrip`, `toolbarFormattingRoundTrip`) only reach the
  * shapes someone thought of; this test generates documents from the editor's
  * own schema (paragraphs, headings, the three list kinds, tables, code,
- * quotes, rules, marks, awkward characters) and checks, for each:
+ * quotes, rules, marks, soft and hard line breaks, literal `*` / `_` runs,
+ * awkward characters) and checks, for each:
  *
  *   serialise(doc) → load → not lossy, and serialise(reloaded) === serialise(doc).
  *
@@ -49,6 +52,8 @@ beforeAll(() => {
   writer = makeEditor();
   reader = makeEditor();
   schema = writer.schema;
+  // The first load registers every extension's Markdown setup on the parser.
+  loadMarkdownIntoEditor(writer, 'x');
 });
 
 afterAll(() => {
@@ -56,9 +61,12 @@ afterAll(() => {
   reader.destroy();
 });
 
+/** `doc` as a save writes it (`editorMarkdown`: the serialiser, then only the escapes the parser needs). */
 function serialise(doc: ProseMirrorNode): string {
-  const storage = writer.storage as unknown as { markdown: { serializer: { serialize(n: ProseMirrorNode): string } } };
-  return storage.markdown.serializer.serialize(doc);
+  const storage = writer.storage as unknown as {
+    markdown: { serializer: { serialize(n: ProseMirrorNode): string }; parser: { md: MarkdownRenderer } };
+  };
+  return withMinimalEscapes(storage.markdown.serializer.serialize(doc), storage.markdown.parser.md);
 }
 
 interface RoundTrip {
@@ -82,16 +90,23 @@ const CHARS = [
   '|', '`', '*', '_', '[', ']', '\\', '<', '>', '&', '#', '1', '2', '.', ')', '-', '+', '!', '~', '(', ';', '=',
 ];
 
-const textArb = fc.array(fc.constantFrom(...CHARS), { minLength: 1, maxLength: 8 }).map((cs) => cs.join(''));
+/** Literal delimiter runs other apps write in plain text (`2** - notes`, `the *** and`, `the ___ and`). */
+const DELIMITER_TEXT = ['**', ' ** ', '***', ' *** ', '___', ' ___ ', '2** -', 'a * b', '*a', 'b_'];
+
+const textArb = fc.oneof(
+  { weight: 6, arbitrary: fc.array(fc.constantFrom(...CHARS), { minLength: 1, maxLength: 8 }).map((cs) => cs.join('')) },
+  { weight: 1, arbitrary: fc.constantFrom(...DELIMITER_TEXT) },
+);
 
 type MarkName = 'bold' | 'italic' | 'strike' | 'code' | 'link' | 'underline' | 'color';
 const markNameArb = fc.subarray<MarkName>(['bold', 'italic', 'strike', 'code', 'link', 'underline', 'color'], { maxLength: 2 });
 
-type InlineItem = { kind: 'text'; text: string; marks: MarkName[] } | { kind: 'break' } | { kind: 'tab' };
+type InlineItem = { kind: 'text'; text: string; marks: MarkName[] } | { kind: 'break' } | { kind: 'soft' } | { kind: 'tab' };
 
 const inlineItemArb: fc.Arbitrary<InlineItem> = fc.oneof(
   { weight: 8, arbitrary: fc.record({ kind: fc.constant('text' as const), text: textArb, marks: markNameArb }) },
   { weight: 1, arbitrary: fc.constant({ kind: 'break' as const }) },
+  { weight: 1, arbitrary: fc.constant({ kind: 'soft' as const }) },
   { weight: 1, arbitrary: fc.constant({ kind: 'tab' as const }) },
 );
 
@@ -126,13 +141,14 @@ function buildInline(items: InlineItem[]): ProseMirrorNode[] {
   const out: ProseMirrorNode[] = [];
   for (const item of items) {
     if (item.kind === 'break') out.push(schema.nodes.hardBreak.create());
+    else if (item.kind === 'soft') out.push(schema.nodes.softBreak.create());
     else if (item.kind === 'tab') out.push(schema.nodes.tab.create());
     else if (item.marks.some((m) => DELIMITER_MARKS.has(m)) && !item.marks.includes('code')) {
       // A bold, italic or strikethrough run is a whole word with a space on
       // each side. Mid-word next to punctuation, tiptap-markdown shifts the
       // delimiter to where it can open, which can cut into an HTML tag or an
       // entity; that is its own finding, outside this test's scope.
-      if (out.length && out[out.length - 1].type.name !== 'hardBreak') out.push(schema.text(' '));
+      if (out.length && !isLineBreak(out[out.length - 1])) out.push(schema.text(' '));
       out.push(schema.text(wordsOnly(item.text), markSet(item.marks)));
       out.push(schema.text(' '));
     } else if (item.marks.includes('code')) {
@@ -148,13 +164,13 @@ function buildInline(items: InlineItem[]): ProseMirrorNode[] {
   // end of a line. Trimming a run can bare another, so repeat until stable.
   for (let changed = true; changed; ) {
     changed = false;
-    while (out.length && out[out.length - 1].type.name === 'hardBreak') {
+    while (out.length && isLineBreak(out[out.length - 1])) {
       out.pop();
       changed = true;
     }
     for (let i = 0; i < out.length && !changed; i++) {
       const node = out[i];
-      const lineEnds = i === out.length - 1 || out[i + 1].type.name === 'hardBreak';
+      const lineEnds = i === out.length - 1 || isLineBreak(out[i + 1]);
       if (!node.isText || !lineEnds || !/\s$/.test(node.text ?? '')) continue;
       const trimmed = (node.text ?? '').replace(/\s+$/, '');
       if (trimmed) out[i] = node.cut(0, trimmed.length);
@@ -318,6 +334,8 @@ interface Context {
 
 const CONTEXTS: Context[] = [
   { name: 'a paragraph', start: 'Alpha beta\n\nGamma', caretAfter: 'Alpha beta' },
+  { name: 'a line after a soft break', start: 'Alpha\nbeta\n\nGamma', caretAfter: 'beta' },
+  { name: 'a line before a soft break', start: 'Alpha\nbeta\n\nGamma', caretAfter: 'Alpha' },
   { name: 'a list item', start: '- one\n- two\n- three', caretAfter: 'two' },
   { name: 'a checklist item', start: '- [ ] one\n- [ ] two\n- [ ] three', caretAfter: 'two' },
   { name: 'a numbered item', start: '1. one\n2. two\n3. three', caretAfter: 'two' },

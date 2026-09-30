@@ -43,6 +43,7 @@ import { FiloTaskList, FiloListParse } from './taskItems';
 import { FiloTable } from './tableMarkdown';
 import { FiloCodeBlock } from './codeFence';
 import { FiloHardBreak } from './hardBreak';
+import { SoftBreak, withSoftBreakMarksTrimmed } from './softBreak';
 import { PastePlainText } from './pastePlainText';
 import { FiloBlockquote } from './blockquote';
 import { isFiloLink } from '../../schema/link';
@@ -202,9 +203,9 @@ const ParagraphWithBlankLines = Paragraph.extend({
               state.write(' ');
               rest = rest.cut(1);
             }
-            state.renderInline(withEdgeTabsOutsideRuns(rest), false);
+            state.renderInline(withSoftBreakMarksTrimmed(withEdgeTabsOutsideRuns(rest)), false);
           } else {
-            state.renderInline(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node)));
+            state.renderInline(withSoftBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node))));
           }
           state.closeBlock(node);
         },
@@ -227,7 +228,7 @@ const HeadingWithLayout = Heading.extend({
             state.write(blockLayoutHtml(node));
           } else {
             state.write(`${'#'.repeat(Number(node.attrs.level) || 1)} `);
-            state.renderInline(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node)), false);
+            state.renderInline(withSoftBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node))), false);
           }
           state.closeBlock(node);
         },
@@ -289,6 +290,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       FiloBulletList,
       FiloOrderedList,
       FiloHardBreak,
+      SoftBreak,
       FiloBlockquote,
       HeadingWithLayout,
       NoteText,

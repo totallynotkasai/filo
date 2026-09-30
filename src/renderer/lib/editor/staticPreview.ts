@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import { sanitizeNoteHtml } from '../utils/sanitizeHtml';
+import { renderSoftBreaksAsNodes } from './softBreak';
 
 /**
  * A note body as static HTML, for a Kanban card whose editor isn't mounted
@@ -17,6 +18,8 @@ import { sanitizeNoteHtml } from '../utils/sanitizeHtml';
  */
 
 const md = new MarkdownIt({ html: true, linkify: false, breaks: false });
+// A single newline inside a paragraph shows as a line break, as in the editor.
+renderSoftBreaksAsNodes(md);
 
 /** Rendered previews by body text; a board re-renders the same bodies on every open. */
 const CACHE_LIMIT = 1000;
@@ -38,9 +41,9 @@ const BLOCK_TAGS = new Set(['P', 'DIV', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', '
 const CONTAINER_TAGS = new Set(['DIV', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH']);
 
 /**
- * The editor's DOM has no whitespace between blocks and joins a soft line
- * break with a space; markdown-it leaves newlines in both places, which the
- * editor's `pre-wrap` would show as blank lines. Code blocks keep theirs.
+ * The editor's DOM has no whitespace between blocks; markdown-it leaves
+ * newlines there (and in HTML the note holds), which the editor's `pre-wrap`
+ * would show as blank lines. Code blocks keep theirs.
  */
 function normaliseWhitespace(root: HTMLElement): void {
   const walker = root.ownerDocument.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);

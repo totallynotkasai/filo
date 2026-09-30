@@ -2,7 +2,8 @@
 
 Some *italic*, **bold**, ~~strike~~ and `code`.
 
-> A quote over two lines.
+> A quote
+> over two lines.
 
 ---
 

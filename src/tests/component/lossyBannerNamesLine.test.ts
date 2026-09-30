@@ -13,7 +13,7 @@ import {
  * that line selected, so the user can fix it by hand instead of letting Take
  * ownership rewrite it.
  */
-const NOTE = '---\ntitle: Wrapped\n---\nIntro\n\nA paragraph that is\nhard-wrapped across lines.\n';
+const NOTE = '---\ntitle: Wrapped\n---\nIntro\n\nA paragraph with a [[wiki link]].\n';
 
 describe('the read-only banner names what would change', () => {
   beforeEach(() => resetEditorHarness());
@@ -23,7 +23,7 @@ describe('the read-only banner names what would change', () => {
     recordingFilo({ 'Wrapped.md': NOTE });
     const m = await mountDocumentEditor({ docPath: 'Wrapped.md' });
     const text = m.target.querySelector('.readonly-banner .readonly-text')?.textContent ?? '';
-    expect(text).toContain('Line 6 would change from “A paragraph that is” to “A paragraph that is hard-wrapped across lines.”');
+    expect(text).toContain('Line 6 would change from “A paragraph with a [[wiki link]].” to “A paragraph with a \\[\\[wiki link\\]\\].”');
     await m.unmount();
   });
 
@@ -40,10 +40,10 @@ describe('the read-only banner names what would change', () => {
       await settle();
       textarea = m.target.querySelector('textarea.raw-text');
     }
-    expect(textarea?.value).toContain('hard-wrapped');
+    expect(textarea?.value).toContain('wiki link');
     await settle();
     const selected = textarea!.value.slice(textarea!.selectionStart, textarea!.selectionEnd);
-    expect(selected).toBe('A paragraph that is');
+    expect(selected).toBe('A paragraph with a [[wiki link]].');
     await m.unmount();
   });
 });

@@ -19,6 +19,8 @@ interface Case {
   edit: (win: Page, editor: Locator) => Promise<void>;
   /** Text the reopened editor shows. */
   shows: RegExp;
+  /** Text the saved file must still hold as it was (lines the edit didn't touch). */
+  kept?: string;
 }
 
 const CASES: Case[] = [
@@ -80,6 +82,19 @@ const CASES: Case[] = [
     },
     shows: /const x = 1;\s*```/,
   },
+  {
+    // A note typed one line per thought (single newlines), with literal
+    // asterisks, edited in another paragraph.
+    name: 'Lines',
+    body: 'Potential Titles:\nDilletantes in the Interim\nProspectors in the Interim\n\nChapter 1 and 2** - kept\n\nLast paragraph\n',
+    edit: async (win, ed) => {
+      await ed.locator('p', { hasText: 'Last paragraph' }).first().click();
+      await win.keyboard.press('End');
+      await win.keyboard.type(' edited');
+    },
+    shows: /Potential Titles:Dilletantes in the InterimProspectors in the Interim[\s\S]*2\*\* - kept[\s\S]*Last paragraph edited/,
+    kept: 'Potential Titles:\nDilletantes in the Interim\nProspectors in the Interim\n\nChapter 1 and 2** - kept\n\nLast paragraph edited\n',
+  },
 ];
 
 let root: string;
@@ -109,6 +124,7 @@ test('typed formatting is saved', async () => {
   for (const c of CASES) {
     const text = fs.readFileSync(path.join(vault, `${c.name}.md`), 'utf8');
     expect(text, `${c.name}.md was never written`).not.toBe(`---\ntitle: ${c.name}\n---\n${c.body}`);
+    if (c.kept) expect(text, `${c.name}.md changed lines the edit didn't touch`).toBe(`---\ntitle: ${c.name}\n---\n${c.kept}`);
   }
 });
 
@@ -121,6 +137,9 @@ test('every edited note reopens editable, showing what was typed', async () => {
       await expect(editor, `${c.name} reopened read-only`).toHaveAttribute('contenteditable', 'true');
       await expect(launched.win.locator('.readonly-banner:visible'), `${c.name} shows the read-only banner`).toHaveCount(0);
     }
+    // Single newlines show as line breaks.
+    const lines = await openNoteByName(launched.win, 'Lines');
+    await expect(lines.locator('br[data-filo-soft-break]')).toHaveCount(2);
     expect(launched.errors.filter((e) => e.includes('effect_update_depth_exceeded'))).toEqual([]);
   } finally {
     await quitLikeUser(launched);

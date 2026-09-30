@@ -251,6 +251,22 @@ const CASES: Case[] = [
     run: (e) => e.chain().setTextAlign('right').increaseIndent().run(),
     saved: 'text-align: right; margin-left: 24px;',
   },
+  // Two lines of a note from another app, joined by a single newline (a soft break).
+  { name: 'bold over a soft break', start: 'Alpha\nbeta', run: (e) => e.chain().toggleBold().run(), saved: '**Alpha\nbeta**' },
+  {
+    name: 'typing on the line after a soft break',
+    start: 'Alpha\nbeta',
+    run: (e) => {
+      e.commands.setTextSelection(e.state.doc.content.size - 1);
+      return e.chain().insertContent(' gamma').run();
+    },
+    saved: 'Alpha\nbeta gamma',
+  },
+  { name: 'heading over a soft break', start: 'Alpha\nbeta', run: (e) => e.chain().setHeading({ level: 2 }).run(), saved: '## Alpha<br data-filo-soft-break>beta' },
+  { name: 'centred paragraph with a soft break', start: 'Alpha\nbeta', run: (e) => e.chain().setTextAlign('center').run(), saved: 'text-align: center' },
+  { name: 'bullet list over a soft break', start: 'Alpha\nbeta', run: (e) => e.chain().toggleBulletList().run(), saved: '- Alpha\n  beta' },
+  { name: 'quote over a soft break', start: 'Alpha\nbeta', run: (e) => e.chain().toggleBlockquote().run(), saved: '> Alpha\n> beta' },
+  { name: 'table cell text over a soft break', start: 'Alpha\nbeta', run: (e) => e.chain().insertTable({ rows: 2, cols: 1, withHeaderRow: true }).run() },
   {
     name: 'centred text with characters HTML must escape',
     start: 'a < b & c > d',

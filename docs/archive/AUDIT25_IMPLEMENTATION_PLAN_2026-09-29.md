@@ -52,6 +52,7 @@ Conventions:
 | 6 | Hygiene: dead code, duplicates, comments, docs, gates | from the report's Phase 5 list | Low | M | |
 | 7 | Real-app regression suite (the E2E rewrite, open since Audit-15) | new | Low (tests only) | M | |
 | 8 | Verification, docs, archive | none | None | S | Sign-off |
+| 9 | Single newlines and literal asterisks (added after Phase 8) | N14, N15 | Medium: changes how Markdown is read and written | M | Before daily use on the owner's vault |
 
 Size: S under half a day, M a day or two, L several days.
 
@@ -1109,6 +1110,88 @@ No console errors in any launch. Every quit exited in under 0.21 s.
 5. **Docs:** KNOWN_LIMITATIONS #17 loses "hard-wrapped paragraphs" and the literal-asterisk case; CLAUDE.md's editor gotchas name the new node.
 6. **Real-app check:** the Book Vault pass again, where all 13 notes should open editable, then finish Phase 8 item 5 (archive the plan and the report).
 
+### Phase 9 outcome (2026-09-30)
+
+**Done:** items 1–6. D12 was taken at its default: a soft break shows as a line break. All 13 of the owner's notes now open editable; in Phase 8, 5 opened read-only.
+
+**Build.**
+
+| Item | Where | What |
+|---|---|---|
+| Soft break node | `lib/editor/softBreak.ts` (new); `hardBreak.ts`, `leadSpace.ts`, `tabNode.ts`, `textEscapes.ts`, `createEditor.ts` | markdown-it's `softbreak` token renders as `<br data-filo-soft-break>`, which loads as the `softBreak` inline node. It is shown as a line break and written back as a bare newline, followed by the container prefix (`> `, the list indent). A parser with `breaks: true` (the plain-text paste) keeps its hard `<br>`. `writeLineBreak` is shared with the hard break. Everything that asked "does this line start after a break" (the lead space, a tab at a line edge, the line-start escapes) now counts both kinds of break. A soft break keeps only the marks the text after it also has (`withSoftBreakMarksTrimmed`), so a bold run never closes at the start of a line. Text before a soft break counts as ending its line, so `1.` or `==` there is escaped |
+| Escape only what needs it | `lib/editor/minimalEscapes.ts` (new), run by `editorMarkdown` | After serialising, each run of `\*` / `\_` escapes is tried without its backslashes. The change is kept only when markdown-it, the note's own parser, renders the whole note to the same HTML. Runs are bisected, capped at 48 renders a save. A line the loaded file already holds as it is keeps its escapes |
+| `___` read back as emphasis | `textEscapes.ts` `escapeUnderscoreRuns` | prosemirror-markdown leaves an `_` bare between two word characters, and it counts `_` as one. So `the ___ and` came out as `the \__\_ and`, and the bare middle `_` paired with the next such run as *italic* on reopen. Now a run of underscores is escaped whole once any of it is |
+| Card preview | `staticPreview.ts` | Soft breaks show as line breaks, as in the editor, so swapping to the editor moves nothing |
+| Wording | `TextTile.svelte`, `DocumentEditor.svelte` | Take ownership's example list no longer names "hard-wrapped lines" |
+
+**Tests.**
+- `markdownBodyRoundTrip.test.ts`:
+  - **+11 named cases from other apps:** each Book Vault shape (a list of titles on consecutive lines, a bold line followed by text, a bold line and then a list of stats, `2** - `, `-** ` then a bold run, `the *** and`, `the ___ and`); a two-line quote; lines in a list item; a bold run over a soft break; escapes the file already has.
+  - **+7 behaviour cases:** the node and its HTML; typing after a soft break; Shift+Enter; deleting the text before a soft break; typed `***` / `2**` written bare; `*not italic*` keeps one escape; a typed `___` reads back as underscores.
+  - **+2 FILO_WRITES cases:** `1.` before a soft break; `==` before a soft break.
+  - `mixed-prose` left the read-only set, because its two-line quote keeps its lines. Its `.expected.md` and `misc-syntax.expected.md` record the kept lines.
+  - Run against the old code in the worktree, all of the new cases fail except "escapes the file already has", which is a regression guard and passes before and after.
+- `editorRoundTripProperty.test.ts`:
+  - The generator gains soft breaks and literal `*` / `_` runs (`**`, `***`, `___`, `2** -`, `a * b` …).
+  - Its write step is now `editorMarkdown`'s (the serialiser plus the escape pass).
+  - The command suite gains two contexts: a line after, and a line before, a soft break (+30 cases).
+  - 500 runs, green.
+- `toolbarFormattingRoundTrip.test.ts`: +7 (bold over a soft break, typing on the line after one, heading, centred, bullet list, quote and table over one).
+- New `minimalEscapes.test.ts` (16): runs, what is dropped, what is kept (emphasis, a rule, a list marker, code, an autolink), the file's own lines, `escapeUnderscoreRuns`, and the paste parser's `<br>`.
+- `staticPreview.test.ts` and `editorTyping.test.ts` now expect the line break. The three component tests that used a hard-wrapped note as their read-only example use a `[[wiki link]]` instead.
+- E2E `editorFidelity.e2e.ts`: +1 case. A note with two soft breaks and a `2**` line is edited in another paragraph. It saves with every other line byte for byte, reopens editable, and shows two soft breaks.
+
+**Checks.**
+- lint, svelte-check, `typecheck:main`, test type-check: clean.
+- `test:unit:strict`: 766 files, 7,181 tests (5 skipped), green.
+- Build, then 89/89 gates.
+- E2E `editorFidelity`: 2 passed.
+
+**Byte-identity corpus.** 19,014 unique `.md` files (deduplicated by content):
+- 96 from the repo;
+- 191 from every vault in `My Files/Vaults`, the Book Vault included;
+- 549 `node_modules` READMEs;
+- 18,178 from earlier sessions' real-app scratch vaults.
+
+Each was loaded and saved with `HEAD` (`eb527e4`, in a detached worktree) and with this change:
+- **All 18,430 notes that round-tripped before produce identical bytes.**
+- **None became read-only.**
+- 110 read-only notes now open editable: 99 READMEs, 10 repo or vault notes (the Book Vault's 5 among them) and 1 scratch note.
+- 474 stay read-only, for the other reasons in KNOWN_LIMITATIONS #17.
+
+**Real-app pass** on a fresh scratch copy of the Book Vault (script: session scratchpad `phase9/bookVault9.pass.ts`, on `helpers/app.ts`):
+
+| Check | Result |
+|---|---|
+| Every real note opened | 13 of 13 editable, no banner. Soft breaks shown: General 4, Magic System 5, Leveling System Ideas 17, From Canvas 2 |
+| An edit at the end of the last paragraph in the 5 formerly read-only notes and `Random ideas` | Chapter Specific, Magic System, Random ideas: only that line changed. General, Leveling System Ideas, From Canvas also got the documented first-edit clean-ups (KNOWN_LIMITATIONS #17's table): a trailing space removed, five whitespace-only `  ` lines emptied, trailing blank lines collapsed. Every soft break and every literal `**` / `___` kept its bytes |
+| Notes only opened | byte-identical |
+| Relaunch | the six edited notes reopen editable, showing the edit and the same soft-break counts; nothing written by the second launch |
+| Console errors, quit | none; both quits exited |
+
+**Performance of the escape pass** (plain Node, markdown-it):
+- A 24 KB note whose 200 escapes can all go: 10 ms.
+- A 23 KB note where every other escape must stay (bisection to the cap): 41 ms.
+- It runs only on notes with a `\*` or `\_`, and only on lines changed since the note was loaded.
+
+**Deviations from the plan.**
+
+1. **N15's placeholder is `___`, not `***`.** The note holds three underscores. The plan quoted the read-only banner, which shows lines in the round-trip check's normal form, and that form rewrites underscore emphasis as asterisks. The `\__\_` output was a real bug, not just an escape: markdown-it reads it back as emphasis across the line. It is fixed in the text serialiser (`escapeUnderscoreRuns`), apart from the minimal-escape pass. Both shapes are tested.
+2. **The escape pass keeps the escapes of a line the loaded file already holds.** A pure "escape only what needs it" would rewrite a note that writes `5 \* 3` on purpose, as the `misc-syntax` fixture does, and so break the plan's own rule that every note that round-tripped before keeps its bytes. The pass also runs on the whole serialised note, checked by rendering the whole note, rather than inside the text serialiser: whether a `*` pairs depends on the rest of the paragraph, and tiptap-markdown's delimiter tidy still rewrites the output after each node. Asterisks and underscores only, as the plan says: `[`, `]` and `\` are still escaped (KNOWN_LIMITATIONS #17).
+3. **A soft break where a bare newline can't stand** (a heading, a table cell, the start of a block, or right after another break) is written as `<br data-filo-soft-break>`, not turned into a hard break. Only an edit can put one there: deleting the text before it, or making the paragraph a heading. Written as a hard break, the note would still save to the same bytes, but it would reopen as a different document, which the toolbar round-trip test (document equality) forbids.
+4. **The pass ran on a fresh scratch copy of the original vault** (`Vaults/Dilletante's in the Interim`, read only), not on the owner's `- Copy` folder. That folder still holds Phase 8's `Week One check` and edits.
+5. **Two component tests and one unit test changed their premise**, since a hard-wrapped note is no longer read-only. They now use a `[[wiki link]]` note as their read-only example.
+6. **The toolbar round trip gained seven cases, not one.** Each command that changes a paragraph's container (heading, list, quote, table, alignment) goes through a different serialiser path for the soft break.
+
+**New findings.**
+
+- **N17 (D4 revisited; done 2026-09-30 at the owner's choice):** the Task List notes box still wrote each newline as a hard break (`\`), as D4 decided when a single newline couldn't be kept. Now that it can, typing in the notes box of a note written one line per thought rewrote that note's soft breaks as `\` line ends: it looked the same, but lines the user didn't touch changed in the file. **The owner chose to have the box write plain newlines.**
+  - `lib/tasklist/notesBoxMarkdown.ts`: `boxTextToBody` writes the draft as typed. `bodyToBoxText` still shows a `\` or two-space line break as a plain newline, so a note an older Filo wrote from the box has its `\` line ends tidied to plain newlines the next time the box saves it. That is a one-off byte change that looks the same.
+  - The box writes only after the user types, so a note that is only opened is never written.
+  - Tests: `notesBoxMarkdown.test.ts` (a line added to a one-line-per-thought note leaves the other lines alone; old `\` breaks come back as plain newlines). The characterisation spec `taskNotesBox` now expects `Buy compost` / `Check the roses` on plain lines, loading as a soft break.
+  - Checks after the change: lint, svelte-check, `test:unit:strict` (766 files, 7,181 tests), 89/89 gates.
+- Seen, not new: a "lazy" continuation line (`> a` / `b`, `- a` / `b`) or one indented by spaces or a tab keeps its line break but is rewritten with the container's prefix or without the indent, so such a note stays read-only (KNOWN_LIMITATIONS #17, updated).
+
 ---
 
 ## Decisions
@@ -1138,6 +1221,8 @@ Taken in Phase 5: D9 at its default (`parentTileId` on the placement; an older n
 
 Taken in Phase 3: D7 at its default (Markdown with HTML off and line breaks kept; Ctrl+Shift+V literal; KNOWN_LIMITATIONS #41).
 
+Taken in Phase 9: D12 at its default (a soft break shows as a line break, in the editor and in a Kanban card's preview; the file keeps the bare newline). D4 was then changed at the owner's choice (Phase 9 finding N17): a newline typed in the notes box is written as a plain newline (a soft break), no longer as a hard break.
+
 ## Not included
 
 - **Keeping boards mounted while their tab is hidden** (memory cost). A25-06 makes remounting cheap instead.
@@ -1157,4 +1242,4 @@ Plan written 2026-09-29.
 - **Phase 6: done** 2026-09-29 (see "Phase 6 outcome": the real-app check, 8 deviations, N4, N5, N10 and N11 done; N1–N3 left as recorded; one gate added, 88 in all).
 - **Phase 7: done** 2026-09-29 (see "Phase 7 outcome": 11 spec files on the built app, 9 deviations, three app bugs the suite found and fixed, new findings N12–N13; one gate added, 89 in all).
 - **Phase 8: done** 2026-09-29 (see "Phase 8 outcome": the Book Vault pass, final-build performance, two app bugs found and fixed, 7 deviations, new findings N14–N15). The report's scorecard is updated. The archive step waits for Phase 9.
-- **Phase 9: not started.** Added 2026-09-29 at the owner's request, from N14 / N15.
+- **Phase 9: done** 2026-09-30 (see "Phase 9 outcome": all 13 of the owner's notes open editable; the byte-identity corpus of 19,014 notes found no note changed or newly read-only; 6 deviations; new finding N17, done at the owner's choice: the notes box writes plain newlines). With it, Phase 8 item 5 is done: this plan and the report are in `docs/archive/`.

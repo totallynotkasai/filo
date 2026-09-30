@@ -68,10 +68,10 @@ describe('typing is saved as typed', () => {
     expect(editorMarkdown(ed)).toBe(md);
   });
 
-  it('soft line breaks still join with one space, not a hard break', () => {
+  it('a soft line break is kept as a single newline, not joined or made a hard break', () => {
     const ed = makeEditor();
-    loadMarkdownIntoEditor(ed, 'line one\nline two');
-    expect(editorMarkdown(ed)).toBe('line one line two');
+    expect(loadMarkdownIntoEditor(ed, 'line one\nline two').lossy).toBe(false);
+    expect(editorMarkdown(ed)).toBe('line one\nline two');
   });
 
   it('a nested #tag/sub in the middle of a line stays plain text', () => {

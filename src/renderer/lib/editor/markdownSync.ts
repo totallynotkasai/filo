@@ -2,6 +2,7 @@ import { Document } from 'yaml';
 import { parseFrontmatterObject } from '../vault/frontmatterRead';
 import type { Editor } from '@tiptap/core';
 import { resetEditorHistory } from './editorHistory';
+import { bodyLines, withMinimalEscapes, type MarkdownRenderer } from './minimalEscapes';
 import {
   encodeEmptyParagraphs,
   stripEmptyParagraphSentinels,
@@ -38,6 +39,13 @@ import { bodyWithoutFenceLookalike, splitFrontmatterFence } from '../notes/front
  * `gray-matter`: its `stringify` needs the Node `Buffer` global, undefined in
  * the renderer.
  */
+
+/**
+ * The lines of the body each editor last loaded. A save keeps the escapes of a
+ * line the file already holds as it is (`withMinimalEscapes`).
+ */
+// allow-module-state: per-editor load record, dropped with the editor (WeakMap)
+const loadedLines = new WeakMap<Editor, ReadonlySet<string>>();
 
 export interface ParsedMarkdownDocument {
   /** Raw frontmatter object (parsed via the `yaml` package's `parseDocument().toJS()`). */
@@ -142,6 +150,7 @@ export function loadMarkdownIntoEditor(
   }
 
   const originalBody = body ?? '';
+  loadedLines.set(editor, bodyLines(originalBody));
 
   // Reconstruct empty paragraphs (vertical spacing) that the serialiser encoded
   // as extra blank lines, before the body reaches setContent. Skipped when the
@@ -363,10 +372,13 @@ export function editorMarkdown(editor: Editor): string {
   // `editor.storage` is undefined on lightweight stubs / non-tiptap-markdown
   // editors; access defensively so the lossy-detection caller can swallow a
   // missing-storage scenario without crashing.
-  const storage = (editor as { storage?: { markdown?: { getMarkdown: () => string } } })
+  const storage = (editor as { storage?: { markdown?: { getMarkdown: () => string; parser?: { md?: MarkdownRenderer } } } })
     .storage?.markdown;
   if (storage && typeof storage.getMarkdown === 'function') {
-    return storage.getMarkdown();
+    const markdown = storage.getMarkdown();
+    // Only the escapes the note's own parser needs (`minimalEscapes.ts`).
+    const md = storage.parser?.md;
+    return md ? withMinimalEscapes(markdown, md, loadedLines.get(editor)) : markdown;
   }
   if (typeof (editor as { getText?: () => string }).getText === 'function') {
     return (editor as { getText: () => string }).getText();

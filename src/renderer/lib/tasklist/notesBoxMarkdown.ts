@@ -2,17 +2,18 @@ import MarkdownIt from 'markdown-it';
 
 /**
  * The Task List notes box shows a note's Markdown body as plain text, one
- * line per line. In Markdown a single newline inside a paragraph is only a
- * space, so two lines typed in the box reopened in the rich editor as one
- * line; the note then no longer matched its file and opened read-only (and a
- * rich view already open joined the lines on its next save).
+ * line per line.
  *
- * DECISION: a newline typed in the box is a line break (not a new paragraph).
- * Before a draft is written, every line that continues a paragraph onto the
- * next line gets Markdown's line-break mark (`\` at its end), which is what
- * the rich editor writes for Shift+Enter. When the box opens, those marks
- * are taken off again for display. Only paragraph lines change: lists,
- * headings, code, quotes' own markers and blank lines are written as typed.
+ * DECISION: a newline typed in the box is written as a plain newline. Inside
+ * a paragraph that is a soft line break, which the rich editor shows as a
+ * line break and writes back unchanged (`lib/editor/softBreak.ts`), so the
+ * note reopens as typed and a note written one line per thought keeps its
+ * bytes when a line is added in the box.
+ *
+ * A line break the note already has (a `\` or two spaces at the end of a
+ * paragraph line, as Shift+Enter writes it) shows in the box as a plain
+ * newline too, so it is written back as one the next time the box saves.
+ * It looks the same in every view.
  */
 
 /** Configured like the editor's parser (`createEditor.ts`), for the block structure only. */
@@ -33,16 +34,9 @@ function endsInBreak(line: string): boolean {
   return /(^|[^\\])(\\\\)*\\$/.test(body) || / {2,}$/.test(body);
 }
 
-/** The draft as the note's body: each newline inside a paragraph becomes a line break. */
+/** The draft as the note's body: written as typed, each newline a plain newline. */
 export function boxTextToBody(text: string): string {
-  const lines = text.split('\n');
-  for (const [first, end] of paragraphLines(text)) {
-    for (let i = first; i < end - 1; i++) {
-      const line = lines[i] ?? '';
-      if (!endsInBreak(line)) lines[i] = `${line.replace(/[ \t]+$/, '')}\\`;
-    }
-  }
-  return lines.join('\n');
+  return text;
 }
 
 /** The note's body as the box shows it: line breaks inside a paragraph as plain newlines. */

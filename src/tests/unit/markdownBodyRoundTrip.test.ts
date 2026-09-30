@@ -74,10 +74,13 @@ const corpus = loadCorpus();
  *  - links-underline:   `<u>…[link](…)</u>` re-nests. (Audit-19 DEP-2 — with
  *                       linkify off the bare URL is now emitted verbatim, no
  *                       `<…>` wrap; the fixture stays lossy for the `<u>` only.)
- *  - mixed-prose:       a two-line blockquote is joined onto one line.
  *  - link-schemes:      `[[wiki]]` brackets are escaped. (Audit-19 UX-2 — the
  *                       `filo://` link marks now SURVIVE via Link's isAllowedUri.)
- *  - misc-syntax:       HTML comment / block `<div>` dropped, callout joined.
+ *  - misc-syntax:       HTML comment / block `<div>` dropped, callout's `[!note]`
+ *                       escaped.
+ * `mixed-prose` LEFT this set when a single newline became a soft break node
+ * (`softBreak.ts`): its two-line blockquote keeps its lines, and nothing else
+ * in it changes; its baseline records the lines kept.
  * Audit-19 UX-7 — `task-lists` LEFT this set: a tight task list now serialises
  * tight (FiloTaskListTight), byte-identical to its source bar the final newline.
  *
@@ -90,7 +93,6 @@ const corpus = loadCorpus();
 const LOSSY_ON_TIPTAP2: ReadonlySet<string> = new Set([
   'inline-html-spans',
   'links-underline',
-  'mixed-prose',
   'link-schemes',
   'misc-syntax',
 ]);
@@ -273,6 +275,8 @@ const FILO_WRITES: ReadonlyArray<[string, string]> = [
   ['a bold run opening a second paragraph in a quote', '> &#9;\n>\n> **a** b'],
   ['a quote whose first line was empty', '> a'],
   ['an escaped backslash before "!" and a link', '\\\\\\![a](https://example.com/a)'],
+  ['"1." on a line before a soft break', '1\\.\nbeta'],
+  ['a row of "=" before a soft break', 'a\\\n\\==\nb'],
 ];
 
 describe('shapes Filo writes read back as written', () => {
@@ -283,6 +287,106 @@ describe('shapes Filo writes read back as written', () => {
       expect(rt.out).toBe(body);
     });
   }
+});
+
+/**
+ * The shapes of the owner's real notes (Keep and Canvas exports, plain
+ * typing): one line per thought with no blank line between, and literal
+ * asterisks and underscores Markdown doesn't read as emphasis. Each loads
+ * editable and saves byte for byte.
+ */
+const OTHER_APPS: ReadonlyArray<[string, string]> = [
+  ['a list of titles on consecutive lines', 'Potential Titles:\nDilletantes in the Interim\nProspectors in the Interim\n\nCover Ideas:\nSolo portraits - a stump\nGroup portraits - a river bank.'],
+  ['a bold heading line followed by text', '**Circus**\nShikara could hear the guards talking.\n\n**Alternate Start**\nKasai is also another person.'],
+  ['a bold line, then a list of stats on consecutive lines', '**Potential stats**\nPhysical (likely capped)\nStrength — raw power\nEndurance — stamina'],
+  ['"2** - " after a word', 'Chapter 1 and 2** - To be kept the same.\n\n**Chapter 3** - Needs a rework.'],
+  ['"-** " closing nothing, then a bold run', 'Chapter 7 -** I think it can stay, although **chapter 6** could change.'],
+  ['a "***" placeholder in running text', "she's from the *** and hes from *** they're surprised"],
+  ['a "___" placeholder in running text', "she's from the ___ and hes from ___ they're surprised"],
+  ['a two-line quote', '> A quote\n> over two lines.'],
+  ['lines in a list item', '- first line\n  second line\n- next'],
+  ['a bold run over a soft break', '**bold over\ntwo lines** then text'],
+  ['escapes the file already has', 'Escaped \\*stars\\* and a literal 5 \\* 3.'],
+];
+
+describe('notes from other apps keep their single newlines and literal asterisks', () => {
+  for (const [name, body] of OTHER_APPS) {
+    it(name, () => {
+      const rt = roundTrip(body);
+      expect(rt.lossy).toBe(false);
+      expect(rt.out).toBe(body);
+    });
+  }
+
+  it('a soft break loads as its own node and shows as a line break', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'one\ntwo');
+    expect(ed.getJSON().content?.[0]?.content?.map((n) => n.type)).toEqual(['text', 'softBreak', 'text']);
+    expect(ed.getHTML()).toBe('<p>one<br data-filo-soft-break="">two</p>');
+  });
+
+  it('typing on the line after a soft break keeps the lines apart', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'Potential Titles:\nDilletantes in the Interim');
+    ed.commands.focus('end');
+    ed.commands.insertContent(' (working)');
+    expect(editorMarkdown(ed)).toBe('Potential Titles:\nDilletantes in the Interim (working)');
+  });
+
+  it('Shift+Enter still writes a hard break', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'one\ntwo');
+    ed.commands.focus('end');
+    ed.commands.setHardBreak();
+    ed.commands.insertContent('three');
+    expect(editorMarkdown(ed)).toBe('one\ntwo\\\nthree');
+  });
+
+  it('deleting the text before a soft break keeps the break as a node that reads back', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'one\ntwo');
+    ed.commands.deleteRange({ from: 1, to: 4 });
+    const md = editorMarkdown(ed);
+    expect(md).toBe('<br data-filo-soft-break>two');
+    const rt = roundTrip(md);
+    expect(rt.lossy).toBe(false);
+    expect(rt.out).toBe(md);
+  });
+
+  it('asterisks typed as text are written bare where Markdown reads them as text', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'Start');
+    ed.commands.focus('end');
+    ed.commands.insertContent({ type: 'text', text: ' the *** and 2** - end' });
+    expect(editorMarkdown(ed)).toBe('Start the *** and 2** - end');
+  });
+
+  it('asterisks that would pair as emphasis stay escaped', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'Start');
+    ed.commands.focus('end');
+    ed.commands.insertContent({ type: 'text', text: ' *not italic*' });
+    const md = editorMarkdown(ed);
+    // One escape is enough: the closing `*` can't close without an opener.
+    expect(md).toBe('Start *not italic\\*');
+    const reread = makeEditor();
+    loadMarkdownIntoEditor(reread, md);
+    expect(reread.getText()).toBe('Start *not italic*');
+    const rt = roundTrip(md);
+    expect(rt.lossy).toBe(false);
+    expect(rt.out).toBe(md);
+  });
+
+  it('a typed "___" reads back as underscores, not emphasis', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'Start');
+    ed.commands.focus('end');
+    ed.commands.insertContent({ type: 'text', text: ' from the ___ and from ___ they' });
+    const md = editorMarkdown(ed);
+    const reread = makeEditor();
+    loadMarkdownIntoEditor(reread, md);
+    expect(reread.getText()).toBe('Start from the ___ and from ___ they');
+  });
 });
 
 describe('Markdown from other apps', () => {

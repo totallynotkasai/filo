@@ -1,5 +1,6 @@
 import { Node } from '@tiptap/core';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { isLineBreak } from './softBreak';
 
 /**
  * A tab character typed into a note: one inline item, so Backspace removes it
@@ -24,7 +25,7 @@ interface TabSerializeState {
 /** True when only tabs sit between this tab and the start or the end of its line. */
 function atLineEdge(parent: ProseMirrorNode, index: number): boolean {
   const isTab = (i: number): boolean => parent.child(i).type.name === 'tab';
-  const isBreak = (i: number): boolean => parent.child(i).type.name === 'hardBreak';
+  const isBreak = (i: number): boolean => isLineBreak(parent.child(i));
   let before = index - 1;
   while (before >= 0 && isTab(before)) before--;
   if (before < 0 || isBreak(before)) return true;

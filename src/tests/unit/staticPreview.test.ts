@@ -16,10 +16,10 @@ describe('renderNotePreviewHtml', () => {
     expect(d.querySelectorAll('li > p').length).toBe(2);
   });
 
-  it('keeps no newlines between blocks and joins a soft break with a space', () => {
+  it('keeps no newlines between blocks and shows a soft break as a line break, as the editor does', () => {
     const html = renderNotePreviewHtml('first line\nsecond line\n\n- a\n- b\n');
     expect(html).not.toContain('\n');
-    expect(dom(html).querySelector('p')?.textContent).toBe('first line second line');
+    expect(dom(html).querySelector('p')?.innerHTML).toMatch(/^first line<br[^>]*>second line$/);
   });
 
   it('keeps a code block as written', () => {

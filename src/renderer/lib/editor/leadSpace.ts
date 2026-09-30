@@ -1,5 +1,6 @@
 import { Node } from '@tiptap/core';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { isLineBreak } from './softBreak';
 
 /**
  * Spaces typed at the start of a line are kept.
@@ -27,7 +28,7 @@ export const LEAD_SPACE_ENTITY = '&#32;';
 /** True when the inline child at `index` starts a line of its block. */
 export function startsLine(parent: ProseMirrorNode | null | undefined, index: number): boolean {
   if (!parent || index === 0) return true;
-  return parent.child(index - 1).type.name === 'hardBreak';
+  return isLineBreak(parent.child(index - 1));
 }
 
 /** Marks written as Markdown delimiter runs, which push whitespace outside the run. */

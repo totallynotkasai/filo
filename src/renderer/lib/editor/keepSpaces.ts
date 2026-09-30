@@ -7,8 +7,10 @@
  * (`loadMarkdownIntoEditor`). Kept whitespace would also keep what the default
  * parse is right to drop, so before the parse this pass tidies the HTML that
  * markdown-it rendered:
- *  - a soft line break (a newline inside a paragraph) becomes one space, as
- *    before; left as a newline, it would load as a hard break;
+ *  - a newline left in the text (inside HTML the note holds as HTML) becomes
+ *    one space, as a browser shows it; left as a newline, it would load as a
+ *    hard break. A soft line break in Markdown never gets here: it loads as
+ *    its own node (`softBreak.ts`);
  *  - whitespace at the start or end of a block's text (the space after a task
  *    item's checkbox, the newline before a nested list) is dropped.
  * Code blocks keep every character.

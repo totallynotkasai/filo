@@ -19,7 +19,7 @@ import {
  * discarded (and a tab close found nothing pending). A lossy note is now truly
  * non-editable, toolbar commands included, until Take ownership.
  */
-const HARD_WRAPPED = 'A paragraph that is\nhard-wrapped across lines.\n';
+const LOSSY_NOTE = 'A paragraph with a [[wiki link]].\n';
 
 async function assertFrozenThenOwned(m: Mounted, rel: string, fs: ReturnType<typeof recordingFilo>): Promise<void> {
   const ed = m.editor();
@@ -50,14 +50,14 @@ describe('a lossy note is truly non-editable', () => {
   afterEach(() => teardownEditorHarness());
 
   it('TextTile', async () => {
-    const fs = recordingFilo({ 'Wrapped.md': HARD_WRAPPED });
+    const fs = recordingFilo({ 'Wrapped.md': LOSSY_NOTE });
     const m = await mountTextTile({ tile: { id: 't1', title: 'Wrapped' } });
     await assertFrozenThenOwned(m, 'Wrapped.md', fs);
     await m.unmount();
   });
 
   it('DocumentEditor', async () => {
-    const fs = recordingFilo({ 'Wrapped.md': HARD_WRAPPED });
+    const fs = recordingFilo({ 'Wrapped.md': LOSSY_NOTE });
     const m = await mountDocumentEditor({ docPath: 'Wrapped.md' });
     await assertFrozenThenOwned(m, 'Wrapped.md', fs);
     await m.unmount();

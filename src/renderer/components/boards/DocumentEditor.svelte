@@ -300,7 +300,7 @@
     uiStore.openConfirm({
       title: 'Take ownership of this file?',
       body:
-        "Filo will be able to edit and save this file, but formatting it can't preserve (for example hard-wrapped lines, callouts, wiki links, comments) will be rewritten or removed on the next save." +
+        "Filo will be able to edit and save this file, but formatting it can't preserve (for example callouts, wiki links, comments) will be rewritten or removed on the next save." +
         (listed ? `\n\n${listed}` : '') +
         '\n\nContinue?',
       confirmLabel: 'Take ownership',

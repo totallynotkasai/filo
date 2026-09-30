@@ -38,6 +38,44 @@ export function escapeNoteText(text: string, inAutolink = false): string {
 }
 
 /**
+ * Text already escaped by prosemirror-markdown, with every underscore of a run
+ * escaped once any of them is. prosemirror-markdown leaves an `_` bare between
+ * two word characters, and counts `_` as one, so `the ___ and` came out as
+ * `the \__\_ and`, and the bare middle one paired with the next such run as
+ * emphasis on reopen.
+ */
+export function escapeUnderscoreRuns(escaped: string): string {
+  if (!escaped.includes('_')) return escaped;
+  // Each character, with the escaped ones marked (a `\\` pair is not an escape of what follows).
+  const chars: Array<{ c: string; escaped: boolean }> = [];
+  for (let i = 0; i < escaped.length; i++) {
+    const c = escaped[i] ?? '';
+    if (c === '\\' && i + 1 < escaped.length) {
+      chars.push({ c: escaped[i + 1] ?? '', escaped: true });
+      i++;
+    } else {
+      chars.push({ c, escaped: false });
+    }
+  }
+  let out = '';
+  for (let i = 0; i < chars.length; ) {
+    let end = i;
+    while (chars[end]?.c === '_') end++;
+    if (end === i) {
+      const ch = chars[i];
+      out += ch ? (ch.escaped ? `\\${ch.c}` : ch.c) : '';
+      i++;
+      continue;
+    }
+    const run = chars.slice(i, end);
+    const escapeAll = run.some((ch) => ch.escaped);
+    for (const ch of run) out += escapeAll || ch.escaped ? '\\_' : '_';
+    i = end;
+  }
+  return out;
+}
+
+/**
  * A block's first text, already escaped by prosemirror-markdown, with the
  * list markers it misses: a lone `+` or `1.` (with nothing after it on the
  * line, or only a tab) starts an empty list item.
@@ -97,10 +135,12 @@ export const NoteText = Node.create({
             text = text.slice(1);
             if (!text) return;
           }
-          let out = state.esc(text, blockStart);
+          let out = escapeUnderscoreRuns(state.esc(text, blockStart));
           if (node.marks.length === 0) {
             const next = parent.maybeChild(index + 1);
-            const endsLine = !next;
+            // A soft break is written as a bare newline, so the line ends there
+            // (a hard break's `\` stays on the line).
+            const endsLine = !next || next.type.name === 'softBreak';
             if (blockStart) out = escapeBlockStart(out, endsLine || next?.type.name === 'tab');
             else if (afterBreak) out = escapeAfterBreak(out, endsLine, next?.type.name === 'tab');
             // A heading's trailing ` #` run is read as its closing sequence and dropped.

@@ -585,16 +585,14 @@ Filo can't preserve.
 Formats that still trigger read-only (each is a real byte or semantic change the
 serializer can't preserve cheaply):
 
-- hard-wrapped paragraphs (soft line breaks are joined onto one line). This
-  is common in notes typed one line per thought or exported from Keep: 4 of
-  the 13 notes in the owner's vault. A change is planned (Audit-25 plan,
-  Phase 9);
-- multi-line blockquotes (joined);
+- a continuation line written without its container's prefix or with extra
+  indent (a "lazy" `> a` / `b` quote or `- a` / `b` list item, or a paragraph
+  line indented by spaces or a tab): the line break is kept, but Filo writes
+  the line with the quote's `> ` or the list's indent, and without the
+  indent;
 - `<` / `&` written raw (re-emitted as entities);
-- characters Markdown would read as formatting, written unescaped: `5 * 3`,
-  `[TODO]`, `C:\Users` (Filo writes `5 \* 3`, `\[TODO\]`, `C:\\Users`),
-  including a lone `**` after a word and a `***` placeholder in running text
-  (also planned for Phase 9);
+- brackets and backslashes Markdown could read as syntax, written unescaped:
+  `[TODO]`, `C:\Users` (Filo writes `\[TODO\]`, `C:\\Users`);
 - `[[wiki links]]` and footnotes `[^1]` (brackets escaped);
 - a tab at the start of a heading or list item, or directly before a hard
   line break (a tab inside a line, or inside inline code, round-trips);
@@ -609,6 +607,16 @@ serializer can't preserve cheaply):
 No longer read-only: filenames, bare domains, emails and bare URLs
 (linkify is off), `filo://` internal links, tight checklists, GFM table
 **padding** differences and the `1)` ordered-list delimiter.
+
+Also no longer read-only: **lines separated by a single newline** (notes typed
+one line per thought, Keep and Canvas exports, hard-wrapped paragraphs,
+multi-line quotes). A single newline inside a paragraph loads as a soft break
+(`lib/editor/softBreak.ts`): the editor shows it as a line break, as Obsidian
+and Keep do, and writes it back as a bare newline. And **asterisks and
+underscores Markdown reads as text** (`5 * 3`, `2** - notes`, a `***` or
+`___` placeholder): a save writes a `*` or `_` without a backslash wherever the
+note reads back the same (`lib/editor/minimalEscapes.ts`), and a line the file
+already holds with its escapes (`5 \* 3`) keeps them.
 
 Also no longer read-only (each was something Filo itself
 wrote and then couldn't read back): an empty checkbox (Enter after the last
@@ -664,9 +672,7 @@ gate `editor-body-discipline`.
 
 **Why accepted:** Editing a note Filo would rewrite is the silent-loss class the
 open-format principle forbids; making it honest (non-editable) is the safe
-default, and Take ownership is an explicit, confirmed opt-in. Users with many
-hard-wrapped notes will see more read-only banners than before — that is the
-behaviour being honest, not a regression.
+default, and Take ownership is an explicit, confirmed opt-in.
 
 **Raw view:** a lossy note can still be edited without Take ownership through
 the Document tab's **Raw** toggle. The raw view edits the file's text directly

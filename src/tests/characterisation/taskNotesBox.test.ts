@@ -105,7 +105,7 @@ describe('task notes box', () => {
     await typeTaskNotes(row, 'Buy compost\nCheck the roses');
     await leaveTaskNotes(row);
     await waitFor(() => app.read(rel).includes('Check the roses'), 'the notes on disk');
-    expect(app.read(rel)).toMatch(/\nBuy compost\\\nCheck the roses\n?$/);
+    expect(app.read(rel)).toMatch(/\nBuy compost\nCheck the roses\n?$/);
 
     // Fold the box and open it again: it shows the note's two lines as typed.
     await openTaskNotes(row);
@@ -115,7 +115,7 @@ describe('task notes box', () => {
     expect(documentBanners(app)).toEqual([]);
     const [ed] = editors($$(app.el, '.document-board')[0]);
     expect(ed.isEditable).toBe(true);
-    expect(ed.getJSON().content?.[0]?.content?.map((n) => n.type)).toEqual(['text', 'hardBreak', 'text']);
+    expect(ed.getJSON().content?.[0]?.content?.map((n) => n.type)).toEqual(['text', 'softBreak', 'text']);
   });
 
   it('a note that isn\'t UTF-8 gets a read-only box', async () => {

@@ -22,7 +22,7 @@
  * until the conflict is answered.
  *
  * The box shows the body with its line breaks as plain newlines, and a draft
- * goes to the note with each newline inside a paragraph as a line break
+ * goes to the note as typed, each newline a plain newline
  * (`notesBoxMarkdown.ts`). Everything that compares the draft with the note
  * compares it in that body form; a rescue copy keeps the draft as typed.
  */

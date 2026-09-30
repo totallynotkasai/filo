@@ -5,9 +5,10 @@ import { createTiptapEditor } from '@renderer/lib/editor/createEditor';
 import { editorMarkdown, loadMarkdownIntoEditor } from '@renderer/lib/editor/markdownSync';
 
 /**
- * The Task List notes box shows a body as plain lines; a newline typed there
- * is a line break in the note, so the rich editor reads the note back as
- * typed (not as one joined line, which opened read-only).
+ * The Task List notes box shows a body as plain lines, and a newline typed
+ * there is written as a plain newline: the rich editor reads it back as a
+ * line break (a soft break) and writes it back unchanged, so a note written
+ * one line per thought keeps the lines nobody touched.
  */
 
 const editors: Editor[] = [];
@@ -23,37 +24,47 @@ afterEach(() => {
 });
 
 describe('notes box text ↔ note body', () => {
-  it('two typed lines become a line break, and the rich editor reads them back as two lines', () => {
+  it('two typed lines are written as typed, and the rich editor reads them back as two lines', () => {
     const body = boxTextToBody('line one\nline two');
-    expect(body).toBe('line one\\\nline two');
+    expect(body).toBe('line one\nline two');
     const { ed, lossy } = load(body);
     expect(lossy).toBe(false);
-    expect(ed.getJSON().content?.[0]?.content?.map((n) => n.type)).toEqual(['text', 'hardBreak', 'text']);
+    expect(ed.getJSON().content?.[0]?.content?.map((n) => n.type)).toEqual(['text', 'softBreak', 'text']);
     expect(editorMarkdown(ed)).toBe(body);
   });
 
-  it('the box shows the body with its line breaks as newlines', () => {
+  it('a line added to a note written one line per thought leaves the other lines alone', () => {
+    const body = 'Buy milk\nBuy eggs\nBuy bread';
+    const draft = `${bodyToBoxText(body)}\nBuy butter`;
+    expect(boxTextToBody(draft)).toBe('Buy milk\nBuy eggs\nBuy bread\nBuy butter');
+  });
+
+  it('the box shows a body with line breaks as plain newlines, and writes them back as plain newlines', () => {
     expect(bodyToBoxText('line one\\\nline two')).toBe('line one\nline two');
-    expect(bodyToBoxText(boxTextToBody('a\nb\nc\n\nd\ne'))).toBe('a\nb\nc\n\nd\ne');
+    expect(bodyToBoxText('line one  \nline two')).toBe('line one\nline two');
+    expect(boxTextToBody(bodyToBoxText('a\\\nb\\\nc\n\nd\\\ne'))).toBe('a\nb\nc\n\nd\ne');
   });
 
   it.each([
     ['a list', '- one\n- two\n- [ ] three'],
-    ['paragraphs split by a blank line', 'First\n\nSecond'],
     ['a heading over text', '# Title\nBody'],
-    ['a code block', '```\nline one\nline two\n```'],
-    ['a line already ending in a break', 'one\\\ntwo'],
   ])('%s is written as typed', (_name, text) => {
     expect(boxTextToBody(text)).toBe(text);
   });
 
-  it('a paragraph inside a list item gets its breaks too', () => {
-    expect(boxTextToBody('- item\n  more of it')).toBe('- item\\\n  more of it');
+  it.each([
+    ['paragraphs split by a blank line', 'First\n\nSecond'],
+    ['a code block', '```\nline one\nline two\n```'],
+    ['a paragraph inside a list item', '- item\n  more of it'],
+  ])('%s is written as typed and reads back unchanged', (_name, text) => {
+    expect(boxTextToBody(text)).toBe(text);
+    const { ed, lossy } = load(text);
+    expect(lossy).toBe(false);
+    expect(editorMarkdown(ed)).toBe(text);
   });
 
-  it('trailing spaces before a typed newline are dropped for the break mark', () => {
-    expect(boxTextToBody('one   \ntwo')).toBe('one   \ntwo');
-    expect(boxTextToBody('one \ntwo')).toBe('one\\\ntwo');
+  it('a code block keeps a line ending in a backslash', () => {
+    expect(bodyToBoxText('```\na\\\nb\n```')).toBe('```\na\\\nb\n```');
   });
 
   it('a typed backslash at a line end is kept as text', () => {

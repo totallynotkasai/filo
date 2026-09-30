@@ -717,6 +717,52 @@ Fix where cheap, otherwise list in KL #17:
 3. Move both documents to `docs/archive/`.
 4. Commit and push (after the owner's go-ahead).
 
+### Phase 7 outcome (2026-10-01)
+
+**Status:** done, bar the push (waiting for the owner's go-ahead). Verified on Windows, on the final code:
+- `npm run ci:verify` green: 784 test files, 7,394 tests passed (5 skipped), 89/89 gates;
+- `FILO_E2E_SCALE=1 npm run test:e2e` on the built app: 26/26 (the scale budgets included);
+- the 5,000-note day of use (`sim.pass.ts`) and Phase 1's focused checks (`phase1.pass.ts`), all green (tables below);
+- the corpus check: 18,870 notes, **0 changed bytes, 0 newly lossy** against Phase 3's recorded output.
+
+**A regression found and fixed: a quit after a big tag sweep left a stale crash sentinel.** The first run of `sim.pass.ts` on `0983a46` quit in 5.2 s and left `.filo/.dirty.<machineId>` naming six notes the tag-rename Undo had saved 45 s before, under a folder name the rename had since changed. The next open on the same machine would have asked about unsaved changes that were in fact saved. (The pass's second launch runs under a new machine id, so it didn't show the prompt; the report's `sentinelsAfterQuit1` did.)
+- **Cause:** every note the tag sweep starts refreshes the sentinel (`refreshSentinel` → `markDirty`), and the sentinel mutex sent one IPC per call. Once Phase 5 ran the sweep six notes at a time (about 16 ms a note), the calls came faster than the writes landed, so the queue fell about 43 s behind. Quit waits at most 5 s for it (`SENTINEL_FLUSH_DEADLINE_MS`), and a vault switch would have waited for all of it.
+- **Fix:** `lib/vault/dirtyFlagRecovery.ts` `enqueueSentinelOp`. An op that hasn't started yet is replaced by a later op for the same vault, so at most one op runs and one waits, and the waiting one carries the latest state (last writer wins, as before). An op for another vault is never folded in, so a swap's `markClean` of the outgoing vault still runs.
+- **Tests:** two unit cases in `atomicWriteFrameRefsAndSentinelMutex.test.ts` (200 `markDirty` calls behind a held write reach the disk as two writes, the last one's paths; a burst ending in `markClean` ends deleted; an op for another vault is never folded). The burst case fails on the old code; the other-vault case pins the guard.
+- **Real-app effect:** quit after the day of use 5.2 s → 0.19 s, no sentinel; the 1,484-note tag rename 36 s → 23 s (the sentinel IPC flood was slowing it too).
+
+**The 5,000-note day of use** (`sim.pass.ts`, `MEASURE_UNDO=1`, the final build; audit column from `db1af24`):
+
+| Check | `db1af24` | Now |
+|---|---|---|
+| Keep-style note (one line per thought, `***`, a list under text) | opens read-only, no line named | opens editable; the edit writes the typed text plus KL #17's first-edit spelling (`***` → `---`, a blank line above the list) |
+| Character sheet (quoted title, comment, table, nested list): type in a cell | the cell changes, and the blank line after the frontmatter is dropped (A26-16) | only the cell's line changes |
+| Kanban card (BOM, CRLF, comment): type | BOM and CRLF kept; the blank line after the frontmatter dropped (A26-16) | BOM and CRLF kept; only the typed line changes |
+| Task List tick, then Ctrl+Z | only `completed:` changes; undo byte-identical | same |
+| Tag rename `idea` → `concept` (1,484 notes), then Undo | 116 s; undo byte-identical | 23 s; undo in 24 s, 1,484/1,484 byte-identical; no other file touched |
+| Replace All (25 notes), then Undo | exact; undo byte-identical | same |
+| Folder rename (1,107 notes on the Mind Map) | no stale links | same, no toasts |
+| Sidebar delete of a card's note, then Ctrl+Z | file back; **card never came back** (29 of 30) | file back in 0.17 s, card back in 0.67 s |
+| Syncthing-style delivery to a card | taken, no toasts | same |
+| Quit | 2.1 s | 0.19 s, no sentinel, no rescue copies |
+| Relaunch and look at everything | changed nothing | changed nothing; both prose notes editable, the typed text there |
+
+**Phase 1's focused checks** (`phase1.pass.ts` on the final build): a folder rename Windows refuses leaves all 14 Mind Map links unchanged ("Failed to rename" after 6.3 s); the same 1,107-note rename once allowed takes 0.5 s; a delete + Ctrl+Z 35 s later brings the card back in 0.6 s; quit right after another undo takes 0.4 s with the card and note saved and no sentinel; a folder holding a Video and an Audio tile renames in 0.6 s and both play from the new path.
+
+**Deviations from the plan**
+
+1. **A fix in the verification phase.** The plan had Phase 7 only check; the stale sentinel above was a regression from Phase 5 found by step 1, small and contained, so it was fixed here with its test, and every check was run again on the fixed build.
+2. **The 5,000-note pass is `sim.pass.ts` as the audit wrote it, plus Phase 1's `phase1.pass.ts`,** not a `sim.pass.ts` extended in 1.8 (Phase 1's deviation 5 kept the new checks in their own script). The pass has no assertions of its own; its report was read line by line, as in the audit.
+3. **The corpus was compared against Phase 3's recorded output** (`07efbaf`'s code), not `db1af24`: Phase 2 and 3 changed outputs on purpose, and Phase 3's own comparison already covered them. Nothing changed since then: 0 changed, 0 newly lossy, 0 newly unlocked.
+4. **The report's scorecard gained an "After fixes" column** rather than having its scores replaced, so the audit's findings still read against the scores they explain. A status line under the verdict says every phase is done, and the "If you start now" list is marked as no longer needed.
+
+**Still open (for the owner):**
+- the search query parser trims the needle (` - ` finds every `-`), from Phase 5;
+- about 0.4 MB of heap kept per reload into the same editor (unit environment only), from Phase 2;
+- accessibility: the Light theme's tertiary text (KL #47) and the Board Browser's nested buttons (KL #46).
+
+**Final scores:** see the report's ratings table; overall **9**, as targeted. Open / close / quit / recovery holds its 9 only with the sentinel fix above.
+
 ## Decisions
 
 | # | Question | Default |

@@ -10,6 +10,8 @@ Owner's setup:
 
 Plan: [AUDIT26_IMPLEMENTATION_PLAN_2026-09-30.md](AUDIT26_IMPLEMENTATION_PLAN_2026-09-30.md).
 
+**Status (2026-10-01): all seven phases of the plan are done.** Every finding below is fixed, listed in KNOWN_LIMITATIONS, or named as still open in the plan's Phase 7 outcome; the "After fixes" column of the ratings has the scores reached (overall 9). The "If you start now" list at the end no longer applies. Phase 7's checks are recorded in the plan.
+
 ## Verdict
 
 Filo is genuinely good, and safe to start using for your notes. The owner's impression from scratch testing ("felt pretty good") is right.
@@ -53,29 +55,29 @@ You can start now. Follow the "If you start now" list below until Phase 1 of the
 
 ## Ratings (1–10)
 
-| Area | Score | Why |
-|---|---|---|
-| Notes: write safety | 9 | Fresh read per write, main-side stat and hash check, one conflict prompt, own-write echo by hash, exclusive creates, trash for deletes. Nothing found that loses note text. |
-| Boards: write safety | 8 | Drift holds, forward-only baselines and the unverified-board check all held up. The stray board of N16 is now explained (A26-03). |
-| Renames, moves, trash and their undo | 6 | Trash, restore and delete-undo are byte-exact. But a failed rename leaves boards pointing at the wrong name (A26-01), and a big rename floods the queue (A26-02). |
-| Sync and outside changes (Syncthing) | 8.5 | Syncthing temp files, `.stversions`, conflict copies and old-mtime deliveries are all handled (E2E and the 5,000-note pass). Deliveries wait behind the rename flood (A26-02). |
-| Open / close / quit / crash recovery | 8 | Mature. Quit waits silently behind a slow undo (A26-02). Most Windows shutdowns briefly show "preventing shutdown" (A26-20). |
-| Editor: nothing lost | 8 | Untouched notes save byte-identical or open read-only. Two formatting actions write broken Markdown (A26-04/05), but it opens read-only rather than losing words. One rare case is silent (A26-11). |
-| Editor: notes open editable | 6.5 | Everyday Keep and Obsidian shapes still open read-only, and the banner can't say why (A26-06). |
-| Frontmatter | 9 | Every shape tried is preserved byte for byte or correctly refused. The task tick in the real app changed only `completed:` and kept a hand-written comment. |
-| Undo / redo | 7 | Careful design. Delete-undo is slow after a big rename (A26-02), undo sits on the active board only (A26-14), shortcuts act behind dialogs (A26-09), and an empty key can go on undo (A26-25). |
-| Tags and search | 7.5 | Tag rename is byte-exact, but slow: 116 s for 1,484 notes, and it blocks renames meanwhile (A26-15). Replace All is exact and undoable but edits markup (A26-07). |
-| Mind Map | 8 | Solid. Two missing pointer-cancel handlers (A26-28). |
-| Kanban | 7 | Opens 30 cards in 0.13 s; drag, undo and disk agree. The find bar and a right-click focus bug regressed with lazy editors (A26-08, A26-13). |
-| Task List | 8.5 | Quick add, indent, tick and undo all wrote the right bytes in the built app. |
-| Document tab and sidebar | 7.5 | Sidebar search hides matches (A26-10). The blank line after the frontmatter goes on first edit (A26-16). |
-| Settings, themes, templates | 8 | Apply / Revert writes only what changed. Nothing found. |
-| Accessibility and keyboard | 6.5 | Good base. A26-09 and A26-26, plus N12 / N13 still open. |
-| Performance at 5,000 notes | 8 | Vault opens in 1.0 s; all E2E scale budgets pass. Tag rename and the rename flood are the slow spots. |
-| Code health | 8.5 | Very little dead code, every dependency used, no TODOs. Six files are allowlisted over 1,000 lines. |
-| Docs accuracy | 8 | CLAUDE.md's tree and gate count are exact. A few stale KNOWN_LIMITATIONS entries (#13, #17, #32, #41, #46) and five missing files. |
-| Tests and gates | 8.5 | 7,181 tests and 89 gates green, and an E2E suite on the built app. Some text-pattern gates can be sidestepped, and the property test compares text, not documents. |
-| **Overall** | **8** | Data integrity is about 9 for notes and about 7 for boards around renames. Day-to-day use is about 7.5. |
+| Area | Score | Why | After fixes | What changed |
+|---|---|---|---|---|
+| Notes: write safety | 9 | Fresh read per write, main-side stat and hash check, one conflict prompt, own-write echo by hash, exclusive creates, trash for deletes. Nothing found that loses note text. | 9 | Unchanged. |
+| Boards: write safety | 8 | Drift holds, forward-only baselines and the unverified-board check all held up. The stray board of N16 is now explained (A26-03). | 9 | Board links change only after a rename succeeds; `board:save` never creates folders (Phase 1). |
+| Renames, moves, trash and their undo | 6 | Trash, restore and delete-undo are byte-exact. But a failed rename leaves boards pointing at the wrong name (A26-01), and a big rename floods the queue (A26-02). | 9 | A refused rename changes nothing; Filo's own moves no longer echo; a delete's card is back in 0.7 s after a 1,107-note rename (Phases 1, 6). |
+| Sync and outside changes (Syncthing) | 8.5 | Syncthing temp files, `.stversions`, conflict copies and old-mtime deliveries are all handled (E2E and the 5,000-note pass). Deliveries wait behind the rename flood (A26-02). | 9 | No rename flood for deliveries to wait behind (Phase 1). |
+| Open / close / quit / crash recovery | 8 | Mature. Quit waits silently behind a slow undo (A26-02). Most Windows shutdowns briefly show "preventing shutdown" (A26-20). | 9 | Quit in 0.2 s after the day of use, no stale sentinel (Phase 7 fix); no "preventing shutdown" for a caret (Phase 6). |
+| Editor: nothing lost | 8 | Untouched notes save byte-identical or open read-only. Two formatting actions write broken Markdown (A26-04/05), but it opens read-only rather than losing words. One rare case is silent (A26-11). | 9 | The formatting actions that wrote broken Markdown are fixed (Phase 2). |
+| Editor: notes open editable | 6.5 | Everyday Keep and Obsidian shapes still open read-only, and the banner can't say why (A26-06). | 8.5 | Keep and Obsidian shapes open editable, and the banner names a line (Phase 3). |
+| Frontmatter | 9 | Every shape tried is preserved byte for byte or correctly refused. The task tick in the real app changed only `completed:` and kept a hand-written comment. | 9 | `completed: yes` / `on` / `"true"` read as done (D9). |
+| Undo / redo | 7 | Careful design. Delete-undo is slow after a big rename (A26-02), undo sits on the active board only (A26-14), shortcuts act behind dialogs (A26-09), and an empty key can go on undo (A26-25). | 8.5 | A sidebar delete's undo is on its toast and Settings → Trash; shortcuts no longer act behind dialogs (Phases 4, 5). |
+| Tags and search | 7.5 | Tag rename is byte-exact, but slow: 116 s for 1,484 notes, and it blocks renames meanwhile (A26-15). Replace All is exact and undoable but edits markup (A26-07). | 8.5 | Tag rename of 1,484 notes in 23 s (was 116 s), not blocking renames; Replace All leaves syntax alone (Phase 5). |
+| Mind Map | 8 | Solid. Two missing pointer-cancel handlers (A26-28). | 8.5 | Pointer-cancel handlers added; right-click on tile text gives the tile menu (Phase 4). |
+| Kanban | 7 | Opens 30 cards in 0.13 s; drag, undo and disk agree. The find bar and a right-click focus bug regressed with lazy editors (A26-08, A26-13). | 8.5 | Find reads every card; right-click fixed; a deleted card comes back from anywhere (Phases 4, 5). |
+| Task List | 8.5 | Quick add, indent, tick and undo all wrote the right bytes in the built app. | 8.5 | Unchanged. |
+| Document tab and sidebar | 7.5 | Sidebar search hides matches (A26-10). The blank line after the frontmatter goes on first edit (A26-16). | 8.5 | Name search shows its matches; the blank line after the frontmatter is kept (Phases 3, 4). |
+| Settings, themes, templates | 8 | Apply / Revert writes only what changed. Nothing found. | 8 | Unchanged. |
+| Accessibility and keyboard | 6.5 | Good base. A26-09 and A26-26, plus N12 / N13 still open. | 7 | Dialogs and the Board Browser fixed; KL #46 / #47 still open. |
+| Performance at 5,000 notes | 8 | Vault opens in 1.0 s; all E2E scale budgets pass. Tag rename and the rename flood are the slow spots. | 8.5 | Tag rename 5× faster; no rename flood; scale budgets pass. |
+| Code health | 8.5 | Very little dead code, every dependency used, no TODOs. Six files are allowlisted over 1,000 lines. | 8.5 | Dead code removed; the six allowlisted files remain. |
+| Docs accuracy | 8 | CLAUDE.md's tree and gate count are exact. A few stale KNOWN_LIMITATIONS entries (#13, #17, #32, #41, #46) and five missing files. | 9 | The stale KNOWN_LIMITATIONS entries and CLAUDE.md lines fixed (Phase 6). |
+| Tests and gates | 8.5 | 7,181 tests and 89 gates green, and an E2E suite on the built app. Some text-pattern gates can be sidestepped, and the property test compares text, not documents. | 9 | Four gates tightened; the property test compares documents; 7,394 tests. |
+| **Overall** | **8** | Data integrity is about 9 for notes and about 7 for boards around renames. Day-to-day use is about 7.5. | **9** | All seven phases done; verified in Phase 7 (below). |
 
 ## How this was audited
 
@@ -195,7 +197,7 @@ IDs are A26-nn. Severity follows the refuter's verdict: Critical, High, Medium o
 ### Low
 
 | ID | What | Source |
-|---|---|---|
+|---|---|---|---|---|
 | A26-11 | Silent literal `**`. A note starting with a bold run that ends in punctuation right before a letter (`**A)**Answer`), or a mark on one punctuation character (`a,*b`), saves with stray asterisks, and the note does **not** open read-only. Rare shapes. KL #32 and N1 claim these open read-only. | FB-03 |
 | A26-12 | `01.` or `01)` typed at a line start after Shift+Enter or in a one-line-per-thought note becomes a numbered list; the note opens read-only. `textEscapes.ts:103` escapes only `1`. | FB-04 |
 | A26-13 | Right-clicking a Kanban card before its editor loads: the editor steals focus from the menu a frame later, so ↓ / Enter type into the note (an undoable blank line). | FC-02 |
@@ -271,6 +273,8 @@ These held up under the finders, the refuter or the real app:
 - **Code health:** all 36 runtime dependencies imported, every source file imported, no TODO / FIXME, no `.only` / `.todo`, every General setting read by the app, and CLAUDE.md's tree accurate.
 
 ## If you start now (until Phase 1 lands)
+
+*No longer needed: every item below is fixed (Phases 1 to 5).*
 
 1. **Folder renames and moves:**
    - Close files from that folder in other programs first.

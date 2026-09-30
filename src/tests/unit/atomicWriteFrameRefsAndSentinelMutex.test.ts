@@ -253,5 +253,68 @@ describe('FS integrity & cascade', () => {
 
       expect(writeCount).toBe(1);
     });
+
+    // A vault-wide tag sweep refreshes the sentinel on every note it starts;
+    // one IPC per call fell tens of seconds behind, and quit left a stale
+    // sentinel (a phantom recovery prompt at the next open).
+    it('a burst behind a slow write reaches the disk as its last state, in at most two writes', async () => {
+      const calls: Array<{ channel: string; paths?: string[] }> = [];
+      let release: () => void = () => undefined;
+      const held = new Promise<void>((r) => { release = r; });
+      let first = true;
+      installFiloStub({
+        'vault:write-file-text': async (...args: unknown[]) => {
+          const payload = JSON.parse(String(args[2])) as { pendingPaths?: string[] };
+          calls.push({ channel: 'vault:write-file-text', paths: payload.pendingPaths });
+          if (first) { first = false; await held; }
+          return undefined;
+        },
+        'vault:delete': async () => {
+          calls.push({ channel: 'vault:delete' });
+          return undefined;
+        },
+      });
+
+      const ops = [markDirty('/vault', ['n0.md'])];
+      for (let i = 1; i < 200; i++) ops.push(markDirty('/vault', [`n${i}.md`]));
+      release();
+      await Promise.all(ops);
+      expect(calls).toEqual([
+        { channel: 'vault:write-file-text', paths: ['n0.md'] },
+        { channel: 'vault:write-file-text', paths: ['n199.md'] },
+      ]);
+
+      // A burst that ends clean: the first write, then only the delete.
+      calls.length = 0;
+      const burst = [markDirty('/vault', ['a.md'])];
+      for (let i = 0; i < 50; i++) burst.push(markDirty('/vault', [`b${i}.md`]));
+      burst.push(markClean('/vault'));
+      await Promise.all(burst);
+      expect(calls.map((c) => c.channel)).toEqual(['vault:write-file-text', 'vault:delete']);
+    });
+
+    it('an op for another vault is never folded into a waiting one', async () => {
+      const calls: string[] = [];
+      let release: () => void = () => undefined;
+      const held = new Promise<void>((r) => { release = r; });
+      installFiloStub({
+        'vault:write-file-text': async (...args: unknown[]) => {
+          calls.push(`write ${String(args[0])}`);
+          await held;
+          return undefined;
+        },
+        'vault:delete': async (...args: unknown[]) => {
+          calls.push(`delete ${String(args[0])}`);
+          return undefined;
+        },
+      });
+
+      const a = markDirty('/a', ['x.md']);
+      const cleanA = markClean('/a');
+      const dirtyB = markDirty('/b', ['y.md']);
+      release();
+      await Promise.all([a, cleanA, dirtyB]);
+      expect(calls).toEqual(['write /a', 'delete /a', 'write /b']);
+    });
   });
 });

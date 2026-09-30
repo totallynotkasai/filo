@@ -49,9 +49,14 @@ const LAUNCH_ID = createId();
  * forces a deterministic last-writer-wins ordering matched to the order
  * the writers were called.
  *
- * Trade-off: serialising lengthens the tail of a burst of sentinel ops
- * by ~5–15ms each. Acceptable because sentinel writes only happen on
- * write-state transitions (counter 0→1, 1→0), not on every keystroke.
+ * Serialising alone would queue one IPC per call, and a burst of writes
+ * calls far faster than the IPC lands: a vault-wide tag sweep refreshes the
+ * sentinel on every note it starts, so the queue fell tens of seconds behind
+ * and a quit (which waits at most a few seconds for it) left a stale sentinel
+ * behind, a phantom recovery prompt at the next open. So an op that hasn't
+ * started yet is replaced by a later op for the same vault (see
+ * `enqueueSentinelOp`): at most one op runs and one waits, and the one that
+ * waits always carries the latest state.
  */
 let sentinelMutex: Promise<unknown> = Promise.resolve();
 
@@ -62,6 +67,41 @@ function withSentinelLock<T>(fn: () => Promise<T>): Promise<T> {
   // their own via `reportError`.
   sentinelMutex = next.catch(() => undefined);
   return next;
+}
+
+interface SentinelSlot {
+  vaultRoot: string;
+  op: () => Promise<void>;
+  done: Promise<void>;
+}
+
+/** The queued op that hasn't started yet, if any: a later op for its vault takes its place. */
+let waitingSlot: SentinelSlot | null = null;
+/** Ops queued or running. With none, a new op starts at once and is never replaced. */
+let queuedOps = 0;
+
+function enqueueSentinelOp(vaultRoot: string, op: () => Promise<void>): Promise<void> {
+  if (waitingSlot && waitingSlot.vaultRoot === vaultRoot) {
+    // Last writer wins: the waiting op would be overwritten by this one
+    // anyway, so only this one needs to reach the disk.
+    waitingSlot.op = op;
+    return waitingSlot.done;
+  }
+  const slot: SentinelSlot = { vaultRoot, op, done: Promise.resolve() };
+  const idle = queuedOps === 0;
+  queuedOps++;
+  slot.done = withSentinelLock(async () => {
+    if (waitingSlot === slot) waitingSlot = null;
+    try {
+      await slot.op();
+    } finally {
+      queuedOps--;
+    }
+  });
+  // An op for another vault is never folded into this one (a swap's
+  // markClean of the outgoing vault must still run).
+  waitingSlot = idle ? null : slot;
+  return slot.done;
 }
 
 /**
@@ -165,7 +205,7 @@ export function markDirty(
   if (pendingPaths && pendingPaths.length > 0) {
     payload.pendingPaths = [...pendingPaths];
   }
-  return withSentinelLock(async () => {
+  return enqueueSentinelOp(vaultRoot, async () => {
     try {
       // The sentinel is load-bearing for crash recovery, so a failed write
       // must not be silent: `invokeOk` throws and the catch reports it.
@@ -194,7 +234,7 @@ export function markDirty(
  */
 export function markClean(vaultRoot: string): Promise<void> {
   if (!vaultRoot) return Promise.resolve();
-  return withSentinelLock(async () => {
+  return enqueueSentinelOp(vaultRoot, async () => {
     try {
       // ENOENT (already gone) is the desired terminal state; EACCES/EBUSY/etc
       // escalate so the user knows "clean" didn't land. Clears only THIS

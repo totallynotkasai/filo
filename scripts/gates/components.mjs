@@ -37,6 +37,45 @@ function callArgs(code, open) {
   return args;
 }
 
+/**
+ * The variables a shown argument passes as its text: the whole argument
+ * (`toast(msg)`), or an option naming the text (`{ text: msg }`).
+ */
+function messageVariables(argText) {
+  const names = [];
+  const whole = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(argText);
+  if (whole) names.push(whole[1]);
+  for (const m of argText.matchAll(/\b(?:text|body|title|message)\s*:\s*([A-Za-z_$][\w$]*)\s*[,}\n]/g)) names.push(m[1]);
+  return names.filter((n) => !['undefined', 'null', 'true', 'false'].includes(n));
+}
+
+/** Each value `name` is given in `code` (`const name = …`, `name = …`), with its offset: up to the statement's end. */
+function assignedValues(code, name) {
+  const values = [];
+  const re = new RegExp(`(?<![\\w$.])${name.replace(/\$/g, '\\$')}\\s*(?::[^=;\\n]+)?=(?![=>])`, 'g');
+  for (const m of code.matchAll(re)) {
+    const start = m.index + m[0].length;
+    let depth = 0;
+    let quote = '';
+    let end = start;
+    for (; end < code.length && end < start + 4000; end++) {
+      const c = code[end];
+      if (quote) {
+        if (c === '\\') end++;
+        else if (c === quote) quote = '';
+        continue;
+      }
+      if (c === "'" || c === '"' || c === '`') quote = c;
+      else if (c === '(' || c === '[' || c === '{') depth++;
+      else if (c === ')' || c === ']' || c === '}') {
+        if (--depth < 0) break;
+      } else if (depth === 0 && (c === ';' || c === ',')) break;
+    }
+    values.push({ start, text: code.slice(start, end) });
+  }
+  return values;
+}
+
 /** Brace depth before each char of already-blanked code. */
 function depthMap(code) {
   const depth = new Array(code.length);
@@ -119,6 +158,20 @@ function derivedArg(src, open) {
   return null;
 }
 
+/**
+ * A component's code, offsets kept: each script with its comments and
+ * strings blanked, and the markup with its HTML comments blanked (markup
+ * expressions are code too).
+ */
+function componentCode(raw) {
+  const chars = blankHtmlComments(raw).split('');
+  for (const b of scriptBlocks(raw)) {
+    const code = blank(b.content);
+    for (let i = 0; i < code.length; i++) chars[b.start + i] = code[i];
+  }
+  return chars.join('');
+}
+
 // Pane-scope targets: a split pane renders these twice, so a GLOBAL facade read
 // binds both panes to whichever one is active.
 const PANE_SCOPE_TARGETS = [
@@ -159,7 +212,10 @@ export const checks = [
       'Clear it in onDestroy or an $effect cleanup, or annotate `// allow-uncleared-timer: <reason>`.',
     run(ctx) {
       const out = [];
-      const decl = /\b(?:let|const|var)\s+(\w+)\s*:\s*ReturnType<typeof\s+(?:setTimeout|setInterval)>/g;
+      // A component-scope handle: typed as a timer, or assigned one anywhere
+      // in the component (`let t = setTimeout(…)`, `t = setInterval(…)`).
+      const typed = /\b(?:let|const|var)\s+(\w+)\s*:\s*ReturnType<typeof\s+(?:setTimeout|setInterval)>/g;
+      const declared = /\b(?:let|var)\s+(\w+)\b/g;
       for (const rel of ctx.files(COMPONENTS, { ext: ['.svelte'] })) {
         const raw = ctx.read(rel);
         const rawLines = raw.split(/\r?\n/);
@@ -167,12 +223,18 @@ export const checks = [
           const code = blank(block.content);
           const depth = depthMap(code);
           const teardown = teardownText(code);
-          for (const m of code.matchAll(decl)) {
-            if (depth[m.index] !== 0) continue;
-            const line = lineAt(raw, block.start + m.index);
+          const handles = new Map();
+          for (const m of code.matchAll(typed)) if (depth[m.index] === 0) handles.set(m[1], m.index);
+          for (const m of code.matchAll(declared)) {
+            if (depth[m.index] !== 0 || handles.has(m[1])) continue;
+            const assigned = new RegExp(`\\b${m[1]}\\s*(?:\\?\\?)?=\\s*(?:window\\s*\\.\\s*)?set(?:Timeout|Interval)\\s*\\(`);
+            if (assigned.test(code)) handles.set(m[1], m.index);
+          }
+          for (const [name, index] of handles) {
+            const line = lineAt(raw, block.start + index);
             if (markerNear(rawLines, line - 1, /\/\/\s*allow-uncleared-timer:\s*\S+/)) continue;
-            if (!new RegExp(`clear(?:Timeout|Interval)\\s*\\(\\s*${m[1]}\\b`).test(teardown)) {
-              out.push(fail(rel, line, `\`${m[1]}\` is never cleared in onDestroy / an $effect cleanup`));
+            if (!new RegExp(`clear(?:Timeout|Interval)\\s*\\(\\s*${name}\\b`).test(teardown)) {
+              out.push(fail(rel, line, `\`${name}\` is never cleared in onDestroy / an $effect cleanup`));
             }
           }
         }
@@ -505,15 +567,20 @@ export const checks = [
       'view really needs every change, mark the line `// allow-global-index-version: <reason>`.',
     run(ctx) {
       const out = [];
-      for (const rel of ctx.files([COMPONENTS, 'src/renderer/lib'], { ext: ['.ts', '.svelte'] })) {
+      // `allMetadata()` reads `version` too. A component's markup is scanned
+      // as well as its script, and so are the stores the views derive from.
+      const READ = /\bvaultIndexStore\s*\.\s*(version\b|allMetadata\s*\()/g;
+      for (const rel of ctx.files([COMPONENTS, 'src/renderer/lib', 'src/renderer/stores'], { ext: ['.ts', '.svelte'] })) {
+        if (rel.endsWith('/vaultIndex.svelte.ts')) continue; // the index itself
         const raw = ctx.read(rel);
         if (!raw.includes('vaultIndexStore')) continue;
         const rawLines = raw.split(/\r?\n/);
-        const code = blank(rel.endsWith('.svelte') ? scriptOnly(raw) : raw);
-        for (const m of code.matchAll(/\bvaultIndexStore\s*\.\s*version\b/g)) {
+        const code = rel.endsWith('.svelte') ? componentCode(raw) : blank(raw);
+        for (const m of code.matchAll(READ)) {
           const line = lineAt(code, m.index);
           if (markerNear(rawLines, line - 1, /\/\/\s*allow-global-index-version:\s*\S+/)) continue;
-          out.push(fail(rel, line, 'reads vaultIndexStore.version: read the notes it shows (getMetadata / note selectors) or listVersion'));
+          const what = m[1].startsWith('version') ? 'version' : 'allMetadata()';
+          out.push(fail(rel, line, `reads vaultIndexStore.${what}: read the notes it shows (getMetadata / note selectors) or listVersion / listMetadata()`));
         }
       }
       return out;
@@ -566,7 +633,9 @@ export const checks = [
         const code = stripCommentsKeepOffsets(rel.endsWith('.svelte') ? blankHtmlComments(raw) : raw);
         for (const m of code.matchAll(CALL)) {
           const open = code.indexOf('(', m.index);
-          const shown = callArgs(code, open).slice(m[1] ? 2 : 0);
+          const args = callArgs(code, open).slice(m[1] ? 2 : 0);
+          // A message passed by name is checked where the name is set.
+          const shown = [...args, ...args.flatMap((arg) => messageVariables(arg.text).flatMap((name) => assignedValues(code, name)))];
           for (const arg of shown) for (const lit of arg.text.matchAll(LITERAL)) {
             // Only words the user reads: a literal with a space in it (keys
             // and ids such as 'tag-sweep' have none); ${…} parts are code.
@@ -597,10 +666,10 @@ export const checks = [
       const out = [];
       for (const rel of ctx.files(COMPONENTS, { ext: ['.svelte'] })) {
         const raw = ctx.read(rel);
-        if (!raw.includes("'Enter'")) continue;
+        if (!/['"]Enter['"]/.test(raw)) continue;
         const lines = raw.split(/\r?\n/);
         lines.forEach((line, i) => {
-          if (!/\bkey\s*===\s*'Enter'/.test(line)) return;
+          if (!/\bkey\s*===\s*['"]Enter['"]/.test(line)) return;
           if (/allow-enter-default:\s*\S+/.test(line) || /allow-enter-default:\s*\S+/.test(lines[i - 1] ?? '')) return;
           // The branch: up to the next else / other key test, at most 16 lines.
           let end = i + 1;

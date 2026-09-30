@@ -31,7 +31,7 @@ import { boardCacheStore } from './boardCache.svelte';
 import { vaultStore } from './vault.svelte';
 import { uiStore } from './ui.svelte';
 import { vaultSwapResettable } from '../core/vaultLifecycle';
-import { catchUpLoadedBoard, markBoardUnloaded } from './unloadedBoards';
+import { catchUpLoadedBoard, isBoardBeingCreated, markBoardUnloaded } from './unloadedBoards';
 import { tabStore } from './tabs.svelte';
 
 export type AdoptOutcome = 'adopted' | 'already' | 'duplicate' | 'renamed' | 'failed';
@@ -82,10 +82,14 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
   const vaultRoot = captured.path;
   if (!vaultRoot || !isStillSameVault(captured)) return 'failed';
   if (findLoadedBoardIdForPath(relPath)) return 'already';
+  // Filo is creating it: the create registers it, and its bytes may not be a board yet.
+  if (isBoardBeingCreated(relPath)) return 'already';
 
   const result = await loadBoard(vaultRoot, relPath);
   if (!isStillSameVault(captured)) return 'failed';
   if (!result.ok) {
+    // A create that began during the read: that read saw the empty reservation.
+    if (isBoardBeingCreated(relPath)) return 'already';
     const transient = isTransientBoardLoadError(result.error);
     lastFailure.set(vaultPath(relPath), { message: boardLoadReason(result.error, result.message), transient });
     markBoardUnloaded(relPath, boardLoadReason(result.error, result.message));
@@ -191,6 +195,9 @@ export function adoptUntrackedTreeBoards(treePaths: Iterable<string>, captured: 
     const key = vaultPath(p);
     if (scanned.has(key)) continue;
     if (findLoadedBoardIdForPath(p)) continue;
+    // Not marked scanned: once the create settles, the board is loaded (or, if
+    // the create failed, the file is worth a try on the next refresh).
+    if (isBoardBeingCreated(p)) continue;
     scanned.add(key);
     candidates.push(p);
   }

@@ -26,7 +26,7 @@ import { splitFrontmatterFence } from '../notes/frontmatterFence';
 /**
  * Case-insensitive tag-identity equality. Folds via
  * `toLocaleLowerCase('en-US')` to match the canonical identity used
- * everywhere else: `canonicaliseTagName` (tagsStorage), `vaultIndex.filesByTag`,
+ * everywhere else: `canonicaliseTagName` (tagsStorage)
  * and `frontmatterSync.valuesEqual`. Pinned to en-US so identity is portable
  * across hosts (a Turkish locale's dotless-i fold would otherwise split
  * `Important` / `important`). The rewriter uses this for its PRESENCE checks

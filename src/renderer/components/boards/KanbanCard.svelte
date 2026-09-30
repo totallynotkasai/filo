@@ -176,7 +176,7 @@
   function handleCoverError() { coverFailed = true; }
 
   function isOverdue(): boolean {
-    return isOverdueLib(dueDate, frontmatter.completed === true, clockStore.todayDate());
+    return isOverdueLib(dueDate, FIELD_READERS.completed(frontmatter), clockStore.todayDate());
   }
 
   // The shared chip helpers (as TaskList). `now` is the clock store's day, so a

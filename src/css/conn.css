@@ -140,17 +140,6 @@
   white-space: nowrap;
 }
 
-.connection-label .label-input {
-  width: 100%;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-size: var(--font-size-connection-label, 12px);
-  text-align: center;
-  color: inherit;
-  padding: 0;
-}
-
 /* ── Label Controls ── */
 .label-controls {
   display: flex;

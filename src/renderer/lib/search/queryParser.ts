@@ -4,7 +4,7 @@
  * Splits a raw search string into:
  *  - structured operators (`tag:`, `board:`, `has:`, `property:`, `type:`)
  *  - a bare regex literal (`/pattern/` or `/pattern/iflags`)
- *  - free-text remainder (passed to MiniSearch)
+ *  - free-text remainder (matched against titles and bodies by `runSearch`)
  *
  * Operator grammar:
  *   tag:value           — frontmatter tag match (leading `#` optional, case-insensitive)

@@ -37,6 +37,7 @@ import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { addTagToMarkdown } from '../lib/vault/tagRewriter';
 import { isMarkdownExtension } from '../lib/vault/extension';
 import { isMissingFileError } from '../lib/notes/noteWriter';
+import type { TagRewriteSentinelPayload } from '../lib/vault/tagRewriteSentinel';
 import { reportError } from '../lib/utils/errorBus';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 import { tagSweepStatus, whenTagSweepsIdle, withTagSweepProgress } from './tagSweepProgress.svelte';
@@ -332,7 +333,12 @@ export async function undoRename(snapshot: TagRenameSnapshot, retrying = false):
       });
       return;
     }
-    const result = await runTagRewriteSweep(newName, oldName, identity.path, new SvelteSet(snapshot.writtenPaths));
+    const result = await runTagRewriteSweep(newName, oldName, identity.path, new SvelteSet(snapshot.writtenPaths), {
+      mediaPaths: snapshot.mediaPaths,
+      tiles: snapshot.tiles,
+      chips: snapshot.chips,
+      ...(snapshot.color ? { color: snapshot.color } : {}),
+    });
     if (!isStillSameVault(identity)) return;
     if (result.failed.length > 0) {
       pushTagRewriteFailureToast({
@@ -365,6 +371,32 @@ export async function undoRename(snapshot: TagRenameSnapshot, retrying = false):
   await fileTagsStore.flushPendingSave();
   if (!isStillSameVault(identity)) return;
   await flushTagRewriteBoardWrites('Undo of the tag rename');
+}
+
+/**
+ * Finishes a tag sweep a crash cut short (the Resume of the recovery prompt).
+ * A rename's Undo resumes as that Undo, so only the attachments, tiles and
+ * chips it recorded are renamed back; any other sweep converges forward (a
+ * limited one only over its planned notes).
+ */
+export async function resumeTagSweep(payload: TagRewriteSentinelPayload): Promise<void> {
+  const { oldName, newName, plan, scoped, undoOfRename } = payload;
+  if (newName !== null && undoOfRename) {
+    // The Undo swept the rename's new name back to its old one.
+    await undoRename({
+      identity: captureVaultIdentity(),
+      oldName: newName,
+      newName: oldName,
+      color: undoOfRename.color,
+      writtenPaths: plan,
+      mediaPaths: undoOfRename.mediaPaths,
+      tiles: undoOfRename.tiles,
+      chips: undoOfRename.chips,
+    }, true);
+    return;
+  }
+  if (newName === null) await fileTagsStore.removeTagEverywhere(oldName, scoped ? plan : undefined);
+  else await fileTagsStore.renameTagEverywhere(oldName, newName, scoped ? plan : undefined);
 }
 
 /** Renames one filter chip back, if it still names the tag. See `restoreFilterChip`. */

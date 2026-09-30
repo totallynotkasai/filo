@@ -9,6 +9,7 @@ import { flushDirtyFlagSentinel } from '../lib/vault/dirtyFlagRecovery';
  */
 export function makeRecoverySlice(ctx: VaultContext) {
   return {
+    /** @internal test-only */
     clearRecoveryPendingPaths(): void {
       ctx.setRecoveryPendingPaths([]);
     },

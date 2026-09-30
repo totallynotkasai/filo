@@ -75,7 +75,7 @@ export async function tidyTagsAfterOpen(args: OpenTagHousekeeping): Promise<void
 function seedRegistryFromNotes(): void {
   const seed = emptyTagsFile();
   let mutated = false;
-  for (const md of vaultIndexStore.allMetadata()) {
+  for (const md of vaultIndexStore.allMetadata()) { // allow-global-index-version: a one-off read at open, not a derived
     if (md.tags.length === 0) continue;
     const unique = Array.from(new SvelteSet(
       md.tags.map((t) => t.replace(/^#/, '').trim()).filter(Boolean),

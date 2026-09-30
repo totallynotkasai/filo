@@ -37,7 +37,7 @@ Package:        npm run package
 | `vaultIdentity` | A vault swap mid-`await` can't apply the outgoing vault's data to the new one (`isStillSameVault`); vault-scoped state resets on swap; path-keyed stores use `VaultPath` keys, case-fold compares, and follow renames (path keys in `boardDiscovery` / `vaultDeleteOps` / `folderPins` / `tagsStorage` go through `vaultPath()`, and "the item or inside it" is `isAtOrUnder`); crash sentinels are per-machine; disk-shape IPC goes through `vaultOperations.ts`; one vault open or close runs at a time, and every `vault:close` names the vault it releases (main releases only that one); the pre-swap resets of state a rescue copy reads (board cache, tags, layout, sidebar order, unapplied Settings) declare `runAfter: ['leftBehind']`. |
 | `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; a handler's vault-relative path comes from the root / target pair `assertWithinVault` matched (`vaultRelativeWithin`), never `path.relative` across two spellings of the vault (an 8.3 name, a junction), so the `.filo/` guards can't be walked around; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; a command holding snapshots of boards beyond its own names them in `touchedBoardIds()`, so a board reload drops it; Task List section positions are clamped. |
-| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, every pointer capture handles `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts, no view or lib module reads the vault index's vault-wide `version` (it reads the notes it shows), a Kanban card builds its editor through `LazyTextTileBody` (a static preview, the editor mounted in idle time or on a press), toasts, notices, confirms and `reportError` messages say what happened in the user's words (no `sentinel`, `cascade`, `drain`, `baseline`, `IPC`, `envelope`), and every Enter handler in a component calls `preventDefault` (else its keypress presses the button of a dialog it opens). |
+| `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, every pointer capture handles `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts, no view, lib or store module reads the vault index's vault-wide `version` or `allMetadata()`, in script or markup (it reads the notes it shows), a Kanban card builds its editor through `LazyTextTileBody` (a static preview, the editor mounted in idle time or on a press), toasts, notices, confirms and `reportError` messages say what happened in the user's words (no `sentinel`, `cascade`, `drain`, `baseline`, `IPC`, `envelope`), and every Enter handler in a component calls `preventDefault` (else its keypress presses the button of a dialog it opens). |
 | `codebase` | No file in `src/main` / `src/renderer` over 1000 lines except the allowlisted ones, which may only shrink (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; the board loader accepts only the current format; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; E2E specs drive the built app (no `import('/src/…')`, named `*.e2e.ts`); app source and build config carry no audit ids (`Audit-N`, `P0-N`, `A25-01`, `Phase N / N.N`, and in comments `E.11`); a note's `tags:` is read only through the tags normaliser (`noteTags` / `*TagsField`), since a note may write them as text (`tags: project`); a board's drop handler copies or imports a file dropped from Explorer only after `classifyDroppedFile` (a file already in the vault is linked by its path, never copied). |
 
 **Escape hatches** are same-line comments with a reason, e.g. `// allow-cast: <reason>`, `// allow-direct-write: <reason>`, `// allow-module-state: <reason>`. Keep the marker text exact; the checks look for it.
@@ -60,8 +60,8 @@ The `coverage` job (the vitest coverage ratchet, on Linux) runs weekly (Monday 0
 | Frontend           | Svelte 5 (runes: `$state`, `$derived`, `SvelteSet`), TypeScript, Vite |
 | Rich text editor   | TipTap (ProseMirror) + tiptap-markdown for MD round-tripping (its serializer state replaced by prosemirror-markdown's, `delimiterRuns.ts`) |
 | Canvas             | Custom pointer-event handlers + rbush (spatial index)                  |
-| Markdown parsing   | markdown-it (the editor, through tiptap-markdown; card previews; a plain-text paste, with HTML off and line breaks kept); `yaml` package for FM |
-| Full-text search   | MiniSearch (the vault index's `query()`, built on first use); the Search panel matches note bodies itself |
+| Markdown parsing   | markdown-it (the editor, through tiptap-markdown; card previews; a plain-text paste, with HTML off); `yaml` package for FM |
+| Search             | The Search panel matches titles, tags and note bodies over the vault index itself (`lib/search/runSearch.ts`); MiniSearch only filters template titles in the Template Browser |
 | Schema validation  | Zod                                                                    |
 | List drag-and-drop | svelte-dnd-action                                                      |
 | IDs                | nanoid                                                                 |
@@ -336,7 +336,7 @@ filo/
 │   │   │   │   ├── renameToTitle.ts   # "Rename file to match title"
 │   │   │   │   └── setNoteTitle.ts    # Document-tab title edit → frontmatter `title:`
 │   │   │   ├── vault/                 # Vault-side helpers (renderer)
-│   │   │   │   ├── vaultIndex.ts      # Per-note metadata (frontmatter, title, tags, body; no Markdown parse) + MiniSearch built on first query
+│   │   │   │   ├── vaultIndex.ts      # Per-note metadata (frontmatter, title, tags, body; no Markdown parse)
 │   │   │   │   ├── vaultOperations.ts # Disk-shape IPC: withDrainedWrites, rename, trash/restore, folder, copy
 │   │   │   │   ├── fileRefIntegrity.ts # Board path rewrites on rename, cascade-delete targets, broken refs
 │   │   │   │   ├── dirtyFlagRecovery.ts # `.filo/.dirty.<machineId>` sentinel read/write
@@ -411,6 +411,7 @@ filo/
 │   │   │   │   ├── configDriftHold.ts # `.filo/` settings / hotkeys whose write waits for Reload / Keep local (refused at once; the answer re-fires or drops it)
 │   │   │   │   ├── writeSchedulerTypes.ts # createScheduler's type surface (re-exported by writeScheduler.ts)
 │   │   │   │   ├── writeSchedulerFailures.ts # Failure attribution + retention of transient failures for Retry / Ctrl+S
+│   │   │   │   ├── writeSchedulerParked.ts # Writes neither pending nor in flight (a timer fire behind an earlier write, an entry flushAll hasn't sent yet): flush / hasWork / cancel see them
 │   │   │   │   ├── retryFeedback.ts   # A toast's Retry: fires every kept failed write, then names what still isn't on disk, per kind
 │   │   │   │   ├── writeErrorToast.ts # The toast for a failed debounced write (names a preserved temp file)
 │   │   │   │   ├── lastViewFlush.ts   # Writes a Kanban / Task List `lastView` by the captured board id at teardown, only when a value it owns changed
@@ -451,6 +452,8 @@ filo/
 │   │   │   │   ├── createEditor.ts    # Editor factory with all extensions
 │   │   │   │   ├── closeDrainGate.svelte.ts # Freezes the editors while a leave saves (held until the swap unmounts them)
 │   │   │   │   ├── markdownSync.ts    # MD ↔ ProseMirror round-trip
+│   │   │   │   ├── staticPreview.ts   # A note body as static HTML for a Kanban card whose editor isn't mounted yet (one markdown-it render, sanitised)
+│   │   │   │   ├── editorMountQueue.ts # Mounts queued editors in idle time, cards on screen first
 │   │   │   │   ├── blockLayout.ts     # Aligned / indented paragraph or heading → one HTML line
 │   │   │   │   ├── listItemLayout.ts  # No alignment or indent in a list or checklist item (Align fails and the toolbar disables it; a layout that gets there is cleared)
 │   │   │   │   ├── delimiterRuns.ts   # Filo's serializer state (prosemirror-markdown's): a bold / italic / strikethrough run Markdown wouldn't read back where it is becomes `<strong>` / `<em>` / `<s>`
@@ -466,9 +469,9 @@ filo/
 │   │   │   │   ├── tableMarkdown.ts   # GFM only for one-paragraph cells (`|` escaped, alignment kept); any other table is HTML
 │   │   │   │   ├── codeFence.ts       # A code fence one longer than any backtick line in the code; a paragraph made code keeps its soft breaks as lines
 │   │   │   │   ├── hardBreak.ts       # Shift+Enter: `\` at line end, `<br>` in a heading or table cell
-│   │   │   │   ├── softBreak.ts       # A single newline inside a paragraph: its own node, shown as a line break, written back as a bare newline
+│   │   │   │   ├── softBreak.ts       # A single newline inside a paragraph: its own node, shown as a line break, written back as a bare newline; Enter beside one splits the paragraph there
 │   │   │   │   ├── minimalEscapes.ts  # A save drops a `\*` / `\_` / `\[` … escape markdown-it doesn't need (same HTML); a line the file already holds is written as the file spells it (matched in order)
-│   │   │   │   ├── pastePlainText.ts  # A text/plain paste: Markdown with HTML off and line breaks kept; Ctrl+Shift+V literal
+│   │   │   │   ├── pastePlainText.ts  # A text/plain paste: Markdown with HTML off, a newline a soft break; Ctrl+Shift+V literal
 │   │   │   │   ├── blockquote.ts      # A quote is written without its empty paragraphs (no bare `>` line)
 │   │   │   │   ├── lossyChanges.ts    # The lines a read-only note would change: the banner's "Line N would change…" / "would add a blank line above line N", Take ownership's list
 │   │   │   │   ├── renderedSame.ts    # Lossy check past the cosmetic rules: same markdown-it HTML and reference definitions, no escape another app reads differently
@@ -565,6 +568,8 @@ filo/
 │   │   │   ├── spatialIndex.ts        # rbush wrapper
 │   │   │   └── utils/                 # Shared utilities
 │   │   │       ├── ids.ts             # nanoid wrapper
+│   │   │       ├── keyedReactivity.svelte.ts # KeyedVersions: a reader tracks one key, so adding an entry doesn't re-run every other key's readers
+│   │   │       ├── progressiveCount.svelte.ts # Renders a long list's first rows at once, the rest in idle time (a large sidebar folder)
 │   │   │       ├── forEachLimited.ts  # Runs async work over a list, a few at a time (the tag sweep's reads and writes)
 │   │   │       ├── dateFormat.ts      # localIsoDate: the one `YYYY-MM-DD` formatter (local calendar date, never UTC)
 │   │   │       ├── lineEnding.ts      # fileLineEnding (majority) / frontmatterLineEnding: note writer + tag rewriter
@@ -677,6 +682,7 @@ filo/
 │   │       │   ├── TileHeader.svelte  # Title, tags, lock, style, delete
 │   │       │   ├── TileStylePopup.svelte
 │   │       │   ├── TextTile.svelte
+│   │       │   ├── LazyTextTileBody.svelte # A Kanban card's text: a static preview until the editor mounts (idle time, or a press)
 │   │       │   ├── ImageTile.svelte
 │   │       │   ├── VideoTile.svelte
 │   │       │   ├── AudioTile.svelte
@@ -792,7 +798,7 @@ filo/
 
 - Files: `camelCase.ts` for modules, `PascalCase.svelte` for components, `camelCase.svelte.ts` for stores.
 - CSS variables: `--ui-{category}-{property}` (e.g., `--ui-surface`, `--ui-border`, `--ui-text-primary`).
-- IPC channels: `vault:read`, `vault:write`, `dialog:open`, `window:minimize` (namespace:action).
+- IPC channels: `vault:read-file-text`, `board:save`, `dialog:open-file`, `shell:show-item-in-folder` (namespace:action).
 - Store exports: named exports, not default. e.g., `export const boardStore = ...`.
 - Command names: `verb:noun` format (e.g., `tile:add`, `connection:delete`, `tile:toggle-lock`).
 
@@ -975,7 +981,7 @@ Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, U
 
 ## Key Design Decisions — Do Not Deviate
 
-1. **Local-first. No network calls.** No telemetry, analytics, or remote APIs. Everything works offline.
+1. **Local-first. No network calls.** No telemetry, analytics, or remote APIs. Everything works offline. The one exception, allowed by the design doc: a Link tile fetches its page's title and preview (`link:fetch-metadata`, in main; http(s) to public addresses only), and only for a link the user added.
 2. **Open format.** Text is Markdown. Boards are JSON. Media files are stored as-is. A user must be able to read their data with any text editor.
 3. **File-backed tiles.** Text, Image, Video, Audio, and File tiles point to real files in the vault. Link, Iframe, and Timer tiles store data inline in board JSON.
 4. **One `.md` file = one document.** A Text Tile and a Document Board are two views of the same `.md` file. Edits in either view reflect immediately in the other.

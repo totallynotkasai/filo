@@ -42,8 +42,7 @@ import { isLineBreak } from '../../renderer/lib/editor/softBreak';
  * as the last thing in a block (it shows nothing either, and isn't written);
  * whitespace at the edge of a bold, italic or strikethrough run (written
  * outside it: a formatted space shows nothing); alignment or indent in a list
- * item (the editor clears it there, `listItemLayout.ts`). One known gap a
- * fix will add back: a numbered list starting at 0 (saved as starting at 1).
+ * item (the editor clears it there, `listItemLayout.ts`).
  * Every counter-example found while
  * fixing is kept as a named case in `markdownBodyRoundTrip.test.ts` or
  * `editorEditsReadBack.test.ts`.
@@ -341,14 +340,14 @@ type BlockArbs = {
   list: ProseMirrorNode;
 };
 
-/** Lists nest up to two levels below the top; a numbered list may start anywhere from 1. */
+/** Lists nest up to two levels below the top; a numbered list may start anywhere from 0. */
 const { list: listArb } = fc.letrec<BlockArbs>((tie) => ({
   block: fc.oneof({ depthSize: 'small', withCrossShrink: true }, paragraphArb, tie('list')),
   list: fc.oneof(
     { depthSize: 'small', withCrossShrink: true },
     fc.array(listItemArb(tie('list')), { minLength: 1, maxLength: 3 }).map((items) => schema.nodes.bulletList.create(null, items)),
     fc
-      .record({ items: fc.array(listItemArb(tie('list')), { minLength: 1, maxLength: 3 }), start: fc.constantFrom(1, 1, 1, 2, 3, 10) })
+      .record({ items: fc.array(listItemArb(tie('list')), { minLength: 1, maxLength: 3 }), start: fc.constantFrom(1, 1, 1, 0, 2, 3, 10) })
       .map(({ items, start }) => schema.nodes.orderedList.create({ start }, items)),
     fc
       .array(taskItemArb(tie('list')), { minLength: 1, maxLength: 3 })

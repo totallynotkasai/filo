@@ -17,9 +17,19 @@ export type Priority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
 
 type Frontmatter = Record<string, unknown>;
 
+/** The strings a `completed:` value may say "done" with (YAML 1.1 booleans, and a quoted `"true"`). */
+const DONE_WORDS: ReadonlySet<string> = new Set(['true', 'yes', 'on']);
+
 export const FIELD_READERS = {
+  /**
+   * YAML 1.2 reads `completed: yes` (and `on`, and a quoted `"true"`) as a
+   * string, but a note written by hand or by an app on YAML 1.1 means done.
+   * Read only: a toggle writes a real `true` / `false`.
+   */
   completed(fm: Frontmatter): boolean {
-    return fm.completed === true;
+    const v = fm.completed;
+    if (typeof v === 'string') return DONE_WORDS.has(v.trim().toLowerCase());
+    return v === true;
   },
 
   priority(fm: Frontmatter): Priority {

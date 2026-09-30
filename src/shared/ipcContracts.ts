@@ -423,10 +423,6 @@ export interface IpcChannelMap {
   };
 
   // ── Dialog ───────────────────────────────────────────────────────
-  'dialog:confirm': {
-    args: [message: string, detail?: string, kind?: string];
-    result: boolean;
-  };
   'dialog:choice': {
     args:
       | [message: string, buttons: string[]]

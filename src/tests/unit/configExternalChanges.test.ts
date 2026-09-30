@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeConfigs, seedConfigSnapshots } from '@renderer/lib/boards/configWriteScheduler';
+import {
+  writeConfigs,
+  seedConfigSnapshots,
+  scheduleConfigWrite,
+  flushScheduledConfig,
+  cancelPendingConfigWrite,
+  markCorruptConfigTarget,
+  clearCorruptConfigTarget,
+} from '@renderer/lib/boards/configWriteScheduler';
 import { setConfigExternalHandlers, type ConfigDriftChoice } from '@renderer/lib/boards/configDrift';
 import { __configDriftSettledForTests, isConfigDriftHeld } from '@renderer/lib/boards/configDriftHold';
 import { noteBaseline, __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
@@ -156,6 +164,27 @@ describe('config files changed outside Filo', () => {
     expect(again.failed).toEqual([]);
     expect(saves(calls, 'defaults.json')).toHaveLength(1);
     expect(log.prompts).toEqual(['defaults.json']);
+  });
+
+  it('Keep local writes the held settings even when a corrupt file failed in the same save', async () => {
+    handlers('keep-local');
+    const calls: Call[] = [];
+    mockVault({ 'defaults.json': { mindmap: { theirs: true }, kanban: {}, tasklist: {}, document: {} } }, calls);
+    // workspace.json is corrupt on disk: its write is refused, and no retry
+    // could mend that, so the scheduler keeps nothing of this save.
+    markCorruptConfigTarget('config:save-workspace');
+    try {
+      const args = { vaultRoot: VAULT, settings: settingsWith({ x: 2 }), theme: 'light', workspace, layout: layout(300) };
+      scheduleConfigWrite(() => args);
+      await flushScheduledConfig(() => args);
+      expect(saves(calls, 'defaults.json')).toHaveLength(0); // held for the answer
+      await __configDriftSettledForTests();
+      await flushScheduledConfig(() => args);
+      expect(saves(calls, 'defaults.json')).toHaveLength(1);
+    } finally {
+      clearCorruptConfigTarget('config:save-workspace');
+      cancelPendingConfigWrite();
+    }
   });
 
   it("settings changed outside Filo, Reload: Filo takes the file's settings and writes nothing over it", async () => {

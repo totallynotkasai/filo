@@ -3,14 +3,16 @@
  *
  * tiptap-markdown's own paste parses the text with the note parser, whose
  * `html: true` (needed to load the marks a note keeps as inline HTML) and
- * `breaks: false` read ordinary text as markup: `List<String>`, `<Enter>` and
- * `<!-- -->` vanish, and two lines join into one. Filo parses a paste with a
- * second parser instead: the same Markdown rules and extensions, but HTML
- * off (anything tag-like stays text) and every line break kept. Markdown
- * copied from another app still pastes with its formatting.
+ * reads ordinary text as markup: `List<String>`, `<Enter>` and `<!-- -->`
+ * vanish. Filo parses a paste with a second parser instead: the same Markdown
+ * rules and extensions, but HTML off (anything tag-like stays text). A single
+ * newline becomes a soft break, as it does when the same text is opened from
+ * a file: shown as a line break and saved as a bare newline (a hard break
+ * would save a backslash at the end of every line). Markdown copied from
+ * another app still pastes with its formatting.
  *
  * Ctrl+Shift+V pastes the text literally: a paragraph per blank-line-
- * separated block and a line break per newline, with no Markdown read.
+ * separated block and a soft break per newline, with no Markdown read.
  *
  * Code blocks never reach this: ProseMirror pastes into one as plain text.
  */
@@ -35,19 +37,21 @@ type MarkdownParserClass = new (
 function pasteParserFor(editor: Editor): MarkdownParserLike | null {
   const parser = (editor as { storage?: { markdown?: { parser?: object } } }).storage?.markdown?.parser;
   const Parser = parser?.constructor as MarkdownParserClass | undefined;
-  return Parser ? new Parser(editor, { html: false, linkify: false, breaks: true }) : null;
+  return Parser ? new Parser(editor, { html: false, linkify: false, breaks: false }) : null;
 }
 
-/** `text` as paragraphs (split on blank lines) holding its lines, joined by line breaks. */
+/** `text` as paragraphs (split on blank lines) holding its lines, joined by soft breaks. */
 export function literalTextSlice(schema: Schema, text: string): Slice {
-  const hardBreak = schema.nodes.hardBreak;
+  const lineBreak = schema.nodes.softBreak ?? schema.nodes.hardBreak;
   const paragraph = schema.nodes.paragraph;
   if (!paragraph) return Slice.empty;
   const blocks = text.replace(/\r\n?/g, '\n').split(/\n{2,}/);
   const nodes = blocks.map((block) => {
     const inline: PMNode[] = [];
     block.split('\n').forEach((line, i) => {
-      if (i > 0) inline.push(hardBreak ? hardBreak.create() : schema.text(' '));
+      // A break opening the paragraph (a stray newline at the start of the
+      // paste) shows nothing and would be written as HTML.
+      if (i > 0 && inline.length > 0) inline.push(lineBreak ? lineBreak.create() : schema.text(' '));
       if (line) inline.push(schema.text(line));
     });
     return paragraph.create(null, inline);

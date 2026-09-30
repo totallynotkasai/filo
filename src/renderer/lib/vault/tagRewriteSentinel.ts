@@ -96,6 +96,50 @@ export interface TagRewriteSentinelPayload {
    * every note carrying the tag. Absent for a vault-wide sweep.
    */
   scoped?: boolean;
+  /**
+   * Set when the sweep is the Undo of a rename: what else that Undo renames
+   * back once the notes are done. A Resume replays only these, never every
+   * attachment, tile and chip that carries the tag by then.
+   */
+  undoOfRename?: TagRenameUndoScope;
+}
+
+/** The attachments, board-only tiles and filter chips a rename's Undo renames back. */
+export interface TagRenameUndoScope {
+  mediaPaths: string[];
+  tiles: Array<{ boardId: string; id: string }>;
+  chips: Array<{ boardId: string; slot: number | 'lastView'; index: number }>;
+  color?: string;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((p) => typeof p === 'string');
+}
+
+/** `undefined` when absent, `null` when present but malformed. */
+function parseUndoScope(value: unknown): TagRenameUndoScope | undefined | null {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  if (!isStringArray(v.mediaPaths)) return null;
+  const tiles = v.tiles;
+  if (!Array.isArray(tiles) || !tiles.every((t) => t && typeof t === 'object'
+    && typeof (t as Record<string, unknown>).boardId === 'string'
+    && typeof (t as Record<string, unknown>).id === 'string')) return null;
+  const chips = v.chips;
+  if (!Array.isArray(chips) || !chips.every((c) => {
+    if (!c || typeof c !== 'object') return false;
+    const chip = c as Record<string, unknown>;
+    return typeof chip.boardId === 'string' && typeof chip.index === 'number'
+      && (typeof chip.slot === 'number' || chip.slot === 'lastView');
+  })) return null;
+  if (v.color !== undefined && typeof v.color !== 'string') return null;
+  return {
+    mediaPaths: v.mediaPaths,
+    tiles: (tiles as Array<{ boardId: string; id: string }>).map((t) => ({ boardId: t.boardId, id: t.id })),
+    chips: (chips as TagRenameUndoScope['chips']).map((c) => ({ boardId: c.boardId, slot: c.slot, index: c.index })),
+    ...(typeof v.color === 'string' ? { color: v.color } : {}),
+  };
 }
 
 export interface ReadResult {
@@ -220,6 +264,8 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
       if (committed !== undefined && (!Array.isArray(committed) || !committed.every((p) => typeof p === 'string'))) {
         return { unreadable: true };
       }
+      const undoOfRename = parseUndoScope(parsed.undoOfRename);
+      if (undoOfRename === null) return { unreadable: true };
       return {
         payload: {
           timestamp: parsed.timestamp,
@@ -229,6 +275,7 @@ export function readPendingRewrite(vaultRoot: string): Promise<ReadResult> {
           preexistingNewNamePaths: pre ?? [],
           committedPaths: committed ?? [],
           ...(parsed.scoped === true ? { scoped: true } : {}),
+          ...(undoOfRename ? { undoOfRename } : {}),
         },
       };
     } catch {

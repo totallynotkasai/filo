@@ -171,7 +171,7 @@ export class NoteEditorView {
     );
   }
 
-  /** True while keystrokes wait to be serialised. */
+  /** @internal test-only: true while keystrokes wait to be serialised. */
   get hasUnserialised(): boolean {
     return this.unserialised;
   }

@@ -68,15 +68,6 @@ export function makeWaypointsGroupsSlice(ctx: BoardContext) {
       boardCacheStore.persistWaypoints(board.id, board.waypoints ?? []);
     },
 
-    toggleWaypointLock(waypointId: string): void {
-      const board = mindMapBoardOrNull();
-      if (!board) return;
-      board.waypoints = (board.waypoints || []).map((w) =>
-        w.id === waypointId ? { ...w, locked: !w.locked } : w,
-      );
-      boardCacheStore.persistWaypoints(board.id, board.waypoints ?? []);
-    },
-
     /**
      * Explicit setter used by `ToggleWaypointLockCommand`
      * so undo/redo restores the snapshotted boolean rather than running

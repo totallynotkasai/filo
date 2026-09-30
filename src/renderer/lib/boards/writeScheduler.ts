@@ -43,6 +43,7 @@ import type {
   SchedulerSentinelInfo,
 } from './writeSchedulerTypes';
 import { createFailureLedger, isRetainableWriteError, registerRetryHook } from './writeSchedulerFailures';
+import { newParkedEntry, ParkedWrites } from './writeSchedulerParked';
 
 /**
  * What a `performWrite` race resolves to when it outruns the optional
@@ -73,16 +74,8 @@ export function createScheduler<TArgs>(
    * "saving", `.filo/.dirty` never cleared).
    */
   const inFlight = new Map<string, Set<InFlightEntry>>();
-  /**
-   * PARKED fires. A debounce timer firing for a key with a write already in
-   * flight defers the new write behind `drainPriorInFlight(key)` so the newest
-   * lands last. During that await it is in neither `pending` nor `inFlight`, so
-   * each parked fire registers here BEFORE the await and resolves once
-   * `fireFromTimer` registered its `inFlight` entry (or no-op'd); `flush`/`flushAll`
-   * await these then re-drain. Entries carry the schedule-time sentinel info + a
-   * `cancelled` flag so `cancel(key)` can reach a parked fire.
-   */
-  const parked = new Map<string, Set<ParkedEntry>>();
+  /** Writes in neither `pending` nor `inFlight` (see `writeSchedulerParked.ts`). */
+  const parked = new ParkedWrites();
   /**
    * Writes that outlived `writeTimeoutMs`, per key. They were reported as
    * failed, but they can still land, so the next write of the key waits for
@@ -120,34 +113,13 @@ export function createScheduler<TArgs>(
 
   const hasPriorWrite = (key: string): boolean => !!inFlight.get(key)?.size || !!overdue.get(key)?.size;
 
-  const addParked = (key: string, entry: ParkedEntry): void => {
-    let set = parked.get(key);
-    if (!set) {
-      set = new Set<ParkedEntry>();
-      parked.set(key, set);
-    }
-    set.add(entry);
-  };
-  const removeParked = (key: string, entry: ParkedEntry): void => {
-    const set = parked.get(key);
-    if (!set) return;
-    set.delete(entry);
-    if (set.size === 0) parked.delete(key);
-  };
-  const anyParked = (): boolean => {
-    for (const set of parked.values()) if (set.size > 0) return true;
-    return false;
-  };
   // A write of the path armed here keeps it pending when an earlier one lands
   // (see `registerArmedPathSource`).
   registerArmedPathSource((path) => {
     for (const entry of pending.values()) {
       if (entry.schedulePath && vaultPath(entry.schedulePath) === path) return true;
     }
-    for (const set of parked.values()) {
-      for (const p of set) if (!p.cancelled && p.path && vaultPath(p.path) === path) return true;
-    }
-    return false;
+    return parked.holdsPath(path);
   });
   // Failure attribution and retention of failed fires' args live in
   // writeSchedulerFailures.ts.
@@ -491,15 +463,8 @@ export function createScheduler<TArgs>(
         // waits (it is in neither `pending` nor `inFlight` yet). Resolve it only
         // after `fireFromTimer` has registered the `inFlight` entry (or no-op'd),
         // so there is no gap where the write is in no structure.
-        let resolveParked!: () => void;
-        const parkedPromise = new Promise<void>((res) => { resolveParked = res; });
-        const parkedEntry: ParkedEntry = {
-          promise: parkedPromise,
-          vaultRoot: nextSentinel.vaultRoot,
-          path: nextSentinel.path,
-          cancelled: false,
-        };
-        addParked(key, parkedEntry);
+        const { entry: parkedEntry, resolve: resolveParked } = newParkedEntry(nextSentinel.vaultRoot, nextSentinel.path);
+        parked.add(key, parkedEntry);
         // Capture the scheduler generation at park time; if a `reset()` (vault
         // swap) bumps it during the drain, the closure must neither fire nor
         // surface missing-source against the new vault. The parked promise still
@@ -516,10 +481,10 @@ export function createScheduler<TArgs>(
             if (parkedEntry.cancelled) return;
             // No longer armed once it fires (the in-flight entry registers
             // synchronously inside), so its hand-off can release the path.
-            removeParked(key, parkedEntry);
+            parked.remove(key, parkedEntry);
             fireFromTimer();
           } finally {
-            removeParked(key, parkedEntry);
+            parked.remove(key, parkedEntry);
             resolveParked();
           }
         })();
@@ -554,9 +519,7 @@ export function createScheduler<TArgs>(
     // resume after the delete and mark the deleted path failed for the session.
     // Each un-cancelled parked fire owes exactly one endWrite; emit the balanced
     // success here and let the parked closure bail.
-    const parkedSet = parked.get(key);
-    if (!parkedSet) return;
-    for (const parkedEntry of parkedSet) {
+    for (const parkedEntry of parked.of(key)) {
       if (parkedEntry.cancelled) continue;
       parkedEntry.cancelled = true;
       safeEndWrite(
@@ -584,12 +547,7 @@ export function createScheduler<TArgs>(
     // A PARKED fire is in neither `pending` nor `inFlight` while it waits, so this
     // early-return must check `parked` too — else a flush in that gap reports
     // {ok:true} before the newest edit landed.
-    const initialParked = parked.get(key);
-    if (
-      !pendingEntry &&
-      (!initialBucket || initialBucket.size === 0) &&
-      !(initialParked && initialParked.size > 0)
-    ) {
+    if (!pendingEntry && (!initialBucket || initialBucket.size === 0) && parked.of(key).size === 0) {
       return { ok: true };
     }
 
@@ -670,12 +628,10 @@ export function createScheduler<TArgs>(
       for (const inflightEntry of bucket ? Array.from(bucket) : []) {
         await consumeInflight(inflightEntry);
       }
-      const parkedSet = parked.get(key);
-      if (parkedSet && parkedSet.size > 0) {
-        await Promise.all(Array.from(parkedSet, (p) => p.promise));
-      }
+      const parkedSet = parked.of(key);
+      if (parkedSet.size > 0) await Promise.all(Array.from(parkedSet, (p) => p.promise));
       guard++;
-    } while ((inFlight.get(key)?.size || parked.get(key)?.size) && guard < 50);
+    } while ((inFlight.get(key)?.size || parked.of(key).size) && guard < 50);
     if (guard >= 50) {
       console.warn(`[${opts.name}] flush("${key}") drain hit the iteration bound (50) — possible reschedule loop.`);
     }
@@ -691,6 +647,9 @@ export function createScheduler<TArgs>(
       scheduleVaultRoot: string | undefined;
       schedulePath: string | undefined;
       getArgs: () => TArgs | null;
+      /** Registered as parked until it fires, so `flush(key)` / `hasWork` still see it while it waits its turn. */
+      parked: ParkedEntry;
+      resolveParked: () => void;
     }
     drainRetained(); // re-fire every retained failed write once
 
@@ -708,12 +667,19 @@ export function createScheduler<TArgs>(
       const args = rawArgs && opts.snapshotArgs
         ? opts.snapshotArgs(rawArgs)
         : rawArgs;
+      const { entry: parkedEntry, resolve: resolveParked } = newParkedEntry(entry.scheduleVaultRoot, entry.schedulePath);
+      // The loop below fires these one after another; one waiting its turn is
+      // no longer pending, and without this a `flush(key)` (a board delete's
+      // save first) would report it saved before it had even been sent.
+      parked.add(key, parkedEntry);
       drained.push({
         key,
         args,
         scheduleVaultRoot: entry.scheduleVaultRoot,
         schedulePath: entry.schedulePath,
         getArgs: entry.getArgs,
+        parked: parkedEntry,
+        resolveParked,
       });
     }
     pending.clear();
@@ -737,41 +703,64 @@ export function createScheduler<TArgs>(
     // denominator under us.
     const drainedTotal = drained.length + inflightSnapshot.length;
 
-    for (const entry of drained) {
-      if (!entry.args) {
-        const message = opts.missingSourceMessage?.(entry.key);
-        if (message) {
-          reportError(
-            opts.name,
-            new Error(`flushAll missed for "${entry.key}": source removed before flush`),
-            message,
-          );
+    const unpark = (entry: DrainedEntry): void => {
+      parked.remove(entry.key, entry.parked);
+      entry.resolveParked();
+    };
+    try {
+      for (const entry of drained) {
+        // `cancel(key)` reached it while it waited (the board was deleted) and
+        // has already settled its write tracking.
+        if (entry.parked.cancelled) {
+          unpark(entry);
+          continue;
         }
-        safeEndWrite(
-          { vaultRoot: entry.scheduleVaultRoot, path: entry.schedulePath },
-          false,
-        );
-        const id = entry.schedulePath ?? entry.key;
-        if (!failed.includes(id)) failed.push(id);
-        continue;
+        if (!entry.args) {
+          unpark(entry);
+          const message = opts.missingSourceMessage?.(entry.key);
+          if (message) {
+            reportError(
+              opts.name,
+              new Error(`flushAll missed for "${entry.key}": source removed before flush`),
+              message,
+            );
+          }
+          safeEndWrite(
+            { vaultRoot: entry.scheduleVaultRoot, path: entry.schedulePath },
+            false,
+          );
+          const id = entry.schedulePath ?? entry.key;
+          if (!failed.includes(id)) failed.push(id);
+          continue;
+        }
+        // Drain any older write in flight for this key BEFORE firing the pending
+        // (newest) one so the newest lands LAST. The prior entries stay in
+        // `inflightSnapshot`, so their attribution still runs below — here we only
+        // enforce ORDERING.
+        //
+        // Guard the await on a NON-EMPTY bucket: awaiting yields a microtask even
+        // when nothing is in flight, deferring `fireWrite`'s synchronous IPC
+        // dispatch — callers that fire-and-don't-await `flushAll()` rely on the
+        // write having begun synchronously.
+        if (hasPriorWrite(entry.key)) await drainPriorInFlight(entry.key);
+        if (entry.parked.cancelled) {
+          unpark(entry);
+          continue;
+        }
+        const sentinel = opts.getSentinelInfo(entry.args);
+        if (sentinel.vaultRoot) trackedVault = sentinel.vaultRoot;
+        // Unparked just before the fire, which registers its in-flight entry
+        // synchronously: there is no moment when the write is in neither.
+        unpark(entry);
+        const failureList = await fireWrite(entry.key, entry.args, entry.getArgs);
+        for (const f of failureList) {
+          ledger.consume(f);
+          if (!failed.includes(f)) failed.push(f);
+        }
       }
-      // Drain any older write in flight for this key BEFORE firing the pending
-      // (newest) one so the newest lands LAST. The prior entries stay in
-      // `inflightSnapshot`, so their attribution still runs below — here we only
-      // enforce ORDERING.
-      //
-      // Guard the await on a NON-EMPTY bucket: awaiting yields a microtask even
-      // when nothing is in flight, deferring `fireWrite`'s synchronous IPC
-      // dispatch — callers that fire-and-don't-await `flushAll()` rely on the
-      // write having begun synchronously.
-      if (hasPriorWrite(entry.key)) await drainPriorInFlight(entry.key);
-      const sentinel = opts.getSentinelInfo(entry.args);
-      if (sentinel.vaultRoot) trackedVault = sentinel.vaultRoot;
-      const failureList = await fireWrite(entry.key, entry.args, entry.getArgs);
-      for (const f of failureList) {
-        ledger.consume(f);
-        if (!failed.includes(f)) failed.push(f);
-      }
+    } finally {
+      // A throw above must not leave a `flush(key)` waiting for ever.
+      for (const entry of drained) unpark(entry);
     }
 
     if (inflightSnapshot.length > 0) {
@@ -806,7 +795,7 @@ export function createScheduler<TArgs>(
     // Bounded so a reschedule chaining behind a wedge can't strand the flush.
     let parkedDrainedTotal = 0;
     let parkedGuard = 0;
-    while ((anyParked() || inFlight.size > 0) && parkedGuard < 50) {
+    while ((parked.any() || inFlight.size > 0) && parkedGuard < 50) {
       parkedGuard++;
       // Drain freshly-registered in-flight entries (a parked fire that already
       // fired, or any write that appeared after the snapshot). Snapshot the live
@@ -829,10 +818,8 @@ export function createScheduler<TArgs>(
       // Await any parked promise so its deferred fire registers an in-flight
       // entry (drained on the next pass). Resolves once the fire has fired or
       // no-op'd, so a still-parked write can't slip past the loop condition.
-      if (anyParked()) {
-        const parkedPromises: Promise<void>[] = [];
-        for (const set of parked.values()) for (const p of set) parkedPromises.push(p.promise);
-        await Promise.all(parkedPromises);
+      if (parked.any()) {
+        await Promise.all(parked.promises());
       }
     }
     if (parkedGuard >= 50) {
@@ -900,7 +887,7 @@ export function createScheduler<TArgs>(
 
   // Any unsaved work for `key`: pending / parked / in flight / retained.
   const hasWork = (key: string): boolean =>
-    pending.has(key) || !!inFlight.get(key)?.size || !!parked.get(key)?.size || ledger.hasRetained(key);
+    pending.has(key) || !!inFlight.get(key)?.size || parked.of(key).size > 0 || ledger.hasRetained(key);
 
   function hasPendingTimer(predicate: (args: TArgs) => boolean): boolean {
     for (const entry of pending.values()) {
@@ -915,12 +902,7 @@ export function createScheduler<TArgs>(
   // only); probes that must not report idle/clean over a parked write OR the two. Parked entries carry
   // no args → the predicate sees the schedule-time `{ key, path }`.
   function hasParked(predicate: (info: { key: string; path: string | undefined }) => boolean): boolean {
-    for (const [key, set] of parked.entries()) {
-      for (const entry of set) {
-        if (!entry.cancelled && predicate({ key, path: entry.path })) return true;
-      }
-    }
-    return false;
+    return parked.matches(predicate);
   }
 
   function __failuresSizeForTests(): number {
@@ -941,16 +923,9 @@ export function createScheduler<TArgs>(
    * success while a write is still parked.
    */
   function __parkForTests(key: string): () => void {
-    let release!: () => void;
-    const parkedPromise = new Promise<void>((res) => { release = res; });
-    const entry: ParkedEntry = {
-      promise: parkedPromise,
-      vaultRoot: undefined,
-      path: undefined,
-      cancelled: false,
-    };
-    addParked(key, entry);
-    return () => { removeParked(key, entry); release(); };
+    const { entry, resolve } = newParkedEntry(undefined, undefined);
+    parked.add(key, entry);
+    return () => { parked.remove(key, entry); resolve(); };
   }
 
   return {

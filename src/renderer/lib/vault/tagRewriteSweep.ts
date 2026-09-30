@@ -30,6 +30,7 @@ import { rewriteTagInMarkdown, removeTagFromMarkdown, tagsEqual } from './tagRew
 import {
   writePendingRewrite,
   clearPendingRewrite,
+  type TagRenameUndoScope,
   type TagRewriteSentinelPayload,
 } from './tagRewriteSentinel';
 import { reportError } from '../utils/errorBus';
@@ -135,6 +136,8 @@ export interface TagRewriteSweepArgs {
   applyChanges: (relPaths: string[]) => Promise<void>;
   /** When provided, only rewrite candidate files whose path is in this set. */
   pathFilter?: ReadonlySet<string>;
+  /** The sweep is a rename's Undo: recorded in the sentinel, so a Resume replays only what that Undo renames back. */
+  undoOfRename?: TagRenameUndoScope;
   /** Told as each note is read and as each is written (how many are done), so a long sweep can show how far it is. */
   onProgress?: (progress: TagSweepProgress) => void;
 }
@@ -176,7 +179,7 @@ async function runSweep(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResul
 }
 
 async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<MarkdownRewriteResult> {
-  const { vaultRoot, metadata, oldName, newName, applyChanges, pathFilter } = args;
+  const { vaultRoot, metadata, oldName, newName, applyChanges, pathFilter, undoOfRename } = args;
   if (!vaultRoot) return { attempted: 0, succeeded: [], failed: [] };
   const progress = (phase: TagSweepProgress['phase'], done: number, total: number): void => {
     try {
@@ -279,6 +282,7 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
     // Filled incrementally below (removals only).
     committedPaths: [],
     ...(pathFilter ? { scoped: true } : {}),
+    ...(undoOfRename ? { undoOfRename } : {}),
   };
   if (plan.length > 0) {
     try {

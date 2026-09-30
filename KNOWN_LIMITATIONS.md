@@ -194,8 +194,10 @@ anyway** or **Stay open**. The dialog names each file and why it wasn't saved
 
 **Windows shutdown, restart or sign-out** closes neither the window nor the
 app first, so the quit flush above doesn't run. The renderer keeps main told
-whether leaving now could lose work (anything unsaved, a question waiting for
-an answer, unapplied Settings, a focused text field). Only then does main hold
+whether leaving now could lose work (anything unsaved, keystrokes an editor
+hasn't handed over yet, a question waiting for an answer, unapplied Settings,
+a focused field whose text changed since it took focus; a caret resting in a
+note is not work). Only then does main hold
 the session back (Windows shows its "Filo is preventing shutdown" screen) for
 at most about 4 s, while the renderer saves and writes rescue copies of what
 is left, unapplied Settings and theme-editor edits included
@@ -275,45 +277,34 @@ check first (`writeConfigs`, `saveMiscConfig`).
 
 ## 6. Minimap recomputes the whole board every drag frame (large boards)
 
-**What:** The minimap (on by default) reads the entire `boardStore.tiles` map
-and renders one absolutely-positioned DOM pip per tile. `boardStore.tiles`
-re-derives through `getFullTiles`, which allocates fresh tile objects whenever a
-tile changes, so on an actual tile **drag** the minimap's `activeMediaIds` set,
-the all-tiles bounding box, per-pip `effectiveTileStyle` resolution, and all N
-pip nodes recompute — not just the tile that moved.
+**What:** The minimap (on by default) renders one absolutely-positioned pip
+per tile from `boardStore.tiles`. That map re-derives through `getFullTiles`,
+which allocates fresh tile objects whenever a tile changes, so while a tile is
+**dragged** the minimap's `activeMediaIds` set, the tiles' bounding box, each
+pip's `effectiveTileStyle` and all N pip nodes recompute on every frame, not
+just the tile that moved.
 
-**Already narrowed (H4 perf split) — a pure pan/zoom no longer walks every
-tile.** The bounds math was split into
-[src/renderer/lib/canvas/minimapBounds.ts](src/renderer/lib/canvas/minimapBounds.ts):
-`tilesAABB = $derived(computeTilesAABB(tiles))` is keyed on the tile set ONLY
-(not the viewport) and `bounds = $derived(computeMinimapBounds(tilesAABB,
-viewportRect))` is the cheap viewport union + padding. So panning/zooming re-runs
-only the cheap `bounds`; the tile walk is cached. The remaining per-frame
-recompute is confined to an actual tile drag, where the moved tile's fresh
-identity out of `getFullTiles` invalidates `tilesAABB`, `activeMediaIds`, and the
-pips.
+Panning and zooming don't walk the tiles: the bounds math in
+[src/renderer/lib/canvas/minimapBounds.ts](src/renderer/lib/canvas/minimapBounds.ts)
+keeps the tiles' bounding box (`computeTilesAABB`, keyed on the tile set only)
+apart from the cheap viewport union (`computeMinimapBounds`).
 
 **Where:** [src/renderer/components/canvas/Minimap.svelte](src/renderer/components/canvas/Minimap.svelte)
 (`allTiles`, `activeMediaIds`, `bounds`, the pip `#each`). Root cause: the
-referential churn of `getFullTiles` in
+fresh identities `getFullTiles` hands out in
 [src/renderer/stores/board.svelte.ts](src/renderer/stores/board.svelte.ts) (`tiles`).
 
-**Why deferred (not a permanent trade-off):** The viewport-driven half is already
-done — the H4 split above memoizes `tilesAABB` independently of the viewport, so
-pan/zoom no longer re-walks the tiles. The residual tile-drag recompute can't be
-fixed by a minimap-local memo alone — skipping `effectiveTileStyle` per pip and
-reusing pip nodes needs a stable per-tile identity that `getFullTiles` doesn't
-provide. The robust fix is the
-same stable-identity refactor deferred from Audit2 3.3 (return reference-stable
-tile objects from `getFullTiles` when a tile's placement + def are unchanged),
-which removes the connection-path **and** minimap recompute together. It was
-scoped out of Phase 4 (Audit2 item 4.5) as too broad/risky for one 🟡 item, and
-the perf claim isn't expressible as a unit test (no component-mount harness).
+**Why deferred (not a permanent trade-off):** A memo inside the minimap can't
+skip the per-pip style work or reuse pip nodes without a stable identity per
+tile. The fix is for `getFullTiles` to return the same object for a tile whose
+placement and def haven't changed, which would also stop the connection paths
+recomputing during a drag. That touches every board type's tile path, so it
+waits for its own change, with a component test (the mount harness in
+`src/tests/component/` can count the pip renders) to pin it.
 
-**Impact:** Frame-rate dip while dragging on boards with many hundreds of tiles
-**when the minimap is open** — toggle it off (the SideToolbar minimap button) as
-a workaround. No data risk; rendering throughput only. Revisit alongside the
-`getFullTiles` stable-identity work.
+**Impact:** The frame rate can dip while dragging on boards with many hundreds
+of tiles **when the minimap is open**; toggle it off (the side toolbar's
+minimap button) as a workaround. No data risk: rendering only.
 
 ---
 
@@ -478,25 +469,25 @@ section by being dragged into any other section.
 Minor; it is a legacy bucket. A minimal always-present leading drop zone is a
 possible future enhancement, not a correctness fix.
 
-## 13. Hand-edited quoted `completed: "true"` reads as incomplete
+## 13. `completed:` reads only a boolean or yes / on / "true"
 
-**What:** A task's completion is read as a strict `fm.completed === true`
-([src/renderer/lib/tasks/frontmatterReaders.ts](src/renderer/lib/tasks/frontmatterReaders.ts),
-`FIELD_READERS.completed`) — a real YAML boolean (`completed: true` /
-`completed: yes` both parse to `true`). If a file is hand-edited so the value is
-the QUOTED STRING `completed: "true"`, it parses as the string `"true"`, which is
-not `=== true`, so the row displays as **incomplete** even though the author meant
-"done."
+**What:** A task's completion is read by `FIELD_READERS.completed`
+([src/renderer/lib/tasks/frontmatterReaders.ts](src/renderer/lib/tasks/frontmatterReaders.ts)).
+Filo parses frontmatter as YAML 1.2 (the `yaml` package), where `yes`, `on`
+and a quoted `"true"` are strings, not booleans. A note written by hand, or by
+an app that follows YAML 1.1, means "done" by them, so Filo reads the strings
+`true`, `yes` and `on` (any case) as done, as well as a real `true`. Every
+other value (`no`, `off`, `"false"`, `1`, empty) reads as not done.
 
-**Why accepted (COERCE-1):** A strict boolean read is correct for Filo-written
-files (Filo always writes a real boolean) and deliberately avoids coercing
-arbitrary strings (`"false"`, `"no"`, `"0"`) into a truthiness guess. Toggling the
-checkbox once normalizes the value to a real boolean while preserving every other
-key (the source-preserving engine).
+**Why accepted:** Filo always writes a real `true` / `false`, and it doesn't
+guess beyond the YAML 1.1 words for "true": a number or any other string is
+not a completion. The value on disk is left as it is until the checkbox is
+toggled; the toggle writes a boolean and keeps every other key byte for byte
+(the source-preserving engine).
 
-**Impact:** A hand-edited quoted `completed: "true"` shows the task as incomplete
-until the checkbox is toggled once. Rare (only hand-edited files); self-heals on
-first toggle; never data loss — only a display mismatch.
+**Impact:** A task marked `completed: 1` or `completed: done` in another app
+shows as not done until it is toggled in Filo. Display only; nothing is
+written by reading.
 
 ## 14. Board post-write drift baseline is size-only (no content read-back)
 
@@ -642,10 +633,13 @@ task), one bullet turned into a checklist item (Ctrl+Shift+9), spaces typed at
 the start of a line, a `|` typed in a table cell, a list or heading in a table
 cell (now an HTML table), code holding a line of backticks, a line break in a
 heading, a lone `+` or `1.` line, a heading ending in ` #`, lines typed in the
-Task List notes box; and from other apps, aligned GFM tables and `~~~` or
+Task List notes box, a numbered list typed from `0.`; and from other apps, aligned GFM tables and `~~~` or
 longer code fences. A loose mixed list an older Filo wrote (`- a`, `- [ ] b`,
 `- c` with blank lines between) now opens editable too, and is split into three
-lists on the next save.
+lists on the next save. Two edits no longer leave markup another app shows:
+Enter at the end of a line in a one-line-per-thought note splits the paragraph
+there (no `<br data-filo-soft-break>` in the file), and pasted plain text
+saves its lines as bare newlines (no `\` at each line end).
 
 **Aligned and indented paragraphs are HTML in the file.** Markdown has no way
 to write alignment or indent, so a paragraph or heading aligned or indented from
@@ -684,6 +678,7 @@ the same, and the first body edit rewrites each into Filo's form:
 | a list right after another bullet or checklist list | the other bullet (`-` then `*`), so the two stay two lists |
 | a list, heading, quote, code fence, rule or table straight under a line of text (or text straight under a heading) | a blank line between them |
 | `1. 1. 1.` or `01. 02.` numbering | `1. 2. 3.` |
+| a tight nested list whose item holds a rule, code block or quote | the nested list loose (a blank line between its items); the list around it stays tight |
 | a lazy continuation line (`> a` / `b`, `- a` / `b`) or a line indented under a paragraph | the quote's `> ` or the item's indent; the paragraph line unindented |
 | `<` / `>` in text, entities such as `&copy;` | `&lt;` / `&gt;`, the character itself |
 | a `"` in a link address | `%22` |
@@ -1095,7 +1090,7 @@ little upstream activity). Filo extends it in several places: the tight-list
 rule (`taskListTight.ts`), the aligned or indented block writer
 (`blockLayout.ts`), its own writers for lists (`listMarkers.ts`,
 `taskItems.ts`), tables (`tableMarkdown.ts`), code fences (`codeFence.ts`),
-line breaks (`hardBreak.ts`), quotes (`blockquote.ts`), leading spaces
+line breaks (`hardBreak.ts`, `softBreak.ts`), quotes (`blockquote.ts`), leading spaces
 (`leadSpace.ts`) and text escapes (`textEscapes.ts`), and the lossy check that
 opens a note read-only when a round trip would change it (#17). Filo also
 replaces its serializer state with prosemirror-markdown's own
@@ -1359,10 +1354,12 @@ its last rows aren't in the list yet and it can't be reordered.
 ## 41. Plain text pasted into a note is read as Markdown (without HTML)
 
 **What:** Text pasted with no HTML on the clipboard (from Notepad, a terminal,
-a code editor) is read as Markdown with HTML off and every line break kept:
-`**x**` becomes bold and `# Title` a heading, while `List<String>` and
-`<!-- -->` stay text. **Ctrl+Shift+V** pastes it literally instead (a
-paragraph per blank-line-separated block, a line break per newline).
+a code editor) is read as Markdown with HTML off: `**x**` becomes bold and
+`# Title` a heading, while `List<String>` and `<!-- -->` stay text. A single
+newline becomes a soft break, as it does when the same text is opened from a
+file: shown as a line break and saved as a bare newline. **Ctrl+Shift+V**
+pastes it literally instead (a paragraph per blank-line-separated block, a
+soft break per newline).
 
 **Where:** [src/renderer/lib/editor/pastePlainText.ts](src/renderer/lib/editor/pastePlainText.ts).
 

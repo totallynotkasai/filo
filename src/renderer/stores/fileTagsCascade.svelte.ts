@@ -23,6 +23,7 @@ import {
   type MarkdownRewriteResult,
 } from '../lib/vault/tagRewriteSweep';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
+import type { TagRenameUndoScope } from '../lib/vault/tagRewriteSentinel';
 
 /**
  * Minimal structural type for the methods the cascade reaches into on the
@@ -140,6 +141,7 @@ export async function runTagRewriteSweep(
   newName: string | null,
   vaultRoot: string,
   pathFilter?: ReadonlySet<string>,
+  undoOfRename?: TagRenameUndoScope,
 ): Promise<MarkdownRewriteResult> {
   const captured = captureVaultIdentity();
   return withTagSweepProgress(tagSweepLabel(oldName, newName), async (onProgress) => {
@@ -150,11 +152,12 @@ export async function runTagRewriteSweep(
     // not once per note (see `batchPublishes`).
     return vaultIndexStore.batchPublishes(() => rewriteTagInAllMarkdown({
       vaultRoot,
-      metadata: vaultIndexStore.allMetadata(),
+      metadata: vaultIndexStore.allMetadata(), // allow-global-index-version: the sweep reads every note once, not a derived
       oldName,
       newName,
       applyChanges: (paths) => vaultIndexStore.applyChanges(paths),
       pathFilter,
+      ...(undoOfRename ? { undoOfRename } : {}),
       onProgress,
     }));
   });

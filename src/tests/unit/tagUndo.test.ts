@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { undoRemoval, undoRename, isMergingRename, type TagRemovalSnapshot, type TagRenameSnapshot } from '@renderer/stores/tagUndo.svelte';
+import { undoRemoval, undoRename, isMergingRename, resumeTagSweep, type TagRemovalSnapshot, type TagRenameSnapshot } from '@renderer/stores/tagUndo.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -125,6 +125,29 @@ describe('undo of a tag rename', () => {
     expect(fileTagsStore.getDefinition('old').color).toBe('#123456');
     // Still carried by b.png, so its definition stays.
     expect(fileTagsStore.allTagNames()).toContain('fresh');
+  });
+
+  it("Resume of a crashed Undo renames back only the attachments that Undo recorded", async () => {
+    // Renamed old → fresh; b.png was tagged "fresh" afterwards; the Undo crashed.
+    fileTagsStore.commitFromCandidate('/vault', {
+      version: 1,
+      tags: { fresh: { color: '#3a86ff', createdAt: 0 } },
+      fileTags: { 'a.png': ['fresh'], 'b.png': ['fresh'] },
+    } as unknown as Parameters<typeof fileTagsStore.commitFromCandidate>[1]);
+
+    await resumeTagSweep({
+      timestamp: 1,
+      oldName: 'fresh',
+      newName: 'old',
+      plan: [],
+      preexistingNewNamePaths: [],
+      committedPaths: [],
+      scoped: true,
+      undoOfRename: { mediaPaths: ['a.png'], tiles: [], chips: [] },
+    });
+
+    expect(fileTagsStore.tagsForFile('a.png')).toEqual(['old']);
+    expect(fileTagsStore.tagsForFile('b.png')).toEqual(['fresh']);
   });
 
   it('after a vault swap, Undo renames nothing', async () => {

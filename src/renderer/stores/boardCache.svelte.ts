@@ -39,7 +39,7 @@ import { onVaultSwap } from '../core/vaultLifecycle';
 import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { boardDefaults } from '../core/boardDefaults';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
-import { catchUpLoadedBoard, markBoardUnloaded } from './unloadedBoards';
+import { beginBoardCreate, catchUpLoadedBoard, markBoardUnloaded } from './unloadedBoards';
 import { boardReferencesPath } from '../lib/vault/fileRefIntegrity';
 import { boardLoadReason } from '../lib/boards/boardLoadFailedNotice';
 
@@ -680,6 +680,7 @@ export const boardCacheStore = {
     };
 
     const identity = captureVaultIdentity();
+    const endCreate = beginBoardCreate(place.path);
     try {
       const result = await invokeOk(
         'board:create',
@@ -702,6 +703,9 @@ export const boardCacheStore = {
       markRecentSelfWrite(result.path);
       noteBaseline(result.path, result.mtimeMs, result.size, { ifUnchangedSince: baselineSeq(result.path) });
 
+      // A load that read the half-created file (a spelling the create guard
+      // didn't cover) must not leave the new board marked unloaded.
+      catchUpLoadedBoard(result.path, fileData);
       boardPaths = { ...boardPaths, [board.id]: result.path };
       boardCache = { ...boardCache, [board.id]: fileData };
 
@@ -729,6 +733,8 @@ export const boardCacheStore = {
         `Failed to persist board "${board.name}" — not saved to disk`,
       );
       return false;
+    } finally {
+      endCreate();
     }
   },
 

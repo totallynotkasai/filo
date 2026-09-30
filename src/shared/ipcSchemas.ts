@@ -182,7 +182,6 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // ── Dialogs ───────────────────────────────────────────────────────────
   // Dialog options are passed through to Electron's `showMessageBox` /
   // `showOpenDialog` — we don't re-validate the inner shape, just the arity.
-  'dialog:confirm': z.tuple([nonEmptyString]).rest(optionalString),
   // Multi-button "Save / Don't Save / Cancel"-style dialog.
   // Args: (message, buttons[], options?). Returns the selected button index.
   'dialog:choice': z

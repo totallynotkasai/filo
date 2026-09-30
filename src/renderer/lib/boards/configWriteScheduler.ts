@@ -511,8 +511,14 @@ for (const file of ['app.json', 'defaults.json', 'appearance.json'] as const) {
     },
     // Keep local writes Filo's version; after a Reload the file reads as
     // written (unless memory normalised it), and the bundle's other files may
-    // still be owed, so the held bundle is re-fired either way.
-    resume: () => void configScheduler.retryFailed(CONFIG_KEY),
+    // still be owed, so the held bundle is re-fired either way. The held write
+    // may not be retained (a write that also met a failure no retry mends
+    // keeps nothing), so the bundle is scheduled again from the latest
+    // settings too; a retained one then fires at once in its place.
+    resume: () => {
+      rescheduleConfigWrite();
+      void configScheduler.retryFailed(CONFIG_KEY);
+    },
   });
 }
 

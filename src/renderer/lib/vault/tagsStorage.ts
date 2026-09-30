@@ -300,7 +300,7 @@ export function isSafeNewTagName(name: string): boolean {
  * with the same case-folded value already exists in the registry, return
  * that canonical casing so we don't accidentally create `Project` and
  * `project` as two separate tags. Matches the case-insensitive lookup
- * semantics in `vaultIndex.filesByTag` / `frontmatterSync.valuesEqual`.
+ * semantics in `frontmatterSync.valuesEqual`.
  *
  * Also normalises the input: trim, strip a single leading `#`. Inner spacing
  * is left as it is, so a tag another program wrote with two spaces can still

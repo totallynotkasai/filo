@@ -229,7 +229,7 @@ function enumerateTiles(): TileEnumeration[] {
   const placed = new Set<VaultPath>();
   for (const t of out) if (t.type === 'text' && t.filePath) placed.add(vaultPath(t.filePath));
   untrack(() => {
-    for (const metadata of vaultIndexStore.allMetadata()) {
+    for (const metadata of vaultIndexStore.allMetadata()) { // allow-global-index-version: read untracked; the search store decides when to re-run
       if (placed.has(vaultPath(metadata.path))) continue;
       out.push({
         boardId: '',

@@ -29,7 +29,12 @@ for (const v of VARIANTS) {
     const editor = await openNoteByName(launched.win, 'Note');
     await editor.click();
     await launched.win.keyboard.press('Control+End');
-    await launched.win.keyboard.type(' EDITED');
+    // Keys sent back to back can outrun the editor's reading of the caret (the
+    // space once landed after the word); pace them and see them land. The
+    // save is still what's under test: nothing here waits for it.
+    await launched.win.waitForTimeout(50);
+    await launched.win.keyboard.type(' EDITED', { delay: 50 });
+    await expect(editor).toContainText('Original line EDITED');
     if (v.settleMs) await launched.win.waitForTimeout(v.settleMs);
     await launched.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize());
     if (v.idleMs) await sleep(v.idleMs);

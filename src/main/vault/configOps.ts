@@ -156,6 +156,7 @@ export interface CorruptConfig {
   error: string;
 }
 
+/** @internal test-only */
 export function isCorruptConfig(value: unknown): value is CorruptConfig {
   return (
     !!value &&

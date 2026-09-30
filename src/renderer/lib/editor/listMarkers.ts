@@ -145,7 +145,9 @@ export function serializeOrderedList(
   parent: ProseMirrorNode,
   index: number,
 ): void {
-  const start = Number(node.attrs.start) || 1;
+  // A list may start at 0 (`0. zero`); only a missing or broken start is 1.
+  const given = Number(node.attrs.start);
+  const start = Number.isInteger(given) && given >= 0 ? given : 1;
   const maxW = String(start + node.childCount - 1).length;
   const space = state.repeat(' ', maxW + 2);
   const separator = `${orderedDelimiterFor(parent, index)} `;

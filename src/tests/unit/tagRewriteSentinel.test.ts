@@ -110,6 +110,26 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     expect((await readPendingRewrite('/vault')).payload).toEqual(payload);
   });
 
+  it("a rename's Undo reads back with what it renames back beside the notes", async () => {
+    const payload: TagRewriteSentinelPayload = {
+      timestamp: 1700000000000,
+      oldName: 'fresh',
+      newName: 'old',
+      plan: ['A.md'],
+      preexistingNewNamePaths: [],
+      committedPaths: [],
+      scoped: true,
+      undoOfRename: {
+        mediaPaths: ['a.png'],
+        tiles: [{ boardId: 'b1', id: 't1' }],
+        chips: [{ boardId: 'b1', slot: 'lastView', index: 0 }, { boardId: 'b1', slot: 2, index: 1 }],
+        color: '#123456',
+      },
+    };
+    await writePendingRewrite('/vault', payload);
+    expect((await readPendingRewrite('/vault')).payload).toEqual(payload);
+  });
+
   it('write → read returns the exact payload (removal case with newName=null)', async () => {
     const payload: TagRewriteSentinelPayload = {
       timestamp: 1700000000000,

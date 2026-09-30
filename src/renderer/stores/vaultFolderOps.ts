@@ -94,7 +94,7 @@ export function renameVaultIndexUnderPrefix(oldRel: string, newRel: string): voi
   if (!oldKey || !newKey || oldKey === newKey) return;
   vaultIndexStore.renameKey(oldKey, newKey);
   const childPrefix = oldKey + '/';
-  for (const md of vaultIndexStore.allMetadata()) {
+  for (const md of vaultIndexStore.allMetadata()) { // allow-global-index-version: a one-off read during a rename, not a derived
     const path = md.path;
     if (path.startsWith(childPrefix)) {
       vaultIndexStore.renameKey(path, newKey + path.slice(oldKey.length));

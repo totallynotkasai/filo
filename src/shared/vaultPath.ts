@@ -63,6 +63,7 @@ export function vaultPath(raw: string): VaultPath {
  * Type-guard for "is this string already in canonical `VaultPath` form?".
  * Useful at IPC boundaries and in tests that want to assert a value was
  * routed through `vaultPath()` upstream.
+ * @internal test-only
  */
 export function isVaultPath(v: unknown): v is VaultPath {
   return typeof v === 'string' && v === normalizeVaultRelative(v);

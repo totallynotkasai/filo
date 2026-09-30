@@ -269,12 +269,6 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       boardCacheStore.hydrate(cache, paths);
     },
 
-    clearCache() { boardCacheStore.clear(); },
-
-    updateCacheEntry(boardId: string, updates: Partial<BoardFileData>) {
-      boardCacheStore.updateEntry(boardId, updates);
-    },
-
     markDirty(boardId: string) { boardCacheStore.markDirty(boardId); },
 
     findTileBoardId(tileId: string): string | null {
@@ -345,6 +339,7 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
      * `updateSettings` and used by `UpdateBoardSettingsCommand.undo` to fully
      * revert keys that didn't exist before the command ran — without this,
      * undo would leave a phantom `key: undefined` in the merged object.
+     * @internal test-only
      */
     deleteSettingsKeys(keys: string[]): void {
       if (!currentBoard) return;

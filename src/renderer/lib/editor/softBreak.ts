@@ -1,4 +1,4 @@
-import { Node } from '@tiptap/core';
+import { Extension, Node } from '@tiptap/core';
 import { Fragment, type Mark, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { Transaction } from '@tiptap/pm/state';
 
@@ -140,7 +140,7 @@ const prepared = new WeakSet<object>();
 
 /**
  * Renders markdown-it's soft break as the element this node loads from. A
- * parser with `breaks: true` (the plain-text paste) keeps its hard `<br>`.
+ * parser with `breaks: true` keeps its hard `<br>`.
  */
 export function renderSoftBreaksAsNodes(md: SoftBreakRendererHost): void {
   if (prepared.has(md)) return;
@@ -178,6 +178,35 @@ export const SoftBreak = Node.create({
             renderSoftBreaksAsNodes(md);
           },
         },
+      },
+    };
+  },
+});
+
+/**
+ * Enter beside a soft break splits the paragraph at that break, which goes.
+ * Left in, it would open the new paragraph (an empty first line, and a
+ * `<br data-filo-soft-break>` in a plain note) or end the old one. High
+ * priority, so a list item's or table's Enter doesn't split first; it removes
+ * the break and hands the key on, so theirs (or the paragraph split) runs on
+ * the text without it.
+ */
+export const SoftBreakEnter = Extension.create({
+  name: 'filoSoftBreakEnter',
+  priority: 1000,
+
+  addKeyboardShortcuts() {
+    return {
+      Enter: ({ editor }) => {
+        const { selection } = editor.state;
+        if (!selection.empty) return false;
+        const { $from } = selection;
+        const at = $from.nodeAfter?.type.name === 'softBreak'
+          ? $from.pos
+          : $from.nodeBefore?.type.name === 'softBreak' ? $from.pos - 1 : null;
+        if (at === null) return false;
+        editor.view.dispatch(editor.state.tr.delete(at, at + 1));
+        return false;
       },
     };
   },

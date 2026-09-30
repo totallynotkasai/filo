@@ -85,6 +85,7 @@ import { createTrailingDebounce } from '../lib/utils/trailingDebounce';
 import { flushAllComponents } from '../lib/boards/componentFlush';
 import { fileTagsStore } from './fileTags.svelte';
 import { tidyTagsAfterOpen } from './openTagHousekeeping';
+import { resumeTagSweep } from './tagUndo.svelte';
 import { fireVaultSwap, isVaultTearingDown, onVaultSwap } from '../core/vaultLifecycle';
 import type { VaultContext } from './vaultStoreTypes';
 import { makeTreeSlice } from './vaultTree';
@@ -579,7 +580,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
     const res = await readPendingRewrite(newVaultPath);
     if (!isStillSameVault(captured)) return;
     if (res.payload) {
-      const { oldName, newName, plan, preexistingNewNamePaths, committedPaths, scoped } = res.payload;
+      const { oldName, newName, plan, preexistingNewNamePaths, committedPaths } = res.payload;
       const verb = newName === null ? 'removal' : 'rename';
       const target = newName === null ? `"${oldName}"` : `"${oldName}" → "${newName}"`;
       // Wait for the post-commit index rebuild (runs in parallel with this
@@ -601,7 +602,7 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
           ? hasPartialTagRemovalState(committedPaths)
           : hasPartialTagRewriteState(
               newName,
-              vaultIndexStore.allMetadata(),
+              vaultIndexStore.allMetadata(), // allow-global-index-version: one read in the recovery prompt, not a derived
               preexistingNewNamePaths,
             );
       const partialBody =
@@ -613,13 +614,8 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
         : `Filo found an unfinished tag ${verb} (${target}) that didn't complete in the previous session. Resume rewriting ${plan.length} file${plan.length === 1 ? '' : 's'}?`;
       // Converge forward — idempotent (already-processed files no-op); we can't
       // "undo" it (the sentinel holds the plan + progress, not a pre-edit snapshot).
-      const convergeForward = async (): Promise<void> => {
-        if (newName === null) {
-          await fileTagsStore.removeTagEverywhere(oldName, scoped ? plan : undefined);
-        } else {
-          await fileTagsStore.renameTagEverywhere(oldName, newName, scoped ? plan : undefined);
-        }
-      };
+      const payload = res.payload;
+      const convergeForward = (): Promise<void> => resumeTagSweep(payload);
       await awaitConfirm({
         title: `Incomplete tag ${verb} detected`,
         body,

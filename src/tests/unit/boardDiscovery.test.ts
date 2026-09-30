@@ -6,6 +6,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { captureVaultIdentity, beginVaultGeneration } from '@renderer/lib/vault/vaultIdentity';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { unloadedBoardPaths } from '@renderer/stores/unloadedBoards';
 
 /**
  * Audit-19 EXT-1 — `board:list` ran only at vault open, so a `.board.json`
@@ -95,6 +96,27 @@ describe('runtime board discovery (Audit-19 EXT-1)', () => {
     await adoptUntrackedTreeBoards(tree, captureVaultIdentity());
     expect(loads).toBe(1); // tried once, known board skipped
     expect(uiStore.toasts).toHaveLength(0); // quiet: already reported at open
+  });
+
+  it('a tree refresh during a board create never marks the new board unloaded', async () => {
+    let loads = 0;
+    installFiloMock({
+      'vault:stat': () => ({ success: true, mtimeMs: 1, size: 1 }),
+      // The empty reservation `board:create` makes before it writes the JSON.
+      'board:load': () => {
+        loads++;
+        return { success: false, code: 'PARSE', error: 'Unexpected end of JSON input' };
+      },
+      'board:create': async () => {
+        await adoptUntrackedTreeBoards(['Fresh.board.json'], captureVaultIdentity());
+        return { ok: true, path: 'Fresh.board.json', mtimeMs: 2, size: 2 };
+      },
+      'vault:list-tree': () => ({ success: true, data: [] }),
+    });
+    const board = await boardCacheStore.createBoard('Fresh', 'kanban');
+    expect(board).not.toBeNull();
+    expect(loads).toBe(0);
+    expect(unloadedBoardPaths()).not.toContain('Fresh.board.json');
   });
 
   it('loaded board file gone: followed as a rename, with no duplicate-id warning', async () => {

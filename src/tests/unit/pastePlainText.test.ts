@@ -51,6 +51,15 @@ describe('pasting plain text', () => {
     expect(ed.state.doc.firstChild?.childCount).toBe(3); // text, line break, text
   });
 
+  it('saves pasted lines with bare newlines, as the same text opened from a file', () => {
+    const ed = makeEditor();
+    pastePlain(ed, 'Name: Aria\nAge: 24\nHome: the river');
+    expect(editorMarkdown(ed)).toBe('Name: Aria\nAge: 24\nHome: the river');
+    const literal = makeEditor();
+    pastePlain(literal, 'Name: Aria\nAge: 24', true);
+    expect(editorMarkdown(literal)).toBe('Name: Aria\nAge: 24');
+  });
+
   it('still reads Markdown formatting', () => {
     const ed = makeEditor();
     pastePlain(ed, 'some **bold** text');
@@ -64,7 +73,7 @@ describe('pasting plain text', () => {
     expect(doc.childCount).toBe(2);
     expect(doc.child(0).textContent).toBe('**not bold** __init__next');
     expect(doc.child(1).textContent).toBe('second para');
-    expect(doc.child(0).content.content.map((n) => n.type.name)).toEqual(['text', 'hardBreak', 'text']);
+    expect(doc.child(0).content.content.map((n) => n.type.name)).toEqual(['text', 'softBreak', 'text']);
   });
 });
 

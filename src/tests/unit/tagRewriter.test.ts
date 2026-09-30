@@ -240,7 +240,7 @@ describe('addTagToMarkdown', () => {
 
 // ── Audit 2.2 ─────────────────────────────────────────────────────────────
 // Tag identity is case-INSENSITIVE everywhere else (registry
-// `canonicaliseTagName`, `vaultIndex.filesByTag`, `frontmatterSync.valuesEqual`
+// `canonicaliseTagName`, `frontmatterSync.valuesEqual`
 // — all fold via `toLocaleLowerCase('en-US')`), but the frontmatter rewriter
 // compared with strict `===`. So a file whose YAML spells the tag `Project`
 // (authored in Obsidian, or a first-seen capital the registry preserved) was

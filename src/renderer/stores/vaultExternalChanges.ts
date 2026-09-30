@@ -425,7 +425,7 @@ async function runExternalRenameCascade(
   // prefix.
   vaultIndexStore.renameKey(oldRel, newRel);
   const childPrefix = oldRel.endsWith('/') ? oldRel : oldRel + '/';
-  for (const md of vaultIndexStore.allMetadata()) {
+  for (const md of vaultIndexStore.allMetadata()) { // allow-global-index-version: a one-off read during a rename, not a derived
     const path = md.path;
     if (path.startsWith(childPrefix)) {
       vaultIndexStore.renameKey(path, newRel + path.slice(oldRel.length));

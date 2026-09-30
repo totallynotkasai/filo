@@ -149,14 +149,6 @@ describe('VaultIndex', () => {
     expect(idx.allPaths().sort()).toEqual(['a.md', 'b.md', 'nested/c.md']);
   });
 
-  it('returns files by tag (case-insensitive, strips leading #)', () => {
-    const idx = makeIndex();
-    expect(idx.filesByTag('alpha').sort()).toEqual(['a.md', 'nested/c.md']);
-    expect(idx.filesByTag('#ALPHA').sort()).toEqual(['a.md', 'nested/c.md']);
-    expect(idx.filesByTag('beta')).toEqual(['b.md']);
-    expect(idx.filesByTag('missing')).toEqual([]);
-  });
-
   it('aggregates all tags with counts', () => {
     const idx = makeIndex();
     const tags = idx.allTags();
@@ -164,25 +156,12 @@ describe('VaultIndex', () => {
     expect(tags.get('beta')).toBe(1);
   });
 
-  it('finds files via full-text search by title', () => {
-    const idx = makeIndex();
-    const results = idx.query('Second');
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].path).toBe('b.md');
-  });
-
-  it('finds files via full-text search by content', () => {
-    const idx = makeIndex();
-    const results = idx.query('alpha content');
-    expect(results.some((r) => r.path === 'a.md')).toBe(true);
-  });
-
   it('incrementally updates on upsert of the same path', () => {
     const idx = makeIndex();
     idx.upsert(parseMarkdown('a.md', '---\ntitle: Renamed Title\ntags: [gamma]\n---\nBody'));
     expect(idx.size()).toBe(3);
-    expect(idx.filesByTag('alpha')).toEqual(['nested/c.md']);
-    expect(idx.filesByTag('gamma')).toEqual(['a.md']);
+    expect(idx.allTags().get('alpha')).toBe(1);
+    expect(idx.allTags().get('gamma')).toBe(1);
     expect(idx.get('a.md')?.title).toBe('Renamed Title');
   });
 
@@ -191,8 +170,7 @@ describe('VaultIndex', () => {
     idx.remove('a.md');
     expect(idx.size()).toBe(2);
     expect(idx.get('a.md')).toBeNull();
-    expect(idx.filesByTag('alpha')).toEqual(['nested/c.md']);
-    expect(idx.query('First')).toEqual([]);
+    expect(idx.allTags().get('alpha')).toBe(1);
   });
 
   it('clear() empties everything', () => {
@@ -200,18 +178,11 @@ describe('VaultIndex', () => {
     idx.clear();
     expect(idx.size()).toBe(0);
     expect(idx.allPaths()).toEqual([]);
-    expect(idx.query('anything')).toEqual([]);
-  });
-
-  it('query with empty string returns no results', () => {
-    const idx = makeIndex();
-    expect(idx.query('')).toEqual([]);
-    expect(idx.query('   ')).toEqual([]);
   });
 });
 
 /**
- * M1 (Audit-13) — VaultIndex keys its metadata Map + MiniSearch id by the
+ * M1 (Audit-13) — VaultIndex keys its metadata Map by the
  * case-FOLDED vault-relative path, so a case-divergent external edit (case-only
  * rename, multi-device OneDrive, git) hits the SAME entry instead of missing it
  * (which bypassed the partial-read guard and upserted a duplicate). The stored
@@ -238,8 +209,8 @@ describe('VaultIndex — case-folded keys (Audit-13 M1)', () => {
     idx.upsert(parseMarkdown('notes.md', '---\ntitle: New\ntags: [new]\n---\nBody'));
     expect(idx.size()).toBe(1);
     expect(idx.get('Notes.md')?.title).toBe('New');
-    expect(idx.filesByTag('old')).toEqual([]);
-    expect(idx.filesByTag('new')).toEqual(['notes.md']);
+    expect(idx.allTags().has('old')).toBe(false);
+    expect(idx.allTags().get('new')).toBe(1);
   });
 
   it('remove() with divergent casing deletes the entry', () => {
@@ -260,12 +231,10 @@ describe('VaultIndex — case-folded keys (Audit-13 M1)', () => {
     expect(idx.get('notes.md')?.path).toBe('notes.md');
   });
 
-  it('allPaths() and query() return OS display casing, not folded keys', () => {
+  it('allPaths() returns OS display casing, not folded keys', () => {
     const idx = new VaultIndex();
     idx.upsert(parseMarkdown('Notes/Meeting.md', '---\ntags: [x]\n---\n# Meeting topic'));
     expect(idx.allPaths()).toEqual(['Notes/Meeting.md']);
-    const hits = idx.query('Meeting');
-    expect(hits[0]?.path).toBe('Notes/Meeting.md');
   });
 });
 
@@ -372,19 +341,16 @@ describe('VaultIndex — incremental updates', () => {
   it('simulates a file-change event: re-parsing an existing path replaces content, tags, and title in one step', () => {
     const idx = new VaultIndex();
     idx.upsert(parseMarkdown('journal.md', '---\ntitle: Journal\ntags: [draft]\n---\nFirst pass.'));
-    expect(idx.filesByTag('draft')).toEqual(['journal.md']);
+    expect(idx.get('journal.md')?.tags).toEqual(['draft']);
     expect(idx.get('journal.md')?.title).toBe('Journal');
-    expect(idx.query('first')[0]?.path).toBe('journal.md');
+    expect(idx.get('journal.md')?.content).toContain('First pass.');
 
     idx.upsert(parseMarkdown('journal.md', '---\ntitle: Journal v2\ntags: [published]\n---\nRevised body.'));
 
-    expect(idx.filesByTag('draft')).toEqual([]);
-    expect(idx.filesByTag('published')).toEqual(['journal.md']);
+    expect(idx.get('journal.md')?.tags).toEqual(['published']);
     expect(idx.get('journal.md')?.title).toBe('Journal v2');
-    const firstHits = idx.query('first');
-    expect(firstHits.some((r) => r.path === 'journal.md')).toBe(false);
-    const revisedHits = idx.query('revised');
-    expect(revisedHits.some((r) => r.path === 'journal.md')).toBe(true);
+    expect(idx.get('journal.md')?.content).not.toContain('First pass.');
+    expect(idx.get('journal.md')?.content).toContain('Revised body.');
   });
 });
 

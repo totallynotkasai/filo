@@ -139,7 +139,7 @@ export const saveStateStore = {
     failedPaths = next.slice(0, MAX_TRACKED_FAILED_PATHS);
   },
 
-  /** Explicit clear (e.g. user clicked Retry and it succeeded). */
+  /** @internal test-only: clears the failed paths. */
   clearFailedPaths(): void {
     if (failedPaths.length > 0) failedPaths = [];
   },

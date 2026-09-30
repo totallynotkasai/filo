@@ -176,6 +176,59 @@ describe('createScheduler — flushAll awaits in-flight writes', () => {
     await flushPromise;
     expect(resolved).toBe(true);
   });
+
+  it("flush(key) waits for that key's write while a flushAll is still sending an earlier one", async () => {
+    let releaseFirst!: () => void;
+    const first = new Promise<void>((res) => { releaseFirst = res; });
+    const written: string[] = [];
+    const scheduler = createScheduler<TArgs>({
+      name: 'test',
+      debounceMs: 10_000,
+      performWrite: async (a) => {
+        if (a.path === 'a.board.json') await first;
+        written.push(a.path);
+      },
+      getSentinelInfo: (a) => ({ vaultRoot: a.vaultRoot, path: a.path }),
+    });
+    scheduler.schedule('a', () => makeArgs('a.board.json'));
+    scheduler.schedule('b', () => makeArgs('b.board.json'));
+
+    const all = scheduler.flushAll(); // sends a, then b once a has landed
+    expect(scheduler.hasWork('b')).toBe(true);
+    let bFlushed = false;
+    const flushB = scheduler.flush('b').then((r) => { bFlushed = true; return r; });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(bFlushed).toBe(false); // b hasn't even been sent yet
+
+    releaseFirst();
+    expect((await flushB).ok).toBe(true);
+    expect(written).toEqual(['a.board.json', 'b.board.json']);
+    await all;
+  });
+
+  it('a key cancelled while a flushAll holds it is not written', async () => {
+    let releaseFirst!: () => void;
+    const first = new Promise<void>((res) => { releaseFirst = res; });
+    const written: string[] = [];
+    const scheduler = createScheduler<TArgs>({
+      name: 'test',
+      debounceMs: 10_000,
+      performWrite: async (a) => {
+        if (a.path === 'a.board.json') await first;
+        written.push(a.path);
+      },
+      getSentinelInfo: (a) => ({ vaultRoot: a.vaultRoot, path: a.path }),
+    });
+    scheduler.schedule('a', () => makeArgs('a.board.json'));
+    scheduler.schedule('b', () => makeArgs('b.board.json'));
+
+    const all = scheduler.flushAll();
+    scheduler.cancel('b'); // the board was deleted meanwhile
+    releaseFirst();
+    await all;
+    expect(written).toEqual(['a.board.json']);
+    expect(scheduler.hasWork('b')).toBe(false);
+  });
 });
 
 describe('createScheduler — vault-swap reset guard', () => {

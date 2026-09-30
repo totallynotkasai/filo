@@ -41,7 +41,7 @@ import { FiloTaskList, FiloListParse } from './taskItems';
 import { FiloTable } from './tableMarkdown';
 import { FiloCodeBlock } from './codeFence';
 import { FiloHardBreak } from './hardBreak';
-import { SoftBreak, withBreakMarksTrimmed } from './softBreak';
+import { SoftBreak, SoftBreakEnter, withBreakMarksTrimmed } from './softBreak';
 import { PastePlainText } from './pastePlainText';
 import { FiloBlockquote } from './blockquote';
 import { isFiloLink } from '../../schema/link';
@@ -294,6 +294,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       FiloOrderedList,
       FiloHardBreak,
       SoftBreak,
+      SoftBreakEnter,
       FiloBlockquote,
       HeadingWithLayout,
       NoteText,

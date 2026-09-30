@@ -176,6 +176,7 @@ export function relativeLuminance(hex: string): number {
 /**
  * Returns the WCAG contrast ratio between two colours (1–21). 4.5 is the
  * AA threshold for body text.
+ * @internal test-only
  */
 export function contrastRatio(hex1: string, hex2: string): number {
   const l1 = relativeLuminance(hex1);

@@ -45,29 +45,6 @@ const DialogOpenFileOptionsSchema = z
  */
 export function registerDialogHandlers(): void {
   /**
-   * Shows a confirmation dialog. Returns true if the user clicked "OK"/"Yes".
-   */
-  ipcMain.handle(
-    'dialog:confirm',
-    async (_event, message: string, title?: string, detail?: string) => {
-      const win = BrowserWindow.getFocusedWindow();
-      if (!win) return false;
-
-      const result = await dialog.showMessageBox(win, {
-        type: 'question',
-        buttons: ['Yes', 'No'],
-        defaultId: 0,
-        cancelId: 1,
-        title: title || 'Confirm',
-        message,
-        detail,
-      });
-
-      return result.response === 0;
-    },
-  );
-
-  /**
    * Multi-button choice dialog. Returns the 0-based index of the button the
    * user clicked, or -1 if the dialog closed without a selection (Esc / X).
    *

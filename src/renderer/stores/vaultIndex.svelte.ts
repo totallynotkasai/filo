@@ -158,9 +158,9 @@ async function readFileText(vaultRoot: string, relativePath: string): Promise<Re
  * watcher event, so a note that stays unreadable isn't re-read all session.
  */
 export const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [2_000, 10_000, 60_000];
-const pendingRetries = new SvelteMap<string, ReturnType<typeof setTimeout>>();
+const pendingRetries = new SvelteMap<VaultPath, ReturnType<typeof setTimeout>>();
 /** Retries already spent per path; a watcher event starts it again. */
-const retriesSpent = new SvelteMap<string, number>();
+const retriesSpent = new SvelteMap<VaultPath, number>();
 
 /**
  * Per path, bumped by every change to its entry. A read that started before
@@ -219,23 +219,24 @@ async function indexOnePath(relativePath: string): Promise<void> {
   }
   // Transient: keep the existing entry and read again after a growing wait
   // (TRANSIENT_RETRY_DELAYS_MS). One retry in flight per path.
-  if (pendingRetries.has(relativePath)) return;
-  const spent = retriesSpent.get(relativePath) ?? 0;
+  if (pendingRetries.has(key)) return;
+  const spent = retriesSpent.get(key) ?? 0;
   const delay = TRANSIENT_RETRY_DELAYS_MS[spent];
   if (delay === undefined) return;
-  retriesSpent.set(relativePath, spent + 1);
+  retriesSpent.set(key, spent + 1);
   const timer = setTimeout(() => {
-    pendingRetries.delete(relativePath);
+    pendingRetries.delete(key);
     void indexOnePath(relativePath);
   }, delay);
-  pendingRetries.set(relativePath, timer);
+  pendingRetries.set(key, timer);
 }
 
 function cancelRetry(relativePath: string): void {
-  const pending = pendingRetries.get(relativePath);
+  const key = vaultPath(normaliseRel(relativePath));
+  const pending = pendingRetries.get(key);
   if (pending) clearTimeout(pending);
-  pendingRetries.delete(relativePath);
-  retriesSpent.delete(relativePath);
+  pendingRetries.delete(key);
+  retriesSpent.delete(key);
 }
 
 /**
@@ -468,7 +469,7 @@ export const vaultIndexStore = {
       const ext = dot >= 0 ? rel.slice(dot) : '';
       if (!isMarkdownExtension(ext)) continue;
       // A watcher event for a note the index gave up on starts its retries again.
-      retriesSpent.delete(rel);
+      retriesSpent.delete(vaultPath(rel));
       toIndex.push(rel);
     }
     await indexPathsChunked(toIndex);

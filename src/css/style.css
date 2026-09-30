@@ -1014,19 +1014,6 @@ select:focus:not(:focus-visible) {
   outline: none;
 }
 
-/* ── Search highlight pulse (Find & Replace) ── */
-.search-highlight {
-  animation: search-pulse 0.6s ease 2;
-  outline: 2px solid var(--accent-primary);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-@keyframes search-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary) 0%, transparent); }
-  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent-primary) 30%, transparent); }
-}
-
 /* ── Skip to main content (accessibility) ── */
 .skip-link {
   position: absolute;

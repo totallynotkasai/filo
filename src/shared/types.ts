@@ -103,7 +103,6 @@ export type IpcChannel =
   | 'templates:layout:rename'
   | 'templates:layout:delete'
   // Dialog operations
-  | 'dialog:confirm'
   | 'dialog:choice'
   | 'dialog:open-file'
   // Media operations

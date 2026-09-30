@@ -1,4 +1,3 @@
-import MiniSearch, { type SearchResult } from 'minisearch';
 import type { FileTreeNode } from '../../../shared/types';
 import { normalizeTagsField } from '../utils/normalizeTagsField';
 import { splitFrontmatterSource, parseFrontmatterObject } from './frontmatterRead';
@@ -32,18 +31,6 @@ export interface FileMetadata {
    * paths may omit it, and the heuristic falls back to the parsed-body length.
    */
   rawByteSize?: number;
-}
-
-export interface VaultIndexSearchResult extends SearchResult {
-  path: string;
-  title: string;
-}
-
-interface IndexableDoc {
-  id: string;
-  title: string;
-  content: string;
-  tags: string;
 }
 
 /**
@@ -181,12 +168,9 @@ export function countTagsInInlineTiles(
 /**
  * In-memory metadata index for all .md files in a vault:
  *
- *   1. A `Map<path, FileMetadata>` for direct lookups and structured queries
- *      (tags, frontmatter properties, body text).
- *   2. A MiniSearch full-text index over titles, content and tags, built on
- *      the first `query()` and kept up to date from then on. Nothing builds
- *      it at vault open: the app's Search panel runs its own match over the
- *      metadata (`lib/search/runSearch.ts`).
+ * a `Map<path, FileMetadata>` for direct lookups and structured queries
+ * (tags, frontmatter properties, body text). The Search panel runs its own
+ * match over it (`lib/search/runSearch.ts`).
  *
  * Updates are incremental — a file change only re-parses and re-indexes
  * that single file, not the whole vault.
@@ -199,32 +183,9 @@ export class VaultIndex {
   // a raw-string `.set` a compile error; the stored value keeps `path` in OS
   // casing for display. Pinned by `scripts/gates:vault-path-keys`.
   private readonly metadata = new Map<VaultPath, FileMetadata>();
-  /** Built on the first `query()`; null until then. */
-  private search: MiniSearch<IndexableDoc> | null = null;
-
-  private static doc(id: VaultPath, m: FileMetadata): IndexableDoc {
-    return { id, title: m.title, content: m.content, tags: m.tags.join(' ') };
-  }
-
-  private searchIndex(): MiniSearch<IndexableDoc> {
-    if (!this.search) {
-      this.search = new MiniSearch<IndexableDoc>({
-        fields: ['title', 'content', 'tags'],
-        storeFields: ['title'],
-        searchOptions: {
-          boost: { title: 3, tags: 2 },
-          prefix: true,
-          fuzzy: 0.2,
-        },
-      });
-      this.search.addAll([...this.metadata].map(([id, m]) => VaultIndex.doc(id, m)));
-    }
-    return this.search;
-  }
 
   /**
-   * The single case-folding key derivation for the metadata
-   * Map AND the MiniSearch document id. Returns the branded `VaultPath` form
+   * The single case-folding key derivation for the metadata Map. Returns the branded `VaultPath` form
    * (`vaultPath()` lower-cases + strips the leading slash) so two casings of
    * the same on-disk file collapse to one entry. The branded return type means
    * a caller can't accidentally key the Map by a raw OS path.
@@ -236,22 +197,15 @@ export class VaultIndex {
   upsert(metadata: FileMetadata): void {
     const id = this.keyOf(metadata.path);
     this.metadata.set(id, metadata);
-    if (this.search) {
-      if (this.search.has(id)) this.search.discard(id);
-      this.search.add(VaultIndex.doc(id, metadata));
-    }
   }
 
   remove(path: string): void {
-    const id = this.keyOf(path);
-    if (this.search?.has(id)) this.search.discard(id);
-    this.metadata.delete(id);
+    this.metadata.delete(this.keyOf(path));
   }
 
   /**
    * Rebinds an index entry from `oldPath` to `newPath`.
-   * Updates the metadata map key, the cached `metadata.path`, and the
-   * MiniSearch document id atomically. No-ops if the entry doesn't exist.
+   * Updates the metadata map key and the cached `metadata.path` together. No-ops if the entry doesn't exist.
    *
    * A case-ONLY rename folds to the SAME key, so we refresh the stored display
    * casing in place (mirrors `boardCache.renameBoardPath`).
@@ -270,19 +224,16 @@ export class VaultIndex {
       }
       return;
     }
-    if (this.search?.has(oldId)) this.search.discard(oldId);
     this.metadata.delete(oldId);
     // The new path may be indexed already (a write that landed in the moved
     // file, or its create event came first). That entry is newer; keep it.
     if (this.metadata.has(newId)) return;
     const next: FileMetadata = { ...existing, path: newDisplay };
     this.metadata.set(newId, next);
-    this.search?.add(VaultIndex.doc(newId, next));
   }
 
   clear(): void {
     this.metadata.clear();
-    this.search = null;
   }
 
   has(path: string): boolean {
@@ -293,6 +244,7 @@ export class VaultIndex {
     return this.metadata.get(this.keyOf(path)) ?? null;
   }
 
+  /** @internal test-only */
   allPaths(): string[] {
     // Return the stored OS-casing `path` from each value, not
     // the folded Map keys, so callers keep display casing.
@@ -307,16 +259,6 @@ export class VaultIndex {
     return this.metadata.size;
   }
 
-  /** Returns paths of all files tagged with the given tag (case-insensitive). */
-  filesByTag(tag: string): string[] {
-    const needle = tag.replace(/^#/, '').toLowerCase();
-    const out: string[] = [];
-    for (const md of this.metadata.values()) {
-      if (md.tags.some((t) => t.toLowerCase() === needle)) out.push(md.path);
-    }
-    return out;
-  }
-
   /** Returns a tag-count map across all indexed files. */
   allTags(): Map<string, number> {
     const counts = new Map<string, number>();
@@ -326,21 +268,5 @@ export class VaultIndex {
       }
     }
     return counts;
-  }
-
-  /** Full-text search via MiniSearch. Returns ranked results. */
-  query(queryText: string, limit = 50): VaultIndexSearchResult[] {
-    if (!queryText.trim()) return [];
-    const raw = this.searchIndex().search(queryText, { prefix: true, fuzzy: 0.2 });
-    // The MiniSearch id is the folded key; resolve it back to
-    // the stored OS-casing `path` so search results carry display casing.
-    return raw.slice(0, limit).map((r) => {
-      const display = this.metadata.get(this.keyOf(String(r.id)))?.path ?? String(r.id);
-      return {
-        ...r,
-        path: display,
-        title: (r.title as string) ?? display,
-      };
-    });
   }
 }

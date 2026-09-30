@@ -96,8 +96,9 @@ export function updateEdgePanMouse(x: number, y: number): void {
 }
 
 /**
- * Test/introspection accessor — the canvas scope currently driving edge-pan
- * (pinned at start time), or null when idle.
+ * The canvas scope currently driving edge-pan (pinned at start time), or
+ * null when idle.
+ * @internal test-only
  */
 export function getEdgePanScope(): CanvasScope | null {
   return state.scope;

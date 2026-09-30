@@ -29,12 +29,33 @@ const unloaded = new Map<VaultPath, UnloadedBoard>();
 const journal: Array<{ oldRel: string; newRel: string }> = [];
 /** Boards already named in a notice, per kind of change: each is named once a session. */
 const told = new Set<string>();
+/**
+ * Board files Filo is creating right now. `board:create` reserves an empty
+ * file before it writes the JSON, and a tree refresh in that gap would read
+ * the empty file, fail to parse it and mark a brand-new board unloaded.
+ */
+const creating = new Set<VaultPath>(); // allow-no-rename-transfer: lives for one create only
 
 vaultSwapResettable('unloadedBoards', () => {
   unloaded.clear();
   journal.length = 0;
   told.clear();
+  creating.clear();
 });
+
+/** Filo is creating the board file at `relPath`; call the returned function once the create has settled. */
+export function beginBoardCreate(relPath: string): () => void {
+  const key = vaultPath(relPath);
+  creating.add(key);
+  return () => {
+    creating.delete(key);
+  };
+}
+
+/** True while Filo is creating the board file at `relPath` (its bytes aren't a board yet). */
+export function isBoardBeingCreated(relPath: string): boolean {
+  return creating.has(vaultPath(relPath));
+}
 
 registerPathRenamable('unloadedBoards', (oldRel, newRel) => {
   journal.push({ oldRel, newRel });

@@ -645,6 +645,67 @@ Fix where cheap, otherwise list in KL #17:
   - the two unused CSS rules.
 - Mark test-only exports `@internal`, or move them into test helpers.
 
+### Phase 6 outcome (2026-09-30)
+
+**Status:** done. Verified on Windows:
+- `npm run ci:verify` green: 784 test files, 7,392 tests passed (5 skipped), 89/89 gates;
+- the E2E suite on the built app: 23 passed, 3 skipped (the scale budgets), `quitMinimized` included. Phase 6 changes the write scheduler's `flushAll` (the quit drain runs it) and the shutdown report, so it was run.
+
+**What changed**
+
+- **6.1 Lifecycle lows**
+  - **A26-17: a board created during a sidebar refresh is no longer marked "not loaded".** `persistNewBoard` registers the planned path before `board:create` (`beginBoardCreate` in `stores/unloadedBoards.ts`, released when the create settles). The tree scan skips a path being created without marking it scanned, `adoptBoardAtRuntime` answers `'already'` for it (also when the create began during its read), and a successful create clears any mark a load of another spelling left (`catchUpLoadedBoard`).
+  - **A26-18: Resume of a crashed tag-rename Undo renames back only what that Undo recorded.** The Undo's sweep writes its attachments, board-only tiles, filter chips and colour into the sentinel (`undoOfRename`, validated on read; a malformed one makes the sentinel unreadable, as the other fields do). Resume goes through `resumeTagSweep` (`stores/tagUndo.svelte.ts`), which replays such a sweep as that Undo (`undoRename(…, retrying)`), and converges every other sweep forward as before.
+  - **A26-19: `flush(key)` and `hasWork` see a write a full save has captured but not yet sent.** `flushAll` registers each captured entry as parked until it fires (removed just before `fireWrite`, which registers its in-flight entry synchronously, so the write is never in no structure). `cancel(key)` now reaches such an entry too: a board deleted while a Ctrl+S or the quit drain is saving other boards no longer has its captured write fire into a missing file.
+  - **A26-20: a caret resting in a note no longer holds a Windows shutdown back.** `mayLoseWorkNow` counts a focused field only when its text changed since it took focus (recorded on `focusin`); a note editor counts only through its unserialised keystrokes, which `nothingUnsaved` already reports. An `input` listener re-checks on the next task, so typing is reported at once rather than on the 1 s poll.
+  - **A26-21: Keep local on a held settings file writes it even when a corrupt file failed in the same save.** The config drift target's `resume` schedules the bundle again from the latest settings, then re-fires a retained write if there is one.
+- **6.2 Editor cosmetics (A26-24)**
+  - **A `0.` list saves as `0.`** (`serializeOrderedList` took `start || 1`). The property test's generator now includes lists starting at 0 (closing Phase 2 deviation 5).
+  - **Enter beside a soft break splits the paragraph there** (`SoftBreakEnter`, high priority in `softBreak.ts`): it removes the break and hands the key on, so a list item's Enter (a new item) or the paragraph split runs on the text without it. No `<br data-filo-soft-break>` in the file, no empty first line.
+  - **Pasted plain text saves bare newlines.** The paste parser uses `breaks: false`, so a single newline is a soft break, as when the same text is opened from a file; Ctrl+Shift+V's literal paste uses soft breaks too. KL #41 updated.
+  - **Adjacent lists and nested blocks were already fixed** by Phase 2's list writers (`listMarkers.ts`): `* a / * b` then `- c` and a nested item holding a rule, code block or quote both reopen editable and stable. Pinned as named round-trip cases. What is left of the nested case is spelling: the nested list is written loose, the list around it stays tight (a row in KL #17's table).
+- **6.3 Gates (FC-08)**, each proven by planting a violation in a temporary component and store (all four failed), then removing it:
+  - `no-global-index-version` also matches `allMetadata(`, scans component markup as well as script, and scans `stores/`. Its seven existing one-off reads (a rename, the recovery prompt, the tag sweep, open housekeeping, a trash move, the search runner's untracked read) carry the marker;
+  - `component-timer-cleanup` also catches an untyped component-scope variable assigned `setTimeout` / `setInterval` anywhere in the component;
+  - `enter-keeps-the-key` accepts either quote style;
+  - `toast-plain-language` follows a message passed by name (the whole argument, or a `text:` / `body:` / `title:` / `message:` option) to what it is set to in the same file.
+- **6.4 Docs (FC-09)**
+  - KNOWN_LIMITATIONS: #13 rewritten for D9; #6 rewritten without narration (and without the stale "no component-mount harness" reason); #41 for the soft-break paste; #17 (the nested-list row, `0.`, the two edits that no longer leave markup); #32 names `softBreak.ts`; #4's shutdown paragraph for A26-20.
+  - CLAUDE.md: the search row (MiniSearch only in the Template Browser), real IPC channel examples, the Link tile's preview fetch under "No network calls", the five files in the tree, `softBreak.ts` / `pastePlainText.ts` lines, and the `components` gate row.
+- **6.5 Dead code (FC-10):** removed `VaultIndex.query()` with its MiniSearch index and `filesByTag`, `boardStore.clearCache` / `updateCacheEntry`, the store-level `toggleWaypointLock`, the `dialog:confirm` channel (handler, schema, contract, union entry) and the two CSS rules. The ten test-only exports are marked `@internal test-only`. `minisearch` stays a dependency (the Template Browser uses it).
+- **Tests added or changed:**
+  - unit `boardDiscovery.test.ts` (a tree refresh inside `board:create` loads nothing and marks nothing);
+  - unit `tagRewriteSentinel.test.ts` (the Undo's scope round-trips) and `tagUndo.test.ts` (Resume renames back only the recorded attachment);
+  - unit `writeScheduler.test.ts` (`flush('b')` waits while `flushAll` is still sending `a`; a key cancelled while held isn't written);
+  - unit `unsavedStateReport.test.ts` (new: a focused editor with nothing unsaved, typed keystrokes, an input only once changed);
+  - unit `configExternalChanges.test.ts` (Keep local with a corrupt `workspace.json` in the same save);
+  - component `softBreakEnter.test.ts` (new), unit `pastePlainText.test.ts`, `markdownBodyRoundTrip.test.ts` (`0.`, adjacent lists, the nested rule), `frontmatterReaders.test.ts` (new, D9), `vaultIndex.test.ts` (the removed methods' cases now read `allTags` / `get`);
+  - E2E `quitMinimized.e2e.ts` paces its typing and waits to see it land (the Phase 4 flake).
+- **Proof on the old code** (each fix reverted alone, its tests kept): create race 1 fail, scheduler 2, shutdown report 2, config resume 1, editor 5 (Enter 2, paste 2, `0.` 1). The A26-18 test calls a function the old code doesn't have; the old Resume path (`renameTagEverywhere`) renames every attachment by construction.
+- **Property sweep:** 4 seeds × 600 documents with the widened generator, clean.
+
+**Deviations from the plan**
+
+1. **A26-17: the create is guarded, and the scan never marks it.** The plan offered either option; the planned path is registered before `board:create`, and a load of a path being created answers `'already'` instead of failing. No "young file" heuristic.
+2. **A26-18: Resume replays the Undo itself** rather than a scoped note sweep plus a separate replay: `resumeTagSweep` rebuilds the Undo's snapshot from the sentinel and runs `undoRename`, so the order (notes first, then attachments, tiles, chips, registry) is the Undo's own. It lives in `tagUndo.svelte.ts`: `vault.svelte.ts` is over the size cap and may only shrink (it did, by four lines).
+3. **A26-19 goes one step further:** a captured entry is cancellable, not only visible, since it now sits in the parked set that `cancel(key)` already walks. The fix took `writeScheduler.ts` past the 1,000-line gate, so the parked set moved to its own module (`lib/boards/writeSchedulerParked.ts`: `ParkedWrites`, `newParkedEntry`); the scheduler is now 947 lines, down from 972.
+4. **6.2: two of the five cosmetics needed no change** (adjacent lists, nested blocks), fixed earlier by Phase 2; they are pinned as tests and the residual spelling is listed.
+5. **D9 took its default and one more word:** a quoted `"true"` reads as done too (the case KL #13 was written for). `yes` / `on` / `"true"`, any case, read as done; the write stays a boolean.
+6. **Two small items beyond the plan's list:** the vault index's retry maps are keyed by `VaultPath` (FC-10's "minor key inconsistency"), and the `quitMinimized` E2E flake from Phase 4 is paced.
+7. **Docs pulled forward in earlier phases:** KL #32 (Phase 2), KL #46 (Phase 4) and most of #17 (Phases 2 and 3) were already current; this phase only added to #17 and #32.
+
+**Not done (for the owner or later)**
+
+- **The search query parser trims the needle** (Phase 5's finding): ` - ` still finds every `-`. It is a query-syntax decision (quoting? a literal mode?), so it is left for the owner.
+- **About 0.4 MB of heap kept per reload into the same editor** (Phase 2's finding, unit environment only) was not investigated.
+
+**Scores after Phase 6:**
+- Renames, moves, trash and their undo 8.5 → 9 (a new board is never falsely "not loaded"; a crashed tag-rename Undo resumes as that Undo);
+- Open / close / quit / recovery 8.5 → 9 (a board deleted during a save keeps its last edit in the trash copy; a routine shutdown no longer shows "preventing shutdown"; Keep local always writes);
+- Editor: notes open editable stays 8.5 (`0.` lists now open editable; the rest was cosmetic);
+- Accessibility and keyboard stays 7 (Phase 4's score). The 7.5 target isn't claimed: the Light theme's tertiary text (KL #47) and the Board Browser's nested buttons (KL #46) are still open.
+- **Overall 9.**
+
 ## Phase 7: verification and archive
 
 1. Run the checks:

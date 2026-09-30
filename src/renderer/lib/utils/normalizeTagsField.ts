@@ -64,7 +64,7 @@ export function parseTagsField(value: unknown): ParsedTagsField {
  * `normalizeTagsField` (see `frontmatterSync.valuesEqual`), so preserving the
  * authored order here can never re-trigger a spurious divergence.
  *
- * Comparison / MiniSearch indexing must still use `normalizeTagsField`.
+ * Comparison must still use `normalizeTagsField`.
  */
 export function orderPreservingTagsField(value: unknown): string[] {
   const parsed = parseTagsField(value);
@@ -82,7 +82,7 @@ export function orderPreservingTagsField(value: unknown): string[] {
 
 /**
  * Canonical tag list. Used wherever Filo needs a stable, comparable view of a
- * `.md` file's frontmatter tags — equality checks, MiniSearch indexing,
+ * `.md` file's frontmatter tags — equality checks,
  * divergence detection.
  *
  * Semantics:

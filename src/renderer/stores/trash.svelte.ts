@@ -128,7 +128,7 @@ export async function syncRestoredTree(rels: string[], identity: VaultIdentity):
  */
 export async function reindexUnder(rel: string): Promise<void> {
   const key: string = vaultPath(rel);
-  const paths = vaultIndexStore
+  const paths = vaultIndexStore // allow-global-index-version: a one-off read after a trash move, not a derived
     .allMetadata()
     .map((m) => m.path)
     .filter((p) => {

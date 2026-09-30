@@ -3,6 +3,7 @@ import { parseFrontmatterObject } from '../vault/frontmatterRead';
 import type { Editor } from '@tiptap/core';
 import { resetEditorHistory } from './editorHistory';
 import { bodyLines, withMinimalEscapes, type MarkdownRenderer } from './minimalEscapes';
+import { rendersSame } from './renderedSame';
 import {
   encodeEmptyParagraphs,
   stripEmptyParagraphSentinels,
@@ -41,11 +42,11 @@ import { bodyWithoutFenceLookalike, splitFrontmatterFence } from '../notes/front
  */
 
 /**
- * The lines of the body each editor last loaded. A save keeps the escapes of a
- * line the file already holds as it is (`withMinimalEscapes`).
+ * The lines of the body each editor last loaded, in order. A save writes a line
+ * the file already holds as the file spells it (`withMinimalEscapes`).
  */
 // allow-module-state: per-editor load record, dropped with the editor (WeakMap)
-const loadedLines = new WeakMap<Editor, ReadonlySet<string>>();
+const loadedLines = new WeakMap<Editor, readonly string[]>();
 
 export interface ParsedMarkdownDocument {
   /** Raw frontmatter object (parsed via the `yaml` package's `parseDocument().toJS()`). */
@@ -180,6 +181,10 @@ export function loadMarkdownIntoEditor(
     .chain()
     .command(({ tr }) => {
       tr.setMeta('addToHistory', false);
+      // A load isn't typing: a bare URL in the file stays text, as the file
+      // has it. Link's autolink would otherwise link the first block's last
+      // word, and a save would write it as `<…>`.
+      tr.setMeta('preventAutolink', true);
       return true;
     })
     // Keeps runs of spaces the file has (`keepSpaces.ts` tidies the rest).
@@ -219,7 +224,7 @@ export function loadMarkdownIntoEditor(
   if (originalBody.length > 0 && hasMarkdownStorage) {
     try {
       const roundTripped = editorMarkdown(editor);
-      lossy = isLossyMarkdownRoundTrip(originalBody, roundTripped);
+      lossy = isLossyMarkdownRoundTrip(originalBody, roundTripped, markdownRenderer(editor));
       // What the read-only banner names, and Take ownership's confirm lists.
       if (lossy) changes = roundTripChanges(originalBody, roundTripped);
     } catch {
@@ -238,11 +243,23 @@ export function loadMarkdownIntoEditor(
  * survives this normalisation and still differs is real syntax that the
  * parser dropped.
  *
+ * With `md`, the note's markdown-it, texts that still differ are compared as
+ * that parser reads them (`renderedSame.ts`): a difference that renders the
+ * same, adds no escape another app would read differently and keeps every
+ * reference definition is only spelling (a blank line between blocks, list
+ * numbers), and the note stays editable.
+ *
  * Exported for direct unit-testing in `markdownSync.test.ts`. Production
  * call site is `loadMarkdownIntoEditor` above.
  */
-export function isLossyMarkdownRoundTrip(original: string, roundTripped: string): boolean {
-  return normaliseForRoundTripCompare(original) !== normaliseForRoundTripCompare(roundTripped);
+export function isLossyMarkdownRoundTrip(original: string, roundTripped: string, md?: MarkdownRenderer): boolean {
+  if (normaliseForRoundTripCompare(original) === normaliseForRoundTripCompare(roundTripped)) return false;
+  return !md || !rendersSame(original, roundTripped, md);
+}
+
+/** The editor's markdown-it, when it has tiptap-markdown's parser. */
+function markdownRenderer(editor: Editor): MarkdownRenderer | undefined {
+  return (editor as { storage?: { markdown?: { parser?: { md?: MarkdownRenderer } } } }).storage?.markdown?.parser?.md;
 }
 
 /** A line of the note that saving from the editor would change, as the round-trip check compares it. */
@@ -251,14 +268,65 @@ export interface RoundTripChange {
   original: string;
   /** The line as Filo would write it ('' when saving would drop it). */
   filo: string;
+  /**
+   * For a line saving would add (`original` ''): the file's line it would go
+   * above, in normal form; '' when it would go at the end.
+   */
+  above?: string;
+}
+
+/** Past this many lines in the region that differs, lines are paired in order rather than diffed. */
+const DIFF_LIMIT = 1500;
+
+type LineOp = { kind: 'same' | 'drop'; a: string } | { kind: 'add'; b: string };
+
+/** A shortest edit script from `a` to `b` (a longest common subsequence). */
+function lineOps(a: readonly string[], b: readonly string[]): LineOp[] {
+  const n = a.length;
+  const m = b.length;
+  if (n > DIFF_LIMIT || m > DIFF_LIMIT) {
+    const ops: LineOp[] = [];
+    for (let i = 0; i < Math.max(n, m); i++) {
+      if (i < n && i < m && a[i] === b[i]) ops.push({ kind: 'same', a: a[i] ?? '' });
+      else {
+        if (i < n) ops.push({ kind: 'drop', a: a[i] ?? '' });
+        if (i < m) ops.push({ kind: 'add', b: b[i] ?? '' });
+      }
+    }
+    return ops;
+  }
+  // lcs[i][j]: the longest common subsequence of a[i..] and b[j..].
+  const lcs: Uint16Array[] = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    const row = lcs[i] as Uint16Array;
+    const below = lcs[i + 1] as Uint16Array;
+    for (let j = m - 1; j >= 0; j--) {
+      row[j] = a[i] === b[j] ? (below[j + 1] ?? 0) + 1 : Math.max(below[j] ?? 0, row[j + 1] ?? 0);
+    }
+  }
+  const ops: LineOp[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) {
+      ops.push({ kind: 'same', a: a[i++] ?? '' });
+      j++;
+    } else if (j < m && (i >= n || (lcs[i]?.[j + 1] ?? 0) >= (lcs[i + 1]?.[j] ?? 0))) {
+      ops.push({ kind: 'add', b: b[j++] ?? '' });
+    } else {
+      ops.push({ kind: 'drop', a: a[i++] ?? '' });
+    }
+  }
+  return ops;
 }
 
 /**
  * Up to `max` lines that differ between `original` and what the editor would
- * write for it, in the round-trip check's normal form. The lines both share at
- * the start and at the end are set aside, and the rest are paired in order,
- * which names a single changed region exactly (the usual case). Empty when
- * nothing differs.
+ * write for it, in the round-trip check's normal form, in file order. Lines
+ * dropped and added at one place are paired as changed lines; a line only
+ * added names the file line it would go above. When anything else changes, a
+ * blank line added or dropped between blocks isn't listed: it is the spelling,
+ * not the reason. Empty when nothing differs.
  */
 export function roundTripChanges(original: string, roundTripped: string, max = 3): RoundTripChange[] {
   const a = normaliseForRoundTripCompare(original).split('\n');
@@ -271,13 +339,41 @@ export function roundTripChanges(original: string, roundTripped: string, max = 3
     endA--;
     endB--;
   }
-  const out: RoundTripChange[] = [];
-  for (let i = 0; start + i < Math.max(endA, endB) && out.length < max; i++) {
-    const o = (start + i < endA ? a[start + i] : '') ?? '';
-    const f = (start + i < endB ? b[start + i] : '') ?? '';
-    if (o !== f) out.push({ original: o, filo: f });
+  const ops = lineOps(a.slice(start, endA), b.slice(start, endB));
+  // The first non-blank file line at or after each op, for an added line's place.
+  const nextFileLine: string[] = new Array<string>(ops.length + 1);
+  let next = a.slice(endA).find((line) => line !== '') ?? '';
+  nextFileLine[ops.length] = next;
+  for (let k = ops.length - 1; k >= 0; k--) {
+    const op = ops[k];
+    if (op && op.kind !== 'add' && op.a !== '') next = op.a;
+    nextFileLine[k] = next;
   }
-  return out;
+  const all: RoundTripChange[] = [];
+  for (let k = 0; k < ops.length; ) {
+    const dropped: string[] = [];
+    const added: string[] = [];
+    const at = k;
+    while (k < ops.length && ops[k]?.kind !== 'same') {
+      const op = ops[k++];
+      if (op?.kind === 'drop') dropped.push(op.a);
+      else if (op?.kind === 'add') added.push(op.b);
+    }
+    // Text lines pair with text lines; blank lines added or dropped between
+    // them are listed on their own.
+    const droppedText = dropped.filter((line) => line !== '');
+    const addedText = added.filter((line) => line !== '');
+    for (let p = 0; p < Math.max(droppedText.length, addedText.length); p++) {
+      if (p < droppedText.length) all.push({ original: droppedText[p] ?? '', filo: addedText[p] ?? '' });
+      else all.push({ original: '', filo: addedText[p] ?? '', above: nextFileLine[k] ?? '' });
+    }
+    for (let p = addedText.length; p < added.length; p++) all.push({ original: '', filo: '', above: nextFileLine[k] ?? '' });
+    for (let p = droppedText.length; p < dropped.length; p++) all.push({ original: '', filo: '' });
+    if (k === at) k++;
+  }
+  const blankOnly = (c: RoundTripChange): boolean => c.original === '' && c.filo === '';
+  const telling = all.filter((c) => !blankOnly(c));
+  return (telling.length > 0 ? telling : all).slice(0, max);
 }
 
 /**

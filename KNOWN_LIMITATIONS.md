@@ -572,51 +572,69 @@ the document.
 
 ## 17. Lossy notes open read-only (and bare URLs are plain text)
 
-**What:** When Filo's editor can't reproduce a note's Markdown byte-for-byte
+**What:** When a save from Filo's editor would change what a note says
 (`isLossyMarkdownRoundTrip`), the note opens **read-only**: the editor is
 non-editable and toolbar commands are refused (a read-only note that only
 refused the save would silently discard what was typed). The banner names the
-first line a save would change ("Line 12 would change from … to …") and offers
-**Edit in Raw view** (opens the whole file with that line selected, to fix by
-hand) and **Take ownership**, which re-enables editing after a confirm listing
-up to three lines that will change; the next save then rewrites the formatting
-Filo can't preserve.
+first line a save would change ("Line 12 would change from … to …", "Line 7
+(…) would be dropped", "Saving would add a blank line above line 4") and
+offers **Edit in Raw view** (opens the whole file with that line selected, to
+fix by hand) and **Take ownership**, which re-enables editing after a confirm
+listing up to three lines that will change; the next save then rewrites the
+formatting Filo can't preserve.
 
-Formats that still trigger read-only (each is a real byte or semantic change the
-serializer can't preserve cheaply):
+**How "would change" is decided.** Filo serialises the loaded note and
+compares it with the file. A difference in the list of spellings below is
+cosmetic. Anything else is compared as markdown-it (the parser the note is
+loaded with) reads it (`lib/editor/renderedSame.ts`): when both render the same
+HTML, the difference is only spelling and the note opens editable. Two things
+the HTML doesn't show still count: link reference definitions (a save that
+dropped one would pass unseen), and a backslash the file didn't have in front
+of a character other Markdown apps give meaning to (`[`, `]`, `!`, `#`, `=`,
+`$`, `^`, `|`, `~`…), since Obsidian reads `\[\[Page\]\]` differently from
+`[[Page]]`. A line the file already holds is written as the file spells it,
+escapes and all (`lib/editor/minimalEscapes.ts`), so `[[wiki links]]`,
+`![[embeds]]`, `> [!note]` callouts, `[TODO]`, footnotes `[^1]`,
+`C:\Users` paths and `![alt](My Pic.png)` image paths with a space all save
+byte for byte. On a line you edit, and in text you type, `*`, `_`, `[`, `]`,
+`#`, `~` and `\` are written without a backslash wherever the note reads back
+the same, so a wiki link on the line you are typing in stays a wiki link.
 
-- a continuation line written without its container's prefix or with extra
-  indent (a "lazy" `> a` / `b` quote or `- a` / `b` list item, or a paragraph
-  line indented by spaces or a tab): the line break is kept, but Filo writes
-  the line with the quote's `> ` or the list's indent, and without the
-  indent;
-- `<` / `&` written raw (re-emitted as entities);
-- brackets and backslashes Markdown could read as syntax, written unescaped:
-  `[TODO]`, `C:\Users` (Filo writes `\[TODO\]`, `C:\\Users`);
-- `[[wiki links]]` and footnotes `[^1]` (brackets escaped);
-- a tab at the start of a heading or list item, or directly before a hard
-  line break (a tab inside a line, or inside inline code, round-trips);
-- HTML comments and block HTML (`<div>`), Obsidian callouts;
+Formats that still trigger read-only (a save would change what the note says):
+
+- HTML comments and block HTML (`<div>`, another app's `<p align="center">`),
+  which the editor drops;
+- link reference definitions (`[1]: https://…`), used or not: they render
+  nothing, and a save would drop them (a used one's link written inline);
+- inline code inside bold, italic or a link (``**`npm run`**``,
+  ``[`CLAUDE.md`](CLAUDE.md)``): the editor's inline code can't carry other
+  formatting, so a save would drop the bold or the link from it;
 - a **tight** list that mixes bullets and checklist items (`- a` then
   `- [ ] b`), from another app: it loads as two lists (no filler checkbox),
-  and Filo would write them as two (`- a`, blank line, `* [ ] b`), so it stays
-  read-only;
-- inline code that starts and ends with a space, or is only spaces (Markdown
-  trims one space from each side of a code span).
+  and Filo would write them as two (`- a`, blank line, `* [ ] b`); the banner
+  names the blank line it would add;
+- a list item an earlier Filo aligned (below).
 
 No longer read-only: filenames, bare domains, emails and bare URLs
-(linkify is off), `filo://` internal links, tight checklists, GFM table
-**padding** differences and the `1)` ordered-list delimiter.
+(linkify is off; a bare URL in the file stays text when the note loads, even
+as the last word of its first paragraph, and only a URL typed in Filo becomes
+a link), `filo://` internal links, tight checklists, GFM table **padding**
+differences, the `1)` ordered-list delimiter, a tab before a line break, and
+the everyday Keep and Obsidian shapes in the table below (a list, heading,
+quote, fence or table straight under a line of text; `1. 1. 1.` numbering; a
+lazy continuation line; an unspaced `***`).
 
 Also no longer read-only: **lines separated by a single newline** (notes typed
 one line per thought, Keep and Canvas exports, hard-wrapped paragraphs,
 multi-line quotes). A single newline inside a paragraph loads as a soft break
 (`lib/editor/softBreak.ts`): the editor shows it as a line break, as Obsidian
-and Keep do, and writes it back as a bare newline. And **asterisks and
-underscores Markdown reads as text** (`5 * 3`, `2** - notes`, a `***` or
-`___` placeholder): a save writes a `*` or `_` without a backslash wherever the
-note reads back the same (`lib/editor/minimalEscapes.ts`), and a line the file
-already holds with its escapes (`5 \* 3`) keeps them.
+and Keep do, and writes it back as a bare newline. And **asterisks,
+underscores and brackets Markdown reads as text** (`5 * 3`, `2** - notes`, a
+`***` or `___` placeholder, `[TODO]`): a save writes them without a backslash
+wherever the note reads back the same (`lib/editor/minimalEscapes.ts`), and a
+line the file
+already holds is written as the file spells it (`5 \* 3` keeps its escape, two
+identical lines keep their own escapes each).
 
 Also no longer read-only (each was something Filo itself
 wrote and then couldn't read back): an empty checkbox (Enter after the last
@@ -664,13 +682,24 @@ the same, and the first body edit rewrites each into Filo's form:
 | `~~~` code fences, or a fence longer than it needs to be | backticks, three unless the code holds a line of backticks |
 | table alignment `:--` / `--:` | `:---` / `---:` |
 | a list right after another bullet or checklist list | the other bullet (`-` then `*`), so the two stay two lists |
+| a list, heading, quote, code fence, rule or table straight under a line of text (or text straight under a heading) | a blank line between them |
+| `1. 1. 1.` or `01. 02.` numbering | `1. 2. 3.` |
+| a lazy continuation line (`> a` / `b`, `- a` / `b`) or a line indented under a paragraph | the quote's `> ` or the item's indent; the paragraph line unindented |
+| `<` / `>` in text, entities such as `&copy;` | `&lt;` / `&gt;`, the character itself |
+| a `"` in a link address | `%22` |
+| a tab opening a heading or list item, inline code padded with a space each side | removed |
+
+The blank lines between a note's frontmatter and its text are kept as the
+file has them.
 
 Nothing is lost, but a note you edit gets a formatting diff that sync tools and
 git will show, including lines you didn't touch. A note you only read is never
 written.
 
 **Where:** `normaliseForRoundTripCompare` in
-[src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts);
+[src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts)
+and `rendersSame` in
+[src/renderer/lib/editor/renderedSame.ts](src/renderer/lib/editor/renderedSame.ts);
 the editability `$effect` in `TextTile.svelte` / `DocumentEditor.svelte`;
 `chainIfEditable` in `lib/editor/toolbarConfig.ts`. Pinned by
 gate `editor-body-discipline`.
@@ -686,7 +715,8 @@ and never passes it through the editor, so it can't lose formatting (see #30).
 **Bare URLs:** with linkify off, a bare `https://…` already on disk round-trips as
 plain text and is no longer rendered as a clickable link; wrap it as `<url>` or
 `[text](url)` to make it a link. Typing next to a bare URL can still autolink it
-once whitespace follows (an explicit scheme is present).
+once whitespace follows (an explicit scheme is present); opening a note never
+does.
 
 ---
 

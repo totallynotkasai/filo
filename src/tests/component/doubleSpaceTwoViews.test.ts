@@ -49,7 +49,7 @@ describe('double spaces', () => {
   });
 
   it('Take ownership holds when a second view opens the same note', async () => {
-    recordingFilo({ 'Wrapped.md': 'A paragraph with a [[wiki link]].\n' });
+    recordingFilo({ 'Wrapped.md': 'A paragraph with a <!-- a comment --> comment.\n' });
     const doc = await mountDocumentEditor({ docPath: 'Wrapped.md' });
     expect(noteStore.get('Wrapped.md')?.readOnly).toBe(true);
     noteStore.takeOwnership('Wrapped.md');

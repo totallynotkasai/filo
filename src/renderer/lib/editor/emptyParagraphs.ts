@@ -124,6 +124,6 @@ export function stripEmptyParagraphSentinels(editor: Editor): void {
   const tr = editor.state.tr;
   // Delete right-to-left so earlier deletions don't shift later positions.
   positions.sort((a, b) => b - a).forEach((p) => tr.delete(p, p + 1));
-  tr.setMeta('preventUpdate', true).setMeta('addToHistory', false);
+  tr.setMeta('preventUpdate', true).setMeta('addToHistory', false).setMeta('preventAutolink', true);
   editor.view.dispatch(tr);
 }

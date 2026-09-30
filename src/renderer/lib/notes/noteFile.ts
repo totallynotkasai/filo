@@ -124,14 +124,15 @@ export function snapshotBody(snapshot: DiskSnapshot): string {
 }
 
 /**
- * True when two bodies hold the same text, ignoring line-ending style and
- * final newlines. The editor serialises LF without a final newline, and the
- * assembler adds one on write, so a note compared with its own editor body
- * must not look changed.
+ * True when two bodies hold the same text, ignoring line-ending style, final
+ * newlines and blank lines before the text. The editor serialises LF without
+ * a final newline or leading blank lines, and the writer puts back the file's
+ * newline and the blank lines under its frontmatter, so a note compared with
+ * its own editor body must not look changed.
  */
 export function sameBody(a: string, b: string): boolean {
   if (a === b) return true;
-  const norm = (s: string): string => s.replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  const norm = (s: string): string => s.replace(/\r\n/g, '\n').replace(/^(?:[ \t]*\n)+/, '').replace(/\n+$/, '');
   return norm(a) === norm(b);
 }
 
@@ -156,7 +157,8 @@ export function assembleNoteText(
   const delta = change.delta;
   const fmChanged = delta !== undefined && !isEmptyFrontmatterDelta(delta);
   const nextFm = fmChanged ? applyFrontmatterDelta(fresh.frontmatter, delta) : fresh.frontmatter;
-  const body = change.body ?? fresh.body;
+  // The disk body already has its blank lines; a new one gets them back.
+  const body = withBlankLinesAfterFence(fresh, change.body ?? fresh.body);
   // An empty file carries no line-ending signal; the body then decides. A
   // change that keeps the body only writes the frontmatter block, which keeps
   // its own ending even in a file whose lines are mixed.
@@ -170,7 +172,7 @@ export function assembleNoteText(
   // an empty block, a fence with trailing spaces, and a block in another line
   // ending than the body all survive.
   if (change.body !== undefined && !fmChanged && fresh.hasFrontmatter) {
-    return withDiskFrontmatter(fresh, change.body, eol);
+    return withDiskFrontmatter(fresh, body, eol);
   }
   let text = assembleMarkdownFile(nextFm, body, {
     bom: fresh.hadBom,
@@ -190,6 +192,20 @@ export function assembleNoteText(
   // newline, neither of which the disk body may gain.
   if (change.body === undefined) text = withDiskBody(text, fresh);
   return text;
+}
+
+/**
+ * `body` (a new body from the editor) under the blank lines `fresh` has
+ * between its closing `---` and its text. The editor doesn't hold them (a
+ * body's leading blank lines aren't part of the document), so without this a
+ * note's first edit would take them out. Only for a note with frontmatter,
+ * and only when the new body starts with text (a body that is only blank
+ * lines, as a new task's note has, keeps them too).
+ */
+function withBlankLinesAfterFence(fresh: NoteText, body: string): string {
+  if (!fresh.hasFrontmatter || body === '' || /^[ \t]*\r?\n/.test(body)) return body;
+  const gap = /^(?:[ \t]*\r?\n)+/.exec(fresh.body)?.[0] ?? '';
+  return gap.replace(/\r\n/g, '\n') + body;
 }
 
 /**

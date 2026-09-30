@@ -30,7 +30,17 @@ export function isOpenable(href: string): boolean {
  */
 export function normaliseLinkUrl(input: string): string | null {
   const href = candidateHref(input);
-  return href !== null && isOpenable(href) ? href : null;
+  return href !== null && isOpenable(href) ? percentEncodeUnsafe(href) : null;
+}
+
+/**
+ * `href` with the characters markdown-it percent-encodes when it reads a link
+ * (`"`, `<`, `>`, `` ` ``, `{`, `}`, `|`, `\`, `^`) encoded already. Otherwise
+ * the saved address reads back spelled differently from the one typed, and the
+ * note's next save changes it.
+ */
+function percentEncodeUnsafe(href: string): string {
+  return href.replace(/["<>`{}|\\^]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
 }
 
 function candidateHref(input: string): string | null {

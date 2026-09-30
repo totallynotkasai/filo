@@ -11,9 +11,10 @@ import { isLineBreak } from './softBreak';
  * the file as a space.
  *
  * In the file it is a tab character. Only where Markdown would lose it, at the
- * start or end of a line (a leading tab makes the line a code block, and
- * headings, list items and continuation lines drop leading whitespace), it is
- * written as the entity `&#9;`, which markdown-it reads back as a tab. A tab
+ * start of a line or the end of a block (a leading tab makes the line a code
+ * block, headings, list items and continuation lines drop leading whitespace,
+ * and a block's last whitespace is trimmed), it is written as the entity
+ * `&#9;`, which markdown-it reads back as a tab. A tab
  * at the edge of a bold or italic run is saved outside the run
  * (`withEdgeTabsOutsideRuns`).
  */
@@ -22,16 +23,21 @@ interface TabSerializeState {
   write(content: string): void;
 }
 
-/** True when only tabs sit between this tab and the start or the end of its line. */
+/**
+ * True when only tabs sit between this tab and the start of its line, or the
+ * end of its block. A tab before a line break doesn't count: markdown-it
+ * keeps it there (it trims only spaces before a soft break, and a hard
+ * break's `\` or `<br>` follows it), so it stays a tab character, as a note
+ * written one line per thought has it.
+ */
 function atLineEdge(parent: ProseMirrorNode, index: number): boolean {
   const isTab = (i: number): boolean => parent.child(i).type.name === 'tab';
-  const isBreak = (i: number): boolean => isLineBreak(parent.child(i));
   let before = index - 1;
   while (before >= 0 && isTab(before)) before--;
-  if (before < 0 || isBreak(before)) return true;
+  if (before < 0 || isLineBreak(parent.child(before))) return true;
   let after = index + 1;
   while (after < parent.childCount && isTab(after)) after++;
-  return after >= parent.childCount || isBreak(after);
+  return after >= parent.childCount;
 }
 
 /** Marks written as Markdown delimiter runs (`**`, `*`, `~~`). */

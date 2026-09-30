@@ -355,6 +355,59 @@ Fix each where cheap; otherwise list it in KL #17.
 - Pass condition: no note changes bytes, and none becomes newly lossy.
 - Record how many are newly **unlocked**.
 
+### Phase 3 outcome (2026-09-30)
+
+**Status:** done. Verified on Windows:
+- `npm run ci:verify` green: 775 test files, 7,329 tests passed (5 skipped), 89/89 gates;
+- the corpus check (3.6): 18,870 notes, **0 changed bytes, 0 newly lossy, 112 newly unlocked** (18 of them now save byte for byte; the other 94 change only spelling on their first edit, per KL #17's table);
+- the property test at its fixed seed (500 documents), plus a sweep of 14 other seeds at 1,500 documents each (21,000) on the final code: no counter-example. Two seed runs hit the test's 180 s timeout under load; seed 5 re-run alone passed all 1,500 (worst document 325 ms);
+- the E2E suite on the built app: 22 passed, 3 skipped (the scale budgets; Phase 3 touches no shell, startup, quit, watching or rename code, but it changes what a save writes, so the editor-fidelity, no-bytes-by-looking and BOM specs were worth a run).
+
+**What changed**
+
+- **3.1 (A26-06, D3 = HTML compare, as defaulted): a note is read-only only when a save would change what it says.** New module `lib/editor/renderedSame.ts`. `isLossyMarkdownRoundTrip` keeps the cosmetic rules as the fast path; past them, both texts are rendered with the note's own markdown-it and must give the same HTML. Two things the HTML doesn't show still count:
+  - link reference definitions (their parsed set must match), since a save that dropped one, even an unused one, would render the same;
+  - a backslash escape the file didn't have in front of a character other apps give meaning to (brackets, `!`, `#`, `$`, `%`, `=`, `^`, `|`, `~`, `<`, `>`, braces, backtick, `:`, `@`, `&`): markdown-it reads `\[\[Page\]\]` like `[[Page]]`, Obsidian doesn't.
+
+  Unlocked by this alone: a list, checklist, heading, quote, fence or table straight under text (or text under a heading), `1. 1. 1.` and `01. 02.` numbering, an unspaced `***`, lazy continuation lines, an indented continuation line, entities, raw `<` / `>`, a tab opening a heading, padded inline code.
+- **3.2: the banner always names a line.** `roundTripChanges` now diffs the changed region (a longest-common-subsequence edit script, positional pairing past 1,500 lines), pairs text lines with text lines, and reports an added line with the file line it goes above (`above`). When anything else changes, blank lines added or dropped are left out (the spelling, not the reason). `locateChanges` / `describeChange` (`lossyChanges.ts`): "Saving would add a blank line above line 7", "A blank line would be dropped"; Edit in Raw view opens at that line and Take ownership lists it.
+- **3.3 (FB-06): a load never autolinks.** `preventAutolink` on the load transaction and on the empty-paragraph sentinel strip. A bare URL anywhere in the file stays text; typing a URL and a space still links it.
+- **3.4 (remaining shapes):**
+  - a tab before a soft or hard break is written as a tab (`tabNode.ts`: `&#9;` only opening a line or ending a block), since markdown-it keeps it there;
+  - the Insert Link popup percent-encodes `"` and the other ASCII characters markdown-it encodes in an address (`<`, `>`, backtick, braces, `|`, `\`, `^`) (`normaliseLinkUrl`), so a typed address reads back as typed;
+  - an image path with a space (R-04) now saves byte for byte (below).
+- **The Phase 2 carry-over: `minimalEscapes` is a fixed point.** `withMinimalEscapes` first writes each line the loaded file holds as the file spells it: a line is matched by what it says with every escape taken out, in file order (the next unused match after the last one, else any unused one), and the swap is kept while markdown-it renders the whole note the same (split and retried per span, within the render budget). Both Phase 2 shapes (identical lines escaped differently; escapes dropped only in part) now save byte for byte. `loadedLines` is now the body's lines in order, not a set.
+- **3.5 (A26-16, D4 = keep, as defaulted):** `assembleNoteText` puts the fresh read's blank lines between the closing `---` and the text back in front of a new body (`withBlankLinesAfterFence`), in both the body-only and the body-plus-frontmatter paths; `sameBody` ignores leading blank lines (the editor never holds them), so the drift and echo checks don't see the kept separator as a change.
+- **Tests added or changed:**
+  - unit `notesOpenEditable.test.ts` (50 cases through the real editor: every A26-06 / FB-06 / FB-07 / R-04 shape, what stays read-only and the line it names, the fixed-point shapes, a typed link with `"`, the frontmatter separator, `sameBody`);
+  - unit `renderedSame.test.ts` (escape counting, the extension-escape guard, references, the three-argument `isLossyMarkdownRoundTrip`);
+  - `lossyChanges.test.ts` (blank line above a line, pairing around blank lines, locating an addition), `minimalEscapes.test.ts` (the new escapes, brackets that would make a link, a heading marker);
+  - component `keepNoteSpelling.test.ts` (typing on the line of an Obsidian note with a separator, callout, wiki link and `[TODO]` writes only what was typed) and two new cases in `lossyBannerNamesLine.test.ts` (a blank-line-only change names its line; a Keep checklist note has no banner);
+  - the property test: the bare-URL and "same URL once per block" exclusions are gone;
+  - golden corpus: `link-schemes` left the lossy set (baseline: the fixture bar its final newline); `misc-syntax`'s callout keeps `[!note]`.
+- **Proof on the old code** (`src/renderer` stashed, the new tests kept): 67 cases fail there, across 7 files; all pass with the fix.
+
+**Deviations from the plan**
+
+1. **3.1: beyond the plan, the extension-escape guard and the reference-definition check.** HTML equality alone would have unlocked notes whose save drops an unused `[1]: https://…` line (renders nothing), and notes whose `[[wiki links]]` a save would escape (renders the same in markdown-it, breaks the link in Obsidian). Both stay read-only.
+2. **3.4: the image path and every other "Filo escapes what the file doesn't" shape were fixed rather than listed in KL #17.** The fixed-point work (matching lines by what they say) makes any unedited line save as the file spells it, so `[[wiki links]]`, `![[embeds]]`, `> [!note]` callouts, `[TODO]`, footnotes, `C:\Users` paths and `#tags` all save byte for byte.
+   - A component test then showed the gap this left: typing on the *same line* as a wiki link re-escaped it (`\[\[Page\]\]`), which would have broken the link in Obsidian now that the note is editable. So the minimal-escape search now also tries `[`, `]`, `#`, `~` and `\` escapes (was `*` and `_` only), dropping each where markdown-it renders the note the same: brackets typed in Filo are now written bare too (`Hello [x]`), and a bullet whose text starts `[ ]` keeps an escape so it doesn't become a task.
+   - Cost: a save of a 69 KB note with many brackets takes 35 ms (was 23 ms); load unchanged.
+3. **3.4: a tab before a hard break** (not only a soft break) is written as a tab: markdown-it keeps it before `\` or `<br>` too.
+4. **3.6: the corpus was compared against `HEAD` (`5b90a6f`, Phase 2), not `db1af24`.** Phase 2 changed outputs on purpose; comparing with its result isolates what Phase 3 changed. The list is 18,870 notes (Audit-25's recipe re-walked; scratch folders have changed since).
+5. **Docs pulled forward from Phase 6.4:** KNOWN_LIMITATIONS #17 rewritten (how "would change" is decided, what stays read-only, the first-edit spelling table extended, the separator kept, bare URLs on load), CLAUDE.md's tree (`renderedSame.ts`, `minimalEscapes.ts`, `lossyChanges.ts`, `tabNode.ts`) and the "writes only Markdown it reads back" note.
+
+**New findings**
+
+- **Inline code inside bold, italic or a link** (``**`npm run`**``, ``[`CLAUDE.md`](CLAUDE.md)``) opens read-only: the editor's code mark excludes other marks, so a save would drop the bold or the link. Correctly read-only (the banner names the line); listed in KL #17. Seen in the corpus's READMEs and project docs; not fixed (a schema change).
+- **What still keeps a corpus note read-only** (372 of 18,870, almost all package READMEs and project docs): HTML blocks and comments, reference definitions, and the code-in-bold/link shape above.
+- **The property test got slower:** 1,500 documents take about 130 s per seed (Phase 2's sweep: 70–106 s), from the extra renders in the escape pass on its deliberately dense documents. The committed 500-run test stays well inside its 180 s timeout.
+
+**Scores after Phase 3:**
+- Editor: notes open editable 7 → 8.5 (the target: the everyday Keep and Obsidian shapes open editable, what stays read-only names its line, and Obsidian syntax survives an edit);
+- Editor: nothing lost stays 9;
+- Document tab and sidebar: the separator (A26-16) fixed.
+
 ## Phase 4: Kanban and interface (A26-08, A26-09, A26-10, A26-13, A26-26, A26-28)
 
 ### 4.1 Kanban find (A26-08)

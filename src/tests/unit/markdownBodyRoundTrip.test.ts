@@ -74,10 +74,11 @@ const corpus = loadCorpus();
  *  - links-underline:   `<u>…[link](…)</u>` re-nests. (Audit-19 DEP-2 — with
  *                       linkify off the bare URL is now emitted verbatim, no
  *                       `<…>` wrap; the fixture stays lossy for the `<u>` only.)
- *  - link-schemes:      `[[wiki]]` brackets are escaped. (Audit-19 UX-2 — the
- *                       `filo://` link marks now SURVIVE via Link's isAllowedUri.)
- *  - misc-syntax:       HTML comment / block `<div>` dropped, callout's `[!note]`
- *                       escaped.
+ *  - misc-syntax:       HTML comment / block `<div>` dropped.
+ * `link-schemes` LEFT this set when a line the file holds became written as
+ * the file spells it (`minimalEscapes.ts`): its `[[wiki]]` brackets are no
+ * longer escaped, so its baseline is the fixture bar the final newline;
+ * misc-syntax's callout keeps its `[!note]` the same way.
  * `mixed-prose` LEFT this set when a single newline became a soft break node
  * (`softBreak.ts`): its two-line blockquote keeps its lines, and nothing else
  * in it changes; its baseline records the lines kept.
@@ -93,7 +94,6 @@ const corpus = loadCorpus();
 const LOSSY_ON_TIPTAP2: ReadonlySet<string> = new Set([
   'inline-html-spans',
   'links-underline',
-  'link-schemes',
   'misc-syntax',
 ]);
 const editors: Editor[] = [];

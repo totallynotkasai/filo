@@ -42,10 +42,9 @@ import { isLineBreak } from '../../renderer/lib/editor/softBreak';
  * as the last thing in a block (it shows nothing either, and isn't written);
  * whitespace at the edge of a bold, italic or strikethrough run (written
  * outside it: a formatted space shows nothing); alignment or indent in a list
- * item (the editor clears it there, `listItemLayout.ts`). Two known gaps a
- * fix will add back: a bare URL as the last word of the note's first block
- * (the load turns it into a link) and a numbered list starting at 0 (saved as
- * starting at 1). Every counter-example found while
+ * item (the editor clears it there, `listItemLayout.ts`). One known gap a
+ * fix will add back: a numbered list starting at 0 (saved as starting at 1).
+ * Every counter-example found while
  * fixing is kept as a named case in `markdownBodyRoundTrip.test.ts` or
  * `editorEditsReadBack.test.ts`.
  *
@@ -268,13 +267,7 @@ function buildInline(items: InlineItem[]): ProseMirrorNode[] {
     else if (item.kind === 'soft') out.push(schema.nodes.softBreak.create(null, null, markSet(item.marks)));
     else if (item.kind === 'tab') out.push(schema.nodes.tab.create());
     else if (item.kind === 'autolink') out.push(schema.text(HREFS[item.href] ?? 'https://example.com', [markFor('link', item.href)]));
-    else if (item.kind === 'bareUrl') {
-      // Once per block: two identical lines holding a lone `*` can be escaped
-      // differently, and a save keeps a line's escapes by its text
-      // (`minimalEscapes.ts`), so such a note opens read-only (a known gap).
-      const text = `see ${HREFS[item.href] ?? 'https://example.com'} now`;
-      if (!out.some((n) => n.text === text)) out.push(schema.text(text));
-    }
+    else if (item.kind === 'bareUrl') out.push(schema.text(`see ${HREFS[item.href] ?? 'https://example.com'} now`));
     else if (item.marks.some((m) => DELIMITER_MARKS.has(m)) && !item.marks.includes('code')) {
       if (item.wordy) {
         // A whole word with a space on each side.
@@ -427,12 +420,6 @@ const topBlockArb: fc.Arbitrary<ProseMirrorNode> = fc.oneof(
   { weight: 1, arbitrary: emptyParagraphArb },
 );
 
-/** True when `doc`'s first block ends with a bare URL, which the load turns into a link (a known gap). */
-function firstBlockEndsWithBareUrl(doc: ProseMirrorNode): boolean {
-  const first = doc.firstChild;
-  return doc.childCount > 1 && !!first?.isTextblock && /\S+:\/\/\S*$|mailto:\S*$/.test(first.textContent);
-}
-
 const docArb = fc
   .array(topBlockArb, { minLength: 1, maxLength: 5 })
   .map((blocks) => {
@@ -448,7 +435,7 @@ const docArb = fc
     } catch {
       return false;
     }
-    return !firstBlockEndsWithBareUrl(doc);
+    return true;
   });
 
 // ── The property ─────────────────────────────────────────────────────────────

@@ -19,7 +19,7 @@ import {
  * discarded (and a tab close found nothing pending). A lossy note is now truly
  * non-editable, toolbar commands included, until Take ownership.
  */
-const LOSSY_NOTE = 'A paragraph with a [[wiki link]].\n';
+const LOSSY_NOTE = 'A paragraph with a <!-- a comment --> comment.\n';
 
 async function assertFrozenThenOwned(m: Mounted, rel: string, fs: ReturnType<typeof recordingFilo>): Promise<void> {
   const ed = m.editor();

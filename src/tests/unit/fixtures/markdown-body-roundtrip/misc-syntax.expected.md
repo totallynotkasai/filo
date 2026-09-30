@@ -12,5 +12,5 @@ next line.
 
 Highlight ==marked== and a callout:
 
-> \[!note\]
+> [!note]
 > Callout body.

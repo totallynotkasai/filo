@@ -11,8 +11,13 @@ describe('escapeRuns', () => {
     expect(escapeRuns('a \\*\\* b \\__\\_ c')).toEqual([[2, 4], [9, 12]]);
   });
 
-  it('skips a backslash that is itself escaped', () => {
-    expect(escapeRuns('\\\\*')).toEqual([]);
+  it('scans an escaped backslash as one escape, so the character after it is bare', () => {
+    expect(escapeRuns('\\\\*')).toEqual([[0]]);
+    expect(escapeRuns('\\\\\\*')).toEqual([[0], [2]]);
+  });
+
+  it('groups bracket, hash, tilde and backslash escapes too, and no others', () => {
+    expect(escapeRuns('\\[\\[Page\\]\\] \\#tag \\~ \\. \\-')).toEqual([[0, 2], [8, 10], [13], [19]]);
   });
 
   it('starts a new run at another character or a gap', () => {
@@ -26,6 +31,8 @@ describe('withMinimalEscapes', () => {
     ['the \\*\\*\\* and', 'the *** and'],
     ['the \\_\\_\\_ and \\_\\_\\_ they', 'the ___ and ___ they'],
     ['5 \\* 3', '5 * 3'],
+    ['see \\[\\[Page\\]\\] and \\[TODO\\]', 'see [[Page]] and [TODO]'],
+    ['\\#tag and C:\\\\Users', '#tag and C:\\Users'],
   ])('drops what markdown-it does not need: %s', (input, output) => {
     expect(withMinimalEscapes(input, md)).toBe(output);
   });
@@ -36,7 +43,8 @@ describe('withMinimalEscapes', () => {
     ['a list marker', '\\* item', '\\* item'],
     ['code', '`\\*`', '`\\*`'],
     ['an autolink, where a backslash is literal', '<https://example.com/x\\_y>', '<https://example.com/x\\_y>'],
-  ])('keeps what markdown-it needs: %s', (_name, input, output) => {
+    ['brackets that would make a link', '\\[a\\](b)', '[a\\](b)'],
+    ['a heading marker', '\\# Title', '\\# Title'],  ])('keeps what markdown-it needs: %s', (_name, input, output) => {
     const out = withMinimalEscapes(input, md);
     expect(out).toBe(output);
     expect(md.render(out)).toBe(md.render(input));

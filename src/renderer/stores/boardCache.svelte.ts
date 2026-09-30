@@ -40,6 +40,7 @@ import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { boardDefaults } from '../core/boardDefaults';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { catchUpLoadedBoard, markBoardUnloaded } from './unloadedBoards';
+import { boardReferencesPath } from '../lib/vault/fileRefIntegrity';
 import { boardLoadReason } from '../lib/boards/boardLoadFailedNotice';
 
 /**
@@ -267,6 +268,22 @@ function updateProjectConnectionsFrames(
   mutator({ connections: project.connections, frames: project.frames });
 }
 
+/**
+ * The boards whose `.board.json` is `oldPath` or sits under it (a folder),
+ * compared case-INSENSITIVELY (Windows/macOS aren't case-sensitive) so a path
+ * stored in another casing still matches.
+ */
+function boardsMovedBy(oldPath: string): string[] {
+  const foldedOld = normalizeVaultRelative(oldPath);
+  const foldedPrefix = `${foldedOld}/`;
+  const ids: string[] = [];
+  for (const [boardId, relPath] of Object.entries(boardPaths)) {
+    const folded = normalizeVaultRelative(toPosix(relPath));
+    if (folded === foldedOld || folded.startsWith(foldedPrefix)) ids.push(boardId);
+  }
+  return ids;
+}
+
 function markDirty(boardId: string): void {
   // Nothing to write for an id with no board file: a Document tab opened on a
   // note has its own undo stack under an id no `.board.json` carries. Arming
@@ -381,30 +398,34 @@ export const boardCacheStore = {
     // case-ONLY rename folds equal but must still rebind `boardPaths` to the new
     // casing, else a phantom-file write + "missing on disk" eviction follows.
     if (normalisedOld === normalisedNew) return [];
-    // Compare case-INSENSITIVELY (Windows/macOS aren't case-sensitive) so an
-    // OS-reported rename whose casing diverges from the stored casing still
-    // rebinds. The descendant SLICE uses the case-preserving `oldPrefix` length
-    // so the suffix keeps its on-disk casing — board paths carry no leading
-    // slash, so the folded and unfolded prefixes share the same length.
+    // The descendant SLICE uses the case-preserving `oldPrefix` length so the
+    // suffix keeps its on-disk casing — board paths carry no leading slash, so
+    // the folded and unfolded prefixes share the same length.
     const oldPrefix = `${normalisedOld}/`;
-    const foldedOld = normalizeVaultRelative(normalisedOld);
-    const foldedPrefix = `${foldedOld}/`;
     const updates: Record<string, string> = {};
-    const changedIds: string[] = [];
-    for (const [boardId, relPath] of Object.entries(boardPaths)) {
-      const norm = toPosix(relPath);
-      const folded = normalizeVaultRelative(norm);
-      if (folded === foldedOld) {
-        updates[boardId] = normalisedNew;
-        changedIds.push(boardId);
-      } else if (folded.startsWith(foldedPrefix)) {
-        updates[boardId] = normalisedNew + '/' + norm.slice(oldPrefix.length);
-        changedIds.push(boardId);
-      }
+    const moved = boardsMovedBy(normalisedOld);
+    for (const boardId of moved) {
+      const norm = toPosix(boardPaths[boardId] ?? '');
+      const exact = normalizeVaultRelative(norm) === normalizeVaultRelative(normalisedOld);
+      updates[boardId] = exact ? normalisedNew : normalisedNew + '/' + norm.slice(oldPrefix.length);
     }
-    if (changedIds.length === 0) return [];
+    if (moved.length === 0) return [];
     boardPaths = { ...boardPaths, ...updates };
-    return changedIds;
+    return moved;
+  },
+
+  /**
+   * What a rename of `oldPath` would change, without changing anything:
+   * the boards whose own `.board.json` moves with it, and the boards with a
+   * link to it or into it.
+   */
+  renameImpact(oldPath: string): { moving: string[]; referencing: string[] } {
+    if (!oldPath) return { moving: [], referencing: [] };
+    const moving = boardsMovedBy(stripLeadingSlash(normalizePath(oldPath)));
+    const referencing = Object.entries(boardCache)
+      .filter(([, data]) => boardReferencesPath(data, oldPath))
+      .map(([boardId]) => boardId);
+    return { moving, referencing };
   },
 
   /** Drops all cache entries (e.g. when closing a vault). */
@@ -416,12 +437,9 @@ export const boardCacheStore = {
   },
 
   /**
-   * Replaces the entire cache with the given snapshot. Used
-   * by vaultFolderOps.rename to roll back a half-mutated cache after the
-   * `vault:rename` IPC fails. Does NOT touch `boardPaths` (paths are stable
-   * across the rename — the IPC determines whether anything moved). Does NOT
-   * mark dirty / schedule writes — the caller is responsible for cancelling
-   * any debounced writes that captured the renamed snapshot.
+   * Replaces the entire cache with the given map (a board adopted at runtime
+   * joins it this way). Does NOT touch `boardPaths` and does NOT mark dirty /
+   * schedule writes.
    */
   replaceCache(snapshot: Record<string, BoardFileData>): void {
     const previous = boardCache;
@@ -432,12 +450,7 @@ export const boardCacheStore = {
     }
   },
 
-  /**
-   * Replaces the `boardPaths` map with a captured snapshot. Mirrors
-   * `replaceCache` for the path map. Paired with
-   * `renameBoardPath` so the rename revert path can roll back the path
-   * rebind without restoring the entire cache.
-   */
+  /** Replaces the `boardPaths` map. Mirrors `replaceCache` for the path map. */
   replacePaths(snapshot: Record<string, string>): void {
     boardPaths = snapshot;
   },

@@ -150,3 +150,58 @@ describe('renameItem', () => {
     expect(await fs.readdir(dir)).toEqual(['b.md']);
   });
 });
+
+/**
+ * Windows answers EPERM, its lock code, for a folder renamed onto a name that
+ * exists. A name that appears after the pre-flight check (another program, or
+ * a stray write) must fail at once as the clash it is, not after the whole
+ * lock retry.
+ */
+describe('renameItem: a name clash met during the lock retry', () => {
+  let dir: string;
+  const budget = process.env.FILO_LOCK_RETRY_BUDGET_MS;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(join(tmpdir(), 'filo-rename-clash-'));
+    process.env.FILO_LOCK_RETRY_BUDGET_MS = '5000';
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    if (budget === undefined) delete process.env.FILO_LOCK_RETRY_BUDGET_MS;
+    else process.env.FILO_LOCK_RETRY_BUDGET_MS = budget;
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('fails with TARGET_EXISTS at once when the target now exists', async () => {
+    const oldPath = join(dir, 'Notes');
+    const newPath = join(dir, 'Notes2');
+    await fs.mkdir(oldPath);
+    const realMkdir = fs.mkdir.bind(fs);
+    vi.spyOn(fs, 'rename').mockImplementation(async () => {
+      await realMkdir(newPath, { recursive: true });
+      throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    });
+
+    const started = Date.now();
+    await expect(renameItem(oldPath, newPath)).rejects.toBeInstanceOf(RenameTargetExistsError);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('still retries a lock while the target does not exist', async () => {
+    const oldPath = join(dir, 'Notes');
+    const newPath = join(dir, 'Notes2');
+    await fs.mkdir(oldPath);
+    const realRename = fs.rename.bind(fs);
+    let attempts = 0;
+    vi.spyOn(fs, 'rename').mockImplementation(async (from: PathLike, to: PathLike) => {
+      attempts++;
+      if (attempts < 3) throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+      return realRename(from, to);
+    });
+
+    await renameItem(oldPath, newPath);
+    expect(attempts).toBe(3);
+    await expect(fs.access(newPath)).resolves.toBeUndefined();
+  });
+});

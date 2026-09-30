@@ -41,16 +41,46 @@ export function serializeBoardPayload(data: unknown): string {
 // ── Write ──
 
 /**
- * Saves board data to a .board.json file using atomic write.
- * Creates parent directories if they don't exist. A string payload (the
- * renderer's serialised board) is written verbatim — see serializeBoardPayload.
- * Returns the text written, for the watcher's record of Filo's own bytes.
+ * A save of a board whose folder isn't there (moved or deleted since the board
+ * was loaded). Code `BOARD_FOLDER_MISSING` crosses IPC so the renderer keeps
+ * the write for a retry instead of recreating the folder.
  */
-export async function saveBoardFile(filePath: string, data: unknown): Promise<string> {
-  await ensureDir(dirname(filePath));
+export class BoardFolderMissingError extends Error {
+  readonly code = 'BOARD_FOLDER_MISSING';
+  constructor(filePath: string) {
+    super(`The folder of board "${filePath}" doesn't exist; not recreating it.`);
+    this.name = 'BoardFolderMissingError';
+  }
+}
+
+/**
+ * Saves board data to a .board.json file using atomic write. A string payload
+ * (the renderer's serialised board) is written verbatim — see
+ * serializeBoardPayload. Returns the text written, for the watcher's record of
+ * Filo's own bytes.
+ *
+ * Only `board:create` makes folders. A save lands in a folder that exists: a
+ * save racing a rename of its folder would otherwise recreate the old folder,
+ * or make the new one before the rename and turn it into a name clash.
+ * `recreate` is the user's explicit "Save at original location" for a board
+ * whose folder went missing.
+ */
+export async function saveBoardFile(filePath: string, data: unknown, opts: { recreate?: boolean } = {}): Promise<string> {
+  if (opts.recreate) await ensureDir(dirname(filePath));
+  else if (!(await isDirectory(dirname(filePath)))) throw new BoardFolderMissingError(filePath);
   const json = serializeBoardPayload(data);
   await atomicWriteFile(filePath, json);
   return json;
+}
+
+async function isDirectory(dir: string): Promise<boolean> {
+  try {
+    return (await fs.stat(dir)).isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') return false;
+    // Anything else (a lock, a share hiccup) is left to the write to report.
+    return true;
+  }
 }
 
 // ── Create ──

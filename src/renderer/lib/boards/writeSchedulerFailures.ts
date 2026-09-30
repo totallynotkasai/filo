@@ -33,6 +33,8 @@ export const RETAINABLE: ReadonlySet<string> = new Set([
   'ENOSPC',
   'EIO',
   'BOARD_PATH_HELD',
+  'BOARD_MOVE_HELD',
+  'BOARD_FOLDER_MISSING',
   'BOARD_DRIFT_HELD',
   'CONFIG_DRIFT_HELD',
   'WRITE_TIMEOUT',

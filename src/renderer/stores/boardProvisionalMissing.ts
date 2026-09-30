@@ -32,6 +32,7 @@ import {
   releaseBoardPath,
   boardHasUnsavedWrite,
   retryFailedBoardWrite,
+  recreateBoardAt,
 } from '../lib/boards/boardWriteScheduler';
 import { clearFailedPathAfterLateSuccess } from '../lib/boards/writeStateTracking';
 import { isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
@@ -155,6 +156,8 @@ function promptMissingBoardWithUnsavedChanges(boardId: string, relPath: string, 
         handler: async () => {
           if (!isStillSameVault(captured) || provisional.get(boardId) !== relPath) return;
           settle(boardId, relPath);
+          // The one write allowed to create the file (and its folder) again.
+          recreateBoardAt(relPath);
           await retryFailedBoardWrite(boardId);
           if (!isStillSameVault(captured)) return;
           await boardCacheStore.flushDirty(boardId);

@@ -3,14 +3,13 @@
  * in-app rename / move is mid-flight.
  *
  * Background. `vaultFolderOps.runRename` rebinds `boardStore.paths[boardId]` to
- * the NEW path BEFORE the `vault:rename` IPC moves the file on disk (the rebind
- * must precede the reference cascade so it walks paths that match the intended
- * disk reality). For that window — and the failure-revert window — the cached
- * board path names a file that does not yet (or no longer) exists on disk. A
- * concurrently-armed watcher reconcile (`vault.refreshTreeAndCleanup`) sees the
- * path missing from the freshly-read tree, its `vault:file-exists` probe
- * confirms "missing", and without this guard it would evict the LIVE board
- * mid-rename (tabs closed, pending writes cancelled, cascade flush skipped).
+ * the NEW path only once the `vault:rename` IPC has moved the file on disk. The
+ * OS move lands before the IPC answers, so for that window the cached board
+ * path names a file that no longer exists on disk. A concurrently-armed
+ * watcher reconcile (`vault.refreshTreeAndCleanup`) sees the path missing from
+ * the freshly-read tree, its `vault:file-exists` probe confirms "missing", and
+ * without this guard it would evict the LIVE board mid-rename (tabs closed,
+ * pending writes cancelled, cascade flush skipped).
  *
  * The `rename` method brackets its whole sequence (drain + cascade + IPC +
  * revert) in `beginRenameInFlight()` / `endRenameInFlight()`; the reconcile's

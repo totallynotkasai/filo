@@ -50,12 +50,35 @@ function filesUnder(tree: FileTreeNode[], vaultRoot: string, rel: string): strin
 
 /**
  * Brings the app up to date with items that just came back from the trash
- * (files or folders, vault-relative): the sidebar tree (which also adopts a
- * restored board), the search index, any open note that was showing as
- * missing, and the theme list for a restored theme. The watcher doesn't
- * report our own restores.
+ * (files or folders, vault-relative): any open note that was showing as
+ * missing, the search index, the sidebar tree (which also adopts a restored
+ * board), and the theme list for a restored theme. The watcher doesn't report
+ * our own restores.
  */
 export async function syncAfterRestore(rels: string[], identity: VaultIdentity): Promise<void> {
+  await syncRestoredNotes(rels);
+  if (!isStillSameVault(identity)) return;
+  await syncRestoredTree(rels, identity);
+}
+
+/**
+ * The part of {@link syncAfterRestore} a restored tile needs at once: every
+ * open view of a note there that showed it as missing reads it again, and a
+ * restored note is back in the search index (a card's preview reads it
+ * there). It doesn't wait for the watcher's queue, which after a big rename
+ * elsewhere can be busy for a while.
+ */
+export async function syncRestoredNotes(rels: string[]): Promise<void> {
+  for (const rel of rels) noteStore.restoredFromTrash(rel);
+  const notes = rels.filter((rel) => vaultPath(rel).endsWith('.md'));
+  if (notes.length > 0) await vaultIndexStore.applyChanges(notes);
+}
+
+/**
+ * The rest of {@link syncAfterRestore}, in turn with the watcher's queue: the
+ * sidebar tree, a restored folder's notes in the search index, the theme list.
+ */
+export async function syncRestoredTree(rels: string[], identity: VaultIdentity): Promise<void> {
   await vaultStore.enqueueRenameQueueWork(() => vaultStore.refreshTreeAndCleanup());
   if (!isStillSameVault(identity)) return;
   const vaultRoot = vaultStore.path;
@@ -64,10 +87,11 @@ export async function syncAfterRestore(rels: string[], identity: VaultIdentity):
     await themeStore.refreshAvailable(vaultRoot);
     if (!isStillSameVault(identity)) return;
   }
-  const files = rels.flatMap((rel) => filesUnder(vaultStore.rawTree, vaultRoot, rel));
-  await vaultIndexStore.applyChanges(files);
-  if (!isStillSameVault(identity)) return;
-  for (const rel of rels) noteStore.restoredFromTrash(rel);
+  const done: string[] = rels.map((rel) => vaultPath(rel));
+  const files = rels
+    .flatMap((rel) => filesUnder(vaultStore.rawTree, vaultRoot, rel))
+    .filter((file) => !done.includes(vaultPath(file)));
+  if (files.length > 0) await vaultIndexStore.applyChanges(files);
 }
 
 /**

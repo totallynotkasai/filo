@@ -69,8 +69,17 @@ export function registerVaultTrashHandlers(): void {
       }
       assertWithinVault(vaultRoot, join(vaultRoot, ...rel.split('/')));
       await suppressWatcher(vaultRoot, rel);
-      const { trashId, kind } = await moveToTrash(vaultRoot, rel, getMachineIdentity().machineId);
-      return { success: true, trashId, kind };
+      // The walk forgets the item until it comes back, so its next pass
+      // doesn't report Filo's own move as a delete by another program.
+      const watcher = getActiveWatcher();
+      const moveDone = watcher?.beginOwnMove();
+      try {
+        const { trashId, kind } = await moveToTrash(vaultRoot, rel, getMachineIdentity().machineId);
+        watcher?.noteOwnTrash(rel, trashId);
+        return { success: true, trashId, kind };
+      } finally {
+        moveDone?.();
+      }
     } catch (err) {
       const code = ipcErrorCode(err);
       if (code !== 'ENOENT') logMainError('vault:trash-move', err);
@@ -90,9 +99,16 @@ export function registerVaultTrashHandlers(): void {
         assertWithinVault(vaultRoot, join(vaultRoot, ...entry.originalPath.split('/')));
         await suppressWatcher(vaultRoot, entry.originalPath, entry.kind);
       }
-      const restored = await restoreFromTrash(vaultRoot, trashId);
-      if (restored.alongside) await suppressWatcher(vaultRoot, restored.restoredPath, restored.kind);
-      return { success: true, ...restored };
+      const watcher = getActiveWatcher();
+      const moveDone = watcher?.beginOwnMove();
+      try {
+        const restored = await restoreFromTrash(vaultRoot, trashId);
+        if (restored.alongside) await suppressWatcher(vaultRoot, restored.restoredPath, restored.kind);
+        watcher?.noteOwnRestore(restored.restoredPath, trashId);
+        return { success: true, ...restored };
+      } finally {
+        moveDone?.();
+      }
     } catch (err) {
       if (!(err instanceof TrashItemMissingError)) logMainError('vault:trash-restore', err);
       return errorResult(err);

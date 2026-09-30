@@ -115,7 +115,12 @@ export const IPC_PAYLOAD_SCHEMAS = {
   // ── Boards ────────────────────────────────────────────────────────────
   'board:list': z.tuple([nonEmptyString]),
   'board:load': z.tuple([nonEmptyString, nonEmptyString]),
-  'board:save': z.tuple([nonEmptyString, nonEmptyString, unknownArg]),
+  // Optional 4th arg: `{ recreate }` lets the save make the board's folder
+  // again (the user's "Save at original location"); otherwise it never does.
+  'board:save': z.union([
+    z.tuple([nonEmptyString, nonEmptyString, unknownArg]),
+    z.tuple([nonEmptyString, nonEmptyString, unknownArg, z.object({ recreate: z.boolean().optional() }).strict()]),
+  ]),
   'board:create': z.tuple([nonEmptyString, nonEmptyString, unknownArg]).rest(optionalString),
   'board:list-conflicts': z.tuple([nonEmptyString]),
 

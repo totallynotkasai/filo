@@ -5,7 +5,8 @@ import { uiStore } from './ui.svelte';
 import { noticeUnloadedBoards } from './unloadedBoards';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { computeMoveIntoFolderTarget } from '../lib/vault/moveIntoFolder';
-import { cancelBoardWrite } from '../lib/boards/boardSaver';
+import { boardHasUnsavedWrite } from '../lib/boards/boardWriteScheduler';
+import { holdBoardMoves } from '../lib/boards/boardMoveHold';
 import { markRecentSelfWrite } from '../lib/boards/writeStateTracking';
 import { reportError } from '../lib/utils/errorBus';
 import { normalizePath, stripLeadingSlash, toVaultRelative } from '../lib/utils/path';
@@ -27,7 +28,6 @@ import {
   type DrainToken,
 } from '../lib/vault/vaultOperations';
 import { performDelete } from './vaultDeleteOps';
-import type { BoardFileData } from '../lib/boards/boardSaver';
 import type { VaultContext } from './vaultStoreTypes';
 
 export type VaultRenameResult = {
@@ -226,73 +226,34 @@ async function runRename(
   newRel: string | null,
   drain: DrainToken,
 ): Promise<VaultRenameResult> {
-      // Run the in-memory cascade BEFORE the IPC rename, so a re-render between
-      // the IPC and the post-IPC cascade can't observe a half-renamed state.
-      // If the cascade itself throws, we refresh the tree as a recovery.
+      // Boards change only once the files have moved. Until then every board
+      // keeps its links and its path, which is what the disk still says, so a
+      // rename that fails (a file inside held open elsewhere, a name clash)
+      // leaves nothing to undo and nothing written: memory and disk agree.
+      // Notes follow the same rule (their queues are held for the move, and
+      // re-keyed after it).
       //
-      // Revert is snapshot-based: on IPC failure the pre-cascade cache snapshot
-      // is restored unconditionally, and debounced board writes scheduled by
-      // the forward cascade are cancelled (they captured renamed snapshots at
-      // schedule time and would write them against the OLD on-disk path). The
-      // active-board tile map is `$derived` from the cache, so it rewinds
-      // automatically; only the spatial index needs `rehydrateSpatial`.
+      // A board whose own .board.json moves (its file, or a folder it is in)
+      // is held for the move: a write of it now could recreate the old file
+      // after the move, or make the new folder first and turn the move into a
+      // name clash. See boardMoveHold.ts.
       //
       // Snapshot vault identity before the first await: if the vault swapped
-      // mid-rename, re-applying `cacheSnapshot` (the OUTGOING vault's boards)
-      // would corrupt the NEW vault's cache. `isStillSameVault` gates both
-      // revert sites.
+      // mid-rename, the outgoing vault's rename must not rewrite the new
+      // vault's boards.
       const renameIdentity = captureVaultIdentity();
-      let cascadeApplied = false;
-      let cacheSnapshot: Record<string, BoardFileData> | null = null;
-      let changedBoardIds: string[] = [];
-      // Snapshot boardPaths before the rename so we can
-      // revert the renameBoardPath mutation on IPC failure.
-      let boardPathsSnapshot: Record<string, string> | null = null;
-      let renamedBoardIds: string[] = [];
       let notLoaded: string[] = [];
+      let impact: { moving: string[]; referencing: string[] } = { moving: [], referencing: [] };
       if (oldRel && newRel) {
         try {
-          // Hydrate every board before the cascade so a lazy-loaded (or
-          // partial-load-failed) entry isn't silently skipped. Under normal
-          // operation the cache is already fully hydrated at vault open, so
-          // this is effectively free.
+          // Hydrate every board first so a lazy-loaded (or partial-load-failed)
+          // entry isn't skipped. Normally the cache is fully hydrated at vault
+          // open, so this is effectively free.
           notLoaded = await boardCacheStore.ensureAllLoaded();
-          cacheSnapshot = JSON.parse(
-            JSON.stringify(boardCacheStore.cache),
-          ) as Record<string, BoardFileData>;
-          boardPathsSnapshot = { ...boardCacheStore.paths };
-          // Rebind any board whose .board.json (or whose
-          // parent folder) just moved. Must run BEFORE propagateRename so
-          // the cascade walks the cache with paths that match disk reality
-          // — otherwise the subsequent vault:tree-updated listener in
-          // vault.svelte.ts spots the still-old path as "missing" and
-          // calls cleanupMissingBoard, evicting the renamed board from
-          // the project.
-          renamedBoardIds = boardCacheStore.renameBoardPath(oldRel, newRel);
-          changedBoardIds = boardStore.propagateRename(oldRel, newRel);
-          cascadeApplied = true;
+          impact = boardCacheStore.renameImpact(oldRel);
         } catch (err) {
-          // Catch BEFORE the sentinel write — if propagateRename throws,
-          // we never reach the IPC rename and there's nothing to recover.
-          // Cascade threw mid-mutation — restore the cache snapshot if we
-          // managed to capture one before the throw.
-          if (cacheSnapshot && isStillSameVault(renameIdentity)) {
-            for (const id of changedBoardIds) {
-              cancelBoardWrite(id, boardCacheStore.paths[id]);
-            }
-            boardCacheStore.replaceCache(cacheSnapshot);
-            // Also unwind the boardPaths rebind so the cache and paths agree on
-            // the OLD path after revert.
-            if (boardPathsSnapshot) boardCacheStore.replacePaths(boardPathsSnapshot);
-            // Derived tiles already snap back to the restored cache; just
-            // rehydrate the spatial index so hit-testing matches.
-            boardStore.rehydrateSpatial();
-          }
-          reportError(
-            'vault.rename.cascade',
-            err,
-            'Failed to update tile references for rename — refreshing the file tree',
-          );
+          // Nothing has moved or changed yet: refuse the rename.
+          reportError('vault.rename.cascade', err, "Couldn't rename: Filo couldn't check which boards link to it.");
           await ctx.refreshTree();
           return { success: false, code: 'IO_ERROR' };
         }
@@ -311,10 +272,9 @@ async function runRename(
           sentinelId = await writePendingRenameCascade(vaultPath, {
             oldPath: oldRel,
             newPath: newRel,
-            // Record renamed boards (whose own .board.json moved)
-            // alongside reference-changed boards so the breadcrumb names the
-            // full affected set, regardless of how boards are rediscovered.
-            affectedBoardIds: [...new Set([...changedBoardIds, ...renamedBoardIds])],
+            // The boards whose own .board.json moves, and those whose links
+            // change, so the breadcrumb names the full affected set.
+            affectedBoardIds: [...new Set([...impact.referencing, ...impact.moving])],
           });
         } catch (err) {
           reportError(
@@ -328,8 +288,7 @@ async function runRename(
       // Register the impending rename in the
       // recent-self-write filter BEFORE the IPC fires, so the watcher echo
       // of the OS rename event (which crosses the rename boundary as a
-      // missing + present pair, often after our own cascade has already
-      // updated `.board.json`s) doesn't re-trigger the external-rename
+      // missing + present pair) doesn't re-trigger the external-rename
       // handler against an operation we just performed.
       if (oldRel) markRecentSelfWrite(oldRel);
       if (newRel) markRecentSelfWrite(newRel);
@@ -339,30 +298,20 @@ async function runRename(
       // sanctioned site. The outer `withDrainedWrites` already drained; the
       // token runs this call under that drain instead of queueing it behind
       // the op it is part of.
-      const result = (await renameVaultPath(vaultPath, oldPath, newPath, drain)) as VaultRenameResult;
+      const releaseMoveHold = holdBoardMoves(impact.moving);
+      let result: VaultRenameResult;
+      try {
+        result = (await renameVaultPath(vaultPath, oldPath, newPath, drain)) as VaultRenameResult;
+      } finally {
+        releaseMoveHold();
+      }
       if (!result.success) {
-        // IPC failed — revert the in-memory cascade so the cache, the
-        // sidebar tree, and the disk all agree on the OLD path again.
-        if (cascadeApplied && cacheSnapshot && isStillSameVault(renameIdentity)) {
-          // Cancel any debounced writes scheduled by the forward cascade
-          // before restoring state. Each carries a schedule-time
-          // snapshot of the renamed cache; if they fire after the restore,
-          // they'd write renamed-state content to the OLD on-disk path
-          // (because the IPC rename didn't happen) and re-corrupt the cache
-          // on the next read.
-          //
-          // Skipped if the vault swapped during the IPC await: the pre-swap hook
-          // already replaced the cache, so re-applying the OUTGOING vault's
-          // snapshot would corrupt the new vault. The disk rename never landed.
-          for (const id of changedBoardIds) {
-            cancelBoardWrite(id, boardCacheStore.paths[id]);
+        // Nothing in memory moved. A moved board's write that waited for the
+        // move is written now, where the board still is.
+        if (isStillSameVault(renameIdentity)) {
+          for (const boardId of impact.moving) {
+            if (boardHasUnsavedWrite(boardId)) boardCacheStore.markDirty(boardId);
           }
-          boardCacheStore.replaceCache(cacheSnapshot);
-          // Unwind boardPaths too.
-          if (boardPathsSnapshot) boardCacheStore.replacePaths(boardPathsSnapshot);
-          // Derived tiles snap back automatically; only the
-          // spatial index needs an explicit rebuild.
-          boardStore.rehydrateSpatial();
         }
         // Drop the sentinel: the disk file didn't move, so
         // the recovery breadcrumb has nothing to replay.
@@ -377,8 +326,29 @@ async function runRename(
         await ctx.refreshTree();
         return result;
       }
+      // The vault was let go during the move: its sentinel stays, and the next
+      // open of that vault offers to finish the boards' side of the rename.
+      if (!isStillSameVault(renameIdentity)) return result;
 
       if (oldRel && newRel) {
+        // The files have moved: boards follow, in the same synchronous block
+        // as the path-keyed sweeps below, so nothing renders a half-renamed
+        // state. The board paths first: the cascade and the sweeps (a board's
+        // name follows its file) read them.
+        let renamedBoardIds: string[] = [];
+        let cascadeOk = true;
+        try {
+          renamedBoardIds = boardCacheStore.renameBoardPath(oldRel, newRel);
+          boardStore.propagateRename(oldRel, newRel);
+        } catch (err) {
+          // The sentinel stays, so the next open offers to finish it.
+          cascadeOk = false;
+          reportError(
+            'vault.rename.cascade',
+            err,
+            "The files were renamed, but Filo couldn't update every board's links to them. It offers to finish that the next time the vault opens.",
+          );
+        }
         // Fire every registered relPath-keyed sweep (noteStore,
         // fileBaselineRegistry, inFlightDriftPrompts, …). Run BEFORE the peer
         // rename calls below so a throwing sweep can't be masked by a later
@@ -484,7 +454,7 @@ async function runRename(
               reportError('vault.rename.sentinel', err, "Filo couldn't note which boards still need the renamed file's new name. If a board shows a tile as missing, re-link it.");
             });
           }
-        } else if (sentinelId && tagsFlushOk && pathKeysOk && configFailed.length === 0) {
+        } else if (sentinelId && cascadeOk && tagsFlushOk && pathKeysOk && configFailed.length === 0) {
           // Full success path: drop the sentinel so the recovery prompt
           // doesn't surface on next open. Gated on `tagsFlushOk`: if the
           // board cascade flushed cleanly but the tag-membership flush above

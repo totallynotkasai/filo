@@ -25,6 +25,7 @@ import {
 } from './watcherSupervisor';
 import { shouldIgnorePath, classifyChange, isAttachmentByExtensionOnly } from './fileWatcherClassify';
 import { SuppressionWindows, type FileProbe } from './watcherSuppression';
+import { OwnMoves, moveCaches, moveRecords, putRecords, takeRecords } from './fileWatcherOwnMoves';
 
 /**
  * Largest file the watcher hashes synchronously to tell Filo's own write from
@@ -155,6 +156,8 @@ export class FileWatcher {
    * "newly seen" and seeds the snapshot without firing any events.
    */
   private reconcileSnapshot: Map<string, ReconcileEntry> | null = null;
+  /** Filo's own moves, kept in step with the walk (see fileWatcherOwnMoves.ts). */
+  private readonly ownMoves = new OwnMoves();
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcileInFlight = false;
 
@@ -312,6 +315,33 @@ export class FileWatcher {
       ino: stat.ino,
       seenAt: Date.now(),
     });
+  }
+
+  /**
+   * Filo is about to move something (a rename, a move into its trash or
+   * back). A walk running meanwhile waits for it; call the returned function
+   * once the move is done, after noting it if it succeeded.
+   */
+  beginOwnMove(): () => void {
+    return this.ownMoves.begin();
+  }
+
+  /** Filo renamed or moved `oldRel` (a file, or a folder with everything in it) to `newRel`. */
+  noteOwnMove(oldRel: string, newRel: string): void {
+    moveCaches({ knownDirs: this.knownDirs, lastKnownSizes: this.lastKnownSizes, lastKnownHashes: this.lastKnownHashes }, oldRel, newRel);
+    this.ownMoves.record(this.reconcileSnapshot, (snapshot) => moveRecords(snapshot, oldRel, newRel), newRel);
+  }
+
+  /** Filo moved `rel` into its trash as `trashId`. */
+  noteOwnTrash(rel: string, trashId: string): void {
+    if (this.reconcileSnapshot) this.ownMoves.trashed.keep(trashId, takeRecords(this.reconcileSnapshot, rel));
+    this.ownMoves.record(null, (snapshot) => { takeRecords(snapshot, rel); });
+  }
+
+  /** Filo brought `trashId` back from its trash to `rel`. */
+  noteOwnRestore(rel: string, trashId: string): void {
+    const records = this.ownMoves.trashed.take(trashId);
+    if (records) this.ownMoves.record(this.reconcileSnapshot, (snapshot) => putRecords(snapshot, rel, records), rel);
   }
 
   /**
@@ -506,6 +536,7 @@ export class FileWatcher {
     this.lastKnownHashes.clear();
     this.knownDirs.clear();
     this.reconcileSnapshot = null;
+    this.ownMoves.clear();
     this.reconcileInFlight = false;
     this.reconcileInFlightPromise = null;
     this.notifyInFlightPromise = null;
@@ -529,6 +560,7 @@ export class FileWatcher {
     if (this.reconcileInFlight) return;
     if (this.aborted) return;
     this.reconcileInFlight = true;
+    this.ownMoves.walkStarted();
     // Publish the in-flight promise so `stop()` can await it. The assignment
     // happens before any await suspension, so a same-tick `stop()` sees it.
     const promise = (async () => {
@@ -540,6 +572,7 @@ export class FileWatcher {
           lastKnownHashes: this.lastKnownHashes,
         });
         if (current === null) return;
+        await this.ownMoves.settleInto(current, () => this.reconcileSnapshot);
         if (this.aborted) return;
         const previous = this.reconcileSnapshot;
         // Don't let the snapshot advance past a currently suppressed path.
@@ -652,6 +685,7 @@ export class FileWatcher {
       } finally {
         this.reconcileInFlight = false;
         this.reconcileInFlightPromise = null;
+        this.ownMoves.walkEnded();
       }
     })();
     this.reconcileInFlightPromise = promise;

@@ -9,7 +9,7 @@ import {
   clearPreservedEmergencyFilesForTarget,
 } from '../services/emergencyFileRegistry';
 import type { FileTreeNode } from '../../shared/types';
-import { retryOnWindowsLock, tmpSiblingPath } from './filenameUtils';
+import { pathExists, retryOnWindowsLock, tmpSiblingPath } from './filenameUtils';
 
 // `extname()` only returns the final segment, so `foo.board.json` → `.json`.
 // Treat `.board.json` as a compound extension so the sidebar can strip it
@@ -330,7 +330,16 @@ export async function renameItem(oldPath: string, newPath: string): Promise<void
     // Windows returns EPERM for a directory rename while
     // OneDrive / Explorer holds a child handle; retry that before failing. The
     // EXDEV branch below runs only after the lock retry, on its own code.
-    await retryOnWindowsLock(() => fs.rename(oldPath, newPath));
+    // Windows also answers EPERM for a folder renamed onto a name that now
+    // exists (created since the check above). No retry can succeed then, so
+    // each retry first checks for it and fails at once as the clash it is.
+    let retrying = false;
+    await retryOnWindowsLock(() => fs.rename(oldPath, newPath), {
+      beforeAttempt: async () => {
+        if (retrying && (await pathExists(newPath))) throw new RenameTargetExistsError(newPath);
+        retrying = true;
+      },
+    });
   } catch (err) {
     if ((err as NodeJS.ErrnoException | null)?.code === 'EXDEV') {
       const stat = await fs.stat(oldPath);

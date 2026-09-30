@@ -242,8 +242,8 @@ describe('FileWatcher on a temp vault', () => {
     await fs.writeFile(join(dir, 'After.board.json'), '{"v":2}', 'utf-8');
     await fs.writeFile(join(dir, 'late.png'), 'png', 'utf-8');
     await watcher.reconcileNow({ seedOnly: true, reportChangedSince: armedAt });
-    await wait(400);
-    expect(changed()).toEqual([{ type: 'board', filename: 'After.board.json', eventType: 'change' }]);
+    // Polled: a fixed wait for the 300 ms notify debounce is flaky under load.
+    await vi.waitFor(() => expect(changed()).toEqual([{ type: 'board', filename: 'After.board.json', eventType: 'change' }]), { timeout: 5000 });
   });
 
   it('without a start time the first walk reports nothing', async () => {

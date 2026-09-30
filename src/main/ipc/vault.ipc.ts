@@ -260,7 +260,16 @@ export function registerVaultHandlers(): void {
         suppressFn(oldRel);
         suppressFn(newRel);
       }
-      await renameItem(oldPath, newPath);
+      // The reconcile walk's record moves with the files, so its next pass
+      // doesn't report Filo's own move as one by another program.
+      const watcher = activeWatcher;
+      const moveDone = watcher?.beginOwnMove();
+      try {
+        await renameItem(oldPath, newPath);
+        watcher?.noteOwnMove(oldRel, newRel);
+      } finally {
+        moveDone?.();
+      }
       renameNonUtf8(oldPath, newPath); // the non-UTF-8 write refusal follows the file
       // Post-rename re-suppress: the OS may emit the create-side event
       // moments after `renameItem` resolves on slow disks, especially for

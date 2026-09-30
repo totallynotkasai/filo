@@ -6,7 +6,7 @@
  */
 import { noteStore } from '../stores/notes.svelte';
 import { uiStore } from '../stores/ui.svelte';
-import { reindexUnder, syncAfterRestore } from '../stores/trash.svelte';
+import { reindexUnder, syncRestoredNotes, syncRestoredTree } from '../stores/trash.svelte';
 import { restoreTrashed, trashVaultPath, type DrainToken } from '../lib/vault/vaultOperations';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { reportError } from '../lib/utils/errorBus';
@@ -102,7 +102,16 @@ export async function restoreFiles(vaultRoot: string, items: TrashedItem[], cont
     }
   }
   if (!isStillSameVault(identity)) return restored;
-  if (restored.length > 0) await syncAfterRestore(restored.map((r) => r.restoredPath), identity);
+  if (restored.length > 0) {
+    const rels = restored.map((r) => r.restoredPath);
+    await syncRestoredNotes(rels);
+    // The command puts its tiles back as soon as this returns; the sidebar
+    // tree catches up in turn with the watcher's queue, which can be busy
+    // (a big rename elsewhere) and must not hold the tiles back.
+    void syncRestoredTree(rels, identity).catch((err: unknown) => {
+      reportError(context, err, "The restored files are back, but the sidebar couldn't show them yet. It shows them after its next refresh.");
+    });
+  }
   const moved = restored.filter((r) => r.restoredPath !== r.rel);
   if (moved.length > 0) {
     uiStore.toast(

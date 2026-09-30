@@ -2,6 +2,7 @@ import { NoActiveVaultError } from '../utils/activeVaultCheck';
 import { PayloadTooLargeError } from '../utils/payloadLimits';
 import { FiloDirForbiddenError } from '../utils/pathSecurity';
 import { RenameTargetExistsError } from '../vault/fileOps';
+import { BoardFolderMissingError } from '../vault/boardFileOps';
 import { LinkedFileError, StaleWriteError } from '../vault/filenameUtils';
 
 /**
@@ -65,6 +66,8 @@ export function ipcErrorCode(err: unknown): 'NO_ACTIVE_VAULT' | 'FILE_TOO_LARGE'
 export function failureCode(err: unknown): string {
   const errno = (err as NodeJS.ErrnoException | null)?.code;
   if (typeof errno === 'string' && /^E[A-Z]+$/.test(errno)) return errno;
+  // A board save whose folder is gone: kept for a retry, never recreated.
+  if (err instanceof BoardFolderMissingError) return err.code;
   return ipcErrorCode(err);
 }
 

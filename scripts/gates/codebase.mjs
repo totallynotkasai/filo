@@ -59,6 +59,7 @@ const CHARACTERISATION_SPECS = {
   'taskFieldsAtOpen.test.ts': 1,
   'explorerDrops.test.ts': 3,
   'taskSubtasks.test.ts': 2,
+  'slowRenames.test.ts': 5,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

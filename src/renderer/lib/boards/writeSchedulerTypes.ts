@@ -89,6 +89,13 @@ export interface CreateSchedulerOptions<TArgs> {
    */
   holdRetained?: (args: TArgs) => boolean;
   /**
+   * True while an armed write must not fire yet: when its debounce runs out it
+   * is armed again instead (still pending, so saves and quit see it). A save
+   * that forces it out meanwhile still fires it. Used by the board scheduler
+   * for a board whose file an in-app rename is moving.
+   */
+  deferFire?: (args: TArgs) => boolean;
+  /**
    * Called when an existing pending key is rescheduled. Receives the
    * sentinel info captured at the previous schedule call and the new one.
    * Used by the board scheduler for rename-mid-debounce path bookkeeping

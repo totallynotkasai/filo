@@ -255,9 +255,11 @@ export function registerBoardHandlers(): void {
   });
 
   /**
-   * Saves data to a .board.json file.
+   * Saves data to an existing board's .board.json file. A missing folder fails
+   * with `BOARD_FOLDER_MISSING` unless `opts.recreate` (the user's "Save at
+   * original location") asks for it back.
    */
-  ipcMain.handle('board:save', async (_event, vaultRoot: string, relativePath: string, data: unknown) => {
+  ipcMain.handle('board:save', async (_event, vaultRoot: string, relativePath: string, data: unknown, opts?: { recreate?: boolean }) => {
     try {
       assertActiveVault(vaultRoot);
       // `board:save` is a CREATING channel (the first save writes a brand-new
@@ -277,7 +279,7 @@ export function registerBoardHandlers(): void {
       // extended after the write so a delayed rename event is still caught.
       const watcher = getActiveWatcher();
       watcher?.suppressWrite(relativePath, LOCK_AWARE_SUPPRESS_MS, serializeBoardPayload(data));
-      const json = await saveBoardFile(fullPath, data);
+      const json = await saveBoardFile(fullPath, data, { recreate: opts?.recreate === true });
       watcher?.suppressWrite(relativePath, 1000, json);
       recordBoardWrite(relativePath, json);
       return { ok: true };

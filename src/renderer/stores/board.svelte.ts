@@ -263,18 +263,6 @@ export function createBoardScopeBoard(deps: BoardScopeBoardDeps) {
       deps.canvas.setBoard(null);
     },
 
-    /**
-     * Rehydrates the pane's spatial index from the current cache state. Used
-     * by mutators that need to bring the per-pane spatial index back in sync
-     * with the cache after a structural mutation (e.g. a `replaceCache` swap
-     * during a rename revert, where the per-pane derived tiles will have
-     * snapped to the restored cache but the spatial index still reflects the
-     * mutated geometry).
-     */
-    rehydrateSpatial(): void {
-      rehydrateSpatialFromCache();
-    },
-
     // ── Cache delegation ──
 
     hydrateCache(cache: Record<string, BoardFileData>, paths: Record<string, string>) {

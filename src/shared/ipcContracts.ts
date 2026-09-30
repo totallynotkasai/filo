@@ -242,7 +242,8 @@ export interface IpcChannelMap {
     result: IpcSuccess<{ data: unknown }>;
   };
   'board:save': {
-    args: [vaultRoot: string, relPath: string, data: unknown];
+    /** `opts.recreate`: make the board's folder again if it is gone (otherwise `BOARD_FOLDER_MISSING`). */
+    args: [vaultRoot: string, relPath: string, data: unknown, opts?: { recreate?: boolean }];
     result: IpcOk;
   };
   'board:create': {

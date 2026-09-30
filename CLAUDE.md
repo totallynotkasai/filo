@@ -115,6 +115,7 @@ filo/
 │   │   │   ├── fileWatcherClassify.ts # Path classification + ignore rules for watcher events (hidden segments like .stversions/ ignored; any other file with an extension is an attachment)
 │   │   │   ├── fileWatcherHash.ts     # Content hash (with a size ceiling) for echo and rename matching
 │   │   │   ├── fileWatcherWalk.ts     # The 30 s reconcile walk (re-reads a file only when its stat moved); files changed since the vault was armed
+│   │   │   ├── fileWatcherOwnMoves.ts # Filo's own renames and trash moves move the walk's record with the files, so the next walk doesn't report them
 │   │   │   ├── watcherSupervisor.ts   # Reopens the fs.watch handle after it dies
 │   │   │   ├── watcherSuppression.ts  # Own-echo windows: suppress / suppressWrite / suppressTree
 │   │   │   ├── syncConflictNotifier.ts # Live notices for sync-client conflict copies
@@ -353,6 +354,7 @@ filo/
 │   │   │   │   ├── vaultCandidate.ts  # Vault open as a transaction: every fallible read before the swap
 │   │   │   │   ├── externalChangeRegistry.ts # The one exhaustive dispatcher for `vault:files-changed`
 │   │   │   │   ├── handleFlushAndQuit.ts # The quit drain: save, then rescue copies if work is left
+│   │   │   │   ├── historySettleNotice.ts # A save waiting over 2 s on a running undo says so (a toast)
 │   │   │   │   ├── handleSessionEnding.ts # Windows ending the session: save, rescue copies (unapplied Settings too), no dialog
 │   │   │   │   ├── unsavedStateReport.ts # Tells main whether leaving now could lose work (`app:unsaved-state`)
 │   │   │   │   ├── conventionPaths.ts # Default folders + free-name helpers for new files
@@ -405,6 +407,7 @@ filo/
 │   │   │   │   ├── miscConfigDrift.ts # viewports / sidebar order / hotkeys: another version is read before a write (merged, or Reload / Keep local)
 │   │   │   │   ├── writeScheduler.ts  # createScheduler: the shared debounce/retry/timeout primitive
 │   │   │   │   ├── boardDriftHold.ts  # Boards whose write waits for a Reload / Keep local answer (the writer refuses at once; follows renames)
+│   │   │   │   ├── boardMoveHold.ts   # Boards whose .board.json an in-app rename is moving: their writes wait for the move
 │   │   │   │   ├── configDriftHold.ts # `.filo/` settings / hotkeys whose write waits for Reload / Keep local (refused at once; the answer re-fires or drops it)
 │   │   │   │   ├── writeSchedulerTypes.ts # createScheduler's type surface (re-exported by writeScheduler.ts)
 │   │   │   │   ├── writeSchedulerFailures.ts # Failure attribution + retention of transient failures for Retry / Ctrl+S
@@ -900,7 +903,14 @@ Boundary").
   `.board.json` path field that pointed at the old path. Titles and tags are
   never touched, because boards don't hold them. The in-app rename/move entry
   point is `stores/vaultFolderOps.ts`; the sidebar delete is
-  `stores/vaultDeleteOps.ts`.
+  `stores/vaultDeleteOps.ts`. Boards change only once `vault:rename` has
+  succeeded: until then they keep their links and paths (what the disk still
+  says), so a rename Windows refuses (a file inside open elsewhere) leaves
+  nothing to undo. A board whose own file moves is held for the move
+  (`lib/boards/boardMoveHold.ts`), and `board:save` never creates a folder
+  (`BOARD_FOLDER_MISSING`, kept for a retry; only "Save at original location"
+  asks for one back), so a write can't recreate the old folder or turn the move
+  into a name clash.
 - **On file delete (from vault):** the cascade removes every tile placement
   referencing that file from each `.board.json`; undo puts them back.
 - **Broken file references** are detected on board load and tracked via

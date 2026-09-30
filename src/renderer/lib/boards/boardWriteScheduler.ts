@@ -31,6 +31,7 @@ import {
   registerTestResetCallback,
 } from './writeStateTracking';
 import { BoardDriftHeldError, holdBoardDrift, isBoardDriftHeld } from './boardDriftHold';
+import { BoardMoveHeldError, isBoardMoveHeld } from './boardMoveHold';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
@@ -129,6 +130,20 @@ export function isBoardPathHeld(boardPath: string): boolean {
   return heldBoardPaths.has(vaultPath(boardPath));
 }
 
+/**
+ * Board paths the user chose to save at their original location although the
+ * file (and maybe its folder) is gone. Only these writes may create the file
+ * again, folder included; any other write of a missing board is a no-op or a
+ * failure, never a resurrection. Cleared once the write lands, and on vault swap.
+ */
+// allow-module-state: reset via the boardScheduler reset callback (vault swap)
+const boardsToRecreate = new Set<VaultPath>(); // allow-no-rename-transfer: the user chose this exact path
+
+/** The next write of `boardPath` recreates it where it was (the "Save at original location" answer). */
+export function recreateBoardAt(boardPath: string): void {
+  if (boardPath) boardsToRecreate.add(vaultPath(boardPath));
+}
+
 /** True when the board has an unsaved (pending / in-flight / retained) write. */
 export function boardHasUnsavedWrite(boardId: string): boolean {
   return boardScheduler.hasWork(boardId);
@@ -185,7 +200,9 @@ const boardScheduler = createScheduler<BoardWriteArgs>({
   },
   getSentinelInfo: (args) => ({ vaultRoot: args.vaultRoot, path: args.boardPath }),
   getFailureId: (args) => args.boardPath,
-  holdRetained: (args) => isBoardDriftHeld(args.boardPath),
+  holdRetained: (args) => isBoardDriftHeld(args.boardPath) || isBoardMoveHeld(args.cached.board.id),
+  // An in-app rename is moving the board's file: its write waits for the move.
+  deferFire: (args) => isBoardMoveHeld(args.cached.board.id),
   onReschedule: (prev, next) => {
     // If the path changed between schedule calls (rename-mid-debounce), drop
     // the OLD entry from pendingVaultPaths before adding the new one —
@@ -245,6 +262,9 @@ export async function writeBoardFile(
   // Held (missing on disk, re-check pending): fail loudly and
   // let the scheduler retain the write rather than recreate the old path.
   if (isBoardPathHeld(boardPath)) throw new BoardPathHeldError(boardPath);
+  // Its file is being moved (a rename forced this write out, e.g. a save
+  // meanwhile): kept, and written at the path the move ends at.
+  if (isBoardMoveHeld(cached.board.id)) throw new BoardMoveHeldError(boardPath);
   // Waiting for a Reload / Keep local answer: no write can land until it is
   // in. Show the question again if it was dismissed (one per path), and
   // refuse without a stat or a failure toast.
@@ -252,6 +272,7 @@ export async function writeBoardFile(
     askAboutDrift(boardExternalEditHandler, boardPath);
     throw new BoardDriftHeldError(boardPath);
   }
+  const recreate = boardsToRecreate.has(vaultPath(boardPath));
   const fileData = cached;
   // Stamp the envelope version on every write. The cache holds only the
   // current shape (defs are built by `buildTileDefinition`), so nothing else
@@ -294,7 +315,8 @@ export async function writeBoardFile(
           preWriteStat = await invokeOk('vault:stat', vaultRoot, boardPath);
         } catch (reErr) {
           if (reErr instanceof IpcEnvelopeError && reErr.code === 'ENOENT') {
-            return;
+            // Gone: nothing to write over, unless the user asked for it back.
+            if (!recreate) return;
           }
           // Re-stat hit a different error (EACCES / transient share hiccup):
           // fall through with no preWriteStat — the save IPC below surfaces
@@ -347,7 +369,9 @@ export async function writeBoardFile(
   // pipeline. Re-marked on success below to refresh the TTL.
   markRecentSelfWrite(boardPath);
   try {
-    await invokeOk('board:save', vaultRoot, boardPath, payload);
+    if (recreate) await invokeOk('board:save', vaultRoot, boardPath, payload, { recreate: true });
+    else await invokeOk('board:save', vaultRoot, boardPath, payload);
+    boardsToRecreate.delete(vaultPath(boardPath));
     markRecentSelfWrite(boardPath);
     // Refresh the baseline so subsequent writes compare against the state we
     // just wrote. KEEP the prior baseline on an unusable stat: clearing would
@@ -501,9 +525,11 @@ registerResetCallback(() => {
   // Deleting-marks and holds must not leak across vaults.
   boardsBeingDeleted.clear();
   heldBoardPaths.clear();
+  boardsToRecreate.clear();
 });
 registerTestResetCallback(() => {
   boardScheduler.reset();
   boardsBeingDeleted.clear();
   heldBoardPaths.clear();
+  boardsToRecreate.clear();
 });

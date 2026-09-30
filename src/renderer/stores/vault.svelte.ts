@@ -97,6 +97,7 @@ import { saveBeforeLeaving, type LeaveOutcome } from './vaultLeaveGuard';
 import { awaitConfirm } from './awaitConfirm';
 import { exclusiveVaultLifecycle, vaultLifecycleBusy } from './vaultLifecycleGuard.svelte';
 import { enqueueRenameQueueWork, resetRenameQueue } from './vaultRenameQueue';
+import { awaitHistoryWithNotice } from '../lib/vault/historySettleNotice';
 
 /**
  * Vault store — owns the open vault's lifecycle (open/close/save), the
@@ -1077,7 +1078,7 @@ export const vaultStore = {
     // filter or camera move); then the async command chain settles, since a
     // command queues its note write only once its body has run on `runChained`.
     await flushAllComponents();
-    await historyStore.whenChainSettled();
+    await awaitHistoryWithNotice(historyStore.whenChainSettled());
     const noteResult = await noteStore.flushAll();
     const flushResult = await flushAll(getBoardWriteArgs, getConfigWriteArgs);
     // Misc writes: tags / themes / templates / viewports / sidebar order.

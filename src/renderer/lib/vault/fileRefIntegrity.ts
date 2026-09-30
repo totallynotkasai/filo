@@ -165,6 +165,25 @@ export function rewriteRenameInBoard(
 }
 
 /**
+ * Whether any file reference in `board` is `path` or sits under it, i.e.
+ * whether a rename of `path` would rewrite this board. Reads only.
+ */
+export function boardReferencesPath(board: BoardFileData, path: string): boolean {
+  let found = false;
+  forEachTileLike(board, (_id, tile) => {
+    if (found) return;
+    for (const field of FILE_REF_FIELDS) {
+      const current = tile[field];
+      if (typeof current === 'string' && current && pathStartsWith(current, path)) {
+        found = true;
+        return;
+      }
+    }
+  });
+  return found;
+}
+
+/**
  * Applies a rename across a caller-provided map of loaded boards. Returns
  * which boards were changed so the caller can persist only those. Does not
  * perform IPC — the consumer passes the in-memory cache and writes changed

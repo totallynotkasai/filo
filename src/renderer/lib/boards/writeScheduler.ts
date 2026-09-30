@@ -469,7 +469,13 @@ export function createScheduler<TArgs>(
       // consumes from there when it awaits in-flight writes.
       void fireWrite(key, snapshotted, getArgs);
     };
-    const timer = setTimeout(() => {
+    const onDue = (): void => {
+      const armed = pending.get(key);
+      const probe = opts.deferFire ? getArgs() : null;
+      if (armed && probe && opts.deferFire?.(probe)) {
+        armed.timer = setTimeout(onDue, opts.debounceMs); // not yet: stays pending
+        return;
+      }
       pending.delete(key);
       // Serialize the timer fire behind any write still in flight for this key
       // so the newest write lands LAST (see `drainPriorInFlight`).
@@ -523,7 +529,8 @@ export function createScheduler<TArgs>(
         // the sync-fire timing flush()/flushAll() and the test suite rely on.
         fireFromTimer();
       }
-    }, debounce);
+    };
+    const timer = setTimeout(onDue, debounce);
 
     pending.set(key, {
       timer,

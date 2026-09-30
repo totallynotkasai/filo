@@ -33,6 +33,12 @@ function changedNames(): string[] {
     .flatMap((e) => (e.payload[0] as Array<{ filename: string }>).map((c) => c.filename));
 }
 
+function changedEvents(): Array<{ filename: string; type: string }> {
+  return sentEvents
+    .filter((e) => e.channel === 'vault:files-changed')
+    .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
+}
+
 function renames(): unknown[] {
   return sentEvents.filter((e) => e.channel === 'vault:file-renamed').map((e) => e.payload[0]);
 }
@@ -69,15 +75,8 @@ describe('FileWatcher.reconcileNow', () => {
     await watcher.reconcileNow({ seedOnly: true });
     await fs.writeFile(join(dir, 'NewFile.md'), 'new', 'utf-8');
     await watcher.reconcileNow();
-    // Wait one debounce window (300ms) for the synthesised events to drain.
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    const filesChanged = sentEvents
-      .filter((e) => e.channel === 'vault:files-changed')
-      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
-    expect(filesChanged.some((c) => c.filename === 'NewFile.md' && c.type === 'document')).toBe(
-      true,
-    );
+    // Polled: a fixed wait for the 300 ms notify debounce is flaky under load.
+    await vi.waitFor(() => expect(changedEvents().some((c) => c.filename === 'NewFile.md' && c.type === 'document')).toBe(true), { timeout: 5000 });
   });
 
   it('synthesises a delete event for a file that vanished since the last pass', async () => {
@@ -174,12 +173,8 @@ describe('FileWatcher.reconcileNow', () => {
     await new Promise((resolve) => setTimeout(resolve, 1100));
     await fs.writeFile(target, 'totally different content of a different size', 'utf-8');
     await watcher.reconcileNow();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    const filesChanged = sentEvents
-      .filter((e) => e.channel === 'vault:files-changed')
-      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
-    expect(filesChanged.some((c) => c.filename === 'Edited.md')).toBe(true);
+    // Polled: a fixed wait for the 300 ms notify debounce is flaky under load.
+    await vi.waitFor(() => expect(changedNames()).toContain('Edited.md'), { timeout: 5000 });
   });
 
   // 6.4.M8 — `.board.json` and similar JSON files Filo round-trips through
@@ -210,12 +205,8 @@ describe('FileWatcher.reconcileNow', () => {
     expect(postStat.size).toBe(preStat.size);
 
     await watcher.reconcileNow();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    const filesChanged = sentEvents
-      .filter((e) => e.channel === 'vault:files-changed')
-      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
-    expect(filesChanged.some((c) => c.filename === 'My.board.json')).toBe(true);
+    // Polled: a fixed wait for the 300 ms notify debounce is flaky under load.
+    await vi.waitFor(() => expect(changedNames()).toContain('My.board.json'), { timeout: 5000 });
   });
 
   // Audit-4 DI-15 — the reconcile walk hashed only the first 4 KB of a
@@ -246,12 +237,8 @@ describe('FileWatcher.reconcileNow', () => {
     expect(postStat.size).toBe(preStat.size);
 
     await watcher.reconcileNow();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    const filesChanged = sentEvents
-      .filter((e) => e.channel === 'vault:files-changed')
-      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
-    expect(filesChanged.some((c) => c.filename === 'Deep.board.json')).toBe(true);
+    // Polled: a fixed wait for the 300 ms notify debounce is flaky under load.
+    await vi.waitFor(() => expect(changedNames()).toContain('Deep.board.json'), { timeout: 5000 });
   });
 
   it('drops reconciled events whose path is currently suppressed', async () => {
@@ -288,21 +275,14 @@ describe('FileWatcher.reconcileNow', () => {
     // Reconcile WHILE suppressed: the event is dropped this pass.
     await watcher.reconcileNow();
     await new Promise((resolve) => setTimeout(resolve, 100));
-    let filesChanged = sentEvents
-      .filter((e) => e.channel === 'vault:files-changed')
-      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
-    expect(filesChanged.some((c) => c.filename === 'SelfWrite.md')).toBe(false);
+    expect(changedNames()).not.toContain('SelfWrite.md');
 
     // Suppression lifts; the next pass re-diffs the preserved prior entry against
     // the changed disk bytes and synthesises the missed change.
     await new Promise((resolve) => setTimeout(resolve, 900));
     sentEvents.length = 0;
     await watcher.reconcileNow();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    filesChanged = sentEvents
-      .filter((e) => e.channel === 'vault:files-changed')
-      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
-    expect(filesChanged.some((c) => c.filename === 'SelfWrite.md')).toBe(true);
+    await vi.waitFor(() => expect(changedNames()).toContain('SelfWrite.md'), { timeout: 5000 });
   });
 
   it('skips the entire `.filo/` subtree', async () => {
@@ -323,13 +303,7 @@ describe('FileWatcher.reconcileNow', () => {
     await watcher.reconcileNow({ seedOnly: true });
     await fs.writeFile(join(dir, 'hero.png'), 'fake png bytes', 'utf-8');
     await watcher.reconcileNow();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    const filesChanged = sentEvents
-      .filter((e) => e.channel === 'vault:files-changed')
-      .flatMap((e) => e.payload[0] as Array<{ filename: string; type: string }>);
-    const heroEvent = filesChanged.find((c) => c.filename === 'hero.png');
-    expect(heroEvent?.type).toBe('attachment');
+    await vi.waitFor(() => expect(changedEvents().find((c) => c.filename === 'hero.png')?.type).toBe('attachment'), { timeout: 5000 });
   });
 
   it('returns vault:watcher-failed when the vault root vanishes', async () => {

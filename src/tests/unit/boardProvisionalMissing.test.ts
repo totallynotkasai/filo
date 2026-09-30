@@ -11,6 +11,7 @@ import { isBoardPathHeld } from '@renderer/lib/boards/boardWriteScheduler';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+import { baselineSeq, noteBaseline, __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
 
 /**
  * Audit-19 EXT-1 — an external FOLDER rename on Windows emits no child events,
@@ -38,6 +39,7 @@ const NEW = 'Work/Plan.board.json';
 
 describe('provisionally missing boards (Audit-19 EXT-1)', () => {
   let saves: string[];
+  let recreates: string[];
   let onReconcile: () => void;
   let fileExists: boolean;
   const enqueue = (task: () => Promise<void>): Promise<unknown> => task();
@@ -50,11 +52,14 @@ describe('provisionally missing boards (Audit-19 EXT-1)', () => {
     boardCacheStore.hydrate({ b1: makeBoard('b1', 'Plan') }, { b1: OLD });
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
     saves = [];
+    recreates = [];
+    __resetBaselinesForTests();
     onReconcile = () => {};
     fileExists = false;
     installFiloMock((channel: string, ...args: unknown[]) => {
       if (channel === 'board:save') {
         saves.push(args[1] as string);
+        if ((args[3] as { recreate?: boolean } | undefined)?.recreate) recreates.push(args[1] as string);
         return { ok: true };
       }
       if (channel === 'vault:reconcile') {
@@ -117,6 +122,26 @@ describe('provisionally missing boards (Audit-19 EXT-1)', () => {
     const toast = uiStore.toasts.find((t) => t.dedupeKey === 'board-missing:b1');
     await toast!.actions!.find((a) => a.label === 'Save at original location')!.handler();
     expect(saves).toContain(OLD);
+  });
+
+  it('"Save at original location" recreates a loaded board (one with a drift baseline) and its folder', async () => {
+    noteBaseline(OLD, 1000, 10, { ifUnchangedSince: baselineSeq(OLD) });
+    boardCacheStore.markDirty('b1');
+    markBoardProvisionallyMissing('b1', OLD, captureVaultIdentity(), enqueue);
+    await vi.advanceTimersByTimeAsync(RECHECK_GRACE_MS + 500);
+    const toast = uiStore.toasts.find((t) => t.dedupeKey === 'board-missing:b1');
+    const saved = toast!.actions!.find((a) => a.label === 'Save at original location')!.handler();
+    await vi.advanceTimersByTimeAsync(1000); // the writer's re-stat of a missing file
+    await saved;
+    expect(recreates).toEqual([OLD]);
+  });
+
+  it('a later write of a missing board recreates nothing unless asked', async () => {
+    noteBaseline(OLD, 1000, 10, { ifUnchangedSince: baselineSeq(OLD) });
+    boardCacheStore.markDirty('b1');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(saves).toEqual([]);
+    expect(recreates).toEqual([]);
   });
 
   it('the file is back on disk → released, board kept', async () => {

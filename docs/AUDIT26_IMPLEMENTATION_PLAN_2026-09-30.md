@@ -445,6 +445,52 @@ Fix each where cheap; otherwise list it in KL #17.
 - The checklist badge counts only task items.
 - Add `pointercancel` to box-select and the connection-label drag (the gate `pointer-capture-cleanup` should then cover them).
 
+### Phase 4 outcome (2026-09-30)
+
+**Status:** done. Verified on Windows:
+- `npm run ci:verify` green: 777 test files, 7,344 tests passed (5 skipped), 89/89 gates;
+- the E2E suite on the built app: 23 passed, 3 skipped (the scale budgets). The new right-click spec fails on a build without the `LazyTextTileBody` fix (the menu loses the focus).
+
+**What changed**
+
+- **4.1 (A26-08): the Kanban find reads every card's text.** `tileMatchesFilters` reads `noteBody(path)`: the open note's model when there is one, else the vault index's copy. Cards whose editor hasn't mounted (most of a long column) match on their text again, and so do mounted ones after a find (the models they held were let go).
+- **4.2 (A26-09, D5 = one global check, as defaulted): shortcuts leave the board behind a dialog alone.** `core/hotkeys.ts` skips every shortcut while a modal dialog is up (`isModalDialogOpen`, new `lib/utils/modalOpen.ts`: a `dialog[open]` or any `aria-modal="true"`, the same test the Mind Map's own keys already used), except Escape (it closes the top layer) and commands registered `allowInDialog` (only Save). The Kanban and Task List board handlers already act only on keys from inside their board, which a focus-trapped dialog never sends.
+- **4.3 (A26-10): the sidebar name search shows its matches.** `sidebarTagFilter` treats the name search like the tag filter: every folder left in the cut-down tree shows open unless the user collapses it during this search; a new query (or tag) starts open again; the user's own expanded folders are untouched and come back when the search clears. Expand / Collapse All act on what the search shows.
+- **4.4 (A26-13, D6): a right-click on card text is not a press into it.**
+  - `LazyTextTileBody` cancels the focus a right or middle press would give card text that isn't being edited (`mousedown` default prevented), so the preview neither mounts its editor nor takes focus; the editor that would have stolen the menu's focus a frame later never starts.
+  - `handleEditorReady` leaves the focus alone when a context menu is open or focus sits in a menu or dialog.
+  - D6: the card's menu shows on card text whether or not its editor has loaded (`wantsNativeTextMenu`, used by the Kanban card's context-menu handler), and the browser's text menu (spell-check, cut / copy / paste) only while that card's text is being edited.
+- **4.5 (A26-26): Enter on a Board Browser row's Rename or Delete button is that button's.** The row's key handler returns unless the row itself is the target. KL #46 corrected.
+- **4.6 (A26-28):**
+  - the checklist badge counts task items only (`lib/kanban/checklistProgress.ts`: a list item opening with `[ ]` / `[x]`, nested or quoted; not a `[x]` in text, inline code, a link or a fenced block);
+  - box-select ends its box on `pointercancel` (keeping what it had selected); a cancelled connection-label drag puts the label back and leaves no undo step;
+  - the gate `pointer-capture-cleanup` now requires a `pointercancel` / `lostpointercapture` handler for **every** pointer capture, not only those that open a spatial batch (proved: it fails with the label's handler removed).
+- **Tests added or changed:**
+  - unit `kanbanFiltersAndSort.test.ts` (a card whose note no editor has opened matches on its text), `hotkeys.test.ts` (a dialog up: Ctrl+Z skipped and not `preventDefault`ed, Save and Escape fire), `checklistProgress.test.ts`, `marqueeSelectionCancel.test.ts`;
+  - component `lazyTextTileBody.test.ts` (a right press doesn't focus or mount; an editor loading under an open menu leaves the focus; the menu a mounted card's text gets, editing or not), `connectionLabelSaved.test.ts` (a cancelled label drag);
+  - characterisation `boardShortcutsAndUndo.test.ts` (Ctrl+Z and Ctrl+W with the Tags Browser open; Enter on the Board Browser's buttons), `tagFilters.test.ts` (the name search opens folders; one existing case updated, since it pinned the old closed folder);
+  - E2E `kanbanClick.e2e.ts`: a right-click on card text, before and after the editors load, opens the card menu, which keeps the focus; a key typed then changes no file.
+- **Proof on the old code** (each fix reverted alone, its tests kept): every new case fails there (find 1, dialog shortcuts 1, sidebar 2, right-click 3, Board Browser 1, label cancel 1).
+
+**Deviations from the plan**
+
+1. **4.2: the exception list is Escape plus an explicit `allowInDialog`, not "the `allowInEditor` keys".** `allowInEditor` also covers Ctrl+O, Ctrl+Shift+W, Ctrl+, and Ctrl+Shift+F, which would open a vault, close it, open Settings or the Search panel behind the dialog. Only Save is marked `allowInDialog`. `Modal`'s `isolateShortcuts` is kept (Settings still sets it) but is now redundant for app shortcuts.
+2. **4.4: the focus is cancelled at the press rather than by remembering the button.** `handlePointerDown` already ignored a right press; the mount came from the *focus* the browser gives a `tabindex` preview on any press. Preventing that focus also keeps the menu's "return focus to the opener" from landing on the card and mounting it after the menu closes.
+3. **D6 refined:** the card menu shows on text that isn't being edited, mounted or not (the default), but a right-click in a card the user is typing in still gets the browser's text menu, so spell-check suggestions and paste stay where they are used. A right press on a mounted card that isn't being edited doesn't move the caret or focus into it either.
+4. **4.6: four more drags got `pointercancel`** (the Tile, Frame, Connection and Element style popups' header drags), found by widening the gate; each now ends its drag on cancel.
+5. **E2E run although Phase 4 touches no shell, startup, quit or watching code:** the right-click fix depends on Chromium's focus-on-press behaviour, which jsdom doesn't model.
+6. **Docs pulled forward from Phase 6.4:** KL #46 (with 4.5, as planned) and CLAUDE.md's tree (`modalOpen.ts`, `checklistProgress.ts`, `editableTarget.ts`, `hotkeys.ts`, `sidebarTagFilter.svelte.ts`) and the `components` gate row.
+
+**New findings**
+
+- **The name search matches file names only.** A folder whose own name matches but that holds no matching file is not shown (`filterTree`, unchanged). Not a regression; noted for the UI pass.
+- **Mind Map text tiles** still give the browser's text menu on a right-click anywhere on their mounted text (no lazy preview there, and D6 was scoped to Kanban cards). Consistent within the Mind Map, so left as is.
+
+**Scores after Phase 4:**
+- Kanban 7 → 8 (find, right-click and the badge fixed; A26-14's undo placement is Phase 5);
+- Accessibility and keyboard 6.5 → 7 (shortcuts behind dialogs, Board Browser Enter; N12 / N13 still open);
+- Document tab and sidebar: the name search (A26-10) fixed.
+
 ## Phase 5: undo, tags and search (A26-07, A26-14, A26-15, A26-25, A26-27)
 
 ### 5.1 Replace All and markup (A26-07)

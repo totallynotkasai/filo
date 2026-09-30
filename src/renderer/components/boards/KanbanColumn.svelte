@@ -35,7 +35,7 @@
   } from '../../lib/styles/effectiveStyle';
   import type { KanbanCardDndItem } from '../../lib/kanban/kanbanDragController.svelte';
   import KanbanCard from './KanbanCard.svelte';
-  import { isEditableTextTarget } from '../../lib/utils/editableTarget';
+  import { isEditableTextTarget, wantsNativeTextMenu } from '../../lib/utils/editableTarget';
   import { handleListKeyNav, focusFirstItem } from '../../lib/utils/listKeyNav';
   import { tick } from 'svelte';
 
@@ -407,7 +407,7 @@
   }
 
   function handleTileContextMenu(e: MouseEvent, tileId: string) {
-    if (isEditableTextTarget(e.target)) return;
+    if (wantsNativeTextMenu(e)) return;
     // Multi-select: when the right-clicked card is part of a selection of
     // 2+, defer to the parent's bulk menu (Move / Delete / Add tag against
     // every selected card). A right-click on a card OUTSIDE the current

@@ -69,3 +69,35 @@ describe('Kanban sort — empty values last, ties keep manual order', () => {
     expect(out).toEqual(['urgent', 'low', 'odd']);
   });
 });
+
+describe('Kanban find reads every card body, open or not', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function findMatches(query: string, bodies: Record<string, string>, order: string[]): string[] {
+    vi.spyOn(vaultIndexStore, 'getMetadata').mockImplementation((path: string) => {
+      const id = /Cards\/(.+)\.md$/.exec(path)?.[1] ?? '';
+      if (!(id in bodies)) return null;
+      return { frontmatter: {}, content: bodies[id] } as unknown as ReturnType<typeof vaultIndexStore.getMetadata>;
+    });
+    const ctl = new KanbanFiltersAndSort({
+      getBoardColumns: () => [],
+      getAllTilesById: () => ({}),
+      getFindQuery: () => query,
+      getCacheVersion: () => 0,
+    });
+    return order.filter((id) => ctl.tileMatchesFilters(tile(id)));
+  }
+
+  it('a card whose note no editor has opened matches on its text', () => {
+    const out = findMatches(
+      'invoice',
+      { a: 'Pay the Invoice on Friday', b: 'Groceries', c: 'nothing here' },
+      ['a', 'b', 'c'],
+    );
+    expect(out).toEqual(['a']);
+  });
+
+  it('a card still matches on its title with no indexed body', () => {
+    expect(findMatches('b', {}, ['a', 'b'])).toEqual(['b']);
+  });
+});

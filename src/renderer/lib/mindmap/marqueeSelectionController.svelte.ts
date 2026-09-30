@@ -104,4 +104,15 @@ export class MarqueeSelectionController {
     this.selectionScope.endBox();
     this.container?.releasePointerCapture(e.pointerId);
   }
+
+  /**
+   * The system took the pointer (a touch turned into a scroll, a window
+   * switch): the box goes away, keeping what it had selected, so it isn't
+   * left drawn and following the next move.
+   */
+  handlePointerCancel(): void {
+    if (!this.isSelecting) return;
+    this.isSelecting = false;
+    this.selectionScope.endBox();
+  }
 }

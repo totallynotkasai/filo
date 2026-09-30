@@ -39,6 +39,8 @@ export interface CommandWithShortcutOptions {
    * editor instead of being blocked by the contenteditable filter.
    */
   allowInEditor?: boolean;
+  /** Forwards to {@link Shortcut.allowInDialog}. */
+  allowInDialog?: boolean;
 }
 
 export function registerCommandWithShortcut(opts: CommandWithShortcutOptions): () => void {
@@ -50,6 +52,7 @@ export function registerCommandWithShortcut(opts: CommandWithShortcutOptions): (
     alt: opts.binding.alt,
     description: opts.description,
     allowInEditor: opts.allowInEditor,
+    allowInDialog: opts.allowInDialog,
     // Routed to the key handler (not gated in the action) so a disabled
     // command is skipped and the loop keeps scanning for another match.
     enabled: opts.enabled,

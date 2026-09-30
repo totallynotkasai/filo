@@ -18,6 +18,7 @@ import { readOutsideVersion, saveMiscConfig, settleOutsideVersion } from '../lib
 import { isConfigDriftHeld, refuseHeldConfigWrite, registerConfigDriftTarget } from '../lib/boards/configDriftHold';
 import { discardMiscWrite, retryMiscWrite } from '../lib/boards/miscWriteScheduler';
 import { seedConfigBaselines, statConfigsBeforeRead } from '../lib/vault/configBaselineSeed';
+import { isModalDialogOpen } from '../lib/utils/modalOpen';
 
 /** Shape of `.filo/hotkeys.json` — a flat command-id → shortcut-string map. */
 type HotkeysConfig = Record<string, string>;
@@ -56,6 +57,13 @@ export interface Shortcut extends ShortcutBinding {
    * falls through to the next match (or the browser) instead of being eaten.
    */
   enabled?: () => boolean;
+  /**
+   * Lets the shortcut fire while a modal dialog is open. Every other
+   * shortcut (Escape aside) is skipped then, since it would act on the board
+   * or tab behind the dialog, where the user can't see it. Only for a command
+   * that is safe whatever is on screen (Save).
+   */
+  allowInDialog?: boolean;
 }
 
 interface RegisteredShortcut extends Shortcut {
@@ -102,10 +110,13 @@ function handleKeyDown(e: KeyboardEvent) {
   const inContentEditable = target.isContentEditable;
 
   if (inFormInput && e.key !== 'Escape') return;
+  // Escape stays: it closes the topmost layer, the dialog included.
+  const behindDialog = e.key !== 'Escape' && isModalDialogOpen();
 
   for (const shortcut of shortcuts) {
     if (bindingMatches(shortcut, e)) {
       if (inContentEditable && e.key !== 'Escape' && !shortcut.allowInEditor) continue;
+      if (behindDialog && !shortcut.allowInDialog) continue;
       // Skip (don't fire, don't preventDefault) so a same-binding shortcut
       // registered by the active pane can still match — see `enabled` above.
       if (shortcut.enabled && !shortcut.enabled()) continue;

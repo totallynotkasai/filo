@@ -313,6 +313,7 @@
     onpointerdown={onDragStart}
     onpointermove={onDragMove}
     onpointerup={onDragEnd}
+    onpointercancel={onDragEnd}
   >
     <span class="popup-title" id={popupTitleId}>Connection Style</span>
     <button class="close-btn" onclick={onclose} aria-label="Close">

@@ -366,6 +366,8 @@
           onclick={(e) => { if (renamingBoardId !== board.id) handleBoardClick(board, e); }}
           onkeydown={(e) => {
             if (renamingBoardId === board.id) return;
+            // A key on the row's Rename or Delete button is that button's.
+            if (e.target !== e.currentTarget) return;
             // Alt+ArrowUp/Down reorders the focused row (keyboard a11y
             // equivalent of drag-reorder); Enter opens the board.
             if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {

@@ -111,7 +111,8 @@ describe('sidebar tag filter', () => {
     await typeSidebarSearch(app, 'plan');
     await escInSidebarSearch(app);
     expect(sidebarTagFilterPill(app)).toBeNull();
-    expect(listing(app)).toEqual(['Work']);
+    // The name search alone still filters, and shows its match's folder open.
+    expect(listing(app)).toEqual(['Work', 'Work/Plan.md']);
     await escInSidebarSearch(app);
     expect(listing(app)).toEqual(UNFILTERED);
   });
@@ -161,6 +162,23 @@ describe('sidebar toolbar while a tag filter is on', () => {
 
     // The user's own folder state was never touched: nothing was expanded.
     await clearSidebarTagFilter(app);
+    expect(listing(app)).toEqual(UNFILTERED);
+  });
+});
+
+describe('sidebar name search', () => {
+  it('shows its matches with their folders open, and the user\'s own folders come back after', async () => {
+    const app = await startApp(VAULT);
+    await typeSidebarSearch(app, 'sub');
+    expect(listing(app)).toEqual(['Work', 'Work/Deep', 'Work/Deep/Sub.md']);
+
+    // Collapse All closes what the search shows; a new query opens again.
+    await clickSidebarExpandCollapse(app);
+    expect(listing(app)).toEqual(['Work']);
+    await typeSidebarSearch(app, 'plan');
+    expect(listing(app)).toEqual(['Work', 'Work/Plan.md']);
+
+    await escInSidebarSearch(app);
     expect(listing(app)).toEqual(UNFILTERED);
   });
 });

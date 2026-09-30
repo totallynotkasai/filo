@@ -11,6 +11,10 @@
    * once and puts the caret where the press was. Once mounted it stays
    * until the board unmounts.
    *
+   * A right-click is not a press into the text: it neither mounts the editor
+   * nor moves focus, so the card's menu keeps the keys (`wantsNativeTextMenu`
+   * gives the card's menu on text that isn't being edited, loaded or not).
+   *
    * A preview holds no text of its own, so leave / quit / rescue logic needs
    * nothing here: a card without an editor has nothing unsaved, and a
    * mounted one registers through `TextTile` as before.
@@ -23,6 +27,7 @@
   import { noteBody, resolveLineSpacing } from '../../stores/noteMeta';
   import { renderNotePreviewHtml } from '../../lib/editor/staticPreview';
   import { queueEditorMount } from '../../lib/editor/editorMountQueue';
+  import { uiStore } from '../../stores/ui.svelte';
 
   let {
     tile,
@@ -99,6 +104,14 @@
     mountNow();
   }
 
+  /**
+   * A right or middle press on card text that isn't being edited: no focus,
+   * so no mount and no caret (the browser would focus the text first).
+   */
+  function handleMouseDown(e: MouseEvent): void {
+    if (e.button !== 0 && !host.contains(document.activeElement)) e.preventDefault();
+  }
+
   function handleFocus(): void {
     if (mounted) return;
     caretTarget = 'start';
@@ -112,6 +125,9 @@
     // After this flush's effects, so the editor is editable when it takes focus.
     requestAnimationFrame(() => {
       if (editor.isDestroyed) return;
+      // A menu or dialog opened meanwhile keeps its focus (and its keys).
+      if (uiStore.contextMenu.visible) return;
+      if (document.activeElement?.closest('[role="menu"], [role="dialog"], [aria-modal="true"], dialog')) return;
       if (target === 'start') {
         editor.commands.focus('start');
         return;
@@ -122,7 +138,8 @@
   }
 </script>
 
-<div class="lazy-text-body" bind:this={host}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="lazy-text-body" bind:this={host} data-card-text="" onmousedown={handleMouseDown}>
   {#if mounted}
     <TextTileBody {tile} {resolved} onEditorReady={handleEditorReady} />
   {:else}

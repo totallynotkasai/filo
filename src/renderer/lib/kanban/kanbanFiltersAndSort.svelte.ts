@@ -4,9 +4,8 @@ import type {
   KanbanTilePlacement,
   Tile,
 } from '../../schema/index';
-import { noteStore } from '../../stores/notes.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
-import { noteTags } from '../../stores/noteMeta';
+import { noteBody, noteTags } from '../../stores/noteMeta';
 import { vaultPathForTile } from './kanbanFrontmatterWriter';
 
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
@@ -82,9 +81,11 @@ export class KanbanFiltersAndSort {
       const haystack: string[] = [];
       haystack.push((tile.title || '').toLowerCase());
       for (const t of tags) haystack.push(String(t).toLowerCase());
+      // Every card's text, mounted or not: a card's editor mounts only near
+      // the view, so an unopened note is read from the vault index.
       const notePath = resolveTextTileVaultPath(tile);
       if (notePath) {
-        const body = noteStore.get(notePath)?.body ?? '';
+        const body = noteBody(notePath);
         if (body) haystack.push(body.toLowerCase());
       }
       const path = vaultPathForTile(tile);

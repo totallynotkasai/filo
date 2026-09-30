@@ -43,6 +43,7 @@
     isOverdue as isOverdueLib,
   } from '../../lib/tasks/dueDateFormat';
   import { clockStore } from '../../stores/clock.svelte';
+  import { checklistProgress as countChecklist } from '../../lib/kanban/checklistProgress';
 
   // Per-pane scope so we can compose the tile cascade with the card
   // cascade's per-card fontSize overrides below.
@@ -163,15 +164,7 @@
   // The open note's body when loaded (ticking a box in its editor refreshes
   // the badge without a disk round-trip), else the vault index's: a card
   // whose editor isn't mounted yet has no open note. Hides when total === 0.
-  let checklistProgress = $derived.by<{ checked: number; total: number } | null>(() => {
-    if (!notePath) return null;
-    const body = noteBody(notePath);
-    const checked = (body.match(/\[x\]/gi) ?? []).length;
-    const open = (body.match(/\[ \]/g) ?? []).length;
-    const total = checked + open;
-    if (total === 0) return null;
-    return { checked, total };
-  });
+  let checklistProgress = $derived(notePath ? countChecklist(noteBody(notePath)) : null);
 
   // ── Cover image ──
   let coverPath = $derived<string>(typeof placement.coverImage === 'string' ? placement.coverImage : '');

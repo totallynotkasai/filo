@@ -676,6 +676,25 @@ export async function deleteBoardInBrowser(app: CharApp, name: string): Promise<
   await quiesce(800);
 }
 
+/**
+ * Enter in the Board Browser on a board's row, or on its Rename / Delete
+ * button (focused first). Opens the browser if it isn't open.
+ */
+export async function enterInBoardBrowser(boardId: string, on: 'row' | 'rename' | 'delete'): Promise<void> {
+  const { uiStore } = await import('@renderer/stores/ui.svelte');
+  if (!boardBrowserOpen()) uiStore.openModal('board-browser');
+  await waitFor(() => document.querySelector(`.board-row[data-board-id="${boardId}"]`) !== null, 'the board in the Board Browser');
+  const row = $(document, `.board-row[data-board-id="${boardId}"]`) as HTMLElement;
+  const target = on === 'row' ? row : ($(row, on === 'rename' ? 'button.board-rename' : 'button.board-delete') as HTMLElement);
+  target.focus();
+  key(target, 'Enter');
+  await quiesce(300);
+}
+
+export function boardBrowserOpen(): boolean {
+  return document.querySelector('.board-browser-panel') !== null;
+}
+
 /** A tile's Delete button, with "delete the file too" ticked. */
 export async function deleteTileAndFile(app: CharApp, tileRoot: HTMLElement): Promise<void> {
   click($(tileRoot, 'button[aria-label="Delete tile"]'));

@@ -7,6 +7,8 @@ import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { parseMarkdown } from '@renderer/lib/vault/vaultIndex';
 import { MOUNTS_PER_IDLE, pendingEditorMounts } from '@renderer/lib/editor/editorMountQueue';
+import { uiStore } from '@renderer/stores/ui.svelte';
+import { wantsNativeTextMenu } from '@renderer/lib/utils/editableTarget';
 import type { Editor } from '@tiptap/core';
 import type { TextTile } from '@renderer/schema/index';
 import {
@@ -143,5 +145,51 @@ describe('LazyTextTileBody: a card shows a preview until its editor is needed', 
     expect(pendingEditorMounts()).toBe(1);
     for (const c of mounted.splice(0)) await unmount(c);
     expect(pendingEditorMounts()).toBe(0);
+  });
+
+  it('a right-click on the preview neither focuses it nor mounts the editor', async () => {
+    recordingFilo({ 'Card.md': NOTE });
+    const el = mountBody(tile('t1', 'Card.md'));
+    const text = el.querySelector('.lazy-preview-text') as HTMLElement;
+    text.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 2 }));
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 });
+    text.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+    expect(el.querySelector('.ProseMirror')).toBeNull();
+  });
+
+  it('an editor that loads while a menu is open leaves the focus with the menu', async () => {
+    recordingFilo({ 'Card.md': NOTE });
+    const el = mountBody(tile('t1', 'Card.md'));
+    (el.querySelector('[data-note-preview]') as HTMLElement).dispatchEvent(new FocusEvent('focus'));
+    uiStore.showContextMenu(10, 10, [{ id: 'x', label: 'Open', action: () => {} }]);
+    await settle(40);
+    expect(editorOf(el).isFocused).toBe(false);
+    uiStore.hideContextMenu();
+  });
+
+  it('a loaded card: its text shows the card menu, and the text menu only while it is being edited', async () => {
+    recordingFilo({ 'Card.md': NOTE });
+    const el = mountBody(tile('t1', 'Card.md'));
+    (el.querySelector('.lazy-preview-text') as HTMLElement)
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 5, clientY: 5 }));
+    await settle(40);
+    const pm = el.querySelector('.ProseMirror') as HTMLElement;
+    const menuOn = (): boolean => {
+      const e = new MouseEvent('contextmenu', { bubbles: true });
+      Object.defineProperty(e, 'target', { value: pm });
+      return wantsNativeTextMenu(e);
+    };
+    editorOf(el).commands.focus('end');
+    expect(menuOn()).toBe(true);
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 });
+    pm.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(false);
+
+    pm.blur();
+    expect(menuOn()).toBe(false);
+    const downUnfocused = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 });
+    pm.dispatchEvent(downUnfocused);
+    expect(downUnfocused.defaultPrevented).toBe(true);
   });
 });

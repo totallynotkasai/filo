@@ -43,3 +43,16 @@ function isContentEditableAware(el: HTMLElement): boolean {
   }
   return false;
 }
+
+/**
+ * Whether a right-click gets the browser's own text menu (spell-check, cut /
+ * copy / paste) rather than Filo's: on editable text, except a card's text
+ * (`data-card-text`) that isn't being edited. A card shows its own menu
+ * whether or not its editor has loaded yet, and the text menu once the user
+ * is typing in it.
+ */
+export function wantsNativeTextMenu(e: MouseEvent): boolean {
+  if (!isEditableTextTarget(e.target)) return false;
+  const cardText = (e.target as HTMLElement).closest('[data-card-text]');
+  return cardText === null || cardText.contains(document.activeElement);
+}

@@ -119,3 +119,35 @@ describe('a connection label being edited', () => {
     expect(historyStore.canUndo).toBe(false);
   });
 });
+
+describe('a connection label drag the system cancels', () => {
+  it('puts the label back where it was and leaves no undo step', async () => {
+    Element.prototype.setPointerCapture ??= function () {};
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    instance = mount(ConnectionLabel, {
+      target,
+      props: {
+        get connection() { return boardCacheStore.cache.mm!.connections.c1!; },
+        pathElement: pathElement(),
+      },
+      context: new Map<unknown, unknown>([[BOARD_SCOPE_KEY, getActiveScope()]]),
+    });
+    await settle();
+    const label = target.querySelector('.connection-label') as HTMLElement;
+    label.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+    // The move itself needs SVG geometry jsdom lacks: stand in for it.
+    const c = boardCacheStore.cache.mm!.connections.c1!;
+    boardStore.updateConnection('c1', { label: { ...c.label, position: 0.9 } });
+    await settle();
+    expect(boardCacheStore.cache.mm!.connections.c1!.label.position).toBe(0.9);
+
+    label.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 1 }));
+    await settle();
+    expect(boardCacheStore.cache.mm!.connections.c1!.label.position).toBe(0.5);
+    expect(historyStore.canUndo).toBe(false);
+    // A later pointerup finds no drag to finish.
+    label.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    expect(historyStore.canUndo).toBe(false);
+  });
+});

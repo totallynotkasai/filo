@@ -31,6 +31,12 @@ import {
   activeTabMenuLabels,
   activeTabName,
   boardFilesText,
+  openTagsBrowser,
+  tagsBrowserOpen,
+  openTabs,
+  enterInBoardBrowser,
+  boardBrowserOpen,
+  activeTabKind,
 } from './harness/actions';
 
 afterEach(async () => {
@@ -148,5 +154,47 @@ describe('global shortcuts follow the board type', () => {
     await createBoard(app, 'tasklist');
     pressShortcut('n', { ctrlKey: true });
     await waitFor(() => taskRows(app).length === 1, 'a new task');
+  });
+});
+
+describe('shortcuts while a dialog is open', () => {
+  it('Ctrl+Z and Ctrl+W leave the board behind the Tags Browser alone; Ctrl+Z works again once it closes', async () => {
+    const app = await startApp({});
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    const columns = kanbanColumns(app).length;
+    const tabs = openTabs(app);
+
+    await openTagsBrowser();
+    // Focus on a button in the dialog, not its search box (a text field
+    // keeps every shortcut out on its own).
+    const close = document.querySelector('.tags-browser')?.closest('dialog')?.querySelector('button.modal-close');
+    if (!(close instanceof HTMLElement)) throw new Error('no close button');
+    close.focus();
+    pressShortcut('z', { ctrlKey: true });
+    pressShortcut('w', { ctrlKey: true });
+    await quiesce(500);
+    expect(tagsBrowserOpen()).toBe(true);
+    expect(kanbanColumns(app).length).toBe(columns);
+    expect(openTabs(app)).toEqual(tabs);
+
+    pressShortcut('Escape');
+    await waitFor(() => !tagsBrowserOpen(), 'the Tags Browser closed');
+    await undo(app);
+    await waitFor(() => kanbanColumns(app).length === columns - 1, 'the column undone');
+  });
+
+  it('in the Board Browser, Enter on a row\'s Rename or Delete button is that button\'s; Enter on the row opens the board', async () => {
+    const app = await startApp({});
+    const mindMap = await createBoard(app, 'mindmap');
+    await createBoard(app, 'kanban');
+
+    await enterInBoardBrowser(mindMap, 'rename');
+    await enterInBoardBrowser(mindMap, 'delete');
+    expect(boardBrowserOpen()).toBe(true);
+    expect(activeTabKind(app)).toBe('kanban');
+
+    await enterInBoardBrowser(mindMap, 'row');
+    await waitFor(() => activeTabKind(app) === 'mindmap', 'the Mind Map opened');
   });
 });

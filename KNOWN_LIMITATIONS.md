@@ -1451,7 +1451,8 @@ the vault, and the notice says where.
 Enter opens the board) that holds its own Rename and Delete buttons. A screen
 reader treats a button's contents as one label, so in browse mode those two
 buttons can be unreachable (axe `nested-interactive`). With the keyboard they
-work: Tab reaches each one.
+work: Tab reaches each one, and Enter or Space on it renames or deletes. The
+row's own Enter opens the board only while the row itself has focus.
 
 **Where:** [src/renderer/components/modals/BoardBrowser.svelte](src/renderer/components/modals/BoardBrowser.svelte);
 the E2E axe scan turns the rule off for this view only

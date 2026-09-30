@@ -1,4 +1,5 @@
 import type { Tile } from '../../schema/index';
+import { isModalDialogOpen } from '../utils/modalOpen';
 
 interface NeighborSelectionInput {
   key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight';
@@ -70,7 +71,7 @@ const ARROWS_SELECTOR = 'select, [role="tab"], [role="option"], [role="radio"], 
  * button), because a button has no use for them.
  */
 export function isCanvasKeyBlocked(key: string, active: Element | null, doc: Document = document): boolean {
-  if (doc.querySelector('[aria-modal="true"], dialog[open]')) return true;
+  if (isModalDialogOpen(doc)) return true;
   if (!active || active === doc.body) return false;
   if (active.closest(OVERLAY_SELECTOR)) return true;
   if (isArrowConsumingTarget(active)) return true;

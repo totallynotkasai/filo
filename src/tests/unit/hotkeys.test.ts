@@ -349,4 +349,32 @@ describe('hotkeys', () => {
       }
     });
   });
+
+  describe('while a modal dialog is open', () => {
+    it('skips app shortcuts, but Escape and an allowInDialog command still fire', () => {
+      initKeyboardShortcuts();
+      const fired: string[] = [];
+      registerShortcut({ key: 'z', ctrl: true, description: 'Undo', action: () => fired.push('undo') });
+      registerShortcut({ key: 's', ctrl: true, allowInDialog: true, description: 'Save', action: () => fired.push('save') });
+      registerShortcut({ key: 'Escape', description: 'Cancel', action: () => fired.push('cancel') });
+      const dialog = document.createElement('div');
+      dialog.setAttribute('aria-modal', 'true');
+      const button = document.createElement('button');
+      dialog.appendChild(button);
+      document.body.appendChild(dialog);
+      try {
+        for (const [key, ctrlKey] of [['z', true], ['s', true], ['Escape', false]] as const) {
+          const e = new KeyboardEvent('keydown', { key, ctrlKey, bubbles: true, cancelable: true });
+          button.dispatchEvent(e);
+          if (key === 'z') expect(e.defaultPrevented).toBe(false);
+        }
+        expect(fired).toEqual(['save', 'cancel']);
+        dialog.remove();
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+        expect(fired).toEqual(['save', 'cancel', 'undo']);
+      } finally {
+        dialog.remove();
+      }
+    });
+  });
 });

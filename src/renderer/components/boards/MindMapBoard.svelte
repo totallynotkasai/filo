@@ -594,6 +594,7 @@
   onpointerdown={(e) => marquee.handlePointerDown(e)}
   onpointermove={(e) => marquee.handlePointerMove(e)}
   onpointerup={(e) => marquee.handlePointerUp(e)}
+  onpointercancel={() => marquee.handlePointerCancel()}
   oncontextmenu={handleContextMenu}
   onclick={handleCanvasClick}
 >

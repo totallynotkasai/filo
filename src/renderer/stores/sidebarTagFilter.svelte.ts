@@ -3,10 +3,11 @@
  * tree by. Sidebar view state: never persisted, cleared on vault swap (with
  * the sidebar's name search).
  *
- * While a filter is on, every folder left in the cut-down tree holds a match,
- * so folders show open unless the user collapses one during this filter. The
- * user's own expanded folders (`vaultStore.expandedFolders`) are left alone
- * and come back when the filter clears.
+ * While a filter is on (this tag, or the sidebar's name search), every folder
+ * left in the cut-down tree holds a match, so folders show open unless the
+ * user collapses one during this filter. The user's own expanded folders
+ * (`vaultStore.expandedFolders`) are left alone and come back when the
+ * filter clears.
  */
 import { SvelteSet } from 'svelte/reactivity';
 import type { FileTreeNode } from '../../shared/types';
@@ -20,8 +21,31 @@ import { fileTagsStore } from './fileTags.svelte';
 import { noteTags } from './noteMeta';
 
 let activeTag = $state<string | null>(null);
-// Absolute tree paths of folders collapsed while this filter is on.
+// Absolute tree paths of folders collapsed while this filter is on, and the
+// filter they were collapsed under: a new tag or search query starts open.
 const collapsedFolders = new SvelteSet<string>();
+let collapsedUnder = $state('');
+
+/** The tag and the name search, as one key; empty while neither filters. */
+function filterKey(): string {
+  const search = vaultStore.search;
+  if (activeTag === null && search === '') return '';
+  return JSON.stringify([activeTag, search]);
+}
+
+/** The folders collapsed under the current filter (reset when it changed). */
+function collapsedNow(): SvelteSet<string> {
+  const key = filterKey();
+  if (collapsedUnder !== key) {
+    collapsedFolders.clear();
+    collapsedUnder = key;
+  }
+  return collapsedFolders;
+}
+
+function isCollapsedNow(path: string): boolean {
+  return collapsedUnder === filterKey() && collapsedFolders.has(path);
+}
 
 /** Every tagged file: notes by frontmatter, media by `.filo/tags.json`. */
 function taggedFiles(): TaggedFile[] {
@@ -64,17 +88,18 @@ export const sidebarTagFilter = {
   },
 
   isFolderExpanded(path: string): boolean {
-    if (activeTag !== null) return !collapsedFolders.has(path);
+    if (filterKey() !== '') return !isCollapsedNow(path);
     return vaultStore.expandedFolders.has(path);
   },
 
   toggleFolder(path: string): void {
-    if (activeTag === null) {
+    if (filterKey() === '') {
       vaultStore.toggleFolder(path);
       return;
     }
-    if (collapsedFolders.has(path)) collapsedFolders.delete(path);
-    else collapsedFolders.add(path);
+    const collapsed = collapsedNow();
+    if (collapsed.has(path)) collapsed.delete(path);
+    else collapsed.add(path);
   },
 
   /**
@@ -87,21 +112,22 @@ export const sidebarTagFilter = {
   },
 
   get anyFolderExpanded(): boolean {
-    if (activeTag === null) return vaultStore.expandedFolders.size > 0;
-    return folderPaths(this.apply(vaultStore.tree)).some((p) => !collapsedFolders.has(p));
+    if (filterKey() === '') return vaultStore.expandedFolders.size > 0;
+    return folderPaths(this.apply(vaultStore.tree)).some((p) => !isCollapsedNow(p));
   },
 
   expandAll(): void {
-    if (activeTag === null) vaultStore.expandAll();
-    else collapsedFolders.clear();
+    if (filterKey() === '') vaultStore.expandAll();
+    else collapsedNow().clear();
   },
 
   collapseAll(): void {
-    if (activeTag === null) {
+    if (filterKey() === '') {
       vaultStore.collapseAll();
       return;
     }
-    for (const p of folderPaths(this.apply(vaultStore.tree))) collapsedFolders.add(p);
+    const collapsed = collapsedNow();
+    for (const p of folderPaths(this.apply(vaultStore.tree))) collapsed.add(p);
   },
 };
 

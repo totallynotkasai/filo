@@ -265,6 +265,8 @@
         // is editor-safe: flushAllMarkdownWriters drains the in-editor
         // debounce timer before the .board.json / .filo/ flush.
         allowInEditor: true,
+        // Saving acts on nothing the dialog hides.
+        allowInDialog: true,
         execute: () => {
           void (async () => {
             const ok = await vaultStore.save();

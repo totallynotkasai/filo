@@ -327,6 +327,18 @@
     isDragging = false;
   }
 
+  // The system took the pointer mid-drag: the label goes back where it was
+  // and no undo step is left for a move that never finished.
+  function handleLabelDragCancel() {
+    if (!isDragging) return;
+    isDragging = false;
+    if (connection.label.position !== dragStartPosition) {
+      boardStore.updateConnection(connection.id, {
+        label: { ...connection.label, position: dragStartPosition },
+      });
+    }
+  }
+
   function handleMouseEnter() {
     if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
     showControls = true;
@@ -381,6 +393,7 @@
         onpointerdown={handleLabelDragStart}
         onpointermove={handleLabelDragMove}
         onpointerup={handleLabelDragEnd}
+        onpointercancel={handleLabelDragCancel}
         ondblclick={() => startEdit()}
       >
         {#if isEditing}

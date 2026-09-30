@@ -266,10 +266,11 @@ export const checks = [
   },
   {
     id: 'pointer-capture-cleanup',
-    title: 'pointer capture that opens a spatial batch also handles pointercancel',
+    title: 'every pointer capture also handles pointercancel',
     hint:
-      'Without a cancel handler a native pointercancel leaves the spatial batch open (rendering freezes) ' +
-      'and the drag flag stuck. Escape: `// allow-pointer-capture-leak: <reason>`.',
+      'Without a cancel handler a native pointercancel leaves the drag flag stuck (a box still drawn, a label ' +
+      'still following the pointer) and, for a drag that opens a spatial batch, the batch open (rendering ' +
+      'freezes). Escape: `// allow-pointer-capture-leak: <reason>`.',
     run(ctx) {
       const out = [];
       let captureFiles = 0;
@@ -279,11 +280,13 @@ export const checks = [
         const code = stripMarkupComments(raw);
         if (!/setPointerCapture\s*\(/.test(code)) continue;
         captureFiles++;
-        if (!/\bbeginBatch\s*\(/.test(code)) continue;
-        comboFiles++;
+        const batch = /\bbeginBatch\s*\(/.test(code);
+        if (batch) comboFiles++;
         if (/\/\/\s*allow-pointer-capture-leak:\s*\S+/.test(raw)) continue;
+        // Case-blind: a controller class names its handler (`handlePointerCancel`) for its component to bind.
         if (!/pointercancel|lostpointercapture/i.test(code)) {
-          out.push(fail(rel, undefined, 'captures the pointer and opens beginBatch() but binds no pointercancel / lostpointercapture'));
+          const what = batch ? 'captures the pointer and opens beginBatch()' : 'captures the pointer';
+          out.push(fail(rel, undefined, `${what} but handles no pointercancel / lostpointercapture`));
         }
       }
       if (captureFiles < 10) out.push(fail('src/renderer', undefined, `tripwire: only ${captureFiles} setPointerCapture files (expected >= 10) — pattern went stale`));

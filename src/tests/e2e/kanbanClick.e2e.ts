@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { freshVault, generateVault, launchBuilt, listFiles, makeTemp, newBoard, openBoardByName, quitLikeUser, removeTemp } from './helpers/app';
+import { changedFiles, freshVault, generateVault, hashVault, launchBuilt, listFiles, makeTemp, newBoard, openBoardByName, quitLikeUser, removeTemp } from './helpers/app';
 
 /**
  * A plain click on a Kanban card must not leave the board in a drag state:
@@ -90,6 +90,38 @@ test("a column taller than the window keeps Add Card after its last card, and it
     await win.waitForTimeout(800);
     await win.keyboard.press('Escape');
     await expect(column.locator('.kanban-card-shell')).toHaveCount(11);
+  } finally {
+    expect((await quitLikeUser(launched)).outcome).toBe('exited');
+  }
+});
+
+test('a right-click on card text opens the card menu, which keeps the keys, loaded editor or not', async () => {
+  const vault = freshVault(root, 'RightClickVault');
+  const { boards } = generateVault(vault, 60);
+  const launched = await launchBuilt(vault);
+  const { win } = launched;
+  const menuHasFocus = (): Promise<boolean> =>
+    win.evaluate(() => document.activeElement?.closest('.context-menu') != null);
+  try {
+    await openBoardByName(win, boards.kanban.replace(/\.board\.json$/, ''));
+    const column = win.locator('.kanban-column').first();
+    await expect(column.locator('.kanban-card-shell')).toHaveCount(10, { timeout: 20_000 });
+    const before = hashVault(vault);
+
+    // Straight away (the card's editor may not have loaded yet), then once
+    // every editor near the view has loaded and none is being edited.
+    for (const card of [column.locator('.lazy-text-body').last(), column.locator('.lazy-text-body').first()]) {
+      await card.click({ button: 'right', position: { x: 30, y: 12 } });
+      await expect(win.locator('.context-menu')).toBeVisible();
+      await win.waitForTimeout(400);
+      expect(await menuHasFocus(), 'the card menu keeps the focus').toBe(true);
+      // Typed into the note if an editor had taken the focus.
+      await win.keyboard.press('x');
+      await win.keyboard.press('Escape');
+      await expect(win.locator('.context-menu')).toHaveCount(0);
+      await win.waitForTimeout(1500);
+    }
+    expect(changedFiles(before, hashVault(vault))).toEqual([]);
   } finally {
     expect((await quitLikeUser(launched)).outcome).toBe('exited');
   }

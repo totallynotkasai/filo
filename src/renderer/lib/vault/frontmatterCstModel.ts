@@ -311,7 +311,8 @@ export function patchFrontmatterSourceCst(
         continue;
       }
 
-      const nextIsPrimitive = nextValue === null || typeof nextValue !== 'object';
+      // A `null` is rebuilt as a bare `key:` (see `serializeKeyValue`).
+      const nextIsPrimitive = nextValue !== null && typeof nextValue !== 'object';
       if (
         isSingleLineScalarValue(item.value) &&
         nextIsPrimitive &&

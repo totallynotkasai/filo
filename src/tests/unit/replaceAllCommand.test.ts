@@ -15,6 +15,7 @@ import {
 } from '@renderer/commands/replaceAllCommand';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
+import { MAX_MATCHES } from '@renderer/lib/search/runSearch';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
 import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
@@ -582,16 +583,12 @@ describe('Replace All — match options, the cap, and the toast Undo', () => {
   });
 
   it('refuses a result list cut short at the cap, and writes nothing', async () => {
-    const filesystem: FileMap = { 'a.md': 'x'.repeat(10) };
+    const text = 'x'.repeat(MAX_MATCHES + 1);
+    const filesystem: FileMap = { 'a.md': text };
     seed(filesystem);
     searchStore.setQuery('x');
-    Object.defineProperty(searchStore, 'truncated', { configurable: true, get: () => true });
-    try {
-      await runReplaceAllCommand();
-    } finally {
-      delete (searchStore as unknown as Record<string, unknown>).truncated;
-    }
-    expect(filesystem['a.md']).toBe('x'.repeat(10));
+    await runReplaceAllCommand();
+    expect(filesystem['a.md']).toBe(text);
     expect(uiStore.toasts.map((t) => t.text)).toContain('Too many matches to replace safely; narrow the search.');
   });
 
@@ -611,5 +608,66 @@ describe('Replace All — match options, the cap, and the toast Undo', () => {
     await historyStore.whenChainSettled();
 
     expect(filesystem['a.md']).toBe('hello frodo');
+  });
+});
+
+describe('Replace All leaves Markdown syntax alone', () => {
+  function seed(filesystem: FileMap): void {
+    installFiloStub(filesystem);
+    const defs: Record<string, unknown> = {};
+    for (const path of Object.keys(filesystem)) {
+      vaultIndexStore.restoreMetadata(path, parseMarkdown(path, filesystem[path]!));
+      defs[`t_${path}`] = makeTextDef(`t_${path}`, path, path);
+    }
+    boardCacheStore.hydrate({ mm: makeMindMap('Board', 'mm', defs) }, { mm: 'a.board.json' });
+  }
+
+  it('a dash to an en dash changes the sentence, not the list markers', async () => {
+    const note = '---\ntitle: T\n---\nOne - two.\n\n- item\n  - nested\n  - [ ] task\n';
+    const filesystem: FileMap = { 'a.md': note };
+    seed(filesystem);
+    searchStore.setQuery('-');
+    searchStore.setReplaceText('–');
+    expect(searchStore.matches.filter((m) => m.inSyntax)).toHaveLength(3);
+
+    await runReplaceAllCommand();
+
+    expect(filesystem['a.md']).toBe('---\ntitle: T\n---\nOne – two.\n\n- item\n  - nested\n  - [ ] task\n');
+  });
+
+  it('"--" to "—" keeps rules and table delimiter rows', async () => {
+    const note = 'Wait--what?\n\n---\n\n| a | b |\n| --- | :--: |\n| x--y | z |\n';
+    const filesystem: FileMap = { 'a.md': note };
+    seed(filesystem);
+    searchStore.setQuery('--');
+    searchStore.setReplaceText('—');
+
+    await runReplaceAllCommand();
+
+    expect(filesystem['a.md']).toBe('Wait—what?\n\n---\n\n| a | b |\n| --- | :--: |\n| x—y | z |\n');
+  });
+
+  it('a word in a link address, an image path or an HTML tag stays; the same word in text changes', async () => {
+    const note = 'See [the draft](draft.md) and ![draft](img/draft.png).\n<span title="draft">red draft</span> <https://draft.example>\n\n[ref]: draft-notes.md\n';
+    const filesystem: FileMap = { 'a.md': note };
+    seed(filesystem);
+    searchStore.setQuery('draft');
+    searchStore.setReplaceText('final');
+
+    await runReplaceAllCommand();
+
+    expect(filesystem['a.md']).toBe('See [the final](draft.md) and ![final](img/draft.png).\n<span title="draft">red final</span> <https://draft.example>\n\n[ref]: draft-notes.md\n');
+  });
+
+  it('only syntax matches: nothing is written, and the toast says why', async () => {
+    const filesystem: FileMap = { 'a.md': '- one\n- two\n' };
+    seed(filesystem);
+    searchStore.setQuery('- ');
+    searchStore.setReplaceText('* ');
+
+    await runReplaceAllCommand();
+
+    expect(filesystem['a.md']).toBe('- one\n- two\n');
+    expect(uiStore.toasts.map((t) => t.text).join('\n')).toMatch(/Markdown formatting/);
   });
 });

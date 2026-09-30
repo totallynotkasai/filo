@@ -146,7 +146,9 @@ export async function runTagRewriteSweep(
     await vaultIndexStore.whenBuildComplete();
     // Another vault opened meanwhile: its index isn't this vault's notes.
     if (!isStillSameVault(captured)) return { attempted: 0, succeeded: [], failed: [] };
-    return rewriteTagInAllMarkdown({
+    // Each rewrite refreshes its note's index entry; published in batches,
+    // not once per note (see `batchPublishes`).
+    return vaultIndexStore.batchPublishes(() => rewriteTagInAllMarkdown({
       vaultRoot,
       metadata: vaultIndexStore.allMetadata(),
       oldName,
@@ -154,7 +156,7 @@ export async function runTagRewriteSweep(
       applyChanges: (paths) => vaultIndexStore.applyChanges(paths),
       pathFilter,
       onProgress,
-    });
+    }));
   });
 }
 

@@ -543,6 +543,11 @@ export const historyStore = {
     if (!offStackHeld.includes(command)) offStackHeld = [...offStackHeld, command];
   },
 
+  /** Whether `command` is still held off-stack with its undo on offer. */
+  holdsOffStack(command: Command): boolean {
+    return offStackHeld.includes(command);
+  },
+
   /**
    * The toast's Undo for a held off-stack command: runs its undo in the
    * chain, once. When a board reload dropped it meanwhile, says so instead.
@@ -697,8 +702,10 @@ export const historyStore = {
    * stack holds it (the tab that was active when it ran, maybe not this one)
    * and runs its undo in the chain, even with other steps on top of it. Only
    * for a command with no board whose undo checks what it finds and leaves a
-   * file changed since alone (Replace All). False when it is no longer on
-   * any undo stack (undone already, or dropped).
+   * file changed since alone (Replace All), or puts back only what it took
+   * (a sidebar delete: the item from Filo's trash, and placements a board no
+   * longer holds). False when it is no longer on any undo stack (undone
+   * already, or dropped).
    */
   undoFromToast(command: Command, label: string): boolean {
     if (command.targetBoardId) return false;

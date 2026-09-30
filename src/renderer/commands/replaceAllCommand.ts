@@ -15,7 +15,10 @@
  *
  * Scope: replaces body matches only. Title matches (matchKind: 'title')
  * are surfaced via the find/find-all UI but skipped by Replace — a title
- * edit is its own undoable command (`UpdateTitleCommand`).
+ * edit is its own undoable command (`UpdateTitleCommand`). A body match in
+ * Markdown syntax (a list marker, a rule or table delimiter row, a link
+ * address, an HTML tag) is left alone too, judged on the file as read: a
+ * clean-up of the words mustn't change a note's structure or its links.
  *
  * Undo: puts each match's original text back. The command keeps only the
  * replacements and a hash of the file before and after, never a copy of the
@@ -35,7 +38,8 @@ import { noteStore } from '../stores/notes.svelte';
 import { isMissingFileError, NoteBusyError } from '../lib/notes/noteWriter';
 import { splitFrontmatterSource } from '../lib/vault/frontmatterRead';
 import { noteTextHash } from '../lib/notes/noteFile';
-import { TOO_MANY_TO_REPLACE } from '../lib/search/replaceAllText';
+import { ONLY_SYNTAX_MATCHES, SYNTAX_KINDS, TOO_MANY_TO_REPLACE } from '../lib/search/replaceAllText';
+import { markdownSyntaxRanges, overlapsSyntax } from '../lib/search/markdownSyntax';
 
 /** One replacement: at `start` (in the file before the replace), `before` became `after`. */
 export interface Splice {
@@ -153,6 +157,7 @@ async function buildPlans(
     // exactly `content.length - body.length`.
     const { body: indexedBody } = splitFrontmatterSource(content);
     const fmEnd = content.length - indexedBody.length;
+    const syntax = markdownSyntaxRanges(indexedBody);
 
     const splices: Splice[] = [];
     let lastEnd = -1;
@@ -163,6 +168,7 @@ async function buildPlans(
       // have changed since the vault index last refreshed), and matches
       // never overlap. A stale match is skipped, not the whole file.
       if (rawStart < lastEnd || content.slice(rawStart, rawEnd) !== m.matchText) continue;
+      if (overlapsSyntax(syntax, m.matchStart, m.matchEnd)) continue;
       splices.push({ start: rawStart, before: m.matchText, after: replaceText });
       lastEnd = rawEnd;
     }
@@ -296,14 +302,17 @@ export async function runReplaceAllCommand(): Promise<void> {
   }
 
   const replaceText = searchStore.replaceText;
-  const matches = searchStore.matches;
+  // Found again now: the panel's matches can trail an edit by a moment, and a
+  // stale offset would be skipped.
+  const found = searchStore.searchNow();
+  const matches = found.matches;
   if (matches.length === 0) {
     uiStore.toast('No matches to replace.', 'info', 2500);
     return;
   }
   // A capped list is only some of the matches: replacing it would leave the
   // rest and still say it was done.
-  if (searchStore.truncated) {
+  if (found.truncated) {
     uiStore.toast(TOO_MANY_TO_REPLACE, 'warning', 5000);
     return;
   }
@@ -321,7 +330,9 @@ export async function runReplaceAllCommand(): Promise<void> {
 
   if (result.plans.length === 0) {
     uiStore.toast(
-      'No body matches eligible for replacement (title-only matches are skipped).',
+      matches.some((m) => m.inSyntax)
+        ? ONLY_SYNTAX_MATCHES
+        : 'No body matches eligible for replacement (title-only matches are skipped).',
       'info',
       3000,
     );
@@ -373,6 +384,14 @@ export async function replaceCurrentMatch(): Promise<boolean> {
     return false;
   }
   if (!match.filePath) return false;
+  if (match.inSyntax) {
+    uiStore.toast(
+      `This match is part of the note's Markdown formatting (${SYNTAX_KINDS}); Replace leaves it alone.`,
+      'info',
+      4000,
+    );
+    return false;
+  }
 
   // Re-run the same plan builder against a single match so the splice
   // arithmetic stays in one place. Refresh the result against the latest

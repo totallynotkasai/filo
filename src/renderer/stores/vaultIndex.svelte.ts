@@ -50,6 +50,8 @@ let publishTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingKeys = new Set<VaultPath>();
 let pendingAny = false;
 let pendingList = false;
+/** Open `batchPublishes` runs: while any is open, changes publish on the throttle, as during a rebuild. */
+let batching = 0;
 
 function flushPublish(): void {
   if (publishTimer) clearTimeout(publishTimer);
@@ -68,7 +70,7 @@ function publish(relativePath: string, listChanged: boolean): void {
   pendingKeys.add(vaultPath(relativePath));
   pendingAny = true;
   if (listChanged) pendingList = true;
-  if (!isBuilding) {
+  if (!isBuilding && batching === 0) {
     flushPublish();
     return;
   }
@@ -419,6 +421,23 @@ export const vaultIndexStore = {
    * could miss the carrier that proves a partial commit and offer a Discard
    * that throws away a partially-committed rename.
    */
+  /**
+   * Runs `op` with this index's notices batched: a change inside it reaches
+   * readers of `version` / `listVersion` at most every
+   * `PUBLISH_THROTTLE_MS`, and once more when `op` ends. A tag sweep
+   * changes every note that carries the tag, and published one by one, each
+   * note re-counted every tag view (the Tags Browser, the sidebar chips).
+   */
+  async batchPublishes<T>(op: () => Promise<T>): Promise<T> {
+    batching += 1;
+    try {
+      return await op();
+    } finally {
+      batching = Math.max(0, batching - 1);
+      if (batching === 0 && !isBuilding) flushPublish();
+    }
+  },
+
   whenBuildComplete(): Promise<void> {
     if (!isBuilding) return Promise.resolve();
     return new Promise<void>((resolve) => {

@@ -100,9 +100,9 @@ describe('the sweep reports its progress', () => {
     expect(result.succeeded).toEqual(['a.md', 'b.md']);
     const reading = seen.filter((p) => p.phase === 'reading');
     const writing = seen.filter((p) => p.phase === 'writing');
-    expect(reading.map((p) => p.done)).toEqual([0, 1, 2]);
+    expect(reading.map((p) => p.done)).toEqual([0, 1, 2, 3]);
     expect(reading.every((p) => p.total === 3)).toBe(true);
-    expect(writing.map((p) => p.done)).toEqual([0, 0, 1, 2]);
+    expect(writing.map((p) => p.done)).toEqual([0, 1, 2]);
     expect(writing.every((p) => p.total === 2)).toBe(true);
   });
 });

@@ -532,6 +532,67 @@ Fix each where cheap; otherwise list it in KL #17.
 
 - Re-run the Search panel's query on its own inputs and `listVersion`, and refresh body matches on a short debounce, not on every autosave.
 
+### Phase 5 outcome (2026-09-30)
+
+**Status:** done. Verified on Windows:
+- `npm run ci:verify` green: 781 test files, 7,375 tests passed (5 skipped), 89/89 gates;
+- the E2E suite on the built app: 23 passed, 3 skipped (the scale budgets). Phase 5 touches no shell or quit code, but the tag sweep now writes several notes at once while the watcher runs, so it was worth a run.
+
+**What changed**
+
+- **5.1 (A26-07, D7 = leave syntax alone, as defaulted): Replace All changes words, not structure.** New pure module `lib/search/markdownSyntax.ts` finds the syntax ranges in a note body: a list or number marker opening a line (in a quote too, with a task box after it), a thematic break or a table delimiter row (whole line), a link / image / reference destination or autolink, and an HTML tag or comment.
+  - `runVaultSearch` flags a body match that touches one (`SearchMatch.inSyntax`); Find still shows it.
+  - `replaceableMatches` counts those apart, and the confirm says "N matches inside Markdown formatting (list markers, rules, table lines, link addresses and HTML tags) are left alone." When every match is syntax, a toast says so and nothing runs.
+  - `buildPlans` re-checks each match against the syntax ranges of the **fresh** file it reads, so what is left alone is decided on the bytes being written, not on the index copy.
+  - Replace (one match) on a syntax match says why it won't.
+  - KNOWN_LIMITATIONS #48.
+- **5.2 (A26-14, D8 = always a toast, as defaulted): a sidebar delete's undo is offered wherever the user looks.** `offerDeleteUndo` (`stores/vaultDeleteOps.ts`):
+  - the step stays on the active board's stack (Ctrl+Z there still undoes it);
+  - the "moved to Filo's trash" toast is now shown for every sidebar delete, and its Undo takes the step off whichever stack holds it (`historyStore.undoFromToast`, which the CascadeDelete command qualifies for: no target board, and its undo puts back only the item and the placements a board no longer holds). Undone from Ctrl+Z first, the toast's Undo says the item is already back; dropped by a board reload, it points to Settings → Trash;
+  - **Settings → Trash restore brings the tiles back too** while the delete's step is still in the history: `trash.svelte.ts` keeps a per-session registry (`registerDeleteUndo`, keyed by the command's current trash id, emptied at every vault swap), and `trashStore.restore` runs the delete's undo instead of a bare restore ("Restored X and the tiles that showed it.").
+  - With no board open the step is held off every stack as before, and the toast and Settings → Trash reach it through `undoOffStack`.
+  - KNOWN_LIMITATIONS #43 extended (an Undo from the toast leaves nothing to redo).
+- **5.3 (A26-15): tag rename 2.6× faster, and it no longer blocks renames and deletes.** Profiled with a timing probe in the characterisation harness (real main-process IPC handlers on a temp vault, the Tags Browser open). Three costs, per note:
+  1. the rewrites ran strictly one after another (each an fsync'd atomic write, about 50 ms);
+  2. every rewrite published the vault index at once, and a tag change bumps `listVersion`, so every tag view (the Tags Browser counts, the sidebar chips) re-counted the whole vault **per note**: O(N²), which is why the audit's 5,000-note vault paid more per note than a small one;
+  3. each write armed and cleared the crash sentinel (two more small file ops per note).
+
+  Fixes:
+  - the sweep reads and rewrites six notes at a time (new `lib/utils/forEachLimited.ts`); each rewrite is still a fresh read inside the note's own queue;
+  - `vaultIndexStore.batchPublishes` (used by `runTagRewriteSweep`, so rename, delete, their undo and Resume all get it): inside it the index tells `version` / `listVersion` readers on the 150 ms throttle, and once at the end;
+  - a removal's progress breadcrumb is rewritten one write at a time with the latest list, not once per note;
+  - **the drain is scoped and short**: the sweep drains only the notes it will rewrite, once, before it starts, and holds nothing while it writes. A rename, delete or restore elsewhere now runs at once instead of waiting for the whole sweep. The rewrites need no exclusion: each runs in its note's write queue and follows a rename (`movedTo`, already there).
+
+  Harness timings (1,000 notes, the Tags Browser open): **68 ms → 26 ms per note**; at 200 notes 64 → 31 ms. Sentinel file ops fell from 402 to about 60 per 200 notes.
+- **5.4 (A26-25): undo puts back an empty key as it was.** `inverseDelta` records a key present with no value (`status:` → `null`, `due: ""` → `''`) as a set, not an unset; the writer already keeps a `null` for a key the file holds. The CST engine now writes a `null` as a bare `key:` (`serializeKeyValue`; the value-only splice no longer handles `null`), never `key: null`.
+- **5.5 (A26-27): an autosave no longer re-runs the vault search.** `runVaultSearch` reads each note's title, tags and body untracked; it re-runs on the query, the options, the board cache and `listVersion` (a note added or gone, a tag changed). A note edit re-runs it only once notes have settled for `NOTE_REFRESH_MS` (400 ms), and only while the panel is open with a query (`search.svelte.ts`, an effect that only restarts a timer, and skips a refresh when the index hasn't moved since the last search). Replace All and its confirm work from `searchStore.searchNow()`, a search run at that moment, so a match that moved in the last 400 ms isn't skipped as stale.
+- **Tests added or changed:**
+  - unit `fieldCommandUndoBytes.test.ts` (`status:` and `due: ""` come back byte for byte on undo);
+  - component `searchNoteRefresh.test.ts` (three autosaves don't re-run the search; it re-runs once they pause; a new note or a new query re-runs at once; nothing runs with the panel closed);
+  - unit `markdownSyntax.test.ts`, `replaceAllCommand.test.ts` (four cases: a dash in a sentence vs list markers and a task box, `--` vs a rule and a delimiter row, a word in a link, image path, reference definition, HTML attribute and autolink, only-syntax matches), `replaceAllText.test.ts` (the count and the confirm's line); the cap case now uses a real 5,001-match note, since Replace All searches again itself;
+  - characterisation `trash.test.ts` (a card on a Kanban deleted with a Mind Map active: the toast's Undo brings the note and the card back and leaves nothing on the Mind Map's stack; Ctrl+Z first, then the toast says it is already back; Settings → Trash restores the note and the card);
+  - unit `tagRewriteSweep.test.ts` (a drained op on another path runs while the sweep is still writing), `tagSweepProgress.test.ts` (progress counts finished notes, up to the total), `forEachLimited.test.ts`; component `vaultIndexBatchPublishes.test.ts` (fifty tag changes re-count the tag views once).
+- **Proof on the old code** (each fix reverted alone, its tests kept): empty key 2 fail, search refresh 2, Replace All syntax 4, sidebar delete 3, sweep drain 1.
+
+**Deviations from the plan**
+
+1. **5.1: Replace works from a fresh search, not the panel's list** (a consequence of 5.5's debounce: the list can trail an edit by 400 ms, and a stale offset is skipped silently). The confirm's counts come from the same fresh search.
+2. **5.1: the syntax check is deliberately line-based**, not a full Markdown parse: a list-looking line or a rule inside a code block counts as syntax too (left alone, and counted in the confirm). Heading markers, emphasis delimiters and blockquote markers are not in D7's list and are still replaced.
+3. **5.2: Settings → Trash brings tiles back only within the session** (while the delete's step is in the undo history). The plan said "when the trash entry carries them"; the entry on disk doesn't: board snapshots in `.filo/trash/<id>/manifest.json` would go stale as boards change, and replaying them after a restart could overwrite later edits. After the step has left the history (a restart, a board reload, the history cap), Settings → Trash restores the file alone, as before.
+4. **5.3: the sentinel toggling wasn't changed at its source.** Running six writes at a time keeps the in-flight count above zero for most of the sweep, which removed most of the arm / clear pairs without touching `writeStateTracking`.
+5. **5.3: progress counts finished notes** (`done` reaches `total`), not notes started, since several run at once.
+6. **5.5: the search store owns its debounce** (a module-level `$effect.root`), so it works whether or not the panel component is mounted; it only runs while `open` and a query is set.
+
+**New findings**
+
+- **The query parser trims the needle**: searching ` - ` finds every `-`. Replacing it then adds spaces around hyphens in words (`well-known` → `well – known`). Older than Phase 5; not fixed (a query-syntax decision). For Phase 6 or the owner.
+- **The unit test project runs Svelte's server build**, where effects never run and a `$derived` re-computes on every read; reactivity tests (like 5.5's) must live in the component project (`probeDerived`).
+
+**Scores after Phase 5:**
+- Undo / redo 7.5 → 8.5 (a delete's undo is reachable from the toast and Settings → Trash; empty keys come back);
+- Tags and search 7.5 → 8.5 (tag rename 2.6× faster and no longer blocks other work; Replace All leaves syntax alone; typing with the panel open no longer re-runs the search);
+- Kanban 8 → 8.5 (a deleted card comes back from wherever the user undoes).
+
 ## Phase 6: lifecycle lows and hygiene (A26-17 … A26-21, A26-24, FC-08, FC-09, FC-10)
 
 ### 6.1 Lifecycle lows

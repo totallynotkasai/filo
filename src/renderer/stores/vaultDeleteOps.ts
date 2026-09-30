@@ -2,9 +2,10 @@
  * The sidebar delete of a vault file or folder.
  *
  * The item moves into Filo's trash (`.filo/trash`), never unlinked, so the
- * delete is undoable whatever the item's type or size: Ctrl+Z moves it back
- * and restores every tile placement that pointed at it, and Settings → Trash
- * can restore it later. A folder with a locked child fails as a whole, with
+ * delete is undoable whatever the item's type or size: its undo moves it back
+ * and restores every tile placement that pointed at it, from Ctrl+Z on the
+ * board that was active, the toast, or Settings → Trash (which restores the
+ * file alone once the step has left the history). A folder with a locked child fails as a whole, with
  * nothing moved.
  */
 import { boardStore } from './board.svelte';
@@ -14,7 +15,8 @@ import { fileTagsStore } from './fileTags.svelte';
 import { uiStore } from './ui.svelte';
 import { noticeUnloadedBoards } from './unloadedBoards';
 import { historyStore } from './history.svelte';
-import { reindexUnder, toastMovedToTrash } from './trash.svelte';
+import { registerDeleteUndo, reindexUnder, toastMovedToTrash } from './trash.svelte';
+import type { CascadeDeleteCommand } from '../commands/groupAndBoardCommands';
 import { markRecentSelfWrite } from '../lib/boards/writeStateTracking';
 import { samePath, toVaultRelative } from '../lib/utils/path';
 import { isAtOrUnder } from '@shared/vaultPath';
@@ -62,6 +64,44 @@ function fileTagsUnder(rel: string): Record<string, string[]> {
     if (isAtOrUnder(path, rel)) out[path] = [...tags];
   }
   return out;
+}
+
+/**
+ * Offers the delete's undo in every place the user may look for it: the step
+ * on the active board's stack (when there is one), a "moved to Filo's trash"
+ * toast, and Settings → Trash while the step lasts. The step sits on the
+ * board that was active, which is often not the board that showed the file,
+ * so the toast is always shown. Whichever is used first runs the undo once,
+ * taking the step off its stack; the others then find nothing to undo.
+ */
+function offerDeleteUndo(itemName: string, command: CascadeDeleteCommand, offStack: boolean): void {
+  const label = `Undo ${command.description}`;
+  const undo = async (): Promise<boolean> => {
+    if (offStack) {
+      if (!historyStore.holdsOffStack(command)) return false;
+      await historyStore.undoOffStack(command, label);
+    } else {
+      if (!historyStore.undoFromToast(command, label)) return false;
+      await historyStore.whenChainSettled();
+    }
+    return command.trashId === null;
+  };
+  registerDeleteUndo({ trashId: () => command.trashId, tilesBack: command.touchedBoardIds().size > 0, undo });
+  toastMovedToTrash(itemName, async () => {
+    if (offStack && !historyStore.holdsOffStack(command)) {
+      // A board it changed was reloaded since: undoOffStack says so.
+      await historyStore.undoOffStack(command, label);
+      return;
+    }
+    if (await undo()) return;
+    uiStore.toast(
+      command.trashId === null
+        ? `"${itemName}" is already back.`
+        : `That delete is no longer in the undo history. Restore "${itemName}" from Settings → Trash.`,
+      'info',
+      5000,
+    );
+  });
 }
 
 /**
@@ -138,7 +178,8 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       // Document tab active (its stack is the note's text history, keyed by a
       // tab id no board file carries), or the active board's own file going
       // with the item, no board stack the user can reach holds the delete:
-      // the toast offers the undo instead.
+      // it is held off every stack, and only the toast and Settings → Trash
+      // offer its undo.
       const activeId = historyStore.activeBoardId;
       const activePath = activeId ? boardStore.paths[activeId] ?? '' : '';
       const noBoardUndo = !activeId
@@ -218,9 +259,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       }
       await ctx.refreshTree();
       ctx.clearSelection();
-      if (noBoardUndo && command) {
-        toastMovedToTrash(itemName, () => historyStore.undoOffStack(command, `Undo ${command.description}`));
-      }
+      if (command) offerDeleteUndo(itemName, command, noBoardUndo);
       return true;
     }, { paths: [itemPath] });
   } catch (err) {

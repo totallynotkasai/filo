@@ -6,7 +6,7 @@
   import SearchFindAllPopup from './SearchFindAllPopup.svelte';
   import IconButton from '../shared/IconButton.svelte';
   import { replaceableMatches } from '../../lib/search/runSearch';
-  import { replaceAllConfirmBody, TOO_MANY_TO_REPLACE } from '../../lib/search/replaceAllText';
+  import { replaceAllConfirmBody, ONLY_SYNTAX_MATCHES, TOO_MANY_TO_REPLACE } from '../../lib/search/replaceAllText';
 
   /**
    * Vault-wide Search panel.
@@ -162,22 +162,25 @@
   }
 
   async function handleReplaceAll(): Promise<void> {
-    if (searchStore.truncated) {
+    const found = searchStore.searchNow();
+    if (found.truncated) {
       uiStore.toast(TOO_MANY_TO_REPLACE, 'warning', 4000);
       return;
     }
-    const { count, files } = replaceableMatches(searchStore.matches);
+    const { count, files, inSyntax } = replaceableMatches(found.matches);
     if (count === 0) {
       uiStore.toast(
-        searchStore.matches.length === 0 ? 'No matches to replace.' : 'Only title matches found; Replace All leaves titles alone.',
+        found.matches.length === 0
+          ? 'No matches to replace.'
+          : inSyntax > 0 ? ONLY_SYNTAX_MATCHES : 'Only title matches found; Replace All leaves titles alone.',
         'info',
-        3000,
+        inSyntax > 0 ? 5000 : 3000,
       );
       return;
     }
     uiStore.openConfirm({
       title: 'Replace All',
-      body: replaceAllConfirmBody(count, files, searchStore.matches.length - count),
+      body: replaceAllConfirmBody(count, files, found.matches.length - count - inSyntax, inSyntax),
       confirmLabel: 'Replace All',
       danger: false,
       onConfirm: () => {

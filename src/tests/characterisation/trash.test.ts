@@ -24,6 +24,11 @@ import {
   showBoard,
   renameFileToMatchTitle,
   chooseToastAction,
+  addKanbanColumn,
+  kanbanCards,
+  toastTexts,
+  undoAvailable,
+  boardFilesText,
   $,
 } from './harness/actions';
 
@@ -186,5 +191,59 @@ describe('undo of "Rename file to match title"', () => {
     expect(app.exists('Shopping list.md')).toBe(false);
     expect(app.read('Untitled.md')).toBe(note);
     await waitFor(() => mindMapTiles(app)[0]?.text === 'Milk', 'the tile still showing the note');
+  });
+});
+
+describe('a sidebar delete of a note shown on another board than the active one', () => {
+  async function cardOnKanbanWithMindMapActive(): Promise<Awaited<ReturnType<typeof startApp>>> {
+    const app = await startApp({ 'Card.md': '---\ntitle: Card\n---\nBody\n' });
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    await placeNoteOnBoard(app, 'kanban', 'Card.md');
+    expect(kanbanCards(app)).toHaveLength(1);
+    await createBoard(app, 'mindmap');
+    await deleteInSidebar(app, 'Card.md');
+    expect(app.exists('Card.md')).toBe(false);
+    return app;
+  }
+
+  const cardPlaced = (app: Awaited<ReturnType<typeof startApp>>): boolean =>
+    boardFilesText(app).some((text) => text.includes('Card.md'));
+
+  it("the toast offers Undo, and it brings back the note and the card", async () => {
+    const app = await cardOnKanbanWithMindMapActive();
+    expect(toastTexts()).toContain(`"Card.md" was moved to Filo's trash.`);
+
+    await chooseToastAction('Undo');
+    await waitFor(() => app.exists('Card.md'), 'the note back');
+    await waitFor(() => cardPlaced(app), 'the card back in the Kanban file');
+    // The step left the Mind Map's stack with it: nothing is left to undo there.
+    expect(undoAvailable(app)).toBe(false);
+    await showBoard(app, 'kanban');
+    await waitFor(() => kanbanCards(app).length === 1, 'the card on screen');
+  });
+
+  it('Ctrl+Z on the board that was active undoes it; the toast then finds it back already', async () => {
+    const app = await cardOnKanbanWithMindMapActive();
+    await undo(app);
+    await waitFor(() => app.exists('Card.md'), 'the note back');
+    await waitFor(() => cardPlaced(app), 'the card back');
+
+    await chooseToastAction('Undo');
+    expect(toastTexts()).toContain('"Card.md" is already back.');
+    expect(trashedPaths(app)).toEqual([]);
+  });
+
+  it('Settings → Trash restores the note and the card, while the delete is in the undo history', async () => {
+    const app = await cardOnKanbanWithMindMapActive();
+
+    await openTrashSettings(app);
+    await restoreFromTrashSettings('Card.md');
+    await closeModal();
+    await waitFor(() => app.exists('Card.md'), 'the note back');
+    await waitFor(() => cardPlaced(app), 'the card back');
+    expect(app.read('Card.md')).toBe('---\ntitle: Card\n---\nBody\n');
+    expect(trashedPaths(app)).toEqual([]);
+    expect(undoAvailable(app)).toBe(false);
   });
 });

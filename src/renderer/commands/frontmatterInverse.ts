@@ -92,8 +92,10 @@ export function fmValueEqual(a: unknown, b: unknown): boolean {
 
 /**
  * The delta that undoes `delta` on a note whose frontmatter was `before`:
- * each key it touches goes back to its prior value, or is removed when it had
- * none (an empty value counts as none, as in `patchToFrontmatterDelta`).
+ * each key it touches goes back to its prior value, or is removed when the
+ * note didn't have it. A key present with no value (`status:` or `due: ""`,
+ * common in templates from other apps) comes back present and empty: the
+ * writer keeps a `null` / `''` for a key the file holds.
  */
 export function inverseDelta(
   before: Readonly<Record<string, unknown>>,
@@ -102,7 +104,7 @@ export function inverseDelta(
   const inverse: FrontmatterDelta = { set: {}, unset: [] };
   for (const key of deltaKeys(delta)) {
     const prior = before[key];
-    if (key in before && !isEmptyish(prior)) inverse.set[key] = prior;
+    if (Object.prototype.hasOwnProperty.call(before, key) && prior !== undefined) inverse.set[key] = prior;
     else inverse.unset.push(key);
   }
   return inverse;

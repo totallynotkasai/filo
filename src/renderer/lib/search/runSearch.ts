@@ -21,11 +21,15 @@
  * never jumps unpredictably.
  *
  * Pure with respect to vault state — reads `vaultIndexStore` /
- * `boardCacheStore` directly, never writes. Callers wrap this in a
- * lightweight $derived inside the Search store so changes to either store
- * (file edits, board switches) re-run the query.
+ * `boardCacheStore` directly, never writes. Read inside a `$derived`, it
+ * re-runs when the board cache or the set of notes and their tags
+ * (`listVersion`) changes. A note's own title, tags and body are read
+ * untracked: every autosave changes them, and a whole-vault search on each
+ * one made typing hitch with the panel open. The Search store refreshes
+ * those on its own debounce instead.
  */
 
+import { untrack } from 'svelte';
 import type { ParsedQuery, OperatorFilter } from './queryParser';
 import type { TileDefinition, Connection } from '../../schema/index';
 import type { TileType } from '../../schema/tile';
@@ -35,6 +39,7 @@ import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { defTitle, mediaTags, noteTags, noteTitle } from '../../stores/noteMeta';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
+import { markdownSyntaxRanges, overlapsSyntax, type SyntaxRange } from './markdownSyntax';
 
 /** Single match record surfaced to the Search panel + ReplaceAll command. */
 export interface SearchMatch {
@@ -67,6 +72,12 @@ export interface SearchMatch {
   snippet: string;
   /** Tags on the file (frontmatter) — surfaced in the Find All popup. */
   tags: readonly string[];
+  /**
+   * A body match that falls in Markdown syntax (a list marker, a rule or
+   * table delimiter row, a link address, an HTML tag): Find shows it,
+   * Replace leaves it alone (see `markdownSyntax.ts`).
+   */
+  inSyntax?: boolean;
 }
 
 /** The Search panel's Match case / Whole word toggles (free text only). */
@@ -191,14 +202,17 @@ function enumerateTiles(): TileEnumeration[] {
     for (const b of project.boards) boardNameById.set(b.id, b.name);
   }
 
+  void vaultIndexStore.listVersion;
   const out: TileEnumeration[] = [];
   for (const [boardId, data] of Object.entries(boardCacheStore.cache)) {
     const boardName = boardNameById.get(boardId) ?? data.board?.name ?? boardId;
     // Regular tile defs (text / image / video / audio / file) — file-backed.
     for (const [tileId, def] of Object.entries(data.tileDefs ?? {})) {
       const filePath = getDefFilePath(def);
-      const metadata = filePath ? vaultIndexStore.getMetadata(filePath) : null;
-      out.push({ boardId, boardName, tileId, type: def.type, title: defTitle(def), tags: getDefTags(def, filePath), filePath, metadata });
+      const metadata = filePath ? untrack(() => vaultIndexStore.getMetadata(filePath)) : null;
+      const title = def.type === 'text' ? untrack(() => defTitle(def)) : defTitle(def);
+      const tags = def.type === 'text' ? untrack(() => getDefTags(def, filePath)) : getDefTags(def, filePath);
+      out.push({ boardId, boardName, tileId, type: def.type, title, tags, filePath, metadata });
     }
     // Inline tiles (link / iframe / timer) live on the mind-map board
     // itself, not in tileDefs. No backing file but they still need to be
@@ -214,19 +228,21 @@ function enumerateTiles(): TileEnumeration[] {
   // placed on a board. Each counts once, as a text item with no board.
   const placed = new Set<VaultPath>();
   for (const t of out) if (t.type === 'text' && t.filePath) placed.add(vaultPath(t.filePath));
-  for (const metadata of vaultIndexStore.allMetadata()) {
-    if (placed.has(vaultPath(metadata.path))) continue;
-    out.push({
-      boardId: '',
-      boardName: '',
-      tileId: '',
-      type: 'text',
-      title: noteTitle(metadata.path),
-      tags: noteTags(metadata.path),
-      filePath: metadata.path,
-      metadata,
-    });
-  }
+  untrack(() => {
+    for (const metadata of vaultIndexStore.allMetadata()) {
+      if (placed.has(vaultPath(metadata.path))) continue;
+      out.push({
+        boardId: '',
+        boardName: '',
+        tileId: '',
+        type: 'text',
+        title: noteTitle(metadata.path),
+        tags: noteTags(metadata.path),
+        filePath: metadata.path,
+        metadata,
+      });
+    }
+  });
   return out;
 }
 
@@ -403,8 +419,11 @@ export function runVaultSearch(
     }
     scannedFiles.add(t.filePath);
 
+    let syntax: SyntaxRange[] | null = null;
     for (const off of matchOffsets(bodyRegex, t.metadata.content)) {
       if (matches.length >= MAX_MATCHES) { truncated = true; break; }
+      syntax ??= markdownSyntaxRanges(t.metadata.content);
+      const inSyntax = overlapsSyntax(syntax, off.start, off.end);
       matches.push({
         boardId: t.boardId,
         boardName: t.boardName,
@@ -418,6 +437,7 @@ export function runVaultSearch(
         matchKind: 'body',
         snippet: snippetAround(t.metadata.content, off.start, off.end),
         tags: t.tags,
+        ...(inSyntax ? { inSyntax } : {}),
       });
     }
   }
@@ -444,20 +464,26 @@ function toTitleMatch(t: TileEnumeration, start: number, end: number, text: stri
 }
 
 /**
- * What Replace All would change: only body matches (it never renames a
- * title), and the notes they are in, in match order.
+ * What Replace All would change: only body matches outside Markdown syntax
+ * (it never renames a title), and the notes they are in, in match order;
+ * `inSyntax` counts the body matches it leaves alone.
  */
-export function replaceableMatches(matches: readonly SearchMatch[]): { count: number; files: string[] } {
+export function replaceableMatches(matches: readonly SearchMatch[]): { count: number; files: string[]; inSyntax: number } {
   let count = 0;
+  let inSyntax = 0;
   const files: string[] = [];
   const seen = new Set<VaultPath>();
   for (const m of matches) {
     if (m.matchKind !== 'body' || !m.filePath) continue;
+    if (m.inSyntax) {
+      inSyntax++;
+      continue;
+    }
     count++;
     const key = vaultPath(m.filePath);
     if (seen.has(key)) continue;
     seen.add(key);
     files.push(m.filePath);
   }
-  return { count, files };
+  return { count, files, inSyntax };
 }

@@ -88,7 +88,11 @@ export function serializeScalar(value: unknown): string {
  * for a changed collection / type-change or a freshly-added key, via the same
  * `yaml`-package serializer as {@link serializeScalar}. The CST engine rebuilds
  * a changed-collection / added key from this exact text.
+ *
+ * A `null` value is written as a bare `key:`, the way templates from other
+ * apps spell an empty key (an undo puts one back like that), never `key: null`.
  */
 export function serializeKeyValue(key: string, value: unknown): string {
+  if (value === null) return new Document({ [key]: null }).toString({ lineWidth: 0, nullStr: '' });
   return new Document({ [key]: coerceForEmit(value) }).toString({ lineWidth: 0 });
 }

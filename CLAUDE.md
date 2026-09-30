@@ -193,7 +193,7 @@ filo/
 │   │   │   ├── vaultExternalPrompts.ts  # Attachment / note deleted outside Filo while tiles point at it
 │   │   │   ├── vaultExternalDriftPrompts.ts # Startup registration of the writers' drift prompts
 │   │   │   ├── openTagHousekeeping.ts # After open: seed an empty tag registry, or prune gone files' tags once the recovery prompts are answered
-│   │   │   ├── search.svelte.ts       # Search panel state: query, Match case / Whole word, matches, replace
+│   │   │   ├── search.svelte.ts       # Search panel state: query, Match case / Whole word, matches, replace; a note edit re-runs the search only once edits pause (NOTE_REFRESH_MS)
 │   │   │   ├── vaultRecovery.ts       # `.filo/.dirty.<machineId>` sentinel + recovery modal
 │   │   │   ├── foreignSentinels.svelte.ts # Other machines' sentinels in a synced `.filo/`: listed / one info toast, never resumed or cleared
 │   │   │   ├── vaultLifecycleGuard.svelte.ts # One vault open or close at a time (a second returns 'busy'; Home disables its cards)
@@ -214,8 +214,8 @@ filo/
 │   │   │   ├── sidebarOrder.svelte.ts # Manual sidebar order (`.filo/sidebar-order.json`, vault-relative paths); another copy merges per folder
 │   │   │   ├── noteLayout.ts          # setNoteLineSpacing
 │   │   │   ├── vaultFolderOps.ts      # In-app rename/move
-│   │   │   ├── vaultDeleteOps.ts      # Sidebar delete → .filo/trash + tile cascade (undoable)
-│   │   │   ├── trash.svelte.ts        # Settings → Trash list, restore, empty, 30-day purge
+│   │   │   ├── vaultDeleteOps.ts      # Sidebar delete → .filo/trash + tile cascade; its undo from Ctrl+Z, the toast or Settings → Trash
+│   │   │   ├── trash.svelte.ts        # Settings → Trash list, restore (through the delete's undo while it lasts, tiles too), empty, 30-day purge
 │   │   │   ├── vaultStoreTypes.ts     # Shared store types
 │   │   │   ├── vaultTree.ts           # File-tree projection helpers
 │   │   │   ├── vaultProject.ts        # Per-vault virtual project bootstrap
@@ -369,7 +369,7 @@ filo/
 │   │   │   │   ├── boardTypeForPath.ts # A sidebar `.board.json`'s board type, for its icon (in-memory lookup)
 │   │   │   │   ├── tagsStorage.ts     # `.filo/tags.json` mutators
 │   │   │   │   ├── tagsFileMerge.ts   # 3-way merge of `.filo/tags.json` (external reload, pre-write)
-│   │   │   │   ├── tagRewriteSweep.ts # Two-phase tag rename/remove across .md (each write via noteStore.transform)
+│   │   │   │   ├── tagRewriteSweep.ts # Two-phase tag rename/remove across .md (each write via noteStore.transform, a few at a time; index notices batched)
 │   │   │   │   ├── tagRewriter.ts     # Frontmatter tag rename/remove/add (line-level fast path, CST-patch fallback)
 │   │   │   │   ├── frontmatterCstModel.ts # patchFrontmatterSourceCst: source-preserving FM patch on the `yaml` CST; dumpPreservesUntouched (the dump fallback's check)
 │   │   │   │   ├── frontmatterEngine.ts # Shared FM value helpers for the CST engine
@@ -560,10 +560,12 @@ filo/
 │   │   │   ├── search/                # Query parser + search runner (matches over the vault index's bodies)
 │   │   │   │   ├── queryParser.ts     # `tag:` / `board:` / `has:` / `property:` / `type:` operators, /regex/, free text
 │   │   │   │   ├── runSearch.ts       # runVaultSearch: every tile on every board plus notes on no board; Match case / Whole word
-│   │   │   │   └── replaceAllText.ts  # Replace All's confirm (body matches only, the notes named) and its refusal at the match cap
+│   │   │   │   ├── markdownSyntax.ts  # Where a body holds Markdown syntax (list markers, rules, table delimiter rows, link addresses, HTML tags): Replace leaves a match there alone
+│   │   │   │   └── replaceAllText.ts  # Replace All's confirm (body matches only, the notes named, matches in Markdown syntax counted apart) and its refusal at the match cap
 │   │   │   ├── spatialIndex.ts        # rbush wrapper
 │   │   │   └── utils/                 # Shared utilities
 │   │   │       ├── ids.ts             # nanoid wrapper
+│   │   │       ├── forEachLimited.ts  # Runs async work over a list, a few at a time (the tag sweep's reads and writes)
 │   │   │       ├── dateFormat.ts      # localIsoDate: the one `YYYY-MM-DD` formatter (local calendar date, never UTC)
 │   │   │       ├── lineEnding.ts      # fileLineEnding (majority) / frontmatterLineEnding: note writer + tag rewriter
 │   │   │       ├── color.ts           # Colour manipulation helpers
@@ -884,8 +886,10 @@ Boundary").
   disk-shape op on the same path or a parent/child. Each caller passes the
   paths it touches (rename: old and new; trash / restore: the item; new folder
   and copy: the target; external rename: old and new). With no `paths`, the
-  global rule applies: any failure refuses (the vault-wide tag sweep drains
-  this way). Close, open-another-vault and quit don't drain-and-refuse: they
+  global rule applies: any failure refuses. The vault-wide tag sweep drains
+  only the notes it will rewrite, once before it starts, and holds no drain
+  while it writes: each rewrite runs in its note's own write queue and follows
+  a rename, so a rename or delete elsewhere never waits for a long sweep. Close, open-another-vault and quit don't drain-and-refuse: they
   save, then ask if anything at all is left (see "Persistence Boundary").
 - **A note write that fails because the file is gone** raises one sticky
   toast with **Save as new file** (`noteStore.recreate`, exclusive create; only
@@ -953,7 +957,7 @@ When adding a new tile type or board type: register it, implement the interface,
 - **No command keeps a note body.** Delete undo is a restore from `.filo/trash` (a rename back); Replace All keeps only the replaced snippets and before/after hashes, and applies only while the file's bytes match. Gate `no-note-body-in-commands`.
 - Text editing undo is handled by TipTap/ProseMirror internally (separate from board undo). Board-level Ctrl+Z fires when no TipTap editor is focused.
 - **Vault-wide tag delete and rename are undone from their toast** (`stores/tagUndo.svelte.ts`, 15 s), not from board history, because they touch many files and belong to no board. Each Undo changes back only what its action changed (the notes it rewrote, the attachments, board-only tiles and filter chips that carried the tag), so a note tagged with the new name in between keeps it. A merge (a rename into a tag that exists in any spelling, registered or only in a note: `isMergingRename`) asks first and has no undo.
-- **Replace All is undone from its toast too.** It sits on the stack of the tab that was active when it ran; the toast's Undo (`historyStore.undoFromToast`) takes it off whichever stack holds it and undoes it even with steps on top, which is safe only because its undo leaves any file changed since alone. A board delete, and a sidebar delete that no open board's stack can hold, also offer Undo on their "moved to Filo's trash" toast.
+- **Replace All is undone from its toast too.** It sits on the stack of the tab that was active when it ran; the toast's Undo (`historyStore.undoFromToast`) takes it off whichever stack holds it and undoes it even with steps on top, which is safe only because its undo leaves any file changed since alone. A board delete, and every sidebar delete, also offer Undo on their "moved to Filo's trash" toast. A sidebar delete's step stays on the stack of the board that was active (often not the board that showed the file); the toast's Undo takes it off there the same way (its undo puts back only the item and the placements a board no longer holds), and Settings → Trash restores through that undo while the step lasts, so the tiles come back too. With no board open the step is held off every stack and only the toast and Settings → Trash offer it.
 
 ### Override Cascade (Styles)
 

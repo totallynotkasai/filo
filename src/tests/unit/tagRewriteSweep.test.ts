@@ -25,6 +25,7 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTra
 import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
 import { renameAllPathKeys } from '@renderer/lib/vault/renamePathKeys';
 import { uiStore } from '@renderer/stores/ui.svelte';
+import { withDrainedWrites } from '@renderer/lib/vault/vaultOperations';
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
 
@@ -498,5 +499,58 @@ describe('rewriteTagInAllMarkdown — re-reads after the drain', () => {
     // The open view follows the rewrite and keeps its body.
     expect(model.body).toBe('NEW BODY\n');
     expect(model.hasUnsavedBody).toBe(false);
+  });
+});
+
+// ── Renames and deletes elsewhere don't wait for a sweep ─────────────────────
+//
+// A sweep over a thousand notes runs for a while. It drains only the notes it
+// plans to rewrite, and only before it starts, so a disk-shape op on another
+// path (a sidebar rename, delete, restore) runs while it is still writing.
+describe('rewriteTagInAllMarkdown — holds no vault-wide drain while it writes', () => {
+  let fs: FakeFs;
+
+  beforeEach(() => {
+    fs = { files: new Map(), writeLog: [], writeDelayMs: 150 };
+    installFiloStub(fs);
+    resetNoteStore();
+    __resetTagRewriteSweepForTests();
+    __resetTagRewriteSentinelForTests();
+  });
+  afterEach(() => {
+    noteStore.__resetForTests();
+    uninstallFiloStub();
+    __resetTagRewriteSweepForTests();
+    __resetTagRewriteSentinelForTests();
+  });
+
+  it('a drained op on another path runs before the sweep ends', async () => {
+    const paths = Array.from({ length: 12 }, (_, i) => `n${i}.md`);
+    for (const p of paths) fs.files.set(p, '---\ntags: [draft]\n---\nbody\n');
+    const order: string[] = [];
+    let writesWhenOpRan = -1;
+
+    const sweep = rewriteTagInAllMarkdown({
+      vaultRoot: '/vault',
+      metadata: makeMetadata(paths, 'draft'),
+      oldName: 'draft',
+      newName: 'review',
+      applyChanges: async () => {},
+    }).then((res) => {
+      order.push('sweep done');
+      return res;
+    });
+    // Once the sweep is writing, a rename elsewhere asks for its drain.
+    while (fs.writeLog.length === 0) await new Promise((r) => setTimeout(r, 10));
+    await withDrainedWrites(async () => {
+      writesWhenOpRan = fs.writeLog.length;
+      order.push('op elsewhere');
+    }, { paths: ['Elsewhere/Other.md'] });
+
+    const res = await sweep;
+    expect(order).toEqual(['op elsewhere', 'sweep done']);
+    expect(writesWhenOpRan).toBeLessThan(12);
+    expect(res.succeeded).toHaveLength(12);
+    for (const p of paths) expect(fs.files.get(p)).toContain('review');
   });
 });

@@ -360,6 +360,11 @@ export class CascadeDeleteCommand extends Command {
     return ids;
   }
 
+  /** The Filo's trash entry the item is in now; null while it isn't there (undone). */
+  get trashId(): string | null {
+    return this.trashed?.trashId ?? null;
+  }
+
   private vaultChanged(verb: string): boolean {
     // A path-STRING compare (not the generation-aware `isStillSameVault`) is
     // enough: a same-path new generation requires a vault OPEN, whose pre-swap

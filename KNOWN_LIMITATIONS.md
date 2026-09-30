@@ -1391,23 +1391,28 @@ would need a main-process round trip per dropped file.
 **Impact:** Rare. The copy is a new note (`Plan (1).md`); delete it and drop
 the original from the sidebar instead.
 
-## 43. Undoing Replace All from its notification leaves nothing to redo
+## 43. Undoing Replace All or a sidebar delete from its notification leaves nothing to redo
 
-**What:** Replace All's notification offers **Undo**, which takes the replace
-back from any tab, even with other steps on top of it. Undone that way, it is
-taken off the undo history and can't be redone (Ctrl+Z on the tab that was
-active when it ran undoes it with a redo, while it is the last step there).
+**What:** Replace All's notification, and the "moved to Filo's trash"
+notification of a sidebar delete, offer **Undo**, which takes the step back
+from any tab, even with other steps on top of it. Undone that way (or, for a
+delete, restored from Settings → Trash while its step is still in the
+history), it is taken off the undo history and can't be redone. Ctrl+Z on the
+tab that was active when it ran undoes it with a redo, while it is the last
+step there.
 
 **Where:** `historyStore.undoFromToast` in
 [src/renderer/stores/history.svelte.ts](src/renderer/stores/history.svelte.ts);
 `runReplaceAllCommand` in
-[src/renderer/commands/replaceAllCommand.ts](src/renderer/commands/replaceAllCommand.ts).
+[src/renderer/commands/replaceAllCommand.ts](src/renderer/commands/replaceAllCommand.ts);
+`offerDeleteUndo` in
+[src/renderer/stores/vaultDeleteOps.ts](src/renderer/stores/vaultDeleteOps.ts).
 
 **Why accepted:** A redo put back on some tab's stack below newer steps would
-be out of order. Run Replace All again to redo it.
+be out of order. Run Replace All again, or delete the item again, to redo it.
 
-**Impact:** After an Undo from the notification, repeat the Replace All to
-apply it again.
+**Impact:** After an Undo from the notification, repeat the action to apply
+it again.
 
 ## 44. A subtask's `parent:` in a note written by an older build is read, never removed
 
@@ -1480,3 +1485,30 @@ the E2E axe scan leaves colour contrast to `themeContrast.test.ts`.
 tertiary hierarchy harder to see. The palette is the owner's decision.
 
 **Impact:** Small grey text can be hard to read on some screens.
+
+## 48. Replace All leaves matches inside Markdown formatting alone
+
+**What:** Replace All (and Replace on one match) changes a note's words, not
+its structure. A match that falls in Markdown syntax is left as it is:
+
+- a list or number marker opening a line (with a task box after it);
+- a rule (`---`, `***`, `___`) or a table's delimiter row (`| --- | :-: |`);
+- a link or image address (`](here)`, `[id]: here`, `<https://here>`);
+- an HTML tag, its attributes included.
+
+Find still shows these matches, and the Replace All confirm counts them
+("N matches inside Markdown formatting … are left alone"). The check is
+deliberately simple: a line inside a code block that looks like a list
+marker or a rule counts as syntax too.
+
+**Where:** [src/renderer/lib/search/markdownSyntax.ts](src/renderer/lib/search/markdownSyntax.ts);
+`buildPlans` in [src/renderer/commands/replaceAllCommand.ts](src/renderer/commands/replaceAllCommand.ts).
+
+**Why accepted:** Replace works on the file's text, and a typographic
+clean-up (` - ` → ` – `, `--` → `—`) would otherwise turn nested lists into
+paragraphs, rules and tables into text, or change where a link points. A
+replace that is sometimes too careful is safer than one that changes a note's
+shape without saying so.
+
+**Impact:** To change a list marker, a link address or HTML across notes,
+edit those notes directly (or in the Raw view).

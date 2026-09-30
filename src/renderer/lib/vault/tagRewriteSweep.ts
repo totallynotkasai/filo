@@ -44,6 +44,10 @@ import { isLinkedNote, isNonUtf8 } from './nonUtf8Paths.svelte';
 import { getActiveVaultPath } from './activeVaultPath';
 import type { FileMetadata } from './vaultIndex';
 import { rebasePath, registerPathRenamable } from './renamePathKeys';
+import { forEachLimited } from '../utils/forEachLimited';
+
+/** Notes read or rewritten at once by a sweep. */
+const SWEEP_CONCURRENCY = 6;
 
 /**
  * Full-function mutex. Two rapid tag renames (`#draft` → `#review`, then
@@ -202,46 +206,54 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
   const candidates = metadata.filter(
     (md) => md.tags.some((t) => tagsEqual(t, oldName)) && (!pathFilter || pathFilter.has(md.path)),
   );
+  // A few reads at a time: one by one leaves the disk idle between requests.
+  // The plan keeps the notes' index order.
+  const planned: boolean[] = [];
   let read = 0;
-  for (const md of candidates) {
-    progress('reading', read++, candidates.length);
-
-    let raw: string | null = null;
+  progress('reading', 0, candidates.length);
+  await forEachLimited(candidates, SWEEP_CONCURRENCY, async (md, index) => {
     try {
-      const readResult = await invokeOk('vault:read-file-text', vaultRoot, md.path);
-      if (readResult.encoding === 'invalid-utf-8') {
-        skippedNonUtf8.push(md.path);
-        continue;
+      let raw: string | null = null;
+      try {
+        const readResult = await invokeOk('vault:read-file-text', vaultRoot, md.path);
+        if (readResult.encoding === 'invalid-utf-8') {
+          skippedNonUtf8.push(md.path);
+          return;
+        }
+        if (readResult.link) {
+          skippedLinks.push(md.path);
+          return;
+        }
+        raw = readResult.content;
+      } catch (err) {
+        // Envelope failure (file deleted between scan + read, EACCES, …)
+        // is distinguished from a non-envelope throw (programmer error,
+        // out of memory) so we keep "file vanished → silently drop, file
+        // present → record failure" semantics.
+        if (!(err instanceof IpcEnvelopeError)) {
+          reportError('tagRewriteSweep', err, `Pre-flight read failed for ${md.path}`);
+          failed.push(md.path);
+          return;
+        }
       }
-      if (readResult.link) {
-        skippedLinks.push(md.path);
-        continue;
-      }
-      raw = readResult.content;
-    } catch (err) {
-      // Envelope failure (file deleted between scan + read, EACCES, …)
-      // is distinguished from a non-envelope throw (programmer error,
-      // out of memory) so we keep "file vanished → silently drop, file
-      // present → record failure" semantics.
-      if (!(err instanceof IpcEnvelopeError)) {
-        reportError('tagRewriteSweep', err, `Pre-flight read failed for ${md.path}`);
-        failed.push(md.path);
-        continue;
-      }
-    }
 
-    if (raw === null) {
-      const exists = await window.filo.invoke('vault:file-exists', vaultRoot, md.path);
-      if (exists) failed.push(md.path);
-      continue;
-    }
+      if (raw === null) {
+        const exists = await window.filo.invoke('vault:file-exists', vaultRoot, md.path);
+        if (exists) failed.push(md.path);
+        return;
+      }
 
-    const next = newName === null
-      ? removeTagFromMarkdown(raw, oldName)
-      : rewriteTagInMarkdown(raw, oldName, newName);
-    if (next === raw) continue;
-    plan.push({ path: md.path });
-  }
+      const next = newName === null
+        ? removeTagFromMarkdown(raw, oldName)
+        : rewriteTagInMarkdown(raw, oldName, newName);
+      if (next !== raw) planned[index] = true;
+    } finally {
+      progress('reading', ++read, candidates.length);
+    }
+  });
+  candidates.forEach((md, index) => {
+    if (planned[index]) plan.push({ path: md.path });
+  });
   progress('writing', 0, plan.length);
 
   // Lay down the recovery sentinel BEFORE Phase 2 so a crash mid-write leaves
@@ -280,109 +292,112 @@ async function runSweepRecordingRenames(args: TagRewriteSweepArgs): Promise<Mark
     }
   }
 
-  // Drain pending writers BEFORE the Phase 2 commit loop: a debounced editor
-  // write armed against a planned path would otherwise fire AFTER our rewrite
-  // and overwrite it with the editor's pre-rename body.
-  //
-  // If the drain itself fails (a pending markdown write rejected on
-  // EACCES/ENOSPC), we mark every planned path as failed so the caller
-  // — fileTagsStore.renameTagEverywhere — keeps the registry at the
-  // OLD name and re-prompts the user to retry. The sentinel stays in
-  // place; next-open recovery will see it and replay.
+  // Settle what is already queued before the rewrites start, and refuse when
+  // a write to one of the planned notes has failed: its change isn't on disk
+  // yet, so every planned path counts as failed (the registry keeps the OLD
+  // name, the retry toast re-prompts, and the sentinel stays for the next
+  // open). The drain is scoped to the planned notes and held only while it
+  // drains, not for the whole run, so a rename, delete or restore elsewhere
+  // doesn't wait minutes for a big sweep. The rewrites themselves need no
+  // exclusion: each runs in its note's own write queue, after anything queued
+  // for it, and follows a rename that moves the note meanwhile (`movedTo`).
   const succeeded: string[] = [];
-  try {
-    await withDrainedWrites(async () => {
-      let written = 0;
-      for (const item of plan) {
-        progress('writing', written++, plan.length);
-        // The note writer writes into whichever vault is open. After a swap the
-        // planned paths belong to the previous vault: stop, and leave the rest
-        // failed (the sentinel resumes them there).
-        if (getActiveVaultPath() !== vaultRoot) {
-          failed.push(item.path);
-          continue;
-        }
-        try {
-          // Recompute the rewrite from the note's fresh bytes inside its queue
-          // (after anything queued for it, including an editor body, has
-          // landed), never from the Phase-1 snapshot. Tag rewrites edit EXISTING
-          // files: a file gone since the scan throws ENOENT instead of being
-          // resurrected. If a rename recorded during the sweep moved it, the
-          // rewrite follows it there. An open view of the note follows the new
-          // bytes and keeps any keystrokes typed meanwhile. `notifyOnError:
-          // false` avoids one toast per file; the caller shows an aggregate
-          // retry toast.
-          let target = item.path;
-          let written: string | null | undefined;
-          while (written === undefined) {
-            try {
-              written = await noteStore.transform(
-                target,
-                (fresh) => (newName === null
-                  ? removeTagFromMarkdown(fresh.raw, oldName)
-                  : rewriteTagInMarkdown(fresh.raw, oldName, newName)),
-                { notifyOnError: false },
-              );
-            } catch (err) {
-              if (!isMissingFileError(err)) throw err;
-              const now = movedTo(item.path);
-              if (now === null || now === target) break;
-              target = now;
-            }
-          }
-          if (written === undefined) {
-            skippedMissing.push(item.path);
-            continue;
-          }
-          if (written === null) {
-            // Already without the old tag, no longer UTF-8 (never rewritten
-            // from decoded text), or a symbolic link (never replaced).
-            if (isNonUtf8(target)) skippedNonUtf8.push(target);
-            else if (isLinkedNote(target)) skippedLinks.push(target);
-            continue;
-          }
-          succeeded.push(target);
-          // For REMOVALS, persist the per-path commit breadcrumb
-          // incrementally so a crash mid-sweep leaves the partial state
-          // detectable on reopen (renames detect partial state from the index
-          // and skip this extra write). The breadcrumb write is best-effort:
-          // the .md strip already landed, so a failed breadcrumb only risks a
-          // committedPaths list short by one — harmless, because recovery
-          // converges forward idempotently regardless of the exact list.
-          if (newName === null) {
-            sentinelPayload.committedPaths.push(target);
-            try {
-              await writePendingRewrite(vaultRoot, sentinelPayload);
-            } catch (breadcrumbErr) {
-              reportError(
-                'tagRewriteSweep',
-                breadcrumbErr,
-                `Failed to update tag-removal progress breadcrumb after ${target}`,
-              );
-            }
-          }
-        } catch (err) {
-          // A note with an edit that can't be saved yet is left for the
-          // retry; the caller's toast names it with the other failures.
-          if (!(err instanceof NoteBusyError)) reportError('tagRewriteSweep', err, `Failed to rewrite tag in ${item.path}`);
-          failed.push(item.path);
-        }
-      }
-      progress('writing', plan.length, plan.length);
-    });
-  } catch (err) {
-    // PendingWritesFailedError → drain rejected; sentinel stays in place
-    // for next-open recovery, and every planned path is treated as failed
-    // so the caller's retry path picks them up. Any other throw is
-    // unexpected and re-thrown.
-    if (err instanceof PendingWritesFailedError) {
-      for (const item of plan) {
-        if (!succeeded.includes(item.path)) failed.push(item.path);
-      }
+  if (plan.length > 0) {
+    try {
+      await withDrainedWrites(async () => undefined, { paths: plan.map((p) => p.path) });
+    } catch (err) {
+      if (!(err instanceof PendingWritesFailedError)) throw err;
+      for (const item of plan) failed.push(item.path);
       return { attempted: plan.length + failed.length, succeeded, failed };
     }
-    throw err;
   }
+
+  // For REMOVALS, the sentinel lists the notes already stripped, so a crash
+  // mid-sweep leaves the partial state detectable on reopen (renames detect
+  // it from the index). It is rewritten as notes finish, one write at a time
+  // with the latest list (never one write per note). Best-effort: the strips
+  // already landed, so a list short by a few is harmless, because recovery
+  // converges forward idempotently regardless of the exact list.
+  let breadcrumb: Promise<void> | null = null;
+  let breadcrumbStale = false;
+  const saveBreadcrumb = (): void => {
+    breadcrumbStale = true;
+    breadcrumb ??= (async () => {
+      while (breadcrumbStale) {
+        breadcrumbStale = false;
+        try {
+          await writePendingRewrite(vaultRoot, sentinelPayload);
+        } catch (breadcrumbErr) {
+          reportError('tagRewriteSweep', breadcrumbErr, 'Failed to update the tag-removal progress breadcrumb');
+        }
+      }
+      breadcrumb = null;
+    })();
+  };
+
+  let written = 0;
+  await forEachLimited(plan, SWEEP_CONCURRENCY, async (item) => {
+    try {
+      // The note writer writes into whichever vault is open. After a swap the
+      // planned paths belong to the previous vault: stop, and leave the rest
+      // failed (the sentinel resumes them there).
+      if (getActiveVaultPath() !== vaultRoot) {
+        failed.push(item.path);
+        return;
+      }
+      // Recompute the rewrite from the note's fresh bytes inside its queue
+      // (after anything queued for it, including an editor body, has
+      // landed), never from the Phase-1 snapshot. Tag rewrites edit EXISTING
+      // files: a file gone since the scan throws ENOENT instead of being
+      // resurrected. If a rename recorded during the sweep moved it, the
+      // rewrite follows it there. An open view of the note follows the new
+      // bytes and keeps any keystrokes typed meanwhile. `notifyOnError:
+      // false` avoids one toast per file; the caller shows an aggregate
+      // retry toast.
+      let target = item.path;
+      let result: string | null | undefined;
+      while (result === undefined) {
+        try {
+          result = await noteStore.transform(
+            target,
+            (fresh) => (newName === null
+              ? removeTagFromMarkdown(fresh.raw, oldName)
+              : rewriteTagInMarkdown(fresh.raw, oldName, newName)),
+            { notifyOnError: false },
+          );
+        } catch (err) {
+          if (!isMissingFileError(err)) throw err;
+          const now = movedTo(item.path);
+          if (now === null || now === target) break;
+          target = now;
+        }
+      }
+      if (result === undefined) {
+        skippedMissing.push(item.path);
+        return;
+      }
+      if (result === null) {
+        // Already without the old tag, no longer UTF-8 (never rewritten
+        // from decoded text), or a symbolic link (never replaced).
+        if (isNonUtf8(target)) skippedNonUtf8.push(target);
+        else if (isLinkedNote(target)) skippedLinks.push(target);
+        return;
+      }
+      succeeded.push(target);
+      if (newName === null) {
+        sentinelPayload.committedPaths.push(target);
+        saveBreadcrumb();
+      }
+    } catch (err) {
+      // A note with an edit that can't be saved yet is left for the
+      // retry; the caller's toast names it with the other failures.
+      if (!(err instanceof NoteBusyError)) reportError('tagRewriteSweep', err, `Failed to rewrite tag in ${item.path}`);
+      failed.push(item.path);
+    } finally {
+      progress('writing', ++written, plan.length);
+    }
+  });
+  await breadcrumb;
 
   if (succeeded.length > 0) await applyChanges(succeeded);
   if (skippedNonUtf8.length > 0) {

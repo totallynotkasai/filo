@@ -23,7 +23,17 @@ describe('Replace All confirm', () => {
   it('replaceableMatches skips title matches and lists each note once', () => {
     const m = (filePath: string, matchKind: 'body' | 'title'): SearchMatch => ({ filePath, matchKind } as SearchMatch);
     expect(replaceableMatches([m('a.md', 'body'), m('a.md', 'title'), m('A.md', 'body'), m('b.md', 'body')]))
-      .toEqual({ count: 3, files: ['a.md', 'b.md'] });
+      .toEqual({ count: 3, files: ['a.md', 'b.md'], inSyntax: 0 });
+  });
+
+  it('counts body matches in Markdown syntax apart, and the confirm says they are left alone', () => {
+    const m = (filePath: string, inSyntax: boolean): SearchMatch => ({ filePath, matchKind: 'body', inSyntax } as SearchMatch);
+    expect(replaceableMatches([m('a.md', true), m('b.md', false), m('c.md', true)]))
+      .toEqual({ count: 1, files: ['b.md'], inSyntax: 2 });
+    expect(replaceAllConfirmBody(1, ['b.md'], 0, 2))
+      .toContain('2 matches inside Markdown formatting (list markers, rules, table lines, link addresses and HTML tags) are left alone.');
+    expect(replaceAllConfirmBody(1, ['b.md'], 0, 1)).toContain('1 match inside Markdown formatting');
+    expect(replaceAllConfirmBody(1, ['b.md'], 0)).not.toContain('Markdown formatting');
   });
 });
 

@@ -185,4 +185,36 @@ describe('Audit-11 FILO-UR-3 — field-command disk-bytes undo round-trip', () =
     expect(disk.get()).toContain('aliases:');
     expect(disk.get()).toMatch(/priority: low/);
   });
+
+  it('undo puts back a key that was present but empty (`status:`) instead of deleting it', async () => {
+    const disk = installDisk('---\ntitle: Card\nstatus:\npriority: low\n---\nbody content\n');
+
+    const cmd = new UpdateCardFieldCommand('kb', 'card.md', { status: 'doing' }, { status: '' });
+
+    await cmd.execute();
+    await noteStore.flushAll();
+    expect(disk.get()).toMatch(/status: doing/);
+
+    await cmd.undo();
+    await noteStore.flushAll();
+    expect(disk.get()).toBe('---\ntitle: Card\nstatus:\npriority: low\n---\nbody content\n');
+
+    await cmd.execute();
+    await noteStore.flushAll();
+    expect(disk.get()).toMatch(/status: doing/);
+  });
+
+  it('undo puts back an empty quoted value (`due: ""`) as it was', async () => {
+    const disk = installDisk('---\ndue: ""\n---\nbody\n');
+
+    const cmd = new UpdateTaskFieldCommand('tl', 'task.md', { due: '2026-10-01' }, { due: '' });
+
+    await cmd.execute();
+    await noteStore.flushAll();
+    expect(disk.get()).toMatch(/due: ['"]?2026-10-01/);
+
+    await cmd.undo();
+    await noteStore.flushAll();
+    expect(disk.get()).toBe('---\ndue: ""\n---\nbody\n');
+  });
 });

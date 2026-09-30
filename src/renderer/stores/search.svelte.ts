@@ -9,14 +9,21 @@
  *
  * Reactive contract: components read `searchStore.matches` /
  * `searchStore.currentMatch` directly. Both are `$derived` of the parsed
- * query and the underlying vault state, so any edit to the vault index or
- * board cache automatically refreshes the result set. The store does NOT
- * own its own re-run timer.
+ * query, the options, the board cache and the set of notes and their tags
+ * (`listVersion`), so those re-run the search at once. A note's text,
+ * title or fields changing (every autosave) re-runs it only after
+ * `NOTE_REFRESH_MS` without another change, and only while the panel is
+ * open with a query: a whole-vault search on each save made typing hitch.
  */
 
+import { untrack } from 'svelte';
 import { parseQuery, isEmptyQuery, type ParsedQuery } from '../lib/search/queryParser';
 import { runVaultSearch, MAX_MATCHES, type SearchMatch, type SearchOptions } from '../lib/search/runSearch';
 import { onVaultSwap } from '../core/vaultLifecycle';
+import { vaultIndexStore } from './vaultIndex.svelte';
+
+/** How long notes must stay unchanged before an open search reads their text again. */
+export const NOTE_REFRESH_MS = 400;
 
 export type SearchMode = 'find' | 'replace';
 
@@ -36,6 +43,11 @@ let wholeWord = $state(false);
 // would otherwise refire the navigation).
 let pendingJump = $state<{ match: SearchMatch; tick: number } | null>(null);
 let jumpTick = 0;
+// Bumped once notes have settled after a change, so the search reads their
+// text again (see NOTE_REFRESH_MS).
+let noteTick = $state(0);
+// The index version the last search read (a refresh with nothing new is skipped).
+let searchedAt = -1;
 
 /**
  * The parsed form of the current query. Empty queries return an "isEmpty"
@@ -45,15 +57,35 @@ let jumpTick = 0;
 const parsedQuery = $derived(parseQuery(query));
 
 /**
- * Result set + truncation flag. Recomputed whenever the parsed query
- * changes OR the vault index / board cache changes. Empty queries return
- * an empty array so the panel can short-circuit on `matches.length === 0`.
+ * Result set + truncation flag. Recomputed when the query, the options, the
+ * board cache or the set of notes changes, and once notes settle after an
+ * edit (`noteTick`). Empty queries return an empty array so the panel can
+ * short-circuit on `matches.length === 0`.
  */
 const searchResult = $derived.by(() => {
   if (isEmptyQuery(parsedQuery)) {
     return { matches: [] as SearchMatch[], truncated: false };
   }
+  void noteTick;
+  // allow-global-index-version: read untracked, to skip a refresh that has nothing new
+  searchedAt = untrack(() => vaultIndexStore.version);
   return runVaultSearch(parsedQuery, { matchCase, wholeWord });
+});
+
+// The note-change debounce. Watches every index change, but only while a
+// search is showing, and each change only restarts a timer.
+$effect.root(() => {
+  $effect(() => {
+    if (!open || isEmptyQuery(parsedQuery)) return;
+    // allow-global-index-version: the search matches every note's text; this only restarts a timer
+    const seen = vaultIndexStore.version;
+    if (seen === searchedAt) return;
+    const timer = setTimeout(() => {
+      // The search may have run meanwhile (the panel opened, a tag changed).
+      if (seen !== searchedAt) noteTick += 1;
+    }, NOTE_REFRESH_MS);
+    return () => clearTimeout(timer);
+  });
 });
 
 /**
@@ -84,6 +116,15 @@ export const searchStore = {
   /** The options the matches were found with (Replace re-runs the search with them). */
   get options(): SearchOptions { return { matchCase, wholeWord }; },
   get currentIndex() { return clampedIndex; },
+  /**
+   * The query run now, against every note as it stands: the shown matches
+   * can trail an edit by `NOTE_REFRESH_MS`, so Replace works from this.
+   */
+  searchNow(): { matches: SearchMatch[]; truncated: boolean } {
+    return isEmptyQuery(parsedQuery)
+      ? { matches: [], truncated: false }
+      : runVaultSearch(parsedQuery, { matchCase, wholeWord });
+  },
   get currentMatch(): SearchMatch | null {
     const list = searchResult.matches;
     return list.length > 0 ? (list[clampedIndex] ?? null) : null;

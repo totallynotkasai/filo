@@ -31,6 +31,34 @@ let thisMachine = $state('');
 let loaded = $state(false);
 let busy = $state(false);
 
+/**
+ * A delete this session can still undo as a whole: `trashId()` names the
+ * trash entry its item is in now (null once undone), and `undo()` runs the
+ * delete's own undo, which also puts back the tiles it removed. True once
+ * the item is back.
+ */
+export interface DeleteUndo {
+  trashId: () => string | null;
+  /** Whether the delete removed any tile (the restore toast says so). */
+  tilesBack: boolean;
+  undo: () => Promise<boolean>;
+}
+
+// allow-module-state: this session's undoable deletes, emptied at every vault swap
+let deleteUndos: DeleteUndo[] = [];
+
+/**
+ * Lets Settings → Trash restore an item through its delete's undo, so the
+ * tiles come back with it, while that undo is still in the history.
+ */
+export function registerDeleteUndo(entry: DeleteUndo): void {
+  deleteUndos = [...deleteUndos, entry];
+}
+
+function deleteUndoFor(trashId: string): DeleteUndo | undefined {
+  return deleteUndos.find((d) => d.trashId() === trashId);
+}
+
 /** Vault-relative paths of every file in `tree` at or under `rel`. */
 function filesUnder(tree: FileTreeNode[], vaultRoot: string, rel: string): string[] {
   const key: string = vaultPath(rel);
@@ -164,9 +192,9 @@ export async function purgeExpiredTrash(vaultRoot: string, identity: VaultIdenti
 }
 
 /**
- * "Moved to Filo's trash" with an Undo button, for a delete no board undo
- * stack holds (a board file, whose history goes with it; a sidebar delete with
- * no board open). `undo` puts it back.
+ * "Moved to Filo's trash" with an Undo button: for a board file, whose
+ * history goes with it, and for every sidebar delete (its step may sit on a
+ * stack the user isn't looking at). `undo` puts it back.
  */
 export function toastMovedToTrash(label: string, undo: () => Promise<void>, note?: string): void {
   const identity = captureVaultIdentity();
@@ -243,13 +271,28 @@ export const trashStore = {
     }
   },
 
-  /** Puts one item back where it was (or beside it when that path is taken). */
+  /**
+   * Puts one item back where it was (or beside it when that path is taken).
+   * While the delete's undo is still in the history, restoring runs it, so
+   * the tiles the delete removed come back too.
+   */
   async restore(entry: TrashEntryInfo): Promise<void> {
     const vaultRoot = vaultStore.path;
     if (!vaultRoot || busy) return;
     const identity = captureVaultIdentity();
     busy = true;
     try {
+      const viaUndo = deleteUndoFor(entry.trashId);
+      if (viaUndo && (await viaUndo.undo())) {
+        if (!isStillSameVault(identity)) return;
+        uiStore.toast(
+          viaUndo.tilesBack ? `Restored "${entry.originalPath}" and the tiles that showed it.` : `Restored "${entry.originalPath}".`,
+          'success',
+          4000,
+        );
+        return;
+      }
+      if (!isStillSameVault(identity)) return;
       const result = await restoreTrashed(vaultRoot, entry.trashId, entry.originalPath);
       if (!isStillSameVault(identity)) return;
       if (!result.success) {
@@ -304,6 +347,7 @@ export const trashStore = {
 };
 
 onVaultSwap('pre-swap', 'trash', () => {
+  deleteUndos = [];
   entries = [];
   loaded = false;
   busy = false;

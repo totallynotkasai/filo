@@ -450,16 +450,19 @@ Fix each where cheap; otherwise list it in KL #17.
 **Status:** done. Verified on Windows:
 - `npm run ci:verify` green: 777 test files, 7,344 tests passed (5 skipped), 89/89 gates;
 - the E2E suite on the built app: 23 passed, 3 skipped (the scale budgets). The new right-click spec fails on a build without the `LazyTextTileBody` fix (the menu loses the focus).
+- after the owner's review (folder-name search, Mind Map right-click): `ci:verify` green again (7,348 tests, 89/89 gates); the E2E suite 22 passed, 1 failed, 3 skipped. The failure was `quitMinimized` "typed, saved, minimized for 20 s": the note saved as `Original line EDITED  ` (the typed space landed after the word). It passed 6 of 6 on a repeat run, and it types into a Document tab, which the changes don't touch: the known Playwright-keys-outrun-ProseMirror flake (see New findings).
 
 **What changed**
 
 - **4.1 (A26-08): the Kanban find reads every card's text.** `tileMatchesFilters` reads `noteBody(path)`: the open note's model when there is one, else the vault index's copy. Cards whose editor hasn't mounted (most of a long column) match on their text again, and so do mounted ones after a find (the models they held were let go).
 - **4.2 (A26-09, D5 = one global check, as defaulted): shortcuts leave the board behind a dialog alone.** `core/hotkeys.ts` skips every shortcut while a modal dialog is up (`isModalDialogOpen`, new `lib/utils/modalOpen.ts`: a `dialog[open]` or any `aria-modal="true"`, the same test the Mind Map's own keys already used), except Escape (it closes the top layer) and commands registered `allowInDialog` (only Save). The Kanban and Task List board handlers already act only on keys from inside their board, which a focus-trapped dialog never sends.
-- **4.3 (A26-10): the sidebar name search shows its matches.** `sidebarTagFilter` treats the name search like the tag filter: every folder left in the cut-down tree shows open unless the user collapses it during this search; a new query (or tag) starts open again; the user's own expanded folders are untouched and come back when the search clears. Expand / Collapse All act on what the search shows.
+- **4.3 (A26-10): the sidebar name search shows its matches.** `sidebarTagFilter` treats the name search like the tag filter: every folder left in the cut-down tree shows open unless the user collapses it during this search; a new query (or tag) starts open again; the user's own expanded folders are untouched and come back when the search clears. Expand / Collapse All act on what the search shows. After the owner's review, a folder whose **own name** matches is shown too, with everything inside it (`filterTree`); it and the folders above any match open, while the folders inside it start closed unless they hold a match (`foldersOpenForSearch`), so a match on a big folder doesn't open everything under it.
 - **4.4 (A26-13, D6): a right-click on card text is not a press into it.**
   - `LazyTextTileBody` cancels the focus a right or middle press would give card text that isn't being edited (`mousedown` default prevented), so the preview neither mounts its editor nor takes focus; the editor that would have stolen the menu's focus a frame later never starts.
   - `handleEditorReady` leaves the focus alone when a context menu is open or focus sits in a menu or dialog.
-  - D6: the card's menu shows on card text whether or not its editor has loaded (`wantsNativeTextMenu`, used by the Kanban card's context-menu handler), and the browser's text menu (spell-check, cut / copy / paste) only while that card's text is being edited.
+  - D6: the card's menu shows on card text whether or not its editor has loaded (`wantsNativeTextMenu`, used by the Kanban card's context-menu handler), and the right-click is left to spell-check only while that card's text is being edited.
+  - Filo's only built-in right-click menu is spell-check (`main.ts`, `context-menu`): suggestions and "Add to Dictionary" on a misspelled word, and nothing at all elsewhere. There is no cut / copy / paste menu (an earlier draft of this section, and an older comment in `editableTarget.ts`, said there was; both corrected).
+  - **Mind Map text tiles, the same rule (option A, the owner's choice after review):** `TextTile` marks its text (`data-tile-text`) and keeps a right or middle press on text that isn't being edited from focusing it (`keepFocusOnSecondaryPress`, shared with `LazyTextTileBody`), and `MindMapBoard`'s context-menu handler uses `wantsNativeTextMenu`. A right-click on a tile's text now opens the tile menu, without moving the caret into it; the tile being typed in keeps spell-check. Before, a right-click on a tile's text showed nothing (or spell-check on a misspelled word) and moved the caret there; the tile menu was only on the header and edge.
 - **4.5 (A26-26): Enter on a Board Browser row's Rename or Delete button is that button's.** The row's key handler returns unless the row itself is the target. KL #46 corrected.
 - **4.6 (A26-28):**
   - the checklist badge counts task items only (`lib/kanban/checklistProgress.ts`: a list item opening with `[ ]` / `[x]`, nested or quoted; not a `[x]` in text, inline code, a link or a fenced block);
@@ -468,23 +471,27 @@ Fix each where cheap; otherwise list it in KL #17.
 - **Tests added or changed:**
   - unit `kanbanFiltersAndSort.test.ts` (a card whose note no editor has opened matches on its text), `hotkeys.test.ts` (a dialog up: Ctrl+Z skipped and not `preventDefault`ed, Save and Escape fire), `checklistProgress.test.ts`, `marqueeSelectionCancel.test.ts`;
   - component `lazyTextTileBody.test.ts` (a right press doesn't focus or mount; an editor loading under an open menu leaves the focus; the menu a mounted card's text gets, editing or not), `connectionLabelSaved.test.ts` (a cancelled label drag);
-  - characterisation `boardShortcutsAndUndo.test.ts` (Ctrl+Z and Ctrl+W with the Tags Browser open; Enter on the Board Browser's buttons), `tagFilters.test.ts` (the name search opens folders; one existing case updated, since it pinned the old closed folder);
+  - unit `vaultTreeSortHelpers.test.ts` (a folder whose name matches is kept whole; `foldersOpenForSearch`);
+  - characterisation `boardShortcutsAndUndo.test.ts` (Ctrl+Z and Ctrl+W with the Tags Browser open; Enter on the Board Browser's buttons; a right-click on a Mind Map tile's text, not being edited and being edited), `tagFilters.test.ts` (the name search opens folders; a search on a folder name; one existing case updated, since it pinned the old closed folder);
   - E2E `kanbanClick.e2e.ts`: a right-click on card text, before and after the editors load, opens the card menu, which keeps the focus; a key typed then changes no file.
-- **Proof on the old code** (each fix reverted alone, its tests kept): every new case fails there (find 1, dialog shortcuts 1, sidebar 2, right-click 3, Board Browser 1, label cancel 1).
+- **Proof on the old code** (each fix reverted alone, its tests kept): every new case fails there (find 1, dialog shortcuts 1, sidebar 2, folder-name search 1, right-click 3, Mind Map right-click 1, Board Browser 1, label cancel 1).
 
 **Deviations from the plan**
 
 1. **4.2: the exception list is Escape plus an explicit `allowInDialog`, not "the `allowInEditor` keys".** `allowInEditor` also covers Ctrl+O, Ctrl+Shift+W, Ctrl+, and Ctrl+Shift+F, which would open a vault, close it, open Settings or the Search panel behind the dialog. Only Save is marked `allowInDialog`. `Modal`'s `isolateShortcuts` is kept (Settings still sets it) but is now redundant for app shortcuts.
 2. **4.4: the focus is cancelled at the press rather than by remembering the button.** `handlePointerDown` already ignored a right press; the mount came from the *focus* the browser gives a `tabindex` preview on any press. Preventing that focus also keeps the menu's "return focus to the opener" from landing on the card and mounting it after the menu closes.
-3. **D6 refined:** the card menu shows on text that isn't being edited, mounted or not (the default), but a right-click in a card the user is typing in still gets the browser's text menu, so spell-check suggestions and paste stay where they are used. A right press on a mounted card that isn't being edited doesn't move the caret or focus into it either.
+3. **D6 refined:** the card menu shows on text that isn't being edited, mounted or not (the default), but a right-click in a card the user is typing in is left to spell-check, so its suggestions stay where they are used. A right press on a mounted card that isn't being edited doesn't move the caret or focus into it either.
+7. **Beyond the plan, after the owner's review of the new findings:** D6's rule extended to Mind Map text tiles, and the sidebar search shows folders by their own name (both below, now fixed).
 4. **4.6: four more drags got `pointercancel`** (the Tile, Frame, Connection and Element style popups' header drags), found by widening the gate; each now ends its drag on cancel.
 5. **E2E run although Phase 4 touches no shell, startup, quit or watching code:** the right-click fix depends on Chromium's focus-on-press behaviour, which jsdom doesn't model.
 6. **Docs pulled forward from Phase 6.4:** KL #46 (with 4.5, as planned) and CLAUDE.md's tree (`modalOpen.ts`, `checklistProgress.ts`, `editableTarget.ts`, `hotkeys.ts`, `sidebarTagFilter.svelte.ts`) and the `components` gate row.
 
 **New findings**
 
-- **The name search matches file names only.** A folder whose own name matches but that holds no matching file is not shown (`filterTree`, unchanged). Not a regression; noted for the UI pass.
-- **Mind Map text tiles** still give the browser's text menu on a right-click anywhere on their mounted text (no lazy preview there, and D6 was scoped to Kanban cards). Consistent within the Mind Map, so left as is.
+- **The name search matched file names only** (older than Phase 4): searching "Chapter 1" didn't show a folder "Chapter 1 - Blah" unless a file in it had "Chapter 1" in its name. **Fixed** (the owner's call): see 4.3.
+- **A right-click on a Mind Map text tile's text showed no menu** (or spell-check on a misspelled word), and put the caret there; the tile menu was only on its header and edge. **Fixed** with option A (the owner's call): see 4.4. Options not taken: B (leave it), C (also the tile menu in the tile being typed in when no word under the pointer is misspelled; needs main to tell the renderer, since only it knows).
+
+- **`quitMinimized.e2e.ts` types `' EDITED'` in one `keyboard.type` call**, which can outrun ProseMirror's reading of the DOM selection (seen once in 7 runs: the space landed after the word). Not a product bug; the spec should type with a delay (`{ delay: 50 }`) and check what the editor shows before quitting. For Phase 6 (hygiene).
 
 **Scores after Phase 4:**
 - Kanban 7 → 8 (find, right-click and the badge fixed; A26-14's undo placement is Phase 5);
@@ -597,7 +604,7 @@ Fix where cheap, otherwise list in KL #17:
 | D3 | How lossiness is decided | Compare markdown-it HTML; cosmetic rules as a fast path |
 | D4 | Blank line after the frontmatter on a body edit | Keep it |
 | D5 | Shortcuts while a dialog is open | One global check |
-| D6 | Right-click on a mounted card's text | Filo's card menu |
+| D6 | Right-click on a mounted card's text | Filo's card menu (taken: on text not being edited, Kanban cards and Mind Map tiles; the text being typed in keeps spell-check) |
 | D7 | Replace All matches inside Markdown syntax | Left alone, counted in the confirm |
 | D8 | Sidebar delete undo | Always a toast with Undo, plus the active board's stack |
 | D9 | `completed: yes` | Read as done; still write `true` |

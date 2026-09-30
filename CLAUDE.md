@@ -569,7 +569,7 @@ filo/
 │   │   │       ├── color.ts           # Colour manipulation helpers
 │   │   │       ├── cloneTile.ts
 │   │   │       ├── contextMenuKey.ts
-│   │   │       ├── editableTarget.ts  # isEditableTextTarget; wantsNativeTextMenu (card text not being edited gets the card menu)
+│   │   │       ├── editableTarget.ts  # isEditableTextTarget; wantsNativeTextMenu / keepFocusOnSecondaryPress (tile or card text not being edited: its menu, no caret moved)
 │   │   │       ├── modalOpen.ts       # isModalDialogOpen: a `dialog[open]` or `aria-modal="true"` is up
 │   │   │       ├── errorBus.ts        # Renderer error → toast routing
 │   │   │       ├── openExternal.ts    # openExternalUrl: every link click; http:// refused with a toast

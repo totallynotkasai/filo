@@ -14,6 +14,7 @@
    * A right-click is not a press into the text: it neither mounts the editor
    * nor moves focus, so the card's menu keeps the keys (`wantsNativeTextMenu`
    * gives the card's menu on text that isn't being edited, loaded or not).
+   * Kept from focusing, the preview doesn't mount either.
    *
    * A preview holds no text of its own, so leave / quit / rescue logic needs
    * nothing here: a card without an editor has nothing unsaved, and a
@@ -28,6 +29,7 @@
   import { renderNotePreviewHtml } from '../../lib/editor/staticPreview';
   import { queueEditorMount } from '../../lib/editor/editorMountQueue';
   import { uiStore } from '../../stores/ui.svelte';
+  import { keepFocusOnSecondaryPress } from '../../lib/utils/editableTarget';
 
   let {
     tile,
@@ -104,14 +106,6 @@
     mountNow();
   }
 
-  /**
-   * A right or middle press on card text that isn't being edited: no focus,
-   * so no mount and no caret (the browser would focus the text first).
-   */
-  function handleMouseDown(e: MouseEvent): void {
-    if (e.button !== 0 && !host.contains(document.activeElement)) e.preventDefault();
-  }
-
   function handleFocus(): void {
     if (mounted) return;
     caretTarget = 'start';
@@ -139,7 +133,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="lazy-text-body" bind:this={host} data-card-text="" onmousedown={handleMouseDown}>
+<div class="lazy-text-body" bind:this={host} data-tile-text="" onmousedown={(e) => keepFocusOnSecondaryPress(e, host)}>
   {#if mounted}
     <TextTileBody {tile} {resolved} onEditorReady={handleEditorReady} />
   {:else}

@@ -133,11 +133,20 @@ export function sortTree(nodes: FileTreeNode[], cfg: SortConfig, parentAbs: stri
   return allSame ? nodes : next;
 }
 
+/**
+ * The sidebar's name search: files whose name holds `query` (any case) and
+ * the folders above them, plus every folder whose own name holds it, shown
+ * whole (a search for a folder is a search for what is in it).
+ */
 export function filterTree(nodes: FileTreeNode[], query: string): FileTreeNode[] {
   if (!query) return nodes;
   const lower = query.toLowerCase();
   return nodes.reduce<FileTreeNode[]>((acc, node) => {
     if (node.isDirectory) {
+      if (node.name.toLowerCase().includes(lower)) {
+        acc.push(node);
+        return acc;
+      }
       const filteredChildren = filterTree(node.children ?? [], query);
       if (filteredChildren.length > 0) acc.push({ ...node, children: filteredChildren });
     } else if (node.name.toLowerCase().includes(lower)) {
@@ -145,6 +154,27 @@ export function filterTree(nodes: FileTreeNode[], query: string): FileTreeNode[]
     }
     return acc;
   }, []);
+}
+
+/**
+ * The folders a name search shows open: each folder whose name holds
+ * `query`, and each folder above a file or folder that does. A folder inside
+ * a matching folder with no match of its own starts closed, so a match on a
+ * big folder doesn't open everything under it.
+ */
+export function foldersOpenForSearch(nodes: readonly FileTreeNode[], query: string): Set<string> {
+  const lower = query.toLowerCase();
+  const open = new Set<string>();
+  const walk = (node: FileTreeNode): boolean => {
+    const self = node.name.toLowerCase().includes(lower);
+    if (!node.isDirectory) return self;
+    let below = false;
+    for (const child of node.children ?? []) if (walk(child)) below = true;
+    if (self || below) open.add(node.path);
+    return self || below;
+  };
+  for (const node of nodes) walk(node);
+  return open;
 }
 
 /**

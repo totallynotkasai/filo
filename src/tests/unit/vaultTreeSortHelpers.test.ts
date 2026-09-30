@@ -10,6 +10,7 @@ import {
   compareByField,
   sortTree,
   filterTree,
+  foldersOpenForSearch,
   treesEqual,
   flattenTreePaths,
   directoryExistsInTree,
@@ -160,6 +161,39 @@ describe('filterTree', () => {
     const out = filterTree(tree, 'PLAN');
     expect(names(out)).toEqual(['Notes', 'plan-b.md']);
     expect(names(out[0]?.children ?? [])).toEqual(['Plan.md']);
+  });
+
+  it('keeps a folder whose own name matches, with everything inside it', () => {
+    const chapter = folder('Chapter 1 - Blah', [
+      file('Opening scene.md', { path: '/vault/Chapter 1 - Blah/Opening scene.md' }),
+      folder('Research', [file('Maps.md', { path: '/vault/Chapter 1 - Blah/Research/Maps.md' })], {
+        path: '/vault/Chapter 1 - Blah/Research',
+      }),
+    ]);
+    const out = filterTree([chapter, file('Other.md')], 'chapter 1');
+    expect(out).toEqual([chapter]);
+  });
+});
+
+describe('foldersOpenForSearch', () => {
+  it('opens a matching folder and the folders above any match, not the folders inside a match', () => {
+    const tree = [
+      folder('Book', [
+        folder('Chapter 1 - Blah', [
+          folder('Research', [file('Maps.md', { path: '/vault/Book/Chapter 1 - Blah/Research/Maps.md' })], {
+            path: '/vault/Book/Chapter 1 - Blah/Research',
+          }),
+          folder('Drafts', [file('chapter 1 draft.md', { path: '/vault/Book/Chapter 1 - Blah/Drafts/chapter 1 draft.md' })], {
+            path: '/vault/Book/Chapter 1 - Blah/Drafts',
+          }),
+        ], { path: '/vault/Book/Chapter 1 - Blah' }),
+      ]),
+    ];
+    expect([...foldersOpenForSearch(tree, 'Chapter 1')].sort()).toEqual([
+      '/vault/Book',
+      '/vault/Book/Chapter 1 - Blah',
+      '/vault/Book/Chapter 1 - Blah/Drafts',
+    ]);
   });
 });
 

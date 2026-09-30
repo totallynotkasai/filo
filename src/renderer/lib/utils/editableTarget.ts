@@ -1,7 +1,8 @@
 /**
  * Detects whether an event target is an editable text element so callers can
- * decide whether to defer to the browser's native context menu (spell-check
- * suggestions, cut/copy/paste) instead of preempting it with a custom one.
+ * leave a right-click there to the app's spell-check menu (main process: shown
+ * only on a misspelled word; there is no cut / copy / paste menu) instead of
+ * preempting it with a custom one.
  *
  * Returns true for contenteditable elements (TipTap editors), `<textarea>`,
  * and text-flavoured `<input>` types. Returns false for buttons, checkboxes,
@@ -45,14 +46,24 @@ function isContentEditableAware(el: HTMLElement): boolean {
 }
 
 /**
- * Whether a right-click gets the browser's own text menu (spell-check, cut /
- * copy / paste) rather than Filo's: on editable text, except a card's text
- * (`data-card-text`) that isn't being edited. A card shows its own menu
- * whether or not its editor has loaded yet, and the text menu once the user
- * is typing in it.
+ * Whether a right-click is left to the spell-check menu rather than Filo's:
+ * on editable text, except a tile's or card's text (`data-tile-text`) that
+ * isn't being edited. Such text shows its tile's or card's menu, loaded
+ * editor or not; the text being typed in keeps spell-check (which shows
+ * nothing on a word spelt right).
  */
 export function wantsNativeTextMenu(e: MouseEvent): boolean {
   if (!isEditableTextTarget(e.target)) return false;
-  const cardText = (e.target as HTMLElement).closest('[data-card-text]');
-  return cardText === null || cardText.contains(document.activeElement);
+  const tileText = (e.target as HTMLElement).closest('[data-tile-text]');
+  return tileText === null || tileText.contains(document.activeElement);
+}
+
+/**
+ * A right or middle press on tile or card text that isn't being edited: the
+ * browser would focus the text and move the caret into it first, so the
+ * menu the right-click opens would lose its keys to the editor. The press
+ * is kept from focusing it.
+ */
+export function keepFocusOnSecondaryPress(e: MouseEvent, host: Element): void {
+  if (e.button !== 0 && !host.contains(document.activeElement)) e.preventDefault();
 }

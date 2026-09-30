@@ -38,7 +38,7 @@
   import { createId } from '../../lib/utils/ids';
   import { historyStore } from '../../stores/history.svelte';
   import { DeleteTilesCommand, MoveTilesCommand, UpdateFrameCommand } from '../../commands/index';
-  import { isEditableTextTarget } from '../../lib/utils/editableTarget';
+  import { wantsNativeTextMenu } from '../../lib/utils/editableTarget';
   import { templatesStore } from '../../stores/templates.svelte';
   import { hitTestFrame } from '../../lib/mindmap/frameHitTest';
   import {
@@ -215,9 +215,9 @@
 
   // ── Context menu ──
   function handleContextMenu(e: MouseEvent) {
-    // Defer to the browser's native menu (spell-check suggestions, etc.)
-    // when the right-click landed inside an editable text element.
-    if (isEditableTextTarget(e.target)) return;
+    // Spell-check keeps the text being edited (a title, the tile being typed
+    // in); a text tile's text otherwise opens the tile's menu.
+    if (wantsNativeTextMenu(e)) return;
     e.preventDefault();
     e.stopPropagation();
 

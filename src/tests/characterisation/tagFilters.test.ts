@@ -11,6 +11,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, openOtherVault, type CharApp } from './harness/app';
 import {
   sidebarListing,
+  revealInSidebar,
   clickSidebarTagChip,
   sidebarTagFilterPill,
   clearSidebarTagFilter,
@@ -180,6 +181,27 @@ describe('sidebar name search', () => {
 
     await escInSidebarSearch(app);
     expect(listing(app)).toEqual(UNFILTERED);
+  });
+});
+
+describe('sidebar name search on a folder name', () => {
+  const BOOK = {
+    'Chapter 1 - Blah/Opening scene.md': 'Text\n',
+    'Chapter 1 - Blah/Research/Maps.md': 'Text\n',
+    'Chapter 2/Chapter 1 recap.md': 'Text\n',
+    'Chapter 2/Other.md': 'Text\n',
+  };
+
+  it('shows a folder whose name matches, open, with its files; its own subfolders start closed', async () => {
+    const app = await startApp(BOOK);
+    await typeSidebarSearch(app, 'Chapter 1');
+    expect(listing(app)).toEqual([
+      'Chapter 1 - Blah', 'Chapter 1 - Blah/Opening scene.md', 'Chapter 1 - Blah/Research',
+      'Chapter 2', 'Chapter 2/Chapter 1 recap.md',
+    ]);
+
+    await revealInSidebar(app, 'Chapter 1 - Blah/Research/Maps.md');
+    expect(listing(app)).toContain('Chapter 1 - Blah/Research/Maps.md');
   });
 });
 

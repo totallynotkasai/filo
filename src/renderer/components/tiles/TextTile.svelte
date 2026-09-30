@@ -21,6 +21,7 @@
   } from '../../lib/styles/resolvedTileStyleContext';
   import { isLinkedNote, isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
   import { confirmConvertToUtf8 } from '../../lib/vault/convertToUtf8';
+  import { keepFocusOnSecondaryPress } from '../../lib/utils/editableTarget';
   let {
     tile,
     resolved: resolvedOverride,
@@ -195,7 +196,9 @@
   }
 </script>
 
-<div class="text-tile">
+<!-- A right-click on text that isn't being edited opens its tile's or card's menu (`wantsNativeTextMenu`). -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="text-tile" data-tile-text="" onmousedown={(e) => keepFocusOnSecondaryPress(e, e.currentTarget)}>
   {#if unreadable}
     <!-- Read failed; editing is paused so a keystroke can't
          overwrite the real (unread) file with an empty editor. Retry re-reads disk. -->

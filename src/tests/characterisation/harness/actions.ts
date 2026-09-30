@@ -53,6 +53,23 @@ export function contextMenu(el: Element): void {
   el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: 10, clientY: 10 }));
 }
 
+/**
+ * A right-click as the browser sends it: the press (whose default would
+ * focus editable text) and then the `contextmenu`. Returns the labels of
+ * Filo's menu, or null when none opened (spell-check's is the app's own).
+ */
+export async function rightClick(el: Element): Promise<string[] | null> {
+  const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 });
+  el.dispatchEvent(down);
+  // The browser's default for the press: focus the editable text under it.
+  if (!down.defaultPrevented) (el.closest('[contenteditable="true"]') as HTMLElement | null)?.focus();
+  contextMenu(el);
+  await settle(50);
+  const menu = document.querySelector('.context-menu');
+  if (!menu) return null;
+  return $$(menu, '[role="menuitem"], .menu-item').map((i) => (i.textContent ?? '').trim()).filter(Boolean);
+}
+
 export function key(el: Element, k: string, init: KeyboardEventInit = {}): void {
   el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }));
   el.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true, cancelable: true, ...init }));

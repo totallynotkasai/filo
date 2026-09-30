@@ -37,6 +37,8 @@ import {
   enterInBoardBrowser,
   boardBrowserOpen,
   activeTabKind,
+  rightClick,
+  editors,
 } from './harness/actions';
 
 afterEach(async () => {
@@ -196,5 +198,28 @@ describe('shortcuts while a dialog is open', () => {
 
     await enterInBoardBrowser(mindMap, 'row');
     await waitFor(() => activeTabKind(app) === 'mindmap', 'the Mind Map opened');
+  });
+});
+
+describe('right-click on a Mind Map text tile', () => {
+  it('opens the tile menu on text not being edited, and leaves the text being typed in to spell-check', async () => {
+    const app = await startApp({ 'Plan.md': note('Plan') });
+    await createBoard(app, 'mindmap');
+    await placeNoteOnBoard(app, 'mindmap', 'Plan.md');
+    await waitFor(() => mindMapTiles(app).length === 1 && mindMapTiles(app)[0]!.el.querySelector('.ProseMirror') !== null, 'the tile');
+    const text = (): Element => mindMapTiles(app)[0]!.el.querySelector('.ProseMirror')!;
+
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    const menu = await rightClick(text());
+    expect(menu).toContain('Open as document');
+    // The press didn't put the caret in the tile.
+    expect(text().contains(document.activeElement)).toBe(false);
+    pressShortcut('Escape');
+    await quiesce(100);
+
+    // Typing in the tile (a left press focuses it).
+    editors(mindMapTiles(app)[0]!.el)[0]!.commands.focus('end');
+    await quiesce(100);
+    expect(await rightClick(text())).toBeNull();
   });
 });

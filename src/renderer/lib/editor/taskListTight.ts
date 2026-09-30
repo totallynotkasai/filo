@@ -2,16 +2,17 @@ import { Extension } from '@tiptap/core';
 import { EMPTY_ITEM_TEXT_ATTR } from './taskItems';
 
 /**
- * A list parsed from HTML is tight unless an item holds a plain `<p>` (the
- * loose-list shape markdown-it renders). A `<p style=…>` is an aligned or
- * indented paragraph saved as an HTML line (`blockLayout.ts`), which a tight
- * list can hold, so it doesn't make the list loose. Without that exception a
- * tight list with one centred item would reload loose, gain blank lines on the
- * next save, and open read-only as a lossy note. The empty paragraph the parse
- * gives an item with no text of its own (`taskItems.ts`) doesn't either.
+ * A list parsed from HTML is tight unless one of its own items holds a plain
+ * `<p>` (the loose-list shape markdown-it renders). A loose list nested in an
+ * item says nothing about the list around it: counted, a tight list holding
+ * one reloaded loose, gained blank lines on the next save, and opened
+ * read-only. A `<p style=…>` is an aligned paragraph an earlier Filo wrote in
+ * a list item as an HTML line (`blockLayout.ts`), which a tight list could
+ * hold, so it doesn't make the list loose either; nor does the empty
+ * paragraph the parse gives an item with no text of its own (`taskItems.ts`).
  */
 function isTightListElement(el: HTMLElement): boolean {
-  return el.getAttribute('data-tight') === 'true' || !el.querySelector(`p:not([style]):not([${EMPTY_ITEM_TEXT_ATTR}])`);
+  return el.getAttribute('data-tight') === 'true' || !el.querySelector(`:scope > li > p:not([style]):not([${EMPTY_ITEM_TEXT_ATTR}])`);
 }
 
 /**

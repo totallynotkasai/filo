@@ -17,13 +17,11 @@ declare module '@tiptap/core' {
     };
   }
 }
-import { TextAlign } from '@tiptap/extension-text-align';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Underline } from '@tiptap/extension-underline';
 import { Color } from '@tiptap/extension-color';
 import { Highlight } from '@tiptap/extension-highlight';
 import { FontFamily } from '@tiptap/extension-font-family';
-import { Link } from '@tiptap/extension-link';
 import { Image } from '@tiptap/extension-image';
 import { Placeholder } from '@tiptap/extension-placeholder';
 import { TableCell } from '@tiptap/extension-table-cell';
@@ -43,11 +41,14 @@ import { FiloTaskList, FiloListParse } from './taskItems';
 import { FiloTable } from './tableMarkdown';
 import { FiloCodeBlock } from './codeFence';
 import { FiloHardBreak } from './hardBreak';
-import { SoftBreak, withSoftBreakMarksTrimmed } from './softBreak';
+import { SoftBreak, withBreakMarksTrimmed } from './softBreak';
 import { PastePlainText } from './pastePlainText';
 import { FiloBlockquote } from './blockquote';
 import { isFiloLink } from '../../schema/link';
 import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
+import { FiloTextAlign, ListItemLayout, isListItem } from './listItemLayout';
+import { installNoteSerializer } from './delimiterRuns';
+import { FiloLink } from './autolinkMarkdown';
 
 const lowlight = createLowlight(common);
 
@@ -171,13 +172,15 @@ const ParagraphWithBlankLines = Paragraph.extend({
   addStorage() {
     return {
       markdown: {
-        serialize(state: MarkdownSerializeState, node: ProseMirrorNode): void {
+        serialize(state: MarkdownSerializeState, node: ProseMirrorNode, parent: ProseMirrorNode): void {
           if (node.content.size === 0 && !state.delim) {
             state.flushClose(2);
             state.out += '\n';
             return;
           }
-          if (hasBlockLayout(node)) {
+          // Never in a list item, where the HTML line would swallow the
+          // item's sub-list (`listItemLayout.ts` keeps the layout out).
+          if (hasBlockLayout(node) && !isListItem(parent)) {
             state.write(blockLayoutHtml(node));
             state.closeBlock(node);
             return;
@@ -203,9 +206,9 @@ const ParagraphWithBlankLines = Paragraph.extend({
               state.write(' ');
               rest = rest.cut(1);
             }
-            state.renderInline(withSoftBreakMarksTrimmed(withEdgeTabsOutsideRuns(rest)), false);
+            state.renderInline(withBreakMarksTrimmed(withEdgeTabsOutsideRuns(rest)), false);
           } else {
-            state.renderInline(withSoftBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node))));
+            state.renderInline(withBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node))));
           }
           state.closeBlock(node);
         },
@@ -223,12 +226,12 @@ const HeadingWithLayout = Heading.extend({
   addStorage() {
     return {
       markdown: {
-        serialize(state: MarkdownSerializeState, node: ProseMirrorNode): void {
-          if (hasBlockLayout(node)) {
+        serialize(state: MarkdownSerializeState, node: ProseMirrorNode, parent: ProseMirrorNode): void {
+          if (hasBlockLayout(node) && !isListItem(parent)) {
             state.write(blockLayoutHtml(node));
           } else {
             state.write(`${'#'.repeat(Number(node.attrs.level) || 1)} `);
-            state.renderInline(withSoftBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node))), false);
+            state.renderInline(withBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node))), false);
           }
           state.closeBlock(node);
         },
@@ -294,10 +297,11 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       FiloBlockquote,
       HeadingWithLayout,
       NoteText,
-      TextAlign.configure({
+      FiloTextAlign.configure({
         types: ['heading', 'paragraph'],
         alignments: ['left', 'center', 'right', 'justify'],
       }),
+      ListItemLayout,
       FontSize, // custom extension (extends TextStyle)
       Indent,
       Underline,
@@ -306,7 +310,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         multicolor: true,
       }),
       FontFamily,
-      Link.configure({
+      FiloLink.configure({
         openOnClick: false,
         HTMLAttributes: { class: 'tiptap-link' },
         // Only an explicit-scheme URL autolinks while typing. Link's default
@@ -402,6 +406,9 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
     },
   });
 
+  // Bold, italic and strikethrough that Markdown wouldn't read back are
+  // written as HTML (`delimiterRuns.ts`).
+  installNoteSerializer(editor);
   return editor;
 }
 

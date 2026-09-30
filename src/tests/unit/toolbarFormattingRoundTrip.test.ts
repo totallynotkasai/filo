@@ -209,14 +209,49 @@ const CASES: Case[] = [
       return e.chain().sinkListItem('listItem').run();
     },
   },
+  // Alignment doesn't apply inside lists (D2): an aligned item was written as
+  // an HTML line that swallowed its sub-items.
   {
-    name: 'centred list item',
+    name: 'centring a list item leaves the list as it is',
     start: '- one\n- two',
     run: (e) => {
       e.commands.setTextSelection(3);
+      expect(e.can().setTextAlign('center')).toBe(false);
       return e.chain().setTextAlign('center').run();
     },
-    saved: 'text-align: center',
+    saved: '- one\n- two',
+  },
+  {
+    name: 'select all, centre, on a note with a nested list: only the text outside the list is centred',
+    start: 'Characters\n\n- Aria\n  - scout\n- Kasai',
+    run: (e) => e.chain().selectAll().setTextAlign('center').run(),
+    saved: '<p style="text-align: center;">Characters</p>\n\n- Aria\n  - scout\n- Kasai',
+  },
+  {
+    name: 'select all, right, on a numbered list with a nested item',
+    start: 'Intro\n\n1. First\n   1. sub a\n2. Second',
+    run: (e) => e.chain().selectAll().setTextAlign('right').run(),
+    saved: '<p style="text-align: right;">Intro</p>\n\n1. First\n   1. sub a\n2. Second',
+  },
+  {
+    name: 'select all, centre, on a checklist with a sub-task',
+    start: 'Intro\n\n- [ ] task\n  - [ ] subtask',
+    run: (e) => e.chain().selectAll().setTextAlign('center').run(),
+    saved: '<p style="text-align: center;">Intro</p>\n\n- [ ] task\n  - [ ] subtask',
+  },
+  {
+    name: 'an indented paragraph made into a list, then given a sub-item, keeps no indent',
+    run: (e) => {
+      e.chain().increaseIndent().toggleBulletList().run();
+      e.commands.focus('end');
+      e.chain().splitListItem('listItem').sinkListItem('listItem').insertContent('nested').run();
+    },
+    saved: '- Alpha beta gamma\n  - nested',
+  },
+  {
+    name: 'a centred paragraph made into a checklist item keeps no alignment',
+    run: (e) => e.chain().setTextAlign('center').toggleTaskList().run(),
+    saved: '- [ ] Alpha beta gamma',
   },
   { name: 'link', run: (e) => e.chain().setLink({ href: 'https://example.com' }).run(), saved: '](https://example.com)' },
   { name: 'filo link', run: (e) => e.chain().setLink({ href: 'filo://note/Other.md' }).run(), saved: 'filo://' },
@@ -311,6 +346,13 @@ describe('aligned blocks in the file', () => {
     selectFirstBlock(ed);
     ed.chain().setTextAlign('center').run();
     expect(editorMarkdown(ed)).toBe('<p style="text-align: center;"><a href="https://example.com">site</a></p>');
+  });
+
+  it('a list item an earlier Filo aligned opens read-only, and the banner names its line', () => {
+    const ed = makeEditor();
+    const { lossy, changes } = loadMarkdownIntoEditor(ed, '- plain\n- <p style="text-align: center;">centred item</p>');
+    expect(lossy).toBe(true);
+    expect(changes).toEqual([{ original: '- <p style="text-align: center;">centred item</p>', filo: '- centred item' }]);
   });
 
   it('a body #tag is saved as bare text', () => {

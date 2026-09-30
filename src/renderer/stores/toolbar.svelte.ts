@@ -17,6 +17,10 @@ let highlightColor = $state('transparent');
 let fontFamily = $state('');
 let fontSize = $state(14);
 let textAlign = $state<'left' | 'center' | 'right' | 'justify'>('left');
+/** The focused text can be aligned (not in a list, code or a connection label). */
+let alignAvailable = $state(true);
+/** Align is off because the caret is in a list item, which the control says. */
+let alignInList = $state(false);
 let heading = $state<'normal' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'>('normal');
 let spellcheck = $state(true);
 /**
@@ -40,6 +44,8 @@ export const toolbarStore = {
   get fontFamily() { return fontFamily; },
   get fontSize() { return fontSize; },
   get textAlign() { return textAlign; },
+  get alignAvailable() { return alignAvailable; },
+  get alignInList() { return alignInList; },
   get heading() { return heading; },
   get spellcheck() { return spellcheck; },
   get lineSpacingNote() { return lineSpacingNote; },
@@ -59,6 +65,8 @@ export const toolbarStore = {
     fontFamily?: string;
     fontSize?: number;
     textAlign?: 'left' | 'center' | 'right' | 'justify';
+    alignAvailable?: boolean;
+    alignInList?: boolean;
     heading?: 'normal' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
     lineSpacingNote?: string | null;
     editorHistory?: { canUndo: boolean; canRedo: boolean } | null;
@@ -72,6 +80,8 @@ export const toolbarStore = {
     if (state.fontFamily !== undefined) fontFamily = state.fontFamily;
     if (state.fontSize !== undefined) fontSize = state.fontSize;
     if (state.textAlign !== undefined) textAlign = state.textAlign;
+    if (state.alignAvailable !== undefined) alignAvailable = state.alignAvailable;
+    if (state.alignInList !== undefined) alignInList = state.alignInList;
     if (state.heading !== undefined) heading = state.heading;
     if (state.lineSpacingNote !== undefined) lineSpacingNote = state.lineSpacingNote;
     if (state.editorHistory !== undefined) editorHistory = state.editorHistory;
@@ -98,6 +108,8 @@ export const toolbarStore = {
     fontFamily = '';
     fontSize = 14;
     textAlign = 'left';
+    alignAvailable = true;
+    alignInList = false;
     heading = 'normal';
     lineSpacingNote = null;
     editorHistory = null;

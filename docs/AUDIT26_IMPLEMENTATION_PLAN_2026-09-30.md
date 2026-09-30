@@ -250,6 +250,73 @@ Overall 8.5, as targeted.
   - three or more marks per run.
 - Keep the gate's 500-document floor.
 
+### Phase 2 outcome (2026-09-30)
+
+**Status:** done. Verified on Windows:
+- `npm run ci:verify` green: 772 test files, 7,258 tests passed (5 skipped), 89/89 gates;
+- the property test at its fixed seed (500 documents);
+- a sweep of 16 other seeds, 1,500 documents each (24,000), after the last serialiser change: 14 green, 2 counter-examples, both the `minimalEscapes` shape recorded below for Phase 3 (an escape moves between saves; the document is the same, and the note opens read-only rather than different). Earlier sweeps found the four new findings below and the rule-of-three shapes, all fixed;
+- the E2E suite on the built app: 22 passed, 3 skipped (the scale budgets), including `editorFidelity.e2e.ts` with five new cases (below), which also passed three times on its own.
+
+**What changed**
+
+- **2.1 (A26-04, D2): no alignment or indent inside a list or checklist item.** New module `lib/editor/listItemLayout.ts`:
+  - `FiloTextAlign`: `setTextAlign` skips list items, and fails when nothing it touches can be aligned. Select All + Center aligns only the text outside lists.
+  - The toolbar's Align control is disabled while the caret is in a list, code or a connection label (`can().setTextAlign`), and in a list its tooltip says "Text in a list can't be aligned".
+  - `ListItemLayout`: whatever still brings a layout into a list item (a centred paragraph made into a list, a paste) has it cleared by an `appendTransaction`, so the editor shows what the file holds.
+  - Backstop: the paragraph and heading writers never write block-layout HTML directly in a list item.
+- **2.2 (A26-05): a line break keeps only the marks on both sides of it** (`withBreakMarksTrimmed` in `softBreak.ts`, replacing the soft-break-only, next-side-only trim). Applied to paragraphs, headings and now table cells. A selection from the end of a line to the end of the next, then Ctrl+B / I / strike, saves as `> Name: Aria\n> *Age: 24*`, `# Title<br>**Sub**`, `| c<br>*more* |`.
+- **2.3 (A26-11, N1): bold, italic and strikethrough are written as Markdown only where Markdown reads them back.** New module `lib/editor/delimiterRuns.ts`, installed by `createTiptapEditor`:
+  - The editor's serializer now uses prosemirror-markdown's own state, without tiptap-markdown's delimiter tidy. Each run's delimiters are recorded where they are written.
+  - Once the note is written, a run whose opening delimiter can't open, or whose closing one can't close (markdown-it's `scanDelims`), is written as `<strong>` / `<em>` / `<s>`.
+  - Where a delimiter could go either way (between two letters or two punctuation marks), Markdown's pairing must still land on the run as written, or the run is HTML too: a delimiter merged with a neighbour's into a run that could both open and close; an opening that could close while another run of its character is open around it (`***A*b*c***` read the second `*` as closing); a pair the rule of three won't pair.
+  - `**A)**Answer` → `<strong>A)</strong>Answer`; `a,*b` → `a<em>,</em>b`; `**Name:***Aria*` → `<strong>Name:</strong>*Aria*`; `***A*b*c***` → `***A*b<em>c</em>**`. Runs that read back stay Markdown (`**Name:** Aria`, `**Kasai**san`, so an intraword run in another app's note doesn't become read-only).
+- **2.4 (A26-12):** after a line break, `0{0,8}1.` / `)` is escaped (`01\. Arrival`), since any number worth 1 can start a list under text.
+- **2.5 (A26-22):** making a paragraph code (toolbar, Ctrl+Alt+C, or typing a fence) turns its soft breaks into lines of code first (`softBreaksAsHardBreaks`, `FiloCodeBlock`'s commands and input rules).
+- **2.6 (A26-23):** a tight list whose item holds a numbered sub-list not starting at 1 right under the item's text is written loose (`- parent\n\n  3. child`), which reads back as a list.
+- **2.7 (FB-15): the property test compares documents.** `editorRoundTripProperty.test.ts`:
+  - after save → reload, it checks the reloaded document shows what the generated one did (`shownDocument`), besides "not lossy" and "same bytes";
+  - the generator now covers marks on breaks, alignment and indent (outside lists), numbered lists starting at 2, 3 or 10, `01.` / `001)` / `1)` / `- ` / `# ` / `> ` lines, autolinks and links with awkward addresses, bare URLs, up to three marks per run, bold / italic / strikethrough over punctuation straight against their neighbours, and highlight;
+  - the gate `editor-round-trip-property` now also requires the document comparison (proved: removing it fails the gate).
+- **Tests added:**
+  - unit `editorEditsReadBack.test.ts` (35 cases: Finder B's T2 / T5 / T7 and heading / cell flows, the N1 shapes, `01.` after Shift+Enter and in a soft line, code from a soft-break paragraph, nested start 3);
+  - `toolbarFormattingRoundTrip.test.ts`: the "centred list item" case now expects the list left alone, plus Select All + Center / Right over nested bullet, numbered and checklist lists, indent-then-list and centre-then-checklist, and an old aligned list item opening read-only with its line named;
+  - `markdownBodyRoundTrip.test.ts`: 12 named `FILO_WRITES` cases from the property test's counter-examples;
+  - component `alignInListToolbar.test.ts` (3: Align disabled in a list with its reason, enabled and saving on text; disabled in a checklist; Indent nests a checklist item);
+  - E2E `editorFidelity.e2e.ts`: Quote (italic from the end of a line), Chapters (`01.` after Shift+Enter), Characters (Select All + Center with a nested list, Align disabled in the list), Answer (bold `A)` before a letter), Snippet (typing a fence on a soft-break paragraph).
+- **Proof on the old code** (this phase's `src/renderer` stashed, the new tests kept): 45 unit cases fail there (every A26-04 / 05 / 11 / 12 / 22 / 23 case, the new findings' named cases, and the property test), and the 3 component cases; all pass with the fix. The cases that pass on both are the regression guards ("a paragraph, soft break, Ctrl+B", runs that stay Markdown, a nested list starting at 1).
+
+**Deviations from the plan**
+
+1. **2.1 (D2): Indent isn't disabled in lists.** In a list the Indent buttons already nest or un-nest the item (a list level in the file, as Tab does), which is safe; only the indent *attribute* is kept out of list items. The buttons used the bullet item type even in a checklist, where they did nothing; they now use the innermost item's type.
+   - Beyond the plan: the `ListItemLayout` guard, so no path (list toggles, paste, split) leaves a layout the file wouldn't hold.
+   - Consequence: a list item an earlier Filo aligned (`- <p style=…>`) now opens read-only, the banner naming its line; Take ownership saves it as a plain item. The golden fixture `aligned-blocks.md` lost its aligned list item for that reason.
+2. **2.3: no shifting at all, and the state is replaced rather than patched.** tiptap-markdown's serializer state isn't exported, so "Filo's serializer state" is prosemirror-markdown's own, driven by tiptap-markdown's node and mark writers. `prosemirror-markdown` (already installed at 1.13.8 as tiptap-markdown's dependency) is now a direct dependency, same version, no new download.
+   - The plan kept tiptap-markdown's tidy (only fixing position 0) and fell back to HTML where it still failed. The tidy moved a delimiter across punctuation, which took the formatting off that character, so every run that can't flank where it stands is now written as HTML.
+   - The pairing rules came from the property test's seed sweep: `**X***Y**Z***` and `***A*b*c***` shapes paired differently. The merged-run rule also turns `**bold***italic*`, which did read back, into `<strong>bold</strong>*italic*`. Refusing every delimiter that could go either way was the simpler rule, but it would have made existing intraword runs (`**un**believable`) read-only.
+3. **2.4:** the escape is capped at nine digits (a longer number isn't a list marker, and an escape there would make an existing note lossy), and it also applies when formatting carries on across the break (a new finding below).
+4. **2.6:** only when the item has text above the sub-list; with no text (`- ` then `3.`) the list can start there and stays tight.
+5. **2.7:** the seed moved from 20260929 to 20260930 with the rewrite. Three shapes are kept out of the generator, each named in its header: a bare URL as the last word of the first block (FB-06, Phase 3.3), a numbered list starting at 0 (A26-24, Phase 6.2), and the same bare URL twice in one block (new finding below, Phase 3). The document comparison sets aside what the file can't say and the note doesn't show: marks on breaks, the link's rendering attributes, colour spellings, a list's tight / loose spacing, a paragraph of one space (`- &#32;`), alignment on an empty paragraph, and empty paragraphs in quotes and after an item's first block.
+6. **Pulled forward from Phase 6.2 (A26-24, FB-10):** a list right after another of its kind is written after one blank line, not two; the second read back as an empty paragraph between them (the property test's first document failure once it compared documents).
+7. **Docs pulled forward from Phase 6.4:** KNOWN_LIMITATIONS #32 (it described the delimiter tidy this phase removed) and #17's aligned-block paragraph (list items); CLAUDE.md's tree, tech-stack line and the "writes only Markdown it reads back" note.
+8. **Beyond the plan:** the E2E cases above. The Quote case waits 200 ms after its Shift+→ presses and checks the italic landed: Playwright sends keys faster than a person types, and the editor had taken in only six of the eight when Ctrl+I arrived (checked with a mutation and selection probe: nothing reloads the note; it is only timing).
+
+**New findings** (the widened property test found the first four; all fixed here)
+
+- **An autolink was written with Markdown escapes inside `<…>`**, where a backslash is part of the address: a link typed as `https://example.com/~user` or with a `*` reopened pointing elsewhere, read-only. `NoteText` now writes an autolink's text unescaped (`textEscapes.ts`).
+- **An autolink whose address Markdown shows decoded** (`%20`, a punycode host) reopened with different text, read-only. Such a link is now written `[address](address)` (new module `autolinkMarkdown.ts`, `FiloLink`).
+- **A line after a break whose formatting carries on across it** (underline, colour or bold over `a` / break / `1. one`) wasn't escaped, so `1.`, `01.`, `- ` or `#` there started a list or heading on reopen. Now escaped too (`textEscapes.ts`).
+- **A loose list nested in a tight one made the outer list reload loose** (the tight rule counted every `<p>` inside the list, `taskListTight.ts`), so it gained blank lines and opened read-only. Now only the list's own items count. Also in `listMarkers.ts`: in a loose list, an item with no text followed by a sub-list got a blank line after `- `, which ends such an item; the sub-list now follows on the next line.
+- **Not fixed, for Phase 3 (read-only shapes): `minimalEscapes` isn't always a fixed point**, so a note can reopen read-only (never silently different: the document is the same, only an escape moves). Two shapes, both from the seed sweep:
+  - two identical lines in one paragraph, each with a lone `*` that would pair across them: one escape is dropped, the other kept; on reopen the "keep a line the file holds" rule, keyed by line text, keeps both;
+  - a line whose escapes were dropped only in part (the whole-note search tried them together, and kept `\*\*` once dropping it with another run changed the render): on reopen the line no longer matches the file (the serialiser escapes the `_` it had dropped), so its escapes are tried again and both drop.
+  - Fix direction: match `keepLines` by position, and settle the search (run it until a second pass drops nothing, or decide each line's escapes on their own).
+- **Not investigated, for Phase 6 (hygiene):** loading a note into the same editor again keeps about 0.4 MB of heap each time in the unit environment (1,500 loads of one small note: 204 → 617 MB), on the old code as on the new. A 2,000-run property sweep in one process ran out of its 4 GB heap, so the final sweep read each document back in a fresh editor (the committed test keeps its one reused editor; 500 runs stay well inside the heap). Whether the app itself holds this (it re-loads an open note on every change from disk) needs a heap snapshot in the built app.
+
+**Scores after Phase 2:**
+- Editor: nothing lost 8 → 9 (the Phase 3 target, reached here: every Phase 2 item plus the four found above);
+- Editor: notes open editable 6.5 → 7 (Filo's own writes no longer produce read-only notes in these shapes; other apps' shapes are Phase 3).
+
 ## Phase 3: notes that open read-only for no stated reason (A26-06, A26-16)
 
 ### 3.1 A blank line Filo adds is cosmetic

@@ -637,7 +637,12 @@ the formatting is HTML too (a Markdown parser doesn't read Markdown inside a
 block HTML tag). Every other block stays Markdown. Most Markdown apps show such
 a paragraph aligned; a plain text editor shows the HTML. Filo reads back only
 the `style` form it writes: another app's `<p align="center">` is block HTML
-Filo can't reproduce, so that note opens read-only (list above). Line spacing
+Filo can't reproduce, so that note opens read-only (list above). **Text in a
+list or checklist item can't be aligned or indented** (the toolbar's Align
+control is disabled there, and Indent nests the item instead): as an HTML line
+it swallowed the item's sub-items. A list item an earlier Filo did align
+(`- <p style="text-align: center;">…</p>`) opens read-only, and Take ownership
+saves it as a plain item. Line spacing
 applies to the whole note and is saved as one frontmatter key
 (`lineSpacing: 1.5`), not in the body; other apps ignore it and show their own
 spacing.
@@ -1062,16 +1067,21 @@ rule (`taskListTight.ts`), the aligned or indented block writer
 `taskItems.ts`), tables (`tableMarkdown.ts`), code fences (`codeFence.ts`),
 line breaks (`hardBreak.ts`), quotes (`blockquote.ts`), leading spaces
 (`leadSpace.ts`) and text escapes (`textEscapes.ts`), and the lossy check that
-opens a note read-only when a round trip would change it (#17). Two of those
-writers work around its delimiter tidy, which cut into a quote's `>` when a
-bold or italic run opened a line; a bold, italic or strikethrough run that
-starts mid-word next to punctuation can still be shifted by it (the property
-test keeps such runs word-bounded). A TipTap upgrade, or a patch release of the
-package itself, can change how a node is written without any type error.
+opens a note read-only when a round trip would change it (#17). Filo also
+replaces its serializer state with prosemirror-markdown's own
+(`delimiterRuns.ts`, `prosemirror-markdown` is a direct dependency for it):
+tiptap-markdown's delimiter tidy shifted a bold, italic or strikethrough
+delimiter that couldn't open or close where it stood, which took the
+formatting off a punctuation mark, skipped a run at the start of a note and
+could leave a stray `*`. Now such a run is written as `<strong>`, `<em>` or
+`<s>`, which reads back as the same formatting. A TipTap upgrade, or a patch
+release of either package, can change how a node is written without any type
+error.
 
 **Where:** [src/renderer/lib/editor/createEditor.ts](src/renderer/lib/editor/createEditor.ts),
 [src/renderer/lib/editor/markdownSync.ts](src/renderer/lib/editor/markdownSync.ts),
-`package.json` (`tiptap-markdown`, `@tiptap/*`).
+[src/renderer/lib/editor/delimiterRuns.ts](src/renderer/lib/editor/delimiterRuns.ts),
+`package.json` (`tiptap-markdown`, `prosemirror-markdown`, `@tiptap/*`).
 
 **Why accepted:** Replacing it with a serialiser of our own is a large job, and
 the package does what Filo needs today. The guard is the round-trip suites,
@@ -1081,9 +1091,11 @@ command, gate `toolbar-formatting-saved`), `editorRoundTripProperty.test.ts`
 (500 documents generated from the editor schema, plus list, table and
 line-break commands run in context; gate `editor-round-trip-property`),
 `markdownSync.test.ts` and the
-component and characterisation specs that save and reopen notes.
+component and characterisation specs that save and reopen notes. The property
+test compares the reopened document with the one written, so a note that
+would reopen editable but different (the silent case) fails it too.
 
-**Impact:** Upgrade `tiptap-markdown` or any `@tiptap/*` package only on its own
+**Impact:** Upgrade `tiptap-markdown`, `prosemirror-markdown` or any `@tiptap/*` package only on its own
 branch, with the full `test:unit:strict` run green. A change the suites don't
 cover could re-style notes on their next save (nothing is lost: a note whose
 round trip changes it opens read-only).

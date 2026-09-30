@@ -11,7 +11,7 @@ A plain paragraph with **bold**.
 <p style="text-align: center; margin-left: 24px;">Centred and indented.</p>
 
 - plain item
-- <p style="text-align: center;">centred item</p>
+- second item
 - another item
 
 > <p style="text-align: justify;">A justified quote.</p>

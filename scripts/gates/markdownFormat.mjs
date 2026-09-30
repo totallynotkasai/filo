@@ -445,10 +445,11 @@ export const checks = [
   },
   {
     id: 'editor-round-trip-property',
-    title: 'the editor round-trip property test exists, runs every case, and generates at least 500 documents',
+    title: 'the editor round-trip property test exists, runs every case, compares documents, and generates at least 500 documents',
     hint:
       'editorRoundTripProperty.test.ts generates documents from the editor schema and checks each is written in a form ' +
-      'that reads back (not lossy, same bytes on the next save). Keep NUM_RUNS >= 500 and nothing skipped; fix the ' +
+      'that reads back (not lossy, same bytes on the next save, the same document as shownDocument sees it: a note that ' +
+      'reopens editable but different is the silent case). Keep NUM_RUNS >= 500 and nothing skipped; fix the ' +
       'serialiser a counter-example points at and keep it as a named case in markdownBodyRoundTrip.test.ts.',
     run(ctx) {
       const raw = ctx.read(PROPERTY_TEST);
@@ -460,6 +461,7 @@ export const checks = [
           { token: /\bcreateTiptapEditor\s*\(/, why: 'drives the real editor factory' },
           { token: /\bloadMarkdownIntoEditor\s*\(/, why: 'reads back through the production load path' },
           { token: /\bnumRuns:\s*NUM_RUNS\b/, why: 'the run count is NUM_RUNS' },
+          { token: /\bshownDocument\s*\(\s*rt\.doc\s*\)/, why: 'compares the read-back document, not only the Markdown' },
         ],
       });
       if (SKIPPED_TEST_RE.test(src) || /\bit\.only\b|\bdescribe\.only\b/.test(src)) {

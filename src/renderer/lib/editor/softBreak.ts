@@ -1,5 +1,6 @@
 import { Node } from '@tiptap/core';
-import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { Fragment, type Mark, type Node as ProseMirrorNode } from '@tiptap/pm/model';
+import type { Transaction } from '@tiptap/pm/state';
 
 /**
  * A single newline inside a paragraph (a soft line break), as the file has it.
@@ -68,33 +69,62 @@ export function writeLineBreak(state: BreakSerializeState, parent: ProseMirrorNo
   state.write();
 }
 
+/** True when `node` carries `mark` into a run that goes on across a line break. */
+function carries(node: ProseMirrorNode | undefined, mark: Mark): boolean {
+  if (!node || !mark.isInSet(node.marks)) return false;
+  // Whitespace alone is moved out of the run when it is written.
+  return !node.isText || /\S/.test(node.text ?? '');
+}
+
 /**
- * `block` as it is saved: a soft break keeps only the marks the text after it
- * also has. Written inside a run the next line doesn't continue, the closing
- * delimiter would open the next line (`**a\n**b`), where Markdown can't read
- * it as closing. prosemirror-markdown does the same for a hard break.
- * Returns `block` itself when nothing changes.
+ * `block` as it is saved: a line break (soft or hard) keeps only the marks
+ * the text on both sides of it has. A break shows no formatting, but a mark
+ * on it decides where a bold, italic or strikethrough run is opened or
+ * closed. One the text before the break lacks opened on the break, before the
+ * next line's `> ` or inside a heading's `<br>` (`Title<**br>Sub**`), and one
+ * the text after lacks closed on the next line (`**a\n**b`); Markdown reads
+ * neither. Selecting from the end of a line to the end of the next one puts
+ * the mark on the break. Returns `block` itself when nothing changes.
  */
-export function withSoftBreakMarksTrimmed(block: ProseMirrorNode): ProseMirrorNode {
+export function withBreakMarksTrimmed(block: ProseMirrorNode): ProseMirrorNode {
   const children: ProseMirrorNode[] = [];
+  block.forEach((child) => children.push(child));
   let changed = false;
-  block.forEach((child, _offset, index) => {
-    if (child.type.name !== 'softBreak' || child.marks.length === 0) {
-      children.push(child);
-      return;
-    }
-    const next = block.maybeChild(index + 1);
-    const keep = next && (!next.isText || /\S/.test(next.text ?? ''))
-      ? child.marks.filter((m) => m.isInSet(next.marks))
-      : [];
-    if (keep.length === child.marks.length) {
-      children.push(child);
-      return;
-    }
-    children.push(child.mark(keep));
-    changed = true;
-  });
+  // A trimmed break can end the run a break next to it continued.
+  for (let again = true; again; ) {
+    again = false;
+    children.forEach((child, i) => {
+      if (!isLineBreak(child) || child.marks.length === 0) return;
+      const keep = child.marks.filter((m) => carries(children[i - 1], m) && carries(children[i + 1], m));
+      if (keep.length === child.marks.length) return;
+      children[i] = child.mark(keep);
+      changed = again = true;
+    });
+  }
   return changed ? block.copy(Fragment.fromArray(children)) : block;
+}
+
+/**
+ * In `tr`, turns every soft break in the textblocks `from`..`to` touches
+ * (code aside) into a hard break. A block made into code keeps a hard break
+ * as a new line of code but drops any other inline node, so the lines of a
+ * one-line-per-thought paragraph ran together (`onetwo`). Positions don't
+ * move: both breaks are one position wide.
+ */
+export function softBreaksAsHardBreaks(tr: Transaction, from: number, to: number): void {
+  const { softBreak, hardBreak } = tr.doc.type.schema.nodes;
+  if (!softBreak || !hardBreak) return;
+  const found: number[] = [];
+  tr.doc.nodesBetween(from, to, (node, pos) => {
+    if (!node.isTextblock) return true;
+    if (!node.type.spec.code) {
+      node.forEach((child, offset) => {
+        if (child.type === softBreak) found.push(pos + 1 + offset);
+      });
+    }
+    return false;
+  });
+  for (const pos of found) tr.replaceWith(pos, pos + 1, hardBreak.create());
 }
 
 /** markdown-it's render rule, as far as the soft break rule reads it. */

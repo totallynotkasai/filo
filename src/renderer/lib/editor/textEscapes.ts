@@ -89,9 +89,10 @@ export function escapeBlockStart(escaped: string, aloneOnLine: boolean): string 
  * The text that opens a line after a line break (Shift+Enter). prosemirror-markdown
  * escapes only at the start of a block, but a line inside a paragraph is
  * read the same way when it could interrupt the paragraph: a heading, a quote,
- * a bullet or `1.` item with text, or (when it is the whole line) a row of
- * `=` or `-` that would make the lines above a heading, or a thematic break.
- * Only those are escaped, so any other line is written as it was.
+ * a bullet or numbered item with text (only a number worth 1 can, which
+ * `01.` and `001)` are too), or (when it is the whole line) a row of `=` or
+ * `-` that would make the lines above a heading, or a thematic break. Only
+ * those are escaped, so any other line is written as it was.
  */
 export function escapeAfterBreak(escaped: string, wholeLine: boolean, tabFollows = false): string {
   // A tab item written right after the text counts as the space a marker needs.
@@ -100,7 +101,7 @@ export function escapeAfterBreak(escaped: string, wholeLine: boolean, tabFollows
     .replace(/^(#{1,6})(?=[ \t]|$)/, '\\$1')
     .replace(/^>/, '\\>')
     .replace(/^([-+*])(?=[ \t])/, '\\$1')
-    .replace(/^(1)([.)])(?=[ \t])/, '$1\\$2');
+    .replace(/^(0{0,8}1)([.)])(?=[ \t])/, '$1\\$2');
   if (tabFollows) out = out.slice(0, -1);
   if (wholeLine && (/^(?:=+|-+)[ \t]*$/.test(out) || /^([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(out))) {
     out = `\\${out}`;
@@ -119,7 +120,13 @@ export const NoteText = Node.create({
           // An autolink's text is its URL, where `&…;` is part of the address.
           const inAutolink = state.inAutolink === true;
           let text = escapeNoteText(node.text ?? '', inAutolink);
-          if (inAutolink || text.includes('\n')) {
+          if (inAutolink) {
+            // Inside `<…>` a backslash is part of the address, so nothing is
+            // escaped: `\*` or `\~` there changed the link it read back as.
+            state.text(text, false);
+            return;
+          }
+          if (text.includes('\n')) {
             state.text(text);
             return;
           }
@@ -136,19 +143,24 @@ export const NoteText = Node.create({
             if (!text) return;
           }
           let out = escapeUnderscoreRuns(state.esc(text, blockStart));
+          const prev = parent.maybeChild(index - 1);
+          const next = parent.maybeChild(index + 1);
+          // A soft break is written as a bare newline, so the line ends there
+          // (a hard break's `\` stays on the line), unless a mark closes first.
+          const closesNothing = node.marks.every((m) => !!next && m.isInSet(next.marks));
+          const endsLine = (!next || next.type.name === 'softBreak') && closesNothing;
           if (node.marks.length === 0) {
-            const next = parent.maybeChild(index + 1);
-            // A soft break is written as a bare newline, so the line ends there
-            // (a hard break's `\` stays on the line).
-            const endsLine = !next || next.type.name === 'softBreak';
             if (blockStart) out = escapeBlockStart(out, endsLine || next?.type.name === 'tab');
             else if (afterBreak) out = escapeAfterBreak(out, endsLine, next?.type.name === 'tab');
             // A heading's trailing ` #` run is read as its closing sequence and dropped.
             if (endsLine && parent.type.name === 'heading') out = out.replace(/(^|[ \t])(#+)$/, '$1\\$2');
+          } else if (afterBreak && node.marks.every((m) => !!prev && m.isInSet(prev.marks))) {
+            // Formatting that carries on across the break (`<u>a\n1. b</u>`)
+            // opens nothing on the new line, so the text starts the line.
+            out = escapeAfterBreak(out, endsLine, next?.type.name === 'tab');
           }
           // A `!` right before a link would make it an image. prosemirror-markdown
           // escapes it too, but not after an escaped backslash (`\\!`).
-          const next = parent.maybeChild(index + 1);
           const linkMark = next?.marks.find((m) => m.type.name === 'link');
           if (out.endsWith('!') && linkMark && !linkMark.isInSet(node.marks)) out = `${out.slice(0, -1)}\\!`;
           if (state.inTable) out = out.replace(/\|/g, '\\|');

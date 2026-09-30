@@ -95,6 +95,86 @@ const CASES: Case[] = [
     shows: /Potential Titles:Dilletantes in the InterimProspectors in the Interim[\s\S]*2\*\* - kept[\s\S]*Last paragraph edited/,
     kept: 'Potential Titles:\nDilletantes in the Interim\nProspectors in the Interim\n\nChapter 1 and 2** - kept\n\nLast paragraph edited\n',
   },
+  {
+    // Italic from the end of a quote's first line to the end of the second.
+    name: 'Quote',
+    body: '> Name: Aria\n> Age: 24\n',
+    edit: async (win, ed) => {
+      await ed.locator('blockquote').first().click();
+      await win.keyboard.press('Control+Home');
+      await win.keyboard.press('End');
+      // The line break, then "Age: 24". The editor takes a keyboard selection
+      // from the page a moment after it changes, so the keys go at a person's
+      // pace: sent back to back, some were lost.
+      for (let i = 0; i < 8; i++) {
+        await win.keyboard.press('Shift+ArrowRight');
+        await win.waitForTimeout(50);
+      }
+      await expect.poll(() => win.evaluate(() => window.getSelection()?.toString())).toBe('\nAge: 24');
+      await win.waitForTimeout(200);
+      await win.keyboard.press('Control+i');
+      await expect(ed.locator('blockquote em')).toHaveText('Age: 24');
+    },
+    shows: /Name: AriaAge: 24/,
+    kept: '> Name: Aria\n> *Age: 24*\n',
+  },
+  {
+    // A zero-padded number typed after Shift+Enter.
+    name: 'Chapters',
+    body: 'Chapters:\n',
+    edit: async (win, ed) => {
+      await ed.click();
+      await win.keyboard.press('Control+End');
+      await win.keyboard.press('Shift+Enter');
+      await win.keyboard.type('01. Arrival');
+    },
+    shows: /Chapters:01\. Arrival/,
+    kept: 'Chapters:\\\n01\\. Arrival\n',
+  },
+  {
+    // Select All, then Center, in a note with a nested list: only the text
+    // outside the list is centred, and Align is off inside the list.
+    name: 'Characters',
+    body: 'Characters\n\n- Aria\n  - scout\n- Kasai\n',
+    edit: async (win, ed) => {
+      const align = win.locator('select[aria-label="Text alignment"]');
+      await ed.locator('li', { hasText: 'Kasai' }).first().click();
+      await expect(align).toBeDisabled();
+      await win.keyboard.press('Control+a');
+      await expect(align).toBeEnabled();
+      await align.selectOption('center');
+    },
+    shows: /Characters[\s\S]*Aria[\s\S]*scout[\s\S]*Kasai/,
+    kept: '<p style="text-align: center;">Characters</p>\n\n- Aria\n  - scout\n- Kasai\n',
+  },
+  {
+    // Bold ending in punctuation, typed straight before a letter.
+    name: 'Answer',
+    body: 'Intro\n',
+    edit: async (win, ed) => {
+      await ed.click();
+      await win.keyboard.press('Control+End');
+      await win.keyboard.press('Enter');
+      await win.keyboard.press('Control+b');
+      await win.keyboard.type('A)');
+      await win.keyboard.press('Control+b');
+      await win.keyboard.type('Answer');
+    },
+    shows: /IntroA\)Answer/,
+    kept: 'Intro\n\n<strong>A)</strong>Answer\n',
+  },
+  {
+    // A one-line-per-thought paragraph made into code by typing a fence.
+    name: 'Snippet',
+    body: 'one\ntwo\n',
+    edit: async (win, ed) => {
+      await ed.click();
+      await win.keyboard.press('Control+Home');
+      await win.keyboard.type('``` ');
+    },
+    shows: /one\s*two/,
+    kept: '```\none\ntwo\n```\n',
+  },
 ];
 
 let root: string;

@@ -277,6 +277,18 @@ const FILO_WRITES: ReadonlyArray<[string, string]> = [
   ['an escaped backslash before "!" and a link', '\\\\\\![a](https://example.com/a)'],
   ['"1." on a line before a soft break', '1\\.\nbeta'],
   ['a row of "=" before a soft break', 'a\\\n\\==\nb'],
+  ['bold ending in punctuation right before a letter', '<strong>A)</strong>Answer'],
+  ['italic on one comma between letters', 'a<em>,</em>b'],
+  ['bold, then italic straight after it', '<strong>Name:</strong>*Aria*'],
+  ['bold throughout, italic on its first and last letters', '***A*b<em>c</em>**'],
+  ['"01." after a line break', 'Chapters:\\\n01\\. Arrival'],
+  ['"1." after a soft break inside underlining', '<u>a\n1\\. one</u>'],
+  ['a numbered sub-list starting at 3 under its item\'s text', '- parent\n\n  3. child'],
+  ['a loose sub-list in a tight list', '- a\n  - b\n\n    3. c\n\n  - d'],
+  ['a sub-list under an item with no text, in a loose list', '- a\n\n  3. b\n\n- \n  - c'],
+  ['two bullet lists side by side', '- a\n\n* b'],
+  ['an autolink holding "*" and "~"', '<https://x.com/a*b_c~d>'],
+  ['a link whose text is its percent-encoded address', '[https://example.com/My%20File.pdf](https://example.com/My%20File.pdf)'],
 ];
 
 describe('shapes Filo writes read back as written', () => {

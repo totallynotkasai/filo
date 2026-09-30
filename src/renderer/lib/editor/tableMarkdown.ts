@@ -3,6 +3,7 @@ import { Table } from '@tiptap/extension-table';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { hasBlockLayout } from './blockLayout';
 import { withLeadSpaceNodes, withLeadSpacesOutsideRuns } from './leadSpace';
+import { withBreakMarksTrimmed } from './softBreak';
 
 /**
  * How a table is written to the file.
@@ -108,7 +109,7 @@ function writeMarkdownTable(state: TableSerializeState, table: ProseMirrorNode):
     row.forEach((cell, _o, c) => {
       if (c) state.write(' | ');
       const p = cell.firstChild;
-      if (p && writesSomething(p)) state.renderInline(withLeadSpacesOutsideRuns(withCodePipesEscaped(p)));
+      if (p && writesSomething(p)) state.renderInline(withBreakMarksTrimmed(withLeadSpacesOutsideRuns(withCodePipesEscaped(p))));
     });
     state.write(' |');
     state.ensureNewLine();

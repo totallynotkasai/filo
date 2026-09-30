@@ -283,8 +283,9 @@
 
   <select
     class="toolbar-select align-select"
-    title="Text Align"
+    title={toolbarStore.alignInList ? "Text in a list can't be aligned" : 'Text Align'}
     aria-label="Text alignment"
+    disabled={!toolbarStore.alignAvailable}
     value={toolbarStore.textAlign}
     onfocus={() => tiptapToolbar.keepActiveEditor()}
     onchange={(e) => tiptapToolbar.setTextAlign((e.target as HTMLSelectElement).value as 'left' | 'center' | 'right' | 'justify')}

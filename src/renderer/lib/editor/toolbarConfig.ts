@@ -76,7 +76,13 @@ function syncStateToToolbar(editor: Editor) {
     : 'left') as 'left' | 'center' | 'right' | 'justify';
 
   const note = activeNote?.() ?? null;
+  // Align fails where nothing can be aligned: a list item (`listItemLayout.ts`),
+  // code, or an editor without alignment (a connection label).
+  const can = editor.can();
+  const alignAvailable = 'setTextAlign' in can && can.setTextAlign('left');
   const next = {
+    alignAvailable,
+    alignInList: !alignAvailable && listItemAround(editor) !== null,
     lineSpacingNote: note ? note.path : null,
     bold: editor.isActive('bold'),
     italic: editor.isActive('italic'),
@@ -95,6 +101,16 @@ function syncStateToToolbar(editor: Editor) {
   };
 
   queueMicrotask(() => toolbarStore.updateFromEditor(next));
+}
+
+/** The kind of list item the caret is in (the innermost), or null outside lists. */
+function listItemAround(editor: Editor): 'listItem' | 'taskItem' | null {
+  const { $from } = editor.state.selection;
+  for (let d = $from.depth; d > 0; d--) {
+    const name = $from.node(d).type.name;
+    if (name === 'listItem' || name === 'taskItem') return name;
+  }
+  return null;
 }
 
 export const tiptapToolbar = {
@@ -276,11 +292,13 @@ export const tiptapToolbar = {
     chainIfEditable()?.focus().toggleTaskList().run();
   },
 
+  /** In a list, Indent nests the item (a list level in the file), as Tab does; elsewhere it indents the text. */
   increaseIndent() {
     this.keepActiveEditor();
     if (!activeEditor) return;
-    if (activeEditor.isActive('listItem') || activeEditor.isActive('taskItem')) {
-      chainIfEditable()?.focus().sinkListItem('listItem').run();
+    const item = listItemAround(activeEditor);
+    if (item) {
+      chainIfEditable()?.focus().sinkListItem(item).run();
     } else {
       chainIfEditable()?.focus().increaseIndent().run();
     }
@@ -289,8 +307,9 @@ export const tiptapToolbar = {
   decreaseIndent() {
     this.keepActiveEditor();
     if (!activeEditor) return;
-    if (activeEditor.isActive('listItem') || activeEditor.isActive('taskItem')) {
-      chainIfEditable()?.focus().liftListItem('listItem').run();
+    const item = listItemAround(activeEditor);
+    if (item) {
+      chainIfEditable()?.focus().liftListItem(item).run();
     } else {
       chainIfEditable()?.focus().decreaseIndent().run();
     }

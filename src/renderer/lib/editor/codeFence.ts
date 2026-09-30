@@ -1,5 +1,8 @@
+import { InputRule, isNodeActive, type CommandProps } from '@tiptap/core';
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
+import type { Transaction } from '@tiptap/pm/state';
+import { softBreaksAsHardBreaks } from './softBreak';
 
 /**
  * How a code block is fenced in the file.
@@ -22,6 +25,11 @@ export function codeFenceFor(code: string): string {
   return '`'.repeat(Math.max(3, longest + 1));
 }
 
+/** Soft breaks in every block the selection touches kept as lines once the blocks become code. */
+function keepLinesIn(tr: Transaction): void {
+  for (const range of tr.selection.ranges) softBreaksAsHardBreaks(tr, range.$from.pos, range.$to.pos);
+}
+
 interface CodeSerializeState {
   write(content?: string): void;
   text(text: string, escape?: boolean): void;
@@ -33,11 +41,53 @@ interface MarkdownItOptionsHost {
   set(options: { langPrefix: string }): void;
 }
 
+/** Typing ```` ``` ```` or `~~~` (and a language) then a space at the start of a line makes it code. */
+const FENCE_TYPED = [/^```([a-z]+)?[\s\n]$/, /^~~~([a-z]+)?[\s\n]$/];
+
 /**
  * Code block fenced by `codeFenceFor`. The parse half repeats
  * tiptap-markdown's own, which naming `markdown` here would otherwise drop.
+ *
+ * Making a paragraph into code keeps its soft breaks as new lines of code
+ * (`softBreaksAsHardBreaks`), from the toolbar, Ctrl+Alt+C or a typed fence.
  */
 export const FiloCodeBlock = CodeBlockLowlight.extend({
+  addCommands() {
+    return {
+      ...this.parent?.(),
+      setCodeBlock:
+        (attributes?: { language: string }) =>
+        ({ tr, dispatch, commands }: CommandProps): boolean => {
+          if (dispatch) keepLinesIn(tr);
+          return commands.setNode(this.name, attributes);
+        },
+      toggleCodeBlock:
+        (attributes?: { language: string }) =>
+        ({ state, tr, dispatch, commands }: CommandProps): boolean => {
+          // Toggling code off leaves a paragraph, whose line breaks stay as they are.
+          if (dispatch && !isNodeActive(state, this.type, attributes ?? {})) keepLinesIn(tr);
+          return commands.toggleNode(this.name, 'paragraph', attributes);
+        },
+    };
+  },
+
+  addInputRules() {
+    return FENCE_TYPED.map(
+      (find) =>
+        new InputRule({
+          find,
+          handler: ({ state, range, match }) => {
+            // As TipTap's own rule: only where a code block may stand.
+            const $start = state.doc.resolve(range.from);
+            if (!$start.node(-1).canReplaceWith($start.index(-1), $start.indexAfter(-1), this.type)) return null;
+            state.tr.delete(range.from, range.to);
+            softBreaksAsHardBreaks(state.tr, range.from, range.from);
+            state.tr.setBlockType(range.from, range.from, this.type, { language: match[1] });
+          },
+        }),
+    );
+  },
+
   addStorage() {
     return {
       ...this.parent?.(),

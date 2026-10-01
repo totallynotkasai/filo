@@ -63,6 +63,7 @@ const CHARACTERISATION_SPECS = {
   'taskSubtasks.test.ts': 3,
   'slowRenames.test.ts': 6,
   'sessionEnd.test.ts': 4,
+  'boardFormatUpdate.test.ts': 2,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are
@@ -125,6 +126,99 @@ function allKeys(decls, name, seen = new Set()) {
   const keys = new Set(d.keys);
   if (d.base) for (const k of allKeys(decls, d.base, seen)) keys.add(k);
   return keys;
+}
+
+// Board format migrations: the step list, the current version it must reach,
+// and each step's fixtures (an old file and what it loads as today).
+const BOARD_MIGRATIONS = 'src/renderer/schema/migrations.ts';
+const BOARD_FILE_SCHEMA = 'src/renderer/schema/boardFile.ts';
+const BOARD_MIGRATION_FIXTURES = 'src/tests/unit/fixtures/board-migrations';
+const BOARD_MIGRATION_FIXTURE_TEST = 'src/tests/unit/boardMigrationSteps.test.ts';
+
+/** The comma-separated items of an array or object literal body, at depth 0 (strings skipped). */
+function topLevelItems(body) {
+  const items = [];
+  let depth = 0;
+  let start = 0;
+  let quote = '';
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    else if (ch === '(' || ch === '[' || ch === '{') depth++;
+    else if (ch === ')' || ch === ']' || ch === '}') depth--;
+    else if (ch === ',' && depth === 0) {
+      items.push({ text: body.slice(start, i), offset: start });
+      start = i + 1;
+    }
+  }
+  items.push({ text: body.slice(start), offset: start });
+  return items.filter((item) => item.text.trim() !== '');
+}
+
+/**
+ * MIGRATION_STEPS runs one version at a time up to the current one, and
+ * every step has its fixtures and the test that loads them. A step the gate
+ * can't read (a computed version) fails: the order must be checkable here.
+ */
+function checkBoardMigrationSteps(ctx) {
+  const out = [];
+  const mig = ctx.read(BOARD_MIGRATIONS);
+  const schema = ctx.read(BOARD_FILE_SCHEMA);
+  if (mig === null) out.push(fail(BOARD_MIGRATIONS, undefined, 'file missing — re-point the check'));
+  if (schema === null) out.push(fail(BOARD_FILE_SCHEMA, undefined, 'file missing — re-point the check'));
+  if (mig === null || schema === null) return out;
+  const currentMatch = /\bCURRENT_BOARD_FILE_VERSION\s*=\s*(\d+)\s*;/.exec(stripComments(schema));
+  if (!currentMatch) return [fail(BOARD_FILE_SCHEMA, undefined, 'CURRENT_BOARD_FILE_VERSION is not a number literal — re-point the check')];
+  const current = Number(currentMatch[1]);
+  const code = stripCommentsKeepLines(mig);
+  const decl = /\bconst\s+MIGRATION_STEPS\b[^=]*=\s*\[/.exec(code);
+  if (!decl) return [fail(BOARD_MIGRATIONS, undefined, 'MIGRATION_STEPS is not an array literal — re-point the check')];
+  const open = decl.index + decl[0].length - 1;
+  const close = matchBrace(code, open, '[', ']');
+  if (close < 0) return [fail(BOARD_MIGRATIONS, lineAt(code, open), 'MIGRATION_STEPS has no closing `]`')];
+
+  const steps = [];
+  for (const item of topLevelItems(code.slice(open + 1, close))) {
+    const at = lineAt(code, open + 1 + item.offset + (item.text.length - item.text.trimStart().length));
+    const m = /^\s*\{\s*from\s*:\s*(\d+)\s*,\s*to\s*:\s*(\d+)\s*,\s*migrate\b/.exec(item.text);
+    if (!m) {
+      out.push(fail(BOARD_MIGRATIONS, at, 'a step must read `{ from: <number>, to: <number>, migrate… }`'));
+      continue;
+    }
+    steps.push({ from: Number(m[1]), to: Number(m[2]), line: at });
+  }
+  steps.forEach((step, i) => {
+    if (step.to !== step.from + 1) out.push(fail(BOARD_MIGRATIONS, step.line, `step from ${step.from} goes to ${step.to}, not ${step.from + 1}`));
+    const next = steps[i + 1];
+    if (next && next.from !== step.to) out.push(fail(BOARD_MIGRATIONS, next.line, `step from ${next.from} doesn't follow the step to ${step.to}`));
+    for (const name of [`v${step.from}.board.json`, `v${step.from}.expected.json`]) {
+      if (!ctx.exists(`${BOARD_MIGRATION_FIXTURES}/${name}`)) {
+        out.push(fail(BOARD_MIGRATIONS, step.line, `step from ${step.from} has no fixture ${BOARD_MIGRATION_FIXTURES}/${name}`));
+      }
+    }
+  });
+  const last = steps[steps.length - 1];
+  if (last && last.to !== current) {
+    out.push(fail(BOARD_MIGRATIONS, last.line, `the last step ends at ${last.to}, not at CURRENT_BOARD_FILE_VERSION (${current})`));
+  }
+
+  const test = ctx.read(BOARD_MIGRATION_FIXTURE_TEST);
+  if (test === null) {
+    out.push(fail(BOARD_MIGRATION_FIXTURE_TEST, undefined, 'file missing: the test that loads each step\'s fixtures'));
+  } else {
+    const testCode = stripComments(test);
+    if (!/\bMIGRATION_STEPS\b/.test(testCode) || !testCode.includes('board-migrations')) {
+      out.push(fail(BOARD_MIGRATION_FIXTURE_TEST, undefined, 'no longer loads the fixtures of every MIGRATION_STEPS entry'));
+    }
+    const skip = /\b(?:it|test|describe)\s*\.\s*(?:skip|todo|only|skipIf|runIf)\b|\bx(?:it|describe)\s*\(/.exec(testCode);
+    if (skip) out.push(fail(BOARD_MIGRATION_FIXTURE_TEST, undefined, `\`${skip[0]}\`: the fixture checks must all run`));
+  }
+  return out;
 }
 
 export const checks = [
@@ -266,19 +360,16 @@ export const checks = [
     },
   },
   {
-    id: 'no-legacy-board-migration',
-    title: 'the board loader accepts only the current format: no migration steps, no double-decode',
+    id: 'board-migration-steps',
+    title: 'board-format migration steps run unbroken to the current version, each with its fixtures; no double-decode',
     hint:
-      "Filo hasn't shipped, so an older board format is refused (failedBoards, never written), not migrated. " +
-      'A future format change adds its step deliberately together with this check.',
+      'An older board is carried forward only by tested steps. Write each MIGRATION_STEPS entry as ' +
+      '`{ from: N, to: N+1, migrate }` with number literals, the last ending at CURRENT_BOARD_FILE_VERSION, and add ' +
+      `${BOARD_MIGRATION_FIXTURES}/vN.board.json (a file in format N) and vN.expected.json (what it loads as today); ` +
+      `${BOARD_MIGRATION_FIXTURE_TEST} loads each one. A string board is an older format the version gate refuses.`,
     run(ctx) {
       const out = [];
-      const MIG = 'src/renderer/schema/migrations.ts';
-      const mig = ctx.read(MIG);
-      if (mig === null) out.push(fail(MIG, undefined, 'file missing — re-point the check'));
-      else if (!/\bconst\s+MIGRATION_STEPS\b[^;]*?=\s*\{\s*\}\s*;/.test(stripComments(mig))) {
-        out.push(fail(MIG, undefined, 'MIGRATION_STEPS has a board migration step'));
-      }
+      out.push(...checkBoardMigrationSteps(ctx));
       const MAIN = 'src/main/vault/boardFileOps.ts';
       const main = ctx.read(MAIN);
       if (main === null) out.push(fail(MAIN, undefined, 'file missing — re-point the check'));

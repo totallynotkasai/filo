@@ -983,30 +983,48 @@ what it finds when it runs (a rename's refuses if the old name exists again).
 **Impact:** Once the toast is dismissed or replaced, a deleted tag has to be
 re-added by hand (a rename can be reversed by renaming back).
 
-## 29. Only current-format (v8) board files load
+## 29. An older board format loads only through a tested migration step
 
-**What:** The board loader accepts exactly `version: 8`. A board from an older
-Filo (no version, a lower version, or a double-encoded file) or from a newer
-one is refused: it is listed as failed with a toast, its bytes are copied to
-`.filo/recovery/`, and Filo never writes to it. Notes are unaffected; only the
-`.board.json` is refused.
+**What:** A board file names its format (`version`). Filo reads the current
+format (8), and an older one only when migration steps carry it forward, one
+version at a time. There are no steps yet, so today only v8 boards load. A board
+from a newer Filo, older than the first step, with no version, a fractional one
+or a double-encoded file, or whose step fails, is refused: it is listed as failed
+with a notice, its bytes are copied to `.filo/recovery/`, and Filo never writes
+to it. Notes are unaffected; only the `.board.json` is refused.
 
-**Where:** `migrateBoardFile` in
-[src/renderer/schema/migrations.ts](src/renderer/schema/migrations.ts) (no
-migration steps), `CURRENT_BOARD_FILE_VERSION` in
+A board a step carries forward opens in the current format, and opening it writes
+nothing: the file keeps its old format until the board changes. Its first save
+copies the file as it was to `.filo/recovery/<timestamp>-keep/` (never pruned,
+#33) and only then writes the current format. If the copy can't be made (a full
+disk, `.filo/recovery/` not writable, a file over the 25 MB copy limit), the save
+is refused and kept for Retry. Each vault open shows one notice naming the boards
+it read from an older format.
+
+**Where:** `MIGRATION_STEPS` and `migrateBoardFile` in
+[src/renderer/schema/migrations.ts](src/renderer/schema/migrations.ts),
+`CURRENT_BOARD_FILE_VERSION` in
 [src/renderer/schema/boardFile.ts](src/renderer/schema/boardFile.ts), the
 `no-migration-path` / `from-future` branches in
-[src/renderer/lib/boards/boardLoader.ts](src/renderer/lib/boards/boardLoader.ts).
-Pinned by gate `no-legacy-board-migration`.
+[src/renderer/lib/boards/boardLoader.ts](src/renderer/lib/boards/boardLoader.ts),
+the copy before the first save in
+[src/renderer/lib/boards/migratedBoards.ts](src/renderer/lib/boards/migratedBoards.ts).
+Pinned by gate `board-migration-steps`: the steps run unbroken to the current
+version, and each has fixtures (an old file and what it loads as today) that
+`src/tests/unit/boardMigrationSteps.test.ts` loads.
 
-**Why accepted:** Filo hasn't shipped, so there are no user boards in older
-formats to carry forward, and each migration step is code that could corrupt a
-board. Tolerance for notes written by other apps (no `title:`, CRLF, BOM, odd
-YAML, non-UTF-8) stays, because those are user content rather than a Filo
-format.
+**Why accepted:** Each step is code that rewrites a board, so one is added only
+with a format change, together with fixtures that show what an old file becomes.
+The formats from before v8 were development builds' and have no step: carrying
+them forward would be code no board needs. Tolerance for notes written by other
+apps (no `title:`, CRLF, BOM, odd YAML, non-UTF-8) stays, because those are user
+content rather than a Filo format.
 
-**Impact:** Boards made by earlier development builds must be rebuilt. The notes
-they showed are still in the vault.
+**Impact:**
+- Boards made by development builds before v8 must be rebuilt. The notes they
+  showed are still in the vault.
+- Once a board is saved in a newer format, an older Filo can't open it (#20).
+- An older-format board whose file is over 25 MB opens but can't be saved.
 
 ## 30. The raw view saves the whole file
 
@@ -1152,8 +1170,9 @@ deleted).
 
 These are the only copy of that text. The same goes for the other version a
 **Keep mine** / **Keep local** writes over, a file's original bytes before
-**Convert to UTF-8**, and a board's file before a load repair drops unknown
-tile types or broken references from it: they go in
+**Convert to UTF-8**, a board's file before a load repair drops unknown
+tile types or broken references from it, and a board's file in an older board
+format before its first save in the current one (#29): they go in
 `.filo/recovery/<timestamp>-keep/`. The
 ordinary recovery snapshots (boards that failed to load, copies taken before a
 repair) are pruned to 20 per name and 100 in total, but both prunes skip any

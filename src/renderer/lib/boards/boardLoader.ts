@@ -298,8 +298,8 @@ export interface LoadBoardResult {
   ok: true;
   data: BoardFileData;
   /**
-   * The version on the raw input when a migration step ran, else `null`.
-   * Always `null` today: only the current format loads.
+   * The format version the file is in when migration steps carried it to the
+   * current one, else `null`. The file itself is unchanged.
    */
   migratedFrom: number | null;
   /**
@@ -362,7 +362,13 @@ export interface UnpinnedBoardLoad {
   readJson: string;
 }
 
-export type LoadedBoardBaseline = PinnedBoardBaseline | UnpinnedBoardLoad;
+export type LoadedBoardBaseline = (PinnedBoardBaseline | UnpinnedBoardLoad) & {
+  /**
+   * The file is in this older board format and no copy of it was kept at
+   * load: its first save keeps one before writing the current format over it.
+   */
+  olderFormat?: number;
+};
 
 export interface LoadBoardError {
   ok: false;
@@ -568,13 +574,15 @@ export async function loadBoard(
     };
   }
 
-  // A board from an older Filo format. Refused, and never written, so the file
-  // stays exactly as it was.
+  // A board from an older Filo format that no step carries forward (or whose
+  // step failed). Refused, and never written, so the file stays as it was.
   if (loaded.status === 'no-migration-path') {
     return {
       ok: false,
       error: 'no-migration-path',
-      message: 'This board was made by an older Filo and is not supported. The file was left unchanged.',
+      message: loaded.failure !== undefined
+        ? `This board was made by an older Filo, and updating it to this version's format failed (${loaded.failure}). The file was left unchanged.`
+        : 'This board was made by an older Filo and is not supported. The file was left unchanged.',
     };
   }
 
@@ -623,6 +631,13 @@ export async function loadBoard(
   }
 
   const data = loaded.data;
+
+  // A board carried forward from an older format is still in that format on
+  // disk. Unless the repair above already kept a copy of the file, its first
+  // save keeps one before writing over it.
+  if (loaded.migratedFrom !== null && snapshotPath === null) {
+    baseline = { ...baseline, olderFormat: loaded.migratedFrom };
+  }
 
   if (droppedTileTypes.length > 0) {
     const boardName = data.board.name || relPath;
@@ -825,6 +840,8 @@ export async function loadAllBoards(
    * them once it adopts the cache (`adoptLoadedBoardBaseline`).
    */
   loadedBaselines: Array<{ path: string; baseline: LoadedBoardBaseline | undefined }>;
+  /** The loaded boards whose files are in an older board format, for the open's notice. */
+  migratedBoards: string[];
 }> {
   const relList = (await window.filo.invoke('board:list', vaultRoot)) as string[];
 
@@ -837,6 +854,7 @@ export async function loadAllBoards(
   const prunedBoardIds: string[] = [];
   const normalizedBoardIds: string[] = [];
   const loadedBaselines: Array<{ path: string; baseline: LoadedBoardBaseline | undefined }> = [];
+  const migratedBoards: string[] = [];
   const loaded: LoadedBoardEntry[] = [];
 
   for (const relPath of relList) {
@@ -903,6 +921,7 @@ export async function loadAllBoards(
     if (result.orphansPruned) prunedBoardIds.push(data.board.id);
     if (result.boardIdsNormalized) normalizedBoardIds.push(data.board.id);
     loadedBaselines.push({ path: relPath, baseline: result.baseline });
+    if (result.migratedFrom !== null) migratedBoards.push(relPath);
   }
 
   return {
@@ -915,5 +934,6 @@ export async function loadAllBoards(
     prunedBoardIds,
     normalizedBoardIds,
     loadedBaselines,
+    migratedBoards,
   };
 }

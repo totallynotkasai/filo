@@ -13,12 +13,18 @@
  * the read) marks the path unverified, with the JSON it read: nothing says
  * which version on disk the cache holds, so the first save reads the file
  * before it writes over it (`writeBoardFile`).
+ *
+ * The adoption also records the file's format: a board read from an older
+ * format has its file kept before its first save (`migratedBoards`), and a
+ * board read in the current format clears any such record for its path.
  */
 
 import { markBaselineUnverified, noteBaseline } from '../vault/fileBaselineRegistry';
 import type { LoadedBoardBaseline } from './boardLoader';
+import { noteLoadedBoardFormat } from './migratedBoards';
 
 export function adoptLoadedBoardBaseline(relPath: string, baseline: LoadedBoardBaseline | undefined): void {
+  noteLoadedBoardFormat(relPath, baseline?.olderFormat);
   if (!baseline || 'readJson' in baseline) {
     markBaselineUnverified(relPath, baseline?.readJson);
     return;

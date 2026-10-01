@@ -156,6 +156,22 @@ export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec 
           retryable: false,
         };
   }
+  // A board in an older format is written over only once a copy of its file
+  // is kept, and the copy failed. Retry tries the copy again.
+  if (errorCode(info.error) === 'BOARD_ORIGINAL_NOT_KEPT') {
+    const tooLarge = (info.error as { reason?: unknown }).reason === 'RECOVERY_SNAPSHOT_TOO_LARGE';
+    return {
+      context: 'Board not saved',
+      message:
+        `${info.path ?? 'The board'} is in an older board format, and Filo couldn't keep a copy of it in .filo/recovery ` +
+        `before saving it in the new one${tooLarge ? ' (the file is larger than the 25 MB Filo copies)' : ''}. ` +
+        (tooLarge
+          ? "Your changes are kept in Filo, but they can't be saved to this file."
+          : 'Your changes are kept in Filo; Retry once there is space, or .filo/recovery can be written to.'),
+      coalesceKey: `board-original-not-kept::${info.path ?? ''}`,
+      retryable: !tooLarge,
+    };
+  }
   const context =
     info.kind === 'board'
       ? 'Board save failed'

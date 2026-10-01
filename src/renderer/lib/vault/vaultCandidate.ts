@@ -44,6 +44,7 @@ import { ProjectSchema } from '../../schema/project';
 import { salvageSlice } from '../settings/settingsSalvage';
 import { loadAllBoards, isTransientBoardLoadError } from '../boards/boardLoader';
 import { adoptLoadedBoardBaseline } from '../boards/boardBaseline';
+import { olderFormatBoardsNotice } from '../boards/migratedBoards';
 import { boardLoadRetryToast } from '../boards/boardLoadRetryPrompt';
 import { boardLoadFailedToast, boardLoadReason } from '../boards/boardLoadFailedNotice';
 import { syncConflictToast, groupByCanonical } from './syncConflictNotices';
@@ -304,10 +305,14 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     prunedBoardIds,
     normalizedBoardIds,
     loadedBaselines,
+    migratedBoards,
   } = await loadAllBoards(newVaultPath);
   // These boards become the cache when the candidate commits, and no write to
   // the new vault's boards can run before then. Failed boards stamp nothing.
   for (const { path: boardPath, baseline } of loadedBaselines) adoptLoadedBoardBaseline(boardPath, baseline);
+  // One notice for every board read from an older format.
+  const olderFormat = olderFormatBoardsNotice(migratedBoards);
+  if (olderFormat) warnings.push(olderFormat);
 
   // Snapshot every failed board's bytes into `.filo/recovery/<ts>/` so
   // the originals survive any subsequent write Filo might do in this

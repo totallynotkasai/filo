@@ -849,6 +849,152 @@ Prove it bites:
 
 E2E: full suite (the vault-open path changes).
 
+### Phase 5 outcome (done 2026-10-01)
+
+**What changed: the pipeline (5.1)**
+- `schema/migrations.ts`:
+  - `MIGRATION_STEPS` is an ordered list of `BoardMigrationStep` (`{ from, to, migrate }`), empty today.
+  - `migrateBoardFile` finds the run of steps from the file's version to `CURRENT_BOARD_FILE_VERSION`, one version at a time, and runs them on a deep copy of what was read, setting `version` after each step.
+  - Refused, as before, and never written: a file from a newer Filo; one older than the first step; a missing or fractional version; a string or array. Newly refused the same way: a gap in the steps, a step whose `to` passes the current version, a step that throws, and a step that gives back something that isn't a board. The last two carry a `failure` reason.
+  - `migrationStepProblem(steps, current)`: what is wrong with a step list, or `null`.
+  - `__setBoardMigrationStepsForTests(steps)`: the test seam that runs a synthetic step in place of the empty real list.
+- `loadVersionedFile.ts`: the `no-migration-path` result passes the migrator's `failure` through. The tags and template loaders ignore it.
+- `boardLoader.ts`:
+  - A failed step keeps the `no-migration-path` error kind, with its own message: `This board was made by an older Filo, and updating it to this version's format failed (from version 7: …). The file was left unchanged.` So the failed-board handling is unchanged: the copy in `.filo/recovery/`, the notice, the tab kept open.
+  - Output that fails validation is `schema-invalid`, as before.
+  - A migrated board's `baseline` carries `olderFormat`, unless the load's repair (unknown tile types, orphan refs) already kept a copy of the file.
+  - `loadAllBoards` returns `migratedBoards`, the paths for the open's notice.
+- New `lib/boards/migratedBoards.ts`:
+  - A record of board files still in an older format, uncopied. `VaultPath` keys; it follows renames (`registerPathRenamable('migratedBoards')`) and is reset on vault swap.
+  - `adoptLoadedBoardBaseline` (`boardBaseline.ts`) records each adopted board's format: an older one is recorded, a current one clears the path. All four adopters (open, `ensureAllLoaded`, `adoptBoardAtRuntime`, Reload) go through it already, and gate `board-baseline-after-adopt` keeps it that way.
+  - `keepOlderFormatFile`: the board writer's step just before `board:save`, after the drift check. It copies the file with `recovery:snapshot … 'keep'` to `.filo/recovery/<ts>-keep/`, clears the record and shows `"Plan" is now saved in this version's board format. A copy of the file as it was is in .filo/recovery.` with **Show in folder** (the copy).
+  - A copy that fails throws `BoardOriginalNotKeptError` (`BOARD_ORIGINAL_NOT_KEPT`, added to `RETAINABLE`), so the write is kept for Retry and the file isn't touched. `writeErrorToast.ts` words it: `… is in an older board format, and Filo couldn't keep a copy of it in .filo/recovery before saving it in the new one.` A file over the 25 MB copy limit says so and offers no Retry.
+  - A file that is gone has nothing to copy (a "Save at original location"), and the save goes ahead.
+  - `olderFormatBoardsNotice(paths)`: one notice per vault open, buffered by `vaultCandidate.ts` with the open's other notices. It names up to three boards, then counts: `The board "Plan" was made by an older version of Filo and opens in this version's board format. Its file changes to the new format only when you change the board, and Filo keeps a copy of the file as it was in .filo/recovery first.`
+  - `announceOlderFormatBoard(path)`: the same notice for a board loaded after the open (found mid-session, retried, reloaded after an outside change).
+
+**What changed: the gate (5.2)**
+- `no-legacy-board-migration` is now `board-migration-steps` (`scripts/gates/codebase.mjs`; still 89 checks). It reads `MIGRATION_STEPS` and requires:
+  - every entry written `{ from: N, to: N+1, migrate… }` with number literals, so the order can be checked statically;
+  - each step one version on from the last, the last ending at `CURRENT_BOARD_FILE_VERSION`;
+  - for each step, `src/tests/unit/fixtures/board-migrations/vN.board.json` (a file in format N) and `vN.expected.json` (what it loads as today);
+  - `src/tests/unit/boardMigrationSteps.test.ts` present, loading `MIGRATION_STEPS` and the fixtures, with nothing skipped.
+- The double-decode checks (main's board read, the loader's `JSON.parse`) stay in it.
+- `boardMigrationSteps.test.ts` holds the per-step check: the old file loads through the real pipeline as exactly the expected board, at the current version, valid under the current schema; the file as read is untouched; and loading what Filo then writes changes nothing (`migratedFrom: null`, same board). It also checks the step list, and that every fixture belongs to a step.
+
+**Docs**
+- CLAUDE.md: the gotcha "Only v8 board files load" is now "Boards load at the current version or through tested migration steps"; the `codebase` gate row; the project tree (`migrations.ts`, `boardBaseline.ts`, the new `migratedBoards.ts`).
+- KNOWN_LIMITATIONS #29 rewritten ("An older board format loads only through a tested migration step"); #33 lists the copy kept before a migrated board's first save among the `-keep` copies.
+
+**Tests**
+
+| File | Cases |
+|---|---|
+| `src/tests/unit/boardMigrationSteps.test.ts` (new) | 7: the real steps (list, fixtures, one case per step: none today), the step-list check, and the fixture check itself on a synthetic step with fixtures written to a temp folder |
+| `src/tests/unit/boardFormatMigration.test.ts` (new) | 23 |
+| `src/tests/characterisation/boardFormatUpdate.test.ts` (new) | 2 (gate minimum 2) |
+
+The synthetic format: **format 7, in which a Kanban board called its columns `lanes`**, carried to the current format 8 by a test-only step (`board.lanes` → `board.columns`).
+
+- **Unit** (`boardFormatMigration.test.ts`), with the real loader, adoption, scheduler and writer over an in-memory disk:
+  - the board loads at v8 with its column, `migratedFrom: 7`; nothing is written or copied by loading and adopting it;
+  - the first save copies the file (`recovery:snapshot` before `board:save`), byte for byte, and writes v8 with the edit and no `lanes`; nothing is left unsaved;
+  - one "now saved" notice, and Show in folder opens the copy;
+  - three saves make one copy;
+  - a failed copy (`ENOSPC`): nothing written, the failure is retained and worded, Retry copies and saves once the copy can be made;
+  - a copy over 25 MB says so, with no Retry;
+  - a file renamed before its first save is copied at its new path;
+  - a board read again in the current format keeps no copy; a gone file has nothing to copy;
+  - a step that throws: `loadAllBoards` lists the board as failed with the reason, the file untouched; a result that fails validation is `schema-invalid`;
+  - the open lists only the migrated boards; with no step the board is refused with today's message;
+  - `migrateBoardFile`: a step that changes its board in place leaves the file as read untouched; steps run in order from the file's version, each seeing its own version; a file older than the first step, a gap, and a step past the current version are refused; a step returning a non-board names it; a fractional version (7.5, 8.5) is refused; current, newer and string files are left alone;
+  - the notice for one board, a few, more than three, and none.
+- **Characterisation** (`boardFormatUpdate.test.ts`): the real app on a real temp vault.
+  1. A Kanban board with a column is saved by "an older Filo" (rewritten as format 7) while the vault is closed.
+  2. On open: the notice, the column shows, the file is byte for byte as it was, no copy.
+  3. Another open: the notice again, once; the file still unchanged.
+  4. A column is added: the file is v8 with both columns and no `lanes`; the one `-keep` copy is the old file, byte for byte; the "now saved" notice.
+  5. Reopen: both columns show, no older-format notice, still one copy, no error toasts.
+  - Second case: with a step that throws, the open shows the failed-board notice naming the reason, and the file stays byte for byte.
+
+**Verification**
+- **The gate bites** (`gateBite.mjs`, this session's scratchpad; every file restored byte for byte):
+
+  | Change | Gate | Fixture test |
+  |---|---|---|
+  | none (today) | passes | passes |
+  | a 7 → 8 step, no fixtures | fails: both fixtures named | fails |
+  | the same step with its fixtures | passes | passes |
+  | the same step, wrong expected file | passes | fails |
+  | a 6 → 7 step only | fails: ends at 7, not 8 | — |
+  | a 6 → 8 step | fails: skips a version | — |
+  | steps 5 → 6 and 7 → 8 | fails: doesn't follow | — |
+  | a computed `from` | fails: must be a number literal | — |
+  | `it.skip` in the fixture test | fails | — |
+  | the fixture test no longer naming `MIGRATION_STEPS` | fails | — |
+
+- **The tests can't run on `f6c76b9`**: the step seam, the record and the notices are new. Instead, **each part of the new logic is pinned**: each mutation below was applied in turn, its tests run, and the file restored byte for byte (`mutations.mjs`, `mutations2.mjs`).
+
+  | Mutation | Tests that fail |
+  |---|---|
+  | the writer keeps no copy before the first save | 6 |
+  | the writer awaits the copy step on every save | 1 (`cancelAllPendingWrites.test.ts`) |
+  | the loader never marks an older format | 7 |
+  | the adoption records no format | 7 |
+  | a current-format load leaves the record | 1 |
+  | the record stays after the copy | 1 |
+  | a failed copy lets the write go ahead | 2 |
+  | a gone file fails the save | 1 |
+  | the record ignores renames | 1 |
+  | a failed copy is not kept for Retry | 1 |
+  | the failed copy gets the generic wording | 2 |
+  | a step that throws is not caught | 1 |
+  | steps work on the file as read | 1 |
+  | the pipeline doesn't set each step's version | 11 |
+  | the open shows no notice | 1 (characterisation) |
+  | the failed step's reason is not named | 1 unit, 1 characterisation |
+- `npm run ci:verify` on Windows: green.
+  - lint, svelte-check (860 files) and `typecheck:main` clean;
+  - `test:unit:strict`: 794 files, 7,523 tests passed, 5 skipped;
+  - build;
+  - 89/89 gates, including `board-migration-steps`, `characterisation-suite` (the new spec), `relpath-rename-transfer`, `vault-scoped-state`, `board-baseline-after-adopt`, `toast-plain-language`, `test-typecheck` and `no-audit-narration`.
+  - Two earlier full runs each failed on one test that passes alone, both timing under load (see "New findings"). A third earlier run failed on `cancelAllPendingWrites.test.ts`, which caught a real change: see deviation 9.
+- **E2E on the built app** (`FILO_E2E_SCALE=1`): all 23 functional specs pass, including vault open, crash recovery, sync deliveries, "no bytes written by looking" and the daily-driver boards. The 3 scale budgets missed.
+  - **That isn't Phase 5.** A game client and its overlay were running (about 60% CPU), and the whole run took 6.0 min against 2.6 min in Phase 1. A `HEAD` (`f6c76b9`) build in a separate worktree, run alternately with the Phase 5 build (4 runs each, `scaleAB.mjs`), misses the same budgets by similar amounts:
+
+    | Measure (budget) | `f6c76b9` | Phase 5 |
+    |---|---|---|
+    | Kanban 300 open (1,000 ms) | 1,218 / 1,054 / 1,167 / 976 | 1,256 / 1,147 / 1,101 / 1,050 |
+    | Kanban switch back (500 ms) | 779 / 705 / 1,579 / 657 | 802 / 1,642 / 666 / 720 |
+    | Task List fields after rows (1,000 ms) | 1,252 / 1,423 / 1,577 / 1,204 | 1,794 / 1,630 / 1,642 / 941 |
+    | 2,000-note folder, all rows (5,000 ms) | 1,813 / 6,807 / 6,831 / 6,815 | 6,832 / 6,852 / 6,799 / 1,642 |
+
+    Nothing Phase 5 adds runs while a board renders: a current-format load returns from `migrateBoardFile` at once, and adoption adds one map delete per board. Phase 6 runs the scale budgets again on a quiet machine.
+- **The real app** (`phase5check.mjs`, this session's scratchpad). This build has no real step, so it must behave as before. A vault with a v8 Kanban board and the same board saved as format 7: 12 of 13 checks pass, with no renderer errors.
+  - the format-7 board is listed as "made by an older Filo and is not supported", its file byte for byte, a failed-load copy in `.filo/recovery/` (not `-keep`), and no "opens in this version's format" notice;
+  - the v8 board isn't written by the open; a column added is saved as v8, with no `-keep` copy and no "now saved" notice.
+  - The one failure, "opening the v8 board writes nothing", fails the same way on a `f6c76b9` build: see "New findings".
+
+**Deviations from the plan**
+1. **The synthetic step is 7 → 8, not 8 → 9.** "One version behind" the current format 8 lets the real v8 schema validate the result, so nothing else in the build has to pretend to be v9. The first edit therefore writes v8, not v9. The format-7 story: a Kanban board called its columns `lanes`.
+2. **No Show in folder on the open's notice.** Under D8 the copy is made at the first save, so at open there is nothing to show yet. The open's notice says the file changes only when the board does and that a copy is kept first. **Show in folder** is on the notice shown at the first save, which names the copy just made.
+3. **A failed step keeps the `no-migration-path` error kind**, with its own message naming the reason, rather than a new kind. The failed-board handling (the copy in `.filo/recovery/`, the notice, the tab kept open) then applies unchanged, "exactly as today". Output that fails validation stays `schema-invalid`.
+4. **More is refused than the plan listed:** a gap in the steps, a step whose `to` passes the current version, a step returning something that isn't a board, and a fractional version above the current one. That last one (`8.5`) used to load as v8 and would have been saved as v8: the old loop never ran for it and stamped the current version.
+5. **The gate's shape.** It is renamed `board-migration-steps` (the old name described the opposite rule). It reads the steps statically, so each must be written `{ from: N, to: N+1, migrate… }` with number literals. "A second load of the result changes nothing" is checked by the fixture test; the gate checks that the test exists, loads the fixtures and skips nothing. The fixtures are `vN.board.json` plus `vN.expected.json`, where the expected file is what the old file loads as **today**, through every later step, not only the next one.
+6. **No copy when the load's repair already kept one.** A migrated board that also had unknown tile types or broken references removed is copied by that repair at load (`-keep`) and saved at once, as repaired boards already were. It isn't copied a second time.
+7. **Not in the plan:**
+   - the same notice for a board loaded after the open (found mid-session, retried, or reloaded after an outside change);
+   - the failure code `BOARD_ORIGINAL_NOT_KEPT` (kept for Retry) and its wording, with a separate line for a file over the 25 MB copy limit;
+   - a gone file (a "Save at original location") has nothing to copy, so its save goes ahead.
+8. **KNOWN_LIMITATIONS #33**, not in the plan, now lists the copy kept before a migrated board's first save.
+9. **The copy step awaits only for a board that needs it.** An unconditional `await` added a microtask before every board save; `cancelAllPendingWrites.test.ts` caught it. The writer now checks `hasUncopiedOlderFormat` first, so every other save runs exactly as before.
+10. **One Phase 4 test given more time.** `staleWriteContentCheck.test.ts`'s large-note case writes and hashes four files of 10–16 MB. It takes 2.4 s alone and passed 5.06 s against the 5 s default in a loaded full run, so it now has its own 30 s limit.
+
+**New findings** (low, not fixed)
+- **Opening a Kanban board with no saved view writes it.** The view adds `settings.lastView` (`sortBy`, `filterTags`, `filterProp`) about a second after the board shows. This is the same on `f6c76b9`. Boards Filo makes already have a `lastView`, so it shows only for a board written by hand or by another tool. For a future migrated Kanban board without a `lastView`, the first save would come from opening it rather than from a change. It would still be copied first, so nothing is lost, but the notice's "only when you change the board" wouldn't hold for it.
+- **Two real-filesystem watcher tests can miss under load:** `watcherOwnWriteBytes.test.ts` ("is reported when its bytes differ from ours") and `fileWatcherOwnMoves.test.ts` ("a rename by another program is still reported"). Each failed once in a full run while the machine was busy, and passed alone (15/15) and in the final full run.
+- **Scale budgets on a busy machine:** with a game running, `f6c76b9` misses all three, the Kanban switch back by up to three times (1,579 ms against 500) and the folder by 37%. They can be read only on a quiet machine, or with `FILO_E2E_BUDGET_FACTOR`.
+
 ---
 
 ## Phase 6: verification and archive (Hard 2/10)

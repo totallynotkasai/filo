@@ -29,6 +29,7 @@ import { boardDriftHold, holdBoardDrift, releaseBoardDrift, setBoardDriftRelease
 import { holdDecision, releaseDecision } from './heldDecisions';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { adoptLoadedBoardBaseline } from '../lib/boards/boardBaseline';
+import { announceOlderFormatBoard } from '../lib/boards/migratedBoards';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { baselineSeq, noteBaseline } from '../lib/vault/fileBaselineRegistry';
@@ -177,6 +178,7 @@ export async function reloadBoardFromDisk(
   if (storedPath) boardCacheStore.renameBoardPath(storedPath, rel);
   boardCacheStore.replaceCache({ ...boardStore.cache, [boardId]: result.data });
   adoptLoadedBoardBaseline(rel, result.baseline);
+  if (result.migratedFrom !== null) announceOlderFormatBoard(rel);
   // The board's undo steps were built on the version just replaced: undoing
   // one would write its old snapshot over the other change, with no drift
   // prompt (the baseline now names the version just read). Tell the user only when there

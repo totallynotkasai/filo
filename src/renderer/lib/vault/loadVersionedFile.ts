@@ -41,8 +41,10 @@ export interface VersionMigrationResult {
   migratedFrom: number | null;
   /** Input declares a version newer than this build understands. */
   fromFuture: boolean;
-  /** Input is below current but no migration step covers the gap (or is fractional). */
+  /** Input is below current but no migration step covers the gap (or is fractional), or a step failed. */
   noMigrationPath: boolean;
+  /** A step threw or gave back something unusable: what went wrong, for the user's notice. */
+  failure?: string;
 }
 
 export type VersionMigrator = (raw: unknown) => VersionMigrationResult;
@@ -56,7 +58,7 @@ export type VersionMigrator = (raw: unknown) => VersionMigrationResult;
 export type LoadVersionedResult<T> =
   | { status: 'ok'; data: T; migratedFrom: number | null }
   | { status: 'from-future'; migratedFrom: number | null }
-  | { status: 'no-migration-path'; migratedFrom: number | null }
+  | { status: 'no-migration-path'; migratedFrom: number | null; failure?: string }
   | { status: 'invalid'; error: z.ZodError };
 
 /**
@@ -89,7 +91,11 @@ export function loadVersionedFile<S extends z.ZodType>(
     return { status: 'from-future', migratedFrom: migration.migratedFrom };
   }
   if (migration.noMigrationPath) {
-    return { status: 'no-migration-path', migratedFrom: migration.migratedFrom };
+    return {
+      status: 'no-migration-path',
+      migratedFrom: migration.migratedFrom,
+      ...(migration.failure !== undefined ? { failure: migration.failure } : {}),
+    };
   }
   const candidate = transform ? transform(migration.data) : migration.data;
   const parsed = schema.safeParse(candidate);

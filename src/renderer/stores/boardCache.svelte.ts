@@ -20,6 +20,7 @@ import { flushAllScheduledBoards } from '../lib/boards/boardWriteScheduler';
 import { loadBoard } from '../lib/boards/boardLoader';
 import { baselineSeq, noteBaseline } from '../lib/vault/fileBaselineRegistry';
 import { adoptLoadedBoardBaseline } from '../lib/boards/boardBaseline';
+import { announceOlderFormatBoard } from '../lib/boards/migratedBoards';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
@@ -537,6 +538,7 @@ export const boardCacheStore = {
       const caughtUp = catchUpLoadedBoard(relPath, result.data) > 0;
       boardCache = { ...boardCache, [board.id]: result.data };
       adoptLoadedBoardBaseline(relPath, result.baseline);
+      if (result.migratedFrom !== null) announceOlderFormatBoard(relPath);
       if (caughtUp) markDirty(board.id);
     }
     return failed;

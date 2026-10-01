@@ -32,6 +32,7 @@ import {
 } from './writeStateTracking';
 import { BoardDriftHeldError, holdBoardDrift, isBoardDriftHeld } from './boardDriftHold';
 import { BoardMoveHeldError, isBoardMoveHeld } from './boardMoveHold';
+import { hasUncopiedOlderFormat, keepOlderFormatFile } from './migratedBoards';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
@@ -357,8 +358,14 @@ export async function writeBoardFile(
     }
   }
 
-  // Re-check AFTER the pre-write stat above: the board may have been deleted
-  // while it was awaited, and `board:save` would resurrect it as a ghost
+  // A board still in an older format on disk: its file is copied to
+  // `.filo/recovery/` before this write turns it into the current format (or
+  // the write is refused, kept for Retry, when the copy can't be made). Every
+  // other write goes on without an extra await.
+  if (hasUncopiedOlderFormat(boardPath)) await keepOlderFormatFile(vaultRoot, boardPath);
+
+  // Re-check AFTER the awaits above: the board may have been deleted
+  // while they ran, and `board:save` would resurrect it as a ghost
   // board. `deleteBoard` owns the teardown.
   if (isBoardPathDeleting(boardPath)) return;
 

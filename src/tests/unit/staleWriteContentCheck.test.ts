@@ -120,7 +120,8 @@ describe('the content hash on a write over a note', () => {
     await saveAt(file, huge('b'), at);
     await atomicWriteFile(file, 'mine\n', { expectStat: { ...hugeRead, hash: hashOf(huge('a')) } });
     expect(await fs.readFile(file, 'utf-8')).toBe('mine\n');
-  });
+    // Four files of 10–16 MB written and hashed: a few seconds on a busy disk.
+  }, 30_000);
 
   it('the note write channel carries it through', async () => {
     const file = join(dir, 'Note.md');

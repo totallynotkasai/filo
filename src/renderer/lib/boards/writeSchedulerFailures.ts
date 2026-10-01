@@ -35,6 +35,7 @@ export const RETAINABLE: ReadonlySet<string> = new Set([
   'BOARD_MOVE_HELD',
   'BOARD_FOLDER_MISSING',
   'BOARD_DRIFT_HELD',
+  'BOARD_ORIGINAL_NOT_KEPT',
   'CONFIG_DRIFT_HELD',
   'WRITE_TIMEOUT',
 ]);

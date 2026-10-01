@@ -67,10 +67,23 @@ describe('Search panel: Replace All', () => {
 
   it('the confirm counts body matches only and names the notes', () => {
     expect(searchStore.matches).toHaveLength(4);
+    searchStore.setReplaceText('wyvern');
     replaceAllButton().click();
     flushSync();
     const cfg = uiStore.confirmDialog;
-    expect(cfg?.body).toMatch(/^Replace 3 matches in 2 notes\?\n\n• (?:A\.md\n• b\.md|b\.md\n• A\.md)\n\n1 match in a title isn't replaced/);
+    expect(cfg?.body).toMatch(/^Replace "dragon" with "wyvern" \(3 matches in 2 notes\)\?\n\n• (?:A\.md\n• b\.md|b\.md\n• A\.md)\n\n1 match in a title isn't replaced/);
+  });
+
+  it('a spaced hyphen is searched with its spaces, and the confirm shows them', () => {
+    vaultIndexStore.restoreMetadata('b.md', parseMarkdown('b.md', 'A well-known dragon - and a well-read one.'));
+    searchStore.setQuery(' - ');
+    searchStore.setReplaceText(' – ');
+    flushSync();
+    expect(searchStore.matches.map((m) => m.matchText)).toEqual([' - ']);
+    replaceAllButton().click();
+    flushSync();
+    const nbsp = String.fromCharCode(0xa0);
+    expect(uiStore.confirmDialog?.body).toMatch(new RegExp(`^Replace "${nbsp}-${nbsp}" with "${nbsp}–${nbsp}" \\(1 match in 1 note\\)\\?\\n\\n• b\\.md\\n`));
   });
 
   it('Match case narrows the matches the panel shows', () => {

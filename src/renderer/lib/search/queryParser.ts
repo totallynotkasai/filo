@@ -13,7 +13,10 @@
  *   property:key=value  — frontmatter property equals (case-insensitive key, exact value)
  *   type:tile-type      — tile type discriminator (text|image|video|audio|file|link|iframe|timer)
  *
- * Whitespace separates tokens; a quoted value (`"…"`) preserves embedded whitespace.
+ * A query with no operator is searched for exactly as typed, spaces and quotes
+ * included, as an editor's Find does: ` - ` finds a spaced hyphen, not every
+ * hyphen, and two spaces find a double space. With an operator, whitespace
+ * separates tokens and a quoted value (`"…"`) preserves embedded whitespace.
  * A backslash escape lets a literal colon survive inside an operator value, so
  * `tag:#has\:colon` parses as a single tag `#has:colon`. Outside operator values,
  * backslashes are not interpreted (so plain text `C:\foo` remains intact).
@@ -39,7 +42,11 @@ export type OperatorFilter =
 export interface ParsedQuery {
   /** Structured operators ANDed together when filtering candidate files. */
   operators: OperatorFilter[];
-  /** Free-text remainder, joined with single spaces. Empty when only operators / regex are present. */
+  /**
+   * The text to find: the whole query as typed when it has no operator,
+   * otherwise the tokens left over, joined with single spaces. Empty when
+   * only operators / regex are present.
+   */
   freeText: string;
   /** Compiled regex when the query is a bare `/pattern/` literal; null otherwise. */
   regex: RegExp | null;
@@ -190,7 +197,8 @@ function tryParseOperator(token: string): OperatorFilter | null {
 export function parseQuery(raw: string): ParsedQuery {
   const trimmed = raw.trim();
   if (!trimmed) {
-    return { operators: [], freeText: '', regex: null, raw };
+    // Only spaces is a search too: two of them find a double space to clean up.
+    return { operators: [], freeText: raw, regex: null, raw };
   }
 
   // Special-case: the WHOLE trimmed input is a bare regex. We don't allow
@@ -217,7 +225,10 @@ export function parseQuery(raw: string): ParsedQuery {
 
   return {
     operators,
-    freeText: freeTextParts.join(' '),
+    // Never trimmed or re-spaced: ` - ` trimmed to `-` would match (and a
+    // Replace All rewrite) every hyphenated word, and two spaces would leave
+    // nothing to find.
+    freeText: operators.length === 0 ? raw : freeTextParts.join(' '),
     regex: null,
     raw,
   };

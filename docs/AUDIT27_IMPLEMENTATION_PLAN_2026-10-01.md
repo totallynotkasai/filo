@@ -399,6 +399,102 @@ Tests:
 - KNOWN_LIMITATIONS #48: its example now works as described; no change of substance.
 - The Search panel's placeholder or help mentions quoting and `/regex/`. *Optional; Useful 2/10.*
 
+### Phase 2 outcome (done 2026-10-01)
+
+**What changed: Replace shows the match it changes next (U-01)**
+- `search.svelte.ts`:
+  - `refreshNow()` bumps `noteTick`, so the list reads every note's text at once.
+  - `showMatchAfterReplace(replaced)` refreshes, keeps the replaced match's index (it now holds the match after it), skips any match in the same note that starts inside the replacement, wraps to the first match past the end, and requests the jump.
+  - New type `ReplacedMatch`: the match, its index and the replacement.
+- `replaceAllCommand.ts`: `replaceCurrentMatch` returns what it replaced (`ReplacedMatch`) instead of `true`, or `null` when it replaced nothing. Its fresh-check stays as the guard.
+- `SearchPanel.svelte`:
+  - after a single Replace it calls `showMatchAfterReplace`, not `next()`;
+  - Replace clicks run one after another, so a second click acts on the match the first moved on to;
+  - after Replace All it calls `refreshNow()`.
+
+**What changed: the search text is what you typed (U-04)**
+- `queryParser.ts`: with no operator and no `/regex/`, `freeText` is the query exactly as typed: spaces, quotes and backslashes included. With an operator, the tokenising is unchanged.
+- `runSearch.ts`:
+  - `runVaultSearch` no longer trims the free text before deciding there is nothing to search.
+  - `buildNeedleRegex`: Whole word checks no end where the needle itself is whitespace. So ` - ` with Whole word on still finds the one in `a - b`.
+- `replaceAllText.ts`: the confirm names the search and the replacement, e.g. `Replace " - " with " – " (12 matches in 4 notes)?`.
+  - Every space in them is a no-break space. The dialog's `white-space: pre-line` collapses a run of ordinary spaces, so a double space would read as one.
+  - Text that is only spaces adds a count: `"  " (2 spaces)`.
+  - An empty replacement reads `with nothing`.
+  - A `/regex/` is named as typed.
+  - `searchedText(query)` builds the search's name. `replaceAllConfirmBody` now takes one object (`ReplaceAllPreview`).
+- `SearchPanel.svelte`: the find box has a tooltip: text is found exactly as typed; the filters; quote text with spaces when using a filter; `/pattern/` for a regular expression.
+- CLAUDE.md: the project-tree lines for `search.svelte.ts`, `queryParser.ts` and `replaceAllText.ts`.
+- KNOWN_LIMITATIONS #48: no change, as planned.
+
+**What changed: the Search panel opens above the sidebar (found during the real-app check)**
+- The Search panel and the Find All popup used `z-index: var(--z-floating, 800)`, but `--z-floating` was defined nowhere. So they sat at 800, under the docked sidebar (1000) and the toolbar (1100).
+- The panel opens at the top left, so with the sidebar open (the default) the sidebar's own search bar covered the find box and the drag handle. You could type, but not see what you typed.
+- `style.css` now defines `--z-floating: 1300`: above the sidebar, the toolbars and the side toolbars (1200); below popups, menus and modals.
+- Both components use it with no fallback, so the `css-vars` gate fails if the token goes. Proved: with the token removed the gate names both lines.
+
+**Tests**
+
+| File | Cases | On `5f25a70` (fix files put back) |
+|---|---|---|
+| `src/tests/component/searchReplaceShowsNextMatch.test.ts` (new) | 6 | 5 fail |
+| `src/tests/unit/queryParser.test.ts` | 5 new, 3 rewritten | the 5 new ones fail |
+| `src/tests/unit/runSearch.test.ts` | 4 new | 3 fail |
+| `src/tests/unit/replaceAllText.test.ts` | 4 new, 3 updated | 3 fail on the old parser; the wording is a new API |
+| `src/tests/component/searchReplaceAllConfirm.test.ts` | 1 new, 1 updated | the new one fails |
+
+- **Replace** (`searchReplaceShowsNextMatch.test.ts`): the real panel, the real Replace command and note writer, over in-memory files, with matches in notes A, B and C.
+  - Replace A: the panel jumps to B, the current match is B and the counter reads "1 / 2". After `NOTE_REFRESH_MS` it is still B and "1 / 2". The next Replace changes B and leaves C.
+  - Two Replace clicks 100 ms apart change A, then B, with no warning.
+  - Two clicks at once also change A, then B.
+  - A second match in the same note is the one shown and changed next.
+  - `frodo` → `frodo baggins` moves on to B, not to the `frodo` inside the replacement. This case passes on the old code too, as the plan expected.
+  - Replacing the last match goes back to the first.
+- **Search text**:
+  - `parseQuery`: ` - `, `a  b` and `the end. ` stay as typed; quotes stay; a misspelled operator keeps its spaces; `C:\foo\bar` stays whole (the old parser made it `C:foobar`); `tag:x  foo   bar ` still gives `foo bar`; ` / - / ` is still a regex; a query of only spaces is searched.
+  - `runVaultSearch`: ` - ` finds the spaced hyphen and not the one in `well-known`; two spaces find the double space; Whole word with ` - `; an operator query is tokenised as before.
+  - `buildNeedleRegex`: Whole word with a space at one or both ends, and `-` alone still skipping the hyphen inside a word.
+  - The confirm: the quoted search and replacement, the space count, `with nothing`, a regex, and in the real panel a Replace All of ` - `.
+
+**Verification**
+- **The tests bite.** The fix files were put back to `5f25a70` and the tests run, then the files restored byte-for-byte:
+  - Replace (`search.svelte.ts`, `SearchPanel.svelte`, `replaceAllCommand.ts`): 5 of 6 fail. On the old code the counter reads "2 / 3" and the panel then sits on C; the 100 ms double click leaves B unchanged behind a "match moved" warning.
+  - Search text (`queryParser.ts`, `runSearch.ts`): 12 fail, the 49 existing cases in those files pass.
+- **The real app.** A Playwright script drove the built app over a small vault of four notes on no board (`phase2check.mjs`, this session's scratchpad). All 13 checks passed, with no renderer errors:
+  - "1 / 3"; Replace changes Alpha, opens Beta and reads "1 / 2", still "1 / 2" 0.7 s later;
+  - the next Replace changes Beta and leaves Gamma;
+  - ` - ` finds one match;
+  - the confirm reads `Replace " - " with " – " (1 match in 1 note)?`, and Replace All changes only the spaced hyphen, leaving `well-known` and the double space;
+  - two spaces find one match.
+  - Before the z-index fix, the element on top of the find box was the sidebar's search bar; after it, the find box itself.
+- `npm run ci:verify` on Windows: green.
+  - lint, svelte-check (858 files) and `typecheck:main` clean;
+  - `test:unit:strict`: 788 files, 7,440 tests passed, 5 skipped;
+  - build;
+  - 89/89 gates, including `test-typecheck` (the new test file type-checks clean), `css-vars` and `no-audit-narration`.
+- E2E not run: this phase changes no quit, shutdown, startup or watching path.
+
+**Deviations from the plan**
+1. **A query of only spaces is searched.** D2 said an all-space query stays empty. But the plan's own test ("two spaces match a double space") and the review's complaint ("removing double spaces is impossible") both need it.
+   - A single space finds every space, capped at 5,000 matches like any other search, and Replace All refuses a capped list.
+   - The confirm says how many spaces it will replace.
+2. **With no operator, quotes are part of the text.** "Exactly as typed" includes quote characters, as in an editor's Find: `"hello world" plain` looks for the quotes too. Quotes still group words after a filter (`tag:x " - "`), which is what the plan's note about quoted phrases covers. The existing test of quote grouping now uses a filter.
+3. **Whole word, not in the plan.** Without the change, ` - ` with Whole word on found nothing in `a - b`, because the letter before the space failed the word check. That combination was rare while the text was always trimmed.
+4. **Matches inside the replacement are skipped, not "call `next()` if it's still there".** Every match in the same note that starts before the end of the replacement is passed over, as an editor's Replace does.
+   - `foo` → `foobar` behaves as the plan describes.
+   - `foo` → `xfoo` is caught too. Its inner match starts one character later, so a "still there" check by position would have missed it, and the next Replace would have made `xxfoo`.
+5. **Not in the plan:**
+   - Replace clicks are queued. Two clicks closer together than one write could both act on A (the second then failed with "skipped" or "match moved").
+   - `refreshNow()` also runs after Replace All, so the replaced matches leave the list at once. Otherwise a single Replace within the next 0.4 s warned "match moved".
+6. **`replaceCurrentMatch` returns what it replaced** instead of a boolean, so the panel knows the match, its index and the replacement text used.
+7. **The confirm** also handles text that is only spaces, an empty replacement and a regex. `replaceAllConfirmBody` takes one object (6 values).
+8. **2.3 help** is a tooltip on the find box rather than more placeholder text: the placeholder already fills the box.
+9. **The z-index fix** (above) was not in the plan. It came from the real-app check, and it decides whether you can see the text you are searching, which is the point of U-04.
+
+**New findings** (low, not fixed)
+- With a filter in the query, the tokeniser still drops a backslash after a colon: `tag:x C:\foo` searches `C:foo`. Quoting doesn't help, since the escape is read inside quotes too. Rare.
+- If a note changes between Replace's read and its write, the write is skipped with a "Replace skipped" warning, but the panel still moves on past that match. Before this phase it moved on the same way.
+
 ---
 
 ## Phase 3: titles are saved when you click away (N-1, F-03; Impact 4/10 and 3/10, Hard 3/10)

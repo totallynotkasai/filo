@@ -28,7 +28,7 @@
 
 import { Command } from './Command';
 import { historyStore } from '../stores/history.svelte';
-import { searchStore } from '../stores/search.svelte';
+import { searchStore, type ReplacedMatch } from '../stores/search.svelte';
 import { vaultStore } from '../stores/vault.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { runVaultSearch, type SearchMatch } from '../lib/search/runSearch';
@@ -364,58 +364,61 @@ export async function runReplaceAllCommand(): Promise<void> {
 /**
  * Replaces just the current match (the one pointed at by
  * `searchStore.currentMatch`). Single-file write but still routed through
- * `historyStore` so undo restores the prior file content. Returns true on
- * success so the caller can advance the cursor on Find.
+ * `historyStore` so undo restores the prior file content. Returns what it
+ * replaced, so the panel can show the match after it, or null when it
+ * replaced nothing.
  */
-export async function replaceCurrentMatch(): Promise<boolean> {
+export async function replaceCurrentMatch(): Promise<ReplacedMatch | null> {
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) {
     uiStore.toast('No vault open.', 'error', 2500);
-    return false;
+    return null;
   }
   const match = searchStore.currentMatch;
-  if (!match) return false;
+  if (!match) return null;
   if (match.matchKind !== 'body') {
     uiStore.toast(
       'Title matches are not replaceable from this panel — open the tile to rename.',
       'info',
       3500,
     );
-    return false;
+    return null;
   }
-  if (!match.filePath) return false;
+  if (!match.filePath) return null;
   if (match.inSyntax) {
     uiStore.toast(
       `This match is part of the note's Markdown formatting (${SYNTAX_KINDS}); Replace leaves it alone.`,
       'info',
       4000,
     );
-    return false;
+    return null;
   }
 
   // Re-run the same plan builder against a single match so the splice
   // arithmetic stays in one place. Refresh the result against the latest
   // store state (so a vault edit between Find and Replace doesn't write a
   // stale offset).
+  const index = searchStore.currentIndex;
   const fresh = runVaultSearch(searchStore.parsed, searchStore.options);
-  const current = fresh.matches[searchStore.currentIndex];
+  const current = fresh.matches[index];
   if (!current || current.filePath !== match.filePath || current.matchStart !== match.matchStart) {
     uiStore.toast(
       'Match moved or was edited externally — re-run Find before replacing.',
       'warning',
       3500,
     );
-    return false;
+    return null;
   }
 
-  const result = await buildPlans(vaultRoot, [current], searchStore.replaceText);
+  const replacement = searchStore.replaceText;
+  const result = await buildPlans(vaultRoot, [current], replacement);
   if (!result.ok) {
     uiStore.toast(`Could not read ${current.filePath}. Replace aborted.`, 'error', 4000);
-    return false;
+    return null;
   }
-  if (result.plans.length === 0) return false;
+  if (result.plans.length === 0) return null;
 
   const command = new ReplaceAllCommand(vaultRoot, result.plans);
   await historyStore.execute(command);
-  return true;
+  return { match: current, index, replacement };
 }

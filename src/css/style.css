@@ -144,6 +144,11 @@ img, svg {
   --z-toolbar: 1100;
   --z-tab-bar: 1100;
   --z-side-toolbar: 1200;
+  /* Floating, non-modal panels the user opens over the workspace (Search,
+     Find All): above the docked sidebar, the toolbars and the side toolbars,
+     since the Search panel opens over the sidebar; below popups, menus and
+     modals. */
+  --z-floating: 1300;
   --z-tooltip: 2100;
   --z-minimap: 2300;
   --z-tile-popup-overlay: 2300;

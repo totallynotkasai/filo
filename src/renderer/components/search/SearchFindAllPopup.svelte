@@ -143,7 +143,7 @@
 <style>
   .findall-popup {
     position: fixed;
-    z-index: var(--z-floating, 800);
+    z-index: var(--z-floating);
     top: 72px;
     right: 16px;
     width: 380px;

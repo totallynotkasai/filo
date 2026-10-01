@@ -14,6 +14,8 @@
  * title or fields changing (every autosave) re-runs it only after
  * `NOTE_REFRESH_MS` without another change, and only while the panel is
  * open with a query: a whole-vault search on each save made typing hitch.
+ * A single Replace re-reads them at once (`showMatchAfterReplace`), since the
+ * next Replace acts on the match the panel shows.
  */
 
 import { untrack } from 'svelte';
@@ -21,6 +23,14 @@ import { parseQuery, isEmptyQuery, type ParsedQuery } from '../lib/search/queryP
 import { runVaultSearch, MAX_MATCHES, type SearchMatch, type SearchOptions } from '../lib/search/runSearch';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { vaultIndexStore } from './vaultIndex.svelte';
+import { vaultPath } from '../../shared/vaultPath';
+
+/** A match single Replace just changed: where it was in the list, and what it became. */
+export interface ReplacedMatch {
+  match: SearchMatch;
+  index: number;
+  replacement: string;
+}
 
 /** How long notes must stay unchanged before an open search reads their text again. */
 export const NOTE_REFRESH_MS = 400;
@@ -193,6 +203,44 @@ export const searchStore = {
   },
   consumeJump() {
     pendingJump = null;
+  },
+
+  /** Reads every note's text again now, rather than once edits pause. */
+  refreshNow() {
+    noteTick += 1;
+  },
+
+  /**
+   * After single Replace: the list is read again at once, then the match
+   * after the replaced one is shown. Moving on in the list as it stands
+   * would show one match while the refresh, a moment later, makes the next
+   * Replace act on another. The replaced match has left the list, so its
+   * index now holds the match after it; a match that starts inside the
+   * replacement (`foo` replaced by `foobar`) is passed over, as an editor's
+   * Replace does.
+   */
+  showMatchAfterReplace(replaced: ReplacedMatch) {
+    noteTick += 1;
+    const list = searchResult.matches;
+    if (list.length === 0) {
+      currentIndex = 0;
+      pendingJump = null;
+      return;
+    }
+    const file = replaced.match.filePath === null ? null : vaultPath(replaced.match.filePath);
+    const end = replaced.match.matchStart + replaced.replacement.length;
+    let i = replaced.index;
+    while (i < list.length) {
+      const m = list[i]!;
+      const inReplacement = m.matchKind === 'body'
+        && m.filePath !== null
+        && vaultPath(m.filePath) === file
+        && m.matchStart < end;
+      if (!inReplacement) break;
+      i++;
+    }
+    currentIndex = i < list.length ? i : 0;
+    requestJump();
   },
 
   /**

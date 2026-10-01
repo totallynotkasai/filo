@@ -90,7 +90,9 @@ export interface SearchOptions {
  * Builds a global RegExp from a free-text needle: case-insensitive unless
  * `matchCase`. `wholeWord` matches only where no letter, digit or `_` (in any
  * script) touches either end, so `cat` skips `concatenate` and `café` is a
- * word of its own. Returns null when the input is empty.
+ * word of its own. An end where the needle itself is whitespace needs no
+ * check, since the whitespace already ends a word there (` - ` finds the one
+ * in `a - b`). Returns null when the input is empty.
  */
 export function buildNeedleRegex(needle: string, options: SearchOptions = {}): RegExp | null {
   if (!needle) return null;
@@ -99,8 +101,10 @@ export function buildNeedleRegex(needle: string, options: SearchOptions = {}): R
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const flags = options.matchCase ? 'g' : 'gi';
   if (!options.wholeWord) return new RegExp(escaped, flags);
+  const before = /^\s/.test(needle) ? '' : '(?<![\\p{L}\\p{N}_])';
+  const after = /\s$/.test(needle) ? '' : '(?![\\p{L}\\p{N}_])';
   // `u` for the Unicode letter / number classes.
-  return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, `${flags}u`);
+  return new RegExp(`${before}${escaped}${after}`, `${flags}u`);
 }
 
 /**
@@ -329,7 +333,7 @@ export function runVaultSearch(
 ): { matches: SearchMatch[]; truncated: boolean } {
   // Empty query: short-circuit (avoid an O(n) walk for a no-op).
   const hasOps = query.operators.length > 0;
-  const hasText = query.freeText.trim().length > 0;
+  const hasText = query.freeText.length > 0;
   const hasRegex = query.regex !== null;
   if (!hasOps && !hasText && !hasRegex) {
     return { matches: [], truncated: false };

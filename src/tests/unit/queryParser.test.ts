@@ -16,9 +16,10 @@ describe('parseQuery — empty / plain text', () => {
     expect(q.raw).toBe('');
   });
 
-  it('returns an empty parse for whitespace-only input', () => {
+  it('searches whitespace-only input as typed', () => {
     const q = parseQuery('   ');
-    expect(isEmptyQuery(q)).toBe(true);
+    expect(isEmptyQuery(q)).toBe(false);
+    expect(q.freeText).toBe('   ');
     expect(q.raw).toBe('   ');
   });
 
@@ -29,9 +30,39 @@ describe('parseQuery — empty / plain text', () => {
     expect(q.regex).toBeNull();
   });
 
-  it('preserves quoted strings with whitespace', () => {
-    const q = parseQuery('"hello world" plain');
+  it('with an operator, preserves quoted strings with whitespace', () => {
+    const q = parseQuery('tag:x "hello world" plain');
     expect(q.freeText).toBe('hello world plain');
+  });
+});
+
+describe('parseQuery — text with no operator is searched as typed', () => {
+  it('keeps leading, trailing and repeated spaces', () => {
+    expect(parseQuery(' - ').freeText).toBe(' - ');
+    expect(parseQuery('a  b').freeText).toBe('a  b');
+    expect(parseQuery('the end. ').freeText).toBe('the end. ');
+  });
+
+  it('keeps quotes as typed', () => {
+    expect(parseQuery('"hello world" plain').freeText).toBe('"hello world" plain');
+    expect(parseQuery('say "hi"').freeText).toBe('say "hi"');
+  });
+
+  it('a misspelled operator is text, so the query is kept as typed', () => {
+    expect(parseQuery('has:wibble  x').freeText).toBe('has:wibble  x');
+  });
+
+  it('with an operator, the rest is tokenised as before', () => {
+    const q = parseQuery('tag:x  foo   bar ');
+    expect(q.operators).toEqual([{ kind: 'tag', value: 'x' }]);
+    expect(q.freeText).toBe('foo bar');
+    expect(parseQuery('tag:x " - "').freeText).toBe(' - ');
+  });
+
+  it('a /regex/ is still a regex, with spaces around it', () => {
+    const q = parseQuery(' / - / ');
+    expect(q.regex?.source).toBe(' - ');
+    expect(q.freeText).toBe('');
   });
 });
 
@@ -156,18 +187,9 @@ describe('parseQuery — multi-operator queries', () => {
 });
 
 describe('parseQuery — plain text preserves Windows paths', () => {
-  it('keeps backslash before non-colon chars verbatim', () => {
-    const q = parseQuery('C:\\foo\\bar');
-    // No operator prefix matches `C` so this token routes to free text.
-    // The colon makes the tokeniser look for an escape, but we still want
-    // the backslash literal in the final free text for plain searches.
-    // (The current heuristic strips the escape because `C:` looks like an
-    // operator value — that's a known trade-off; the user can quote it.)
-    // Validate behaviour rather than expectation; assert the path's bones
-    // are recoverable via quoting.
-    const quoted = parseQuery('"C:\\foo\\bar"');
-    expect(quoted.freeText).toContain('foo');
-    expect(quoted.freeText).toContain('bar');
-    void q;
+  it('keeps a path with no operator exactly as typed, backslashes included', () => {
+    // `C:` is no operator, so the whole query is the text to find; the
+    // tokeniser's colon escape never applies to it.
+    expect(parseQuery('C:\\foo\\bar').freeText).toBe('C:\\foo\\bar');
   });
 });

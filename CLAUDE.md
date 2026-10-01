@@ -193,7 +193,7 @@ filo/
 │   │   │   ├── vaultExternalPrompts.ts  # Attachment / note deleted outside Filo while tiles point at it
 │   │   │   ├── vaultExternalDriftPrompts.ts # Startup registration of the writers' drift prompts
 │   │   │   ├── openTagHousekeeping.ts # After open: seed an empty tag registry, or prune gone files' tags once the recovery prompts are answered
-│   │   │   ├── search.svelte.ts       # Search panel state: query, Match case / Whole word, matches, replace; a note edit re-runs the search only once edits pause (NOTE_REFRESH_MS)
+│   │   │   ├── search.svelte.ts       # Search panel state: query, Match case / Whole word, matches, replace; a note edit re-runs the search only once edits pause (NOTE_REFRESH_MS), a Replace at once (then shows the match the next Replace changes)
 │   │   │   ├── vaultRecovery.ts       # `.filo/.dirty.<machineId>` sentinel + recovery modal
 │   │   │   ├── foreignSentinels.svelte.ts # Other machines' sentinels in a synced `.filo/`: listed / one info toast, never resumed or cleared
 │   │   │   ├── vaultLifecycleGuard.svelte.ts # One vault open or close at a time (a second returns 'busy'; Home disables its cards)
@@ -561,10 +561,10 @@ filo/
 │   │   │   │   ├── layoutCapture.ts
 │   │   │   │   └── layoutTemplateStore.ts
 │   │   │   ├── search/                # Query parser + search runner (matches over the vault index's bodies)
-│   │   │   │   ├── queryParser.ts     # `tag:` / `board:` / `has:` / `property:` / `type:` operators, /regex/, free text
+│   │   │   │   ├── queryParser.ts     # `tag:` / `board:` / `has:` / `property:` / `type:` operators, /regex/, free text (with no operator: exactly as typed, spaces and quotes included)
 │   │   │   │   ├── runSearch.ts       # runVaultSearch: every tile on every board plus notes on no board; Match case / Whole word
 │   │   │   │   ├── markdownSyntax.ts  # Where a body holds Markdown syntax (list markers, rules, table delimiter rows, link addresses, HTML tags): Replace leaves a match there alone
-│   │   │   │   └── replaceAllText.ts  # Replace All's confirm (body matches only, the notes named, matches in Markdown syntax counted apart) and its refusal at the match cap
+│   │   │   │   └── replaceAllText.ts  # Replace All's confirm (the search and the replacement quoted with every space kept, body matches only, the notes named, matches in Markdown syntax counted apart) and its refusal at the match cap
 │   │   │   ├── spatialIndex.ts        # rbush wrapper
 │   │   │   └── utils/                 # Shared utilities
 │   │   │       ├── ids.ts             # nanoid wrapper

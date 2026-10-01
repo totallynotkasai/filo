@@ -349,3 +349,38 @@ describe('runVaultSearch — operator filtering', () => {
     expect(bodyMatches).toHaveLength(1);
   });
 });
+
+describe('runVaultSearch — the text is found as typed', () => {
+  function bodyMatches(query: string, options: { wholeWord?: boolean } = {}): string[] {
+    return runVaultSearch(parseQuery(query), options).matches
+      .filter((m) => m.matchKind === 'body')
+      .map((m) => `${m.filePath}@${m.matchStart}:${JSON.stringify(m.matchText)}`);
+  }
+
+  beforeEach(() => {
+    vaultIndexStore.restoreMetadata('words.md', parseMarkdown('words.md', 'a well-known fact - and  two spaces'));
+    boardCacheStore.hydrate(
+      { mm: makeMindMap('Mind Map A', 'mm', { t1: makeTextDef('t1', 'Words', 'words.md') }) },
+      { mm: 'a.board.json' },
+    );
+  });
+
+  it('a spaced hyphen finds only the spaced hyphen, not the one inside a word', () => {
+    expect(bodyMatches(' - ')).toEqual(['words.md@17:" - "']);
+  });
+
+  it('two spaces find the double space, and a double space inside the text counts', () => {
+    expect(bodyMatches('  ')).toEqual(['words.md@23:"  "']);
+    expect(bodyMatches('and  two')).toEqual(['words.md@20:"and  two"']);
+    expect(bodyMatches('and two')).toEqual([]);
+  });
+
+  it('Whole word still finds a needle that starts and ends with a space', () => {
+    expect(bodyMatches(' - ', { wholeWord: true })).toEqual(['words.md@17:" - "']);
+  });
+
+  it('with an operator, the text left over is tokenised as before', () => {
+    expect(bodyMatches('type:text  and   two')).toEqual([]);
+    expect(bodyMatches('type:text " - "')).toEqual(['words.md@17:" - "']);
+  });
+});

@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { searchStore, type SearchMode } from '../../stores/search.svelte';
+  import { searchStore, type ReplacedMatch, type SearchMode } from '../../stores/search.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { navigateToTile } from '../../lib/utils/navigation.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import SearchFindAllPopup from './SearchFindAllPopup.svelte';
   import IconButton from '../shared/IconButton.svelte';
   import { replaceableMatches } from '../../lib/search/runSearch';
-  import { replaceAllConfirmBody, ONLY_SYNTAX_MATCHES, TOO_MANY_TO_REPLACE } from '../../lib/search/replaceAllText';
+  import { replaceAllConfirmBody, searchedText, ONLY_SYNTAX_MATCHES, TOO_MANY_TO_REPLACE } from '../../lib/search/replaceAllText';
 
   /**
    * Vault-wide Search panel.
@@ -21,6 +21,11 @@
    * user can Tab from the find box into the workspace and back without
    * fighting a forced cycle.
    */
+
+  const FIND_HELP = 'Finds the text exactly as typed, spaces included.\n'
+    + 'Filters: tag:#name, board:name, property:key=value, type:image, has:connections. '
+    + 'With a filter, put text that has spaces in quotes.\n'
+    + '/pattern/ finds a regular expression.';
 
   let panelEl = $state<HTMLElement | null>(null);
   let findInputEl = $state<HTMLInputElement | null>(null);
@@ -156,9 +161,19 @@
     }
   }
 
-  async function handleReplaceCurrent(): Promise<void> {
-    const ok = await runReplaceCurrent();
-    if (ok) searchStore.next();
+  // Replace clicks run one after another: a second click while the first is
+  // still writing acts on the match the first moves on to, not on the one
+  // it is replacing.
+  let replaceQueue: Promise<void> = Promise.resolve();
+
+  function handleReplaceCurrent(): Promise<void> {
+    const run = replaceQueue.then(async () => {
+      const replaced = await runReplaceCurrent();
+      if (replaced) searchStore.showMatchAfterReplace(replaced);
+    });
+    // A Replace that throws still lets the next click run.
+    replaceQueue = run.catch(() => undefined);
+    return run;
   }
 
   async function handleReplaceAll(): Promise<void> {
@@ -180,7 +195,14 @@
     }
     uiStore.openConfirm({
       title: 'Replace All',
-      body: replaceAllConfirmBody(count, files, found.matches.length - count - inSyntax, inSyntax),
+      body: replaceAllConfirmBody({
+        find: searchedText(searchStore.parsed),
+        replace: searchStore.replaceText,
+        count,
+        files,
+        titleMatches: found.matches.length - count - inSyntax,
+        inSyntax,
+      }),
       confirmLabel: 'Replace All',
       danger: false,
       onConfirm: () => {
@@ -192,7 +214,7 @@
   // Lazy-import to keep the panel's initial render light and avoid a
   // circular reference at module-load time (the command imports stores
   // that may load this component lazily).
-  async function runReplaceCurrent(): Promise<boolean> {
+  async function runReplaceCurrent(): Promise<ReplacedMatch | null> {
     const { replaceCurrentMatch } = await import('../../commands/replaceAllCommand');
     return replaceCurrentMatch();
   }
@@ -200,6 +222,8 @@
   async function runReplaceAll(): Promise<void> {
     const { runReplaceAllCommand } = await import('../../commands/replaceAllCommand');
     await runReplaceAllCommand();
+    // The replaced matches leave the list now, not once edits pause.
+    searchStore.refreshNow();
   }
 
   // No onDestroy cleanup needed — the panel is renderer-light and the
@@ -269,6 +293,7 @@
         type="search"
         class="search-input"
         placeholder="Find in vault… (tag:#name property:k=v type:image /regex/)"
+        title={FIND_HELP}
         value={searchStore.query}
         oninput={(e) => searchStore.setQuery((e.currentTarget as HTMLInputElement).value)}
         onkeydown={handleFindKeydown}
@@ -383,7 +408,7 @@
 <style>
   .search-panel {
     position: fixed;
-    z-index: var(--z-floating, 800);
+    z-index: var(--z-floating);
     width: 360px;
     background: var(--ui-surface);
     border: 1px solid var(--ui-border);

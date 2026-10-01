@@ -73,6 +73,17 @@ const PAIRS: Array<[string, string, number, string]> = [
   ['--ui-warn-text', '--ui-warn-bg-hover', WCAG_AA_NORMAL, 'warning banner text (hover)'],
 ];
 
+/**
+ * The Light theme's small grey text (hints, counts, dates, the Task List's
+ * shortcut strip) meets the full normal-text bar, not only the large-text one
+ * every theme meets above.
+ */
+const LIGHT_SMALL_TEXT: Array<[string, string]> = [
+  ['--text-tertiary', '--ui-bg'],
+  ['--text-tertiary', '--ui-surface'],
+  ['--text-tertiary', '--ui-bg-secondary'],
+];
+
 describe('built-in themes', () => {
   it('are all five read from style.css', () => {
     expect(themes.map((t) => t.id).sort()).toEqual(['blueprint', 'dark', 'light', 'nature', 'retro']);
@@ -104,6 +115,19 @@ describe('WCAG AA contrast — built-in themes', () => {
           ).toBeGreaterThanOrEqual(threshold);
         });
       }
+    });
+  }
+});
+
+describe('WCAG AA contrast — Light theme small text', () => {
+  const light = themes.find((t) => t.id === 'light');
+  for (const [textVar, bgVar] of LIGHT_SMALL_TEXT) {
+    it(`${textVar} on ${bgVar} meets ${WCAG_AA_NORMAL}:1`, () => {
+      const text = light?.variables[textVar];
+      const bg = light?.variables[bgVar];
+      expect(text && bg, `light missing ${textVar} or ${bgVar}`).toBeTruthy();
+      const ratio = contrastRatio(text ?? '', bg ?? '');
+      expect(ratio, `[light] ${textVar} on ${bgVar} = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(WCAG_AA_NORMAL);
     });
   }
 });

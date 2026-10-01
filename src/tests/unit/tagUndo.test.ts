@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { undoRemoval, undoRename, isMergingRename, resumeTagSweep, type TagRemovalSnapshot, type TagRenameSnapshot } from '@renderer/stores/tagUndo.svelte';
+import {
+  undoRemoval,
+  undoRename,
+  isMergingRename,
+  resumeTagSweep,
+  removeTagWithUndo,
+  renameTagWithUndo,
+  type TagRemovalSnapshot,
+  type TagRenameSnapshot,
+} from '@renderer/stores/tagUndo.svelte';
+import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -224,5 +234,50 @@ describe('undo of a tag delete: filter chips on a mounted view', () => {
 
     expect(lastViewTags()).toEqual(['work', 'keep']);
     expect(boardCacheStore.cache.kb?.board.settings).not.toBe(settingsBefore);
+  });
+});
+
+describe('the Undo on a vault-wide tag action toast', () => {
+  const tagToasts = (): Array<{ text: string; actions: string[] }> =>
+    uiStore.toasts
+      .filter((t) => /^(Deleted tag|Renamed|Merged) /.test(t.text))
+      .map((t) => ({ text: t.text, actions: (t.actions ?? []).map((a) => a.label) }));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue([]);
+    vi.spyOn(vaultIndexStore, 'whenBuildComplete').mockResolvedValue(undefined);
+    vi.spyOn(fileTagsStore, 'removeTagEverywhere').mockResolvedValue({ committed: true, writtenPaths: ['A.md'] });
+    vi.spyOn(fileTagsStore, 'renameTagEverywhere').mockResolvedValue({ committed: true, writtenPaths: ['A.md'] });
+  });
+
+  afterEach(() => {
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+    vi.useRealTimers();
+  });
+
+  it('stays on offer until dismissed', async () => {
+    expect(await removeTagWithUndo('work')).toBe(true);
+    expect(tagToasts()).toEqual([{ text: 'Deleted tag "#work" from 1 item.', actions: ['Undo'] }]);
+
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(tagToasts()).toEqual([{ text: 'Deleted tag "#work" from 1 item.', actions: ['Undo'] }]);
+
+    uiStore.dismissToast(uiStore.toasts.find((t) => t.text.startsWith('Deleted tag'))!.id);
+    expect(tagToasts()).toEqual([]);
+  });
+
+  it('a newer tag action replaces it, Undo and all', async () => {
+    vi.spyOn(fileTagsStore, 'tagExists').mockReturnValue(false);
+    await removeTagWithUndo('work');
+    await renameTagWithUndo('old', 'fresh');
+    expect(tagToasts()).toEqual([{ text: 'Renamed "#old" to "#fresh".', actions: ['Undo'] }]);
+
+    // A merge has no Undo; it still replaces the older Undo, and goes in time.
+    vi.spyOn(fileTagsStore, 'tagExists').mockReturnValue(true);
+    await renameTagWithUndo('fresh', 'other');
+    expect(tagToasts()).toEqual([{ text: 'Merged "#fresh" into "#other".', actions: [] }]);
+    vi.advanceTimersByTime(60_000);
+    expect(tagToasts()).toEqual([]);
   });
 });

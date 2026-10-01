@@ -86,21 +86,33 @@ function offerDeleteUndo(itemName: string, command: CascadeDeleteCommand, offSta
     }
     return command.trashId === null;
   };
-  registerDeleteUndo({ trashId: () => command.trashId, tilesBack: command.touchedBoardIds().size > 0, undo });
+  registerDeleteUndo({
+    trashId: () => command.trashId,
+    tilesBack: command.touchedBoardIds().size > 0,
+    undo,
+    inHistory: () => historyStore.holds(command),
+  });
+  const alreadyBack = (): void => {
+    uiStore.toast(`"${itemName}" is already back.`, 'info', 5000);
+  };
   toastMovedToTrash(itemName, async () => {
+    // Undone already (Ctrl+Z, or Settings → Trash): nothing is left to undo,
+    // whichever stack held it.
+    if (command.trashId === null) {
+      alreadyBack();
+      return;
+    }
     if (offStack && !historyStore.holdsOffStack(command)) {
       // A board it changed was reloaded since: undoOffStack says so.
       await historyStore.undoOffStack(command, label);
       return;
     }
     if (await undo()) return;
-    uiStore.toast(
-      command.trashId === null
-        ? `"${itemName}" is already back.`
-        : `That delete is no longer in the undo history. Restore "${itemName}" from Settings → Trash.`,
-      'info',
-      5000,
-    );
+    if (command.trashId === null) {
+      alreadyBack();
+      return;
+    }
+    uiStore.toast(`That delete is no longer in the undo history. Restore "${itemName}" from Settings → Trash.`, 'info', 5000);
   });
 }
 

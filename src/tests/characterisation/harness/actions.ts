@@ -553,6 +553,13 @@ export async function indentTask(row: HTMLElement, outdent = false): Promise<voi
   await quiesce(600);
 }
 
+/** A task's context menu → Add subtask. */
+export async function addSubtask(app: CharApp, row: HTMLElement): Promise<void> {
+  await rightClick(row.querySelector('.task-title') ?? row);
+  await chooseMenuItem(app, 'Add subtask');
+  await quiesce(400);
+}
+
 /** True when the row is shown as a subtask of the row above it. */
 export function taskIsSubtask(row: HTMLElement): boolean {
   return row.querySelector('.task-item.is-subtask') !== null;

@@ -46,7 +46,7 @@ const { registerVaultHandlers } = await import('../../main/ipc/vault.ipc');
 const { registerVaultEncodingHandlers } = await import('../../main/ipc/vaultEncoding.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 const { __resetNonUtf8RegistryForTests } = await import('../../main/services/nonUtf8Registry');
-const { atomicWriteFile } = await import('../../main/vault/filenameUtils');
+const { atomicWriteFile, STALE_HASH_MAX_BYTES } = await import('../../main/vault/filenameUtils');
 const { fnv1a32 } = await import('../../main/services/fileWatcherHash');
 
 type Result = { success: boolean; code?: string };
@@ -104,6 +104,21 @@ describe('the content hash on a write over a note', () => {
     expect(await fs.readFile(file, 'utf-8')).toBe('version B\n');
 
     await atomicWriteFile(file, 'mine\n', { expectStat: { ...other, hash: hashOf(Buffer.from('version B\n')) } });
+    expect(await fs.readFile(file, 'utf-8')).toBe('mine\n');
+  });
+
+  it('holds for a large note, up to the size limit; past it the stat alone is checked', async () => {
+    const file = join(dir, 'Large.md');
+    const large = (fill: string): Buffer => Buffer.alloc(10 * 1024 * 1024, fill);
+    const read = await saveAt(file, large('a'), at);
+    await saveAt(file, large('b'), at);
+    await expect(atomicWriteFile(file, 'mine\n', { expectStat: { ...read, hash: hashOf(large('a')) } })).rejects.toMatchObject({ code: 'STALE' });
+    expect((await fs.readFile(file)).subarray(0, 1).toString()).toBe('b');
+
+    const huge = (fill: string): Buffer => Buffer.alloc(STALE_HASH_MAX_BYTES + 1, fill);
+    const hugeRead = await saveAt(file, huge('a'), at);
+    await saveAt(file, huge('b'), at);
+    await atomicWriteFile(file, 'mine\n', { expectStat: { ...hugeRead, hash: hashOf(huge('a')) } });
     expect(await fs.readFile(file, 'utf-8')).toBe('mine\n');
   });
 

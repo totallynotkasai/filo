@@ -11,6 +11,13 @@
  * would save a backslash at the end of every line). Markdown copied from
  * another app still pastes with its formatting.
  *
+ * The paste's own first and last newlines are handled before parsing, as
+ * Ctrl+Shift+V handles them. Left in, tiptap-markdown puts them back around
+ * the parsed text, where ProseMirror reads them as hard breaks (a stray `\`
+ * when saved). Newlines opening the paste are dropped. A newline closing it
+ * is a soft break, so typing goes on on the next line, and two or more close
+ * the paragraph, as a blank line does.
+ *
  * Ctrl+Shift+V pastes the text literally: a paragraph per blank-line-
  * separated block and a soft break per newline, with no Markdown read.
  *
@@ -59,6 +66,56 @@ export function literalTextSlice(schema: Schema, text: string): Slice {
   return new Slice(Fragment.from(nodes), 1, 1);
 }
 
+/** A paste without its opening and closing newlines, and how many closed it. */
+export interface PasteEdges {
+  body: string;
+  newlinesAtEnd: number;
+}
+
+/**
+ * Splits `text` (any line endings) into the text to parse and its closing
+ * newlines. Spaces before a closing newline go with it: kept, they would sit
+ * before the soft break, and two of them read back as a hard break.
+ */
+export function pasteEdges(text: string): PasteEdges {
+  const lf = text.replace(/\r\n?/g, '\n');
+  let start = 0;
+  while (lf[start] === '\n') start++;
+  let end = lf.length;
+  let newlinesAtEnd = 0;
+  while (end > start && /[ \t\n]/.test(lf[end - 1] ?? '')) {
+    if (lf[end - 1] === '\n') newlinesAtEnd++;
+    end--;
+  }
+  // Spaces closing the paste with no newline after them are part of the text.
+  if (newlinesAtEnd === 0) end = lf.length;
+  return { body: lf.slice(start, end), newlinesAtEnd };
+}
+
+/**
+ * `slice` closed by `newlines` newlines: one is a soft break at the end of its
+ * text, two or more close its paragraph (the text after the paste then starts
+ * a new one). Only a paste that ends in paragraph text takes them; one that
+ * ends in a list, quote, heading or code keeps them closing that block.
+ */
+function closeWithNewlines(schema: Schema, slice: Slice, newlines: number): Slice {
+  const { paragraph, softBreak } = schema.nodes;
+  const last = slice.content.lastChild;
+  if (newlines === 0 || !paragraph || !softBreak || !last) return slice;
+  if (newlines >= 2) {
+    const endsInText = (slice.openEnd === 0 && last.isInline) || (slice.openEnd === 1 && last.type === paragraph);
+    return endsInText ? new Slice(slice.content.addToEnd(paragraph.create()), slice.openStart, 1) : slice;
+  }
+  if (slice.openEnd === 0 && last.isInline) {
+    return new Slice(slice.content.addToEnd(softBreak.create()), slice.openStart, 0);
+  }
+  if (slice.openEnd === 1 && last.type === paragraph) {
+    const closed = last.copy(last.content.addToEnd(softBreak.create()));
+    return new Slice(slice.content.replaceChild(slice.content.childCount - 1, closed), slice.openStart, 1);
+  }
+  return slice;
+}
+
 function htmlBody(html: string): HTMLElement {
   return new window.DOMParser().parseFromString(`<body>${html}</body>`, 'text/html').body;
 }
@@ -76,11 +133,13 @@ export const PastePlainText = Extension.create({
           clipboardTextParser: (text, $context, plainText) => {
             if (plainText) return literalTextSlice(editor.schema, text);
             parser ??= pasteParserFor(editor);
-            if (!parser) return literalTextSlice(editor.schema, text);
-            return ProseMirrorDOMParser.fromSchema(editor.schema).parseSlice(htmlBody(parser.parse(text, { inline: true })), {
+            const { body, newlinesAtEnd } = pasteEdges(text);
+            if (!parser || !body) return literalTextSlice(editor.schema, text);
+            const slice = ProseMirrorDOMParser.fromSchema(editor.schema).parseSlice(htmlBody(parser.parse(body, { inline: true })), {
               preserveWhitespace: true,
               context: $context,
             });
+            return closeWithNewlines(editor.schema, slice, newlinesAtEnd);
           },
         },
       }),

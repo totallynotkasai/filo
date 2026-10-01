@@ -14,6 +14,7 @@ import {
   taskRows,
   indentTask,
   taskIsSubtask,
+  addSubtask,
   undo,
 } from './harness/actions';
 
@@ -68,6 +69,32 @@ describe('subtasks', () => {
     await waitFor(() => !taskIsSubtask(taskRows(app)[1]!.el), 'the task back at the top level');
     await waitFor(() => taskFor(app, childNote).parentTileId === undefined, 'the board without the parent');
     expect(app.read(childNote)).toBe(childBefore);
+  });
+
+  it('Add subtask puts each new subtask below the ones already there, and undo takes back the newest', async () => {
+    const app = await startApp();
+    await createBoard(app, 'tasklist');
+    await quickAddTask(app, 'Plan trip');
+    await quickAddTask(app, 'Pack');
+    await waitFor(() => taskRows(app).length === 2, 'two tasks');
+    const parent = (): HTMLElement => taskRows(app).find((r) => r.title === 'Plan trip')!.el;
+
+    await addSubtask(app, parent());
+    await waitFor(() => taskRows(app).length === 3, 'the first subtask');
+    await addSubtask(app, parent());
+    await waitFor(() => taskRows(app).length === 4, 'the second subtask');
+
+    const shown = ['Plan trip', 'Plan trip - Subtask 1', 'Plan trip - Subtask 2', 'Pack'];
+    expect(taskRows(app).map((r) => r.title)).toEqual(shown);
+    expect(taskRows(app).slice(1, 3).every((r) => taskIsSubtask(r.el))).toBe(true);
+    await waitFor(
+      () => savedTasks(app).map((t) => t.filePath.replace(/^.*\//, '').replace(/\.md$/, '')).join() === shown.join(),
+      'the board saved in that order',
+    );
+
+    await undo(app);
+    await waitFor(() => taskRows(app).length === 3, 'one subtask taken back');
+    expect(taskRows(app).map((r) => r.title)).toEqual(['Plan trip', 'Plan trip - Subtask 1', 'Pack']);
   });
 
   it('a note that names a parent is shown nested; Shift+Tab outdents it without touching the note', async () => {

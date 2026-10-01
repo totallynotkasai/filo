@@ -548,6 +548,12 @@ export const historyStore = {
     return offStackHeld.includes(command);
   },
 
+  /** Whether `command` is still in the history: on any undo or redo stack, or held off-stack. */
+  holds(command: Command): boolean {
+    return offStackHeld.includes(command)
+      || Object.values(stacks).some((s) => s.undoStack.includes(command) || s.redoStack.includes(command));
+  },
+
   /**
    * The toast's Undo for a held off-stack command: runs its undo in the
    * chain, once. When a board reload dropped it meanwhile, says so instead.

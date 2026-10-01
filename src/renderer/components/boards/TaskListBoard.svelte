@@ -1896,13 +1896,10 @@
     pointer-events: none;
     font-size: 10px;
     color: var(--text-tertiary);
-    opacity: 0.55;
     padding: 4px 16px;
-    transition: opacity 0.15s ease;
   }
 
   .tasklist-kbd-hints:hover {
-    opacity: 0.95;
     pointer-events: auto;
   }
 

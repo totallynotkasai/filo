@@ -528,7 +528,7 @@ double-encoded board (a JSON string literal) is not loaded; see #29.
 ## 15. A foreign write in the last milliseconds before Filo's can be overwritten (boards and `.filo/` settings)
 
 **What:** Notes are covered by a compare-and-swap in the main process: the
-note writer passes the stat (and, up to 2 MB, the hash) of the read it builds
+note writer passes the stat (and, up to 16 MB, the hash) of the read it builds
 on to `vault:write-existing-file-text`, and `atomicWriteFile` re-checks it just
 before every rename, refusing with `STALE` if the file changed (gate
 `note-write-expects-stat`). What remains there is the gap between that check
@@ -549,7 +549,7 @@ board or settings file in that window; with one editing machine and a sync
 client that delivers whole files, that doesn't happen in practice.
 
 **Impact:** Very narrow. If it ever bites, pass the pre-write `{ mtimeMs, size }`
-(and the hash under 2 MB) into `board:save` / `config:save`, have
+(and the hash up to 16 MB) into `board:save` / `config:save`, have
 `atomicWriteFile({ expectStat })` refuse with `STALE`, and route `STALE` into
 the drift question.
 
@@ -640,7 +640,8 @@ longer code fences. A loose mixed list an older Filo wrote (`- a`, `- [ ] b`,
 lists on the next save. Two edits no longer leave markup another app shows:
 Enter at the end of a line in a one-line-per-thought note splits the paragraph
 there (no `<br data-filo-soft-break>` in the file), and pasted plain text
-saves its lines as bare newlines (no `\` at each line end).
+saves its lines as bare newlines (no `\` at each line end, the last one
+included).
 
 **Aligned and indented paragraphs are HTML in the file.** Markdown has no way
 to write alignment or indent, so a paragraph or heading aligned or indented from
@@ -961,22 +962,26 @@ back at their original position.
 **Impact:** Cosmetic. A note's frontmatter may look slightly different after
 delete + undo; the set of tags is the same.
 
-## 28. The undo toast for tag delete and rename lasts 15 seconds
+## 28. Tag delete and rename are undone only from their toast, and only the latest
 
 **What:** Vault-wide tag delete and rename touch many files and belong to no
 board, so their undo is an **Undo** button on the toast that reports them, not a
-board Ctrl+Z step. Like every toast, it closes after at most 15 seconds.
+board Ctrl+Z step. The toast stays until you dismiss it, or until the next
+vault-wide tag action (a delete, rename or merge) replaces it, taking the
+older Undo with it. Closing the vault or opening another one also closes it.
 
-**Where:** `TAG_UNDO_TOAST_MS` in
-[src/renderer/stores/tagUndo.svelte.ts](src/renderer/stores/tagUndo.svelte.ts);
-the toast cap in [src/renderer/stores/ui.svelte.ts](src/renderer/stores/ui.svelte.ts).
+**Where:** `pushTagActionToast` in
+[src/renderer/stores/tagUndo.svelte.ts](src/renderer/stores/tagUndo.svelte.ts)
+(a sticky toast with one shared `dedupeKey`).
 
 **Why accepted:** Putting a vault-wide action on one board's history would file
 it under whichever board happened to be active, where Ctrl+Z on that board
-would unexpectedly rewrite notes elsewhere.
+would unexpectedly rewrite notes elsewhere. Only the latest action keeps its
+Undo, so an older one is never undone underneath a newer one. The Undo checks
+what it finds when it runs (a rename's refuses if the old name exists again).
 
-**Impact:** After the toast closes, a deleted tag has to be re-added by hand
-(a rename can be reversed by renaming back).
+**Impact:** Once the toast is dismissed or replaced, a deleted tag has to be
+re-added by hand (a rename can be reversed by renaming back).
 
 ## 29. Only current-format (v8) board files load
 
@@ -1242,21 +1247,21 @@ there, add its tags again.
 
 ---
 
-## 36. A note over 2 MB is checked for outside changes by its stat alone
+## 36. A note over 16 MB is checked for outside changes by its stat alone
 
 **What:** Before Filo writes over a note, the main process checks that the
 file is still the version Filo read: same modification time and size, and,
-for a file up to 2 MB, the same bytes (a content hash). A note larger than
+for a file up to 16 MB, the same bytes (a content hash). A note larger than
 that is checked by its modification time and size only.
 
 **Where:** `stillHoldsHash` / `STALE_HASH_MAX_BYTES` in
 [src/main/vault/filenameUtils.ts](src/main/vault/filenameUtils.ts).
 
-**Why accepted:** Reading a large file again before every save costs time on
-each write, and notes that size are rare.
+**Why accepted:** The file is read and hashed again before every save; at
+16 MB that takes about 20 ms, and a note that size is already very rare.
 
 **Impact:** On a file system with a coarse timestamp (FAT / exFAT keep 2 s,
-some SMB shares 1 s), another program's save of a note over 2 MB that keeps its
+some SMB shares 1 s), another program's save of a note over 16 MB that keeps its
 size and lands within one timestamp tick of Filo's read could be overwritten.
 Keep large notes on NTFS / APFS / ext4, or close them in other editors while
 Filo has them open.
@@ -1358,9 +1363,11 @@ its last rows aren't in the list yet and it can't be reordered.
 a code editor) is read as Markdown with HTML off: `**x**` becomes bold and
 `# Title` a heading, while `List<String>` and `<!-- -->` stay text. A single
 newline becomes a soft break, as it does when the same text is opened from a
-file: shown as a line break and saved as a bare newline. **Ctrl+Shift+V**
-pastes it literally instead (a paragraph per blank-line-separated block, a
-soft break per newline).
+file: shown as a line break and saved as a bare newline. A newline closing
+the paste is one too, so typing goes on on the next line (two or more close
+the paragraph), and newlines opening it are dropped. **Ctrl+Shift+V** pastes
+it literally instead (a paragraph per blank-line-separated block, a soft break
+per newline), with the same ends.
 
 **Where:** [src/renderer/lib/editor/pastePlainText.ts](src/renderer/lib/editor/pastePlainText.ts).
 
@@ -1468,21 +1475,27 @@ reorder. It waits for a UI pass.
 **Impact:** Screen-reader users rename or delete a board from the sidebar
 instead.
 
-## 47. Tertiary text is below 4.5:1 contrast in the Light theme
+## 47. Tertiary text meets 4.5:1 only in the Light theme
 
 **What:** Hints, counts, dates and the Raw toggle's label use
-`--text-tertiary` (`#80868b` in Light), which is 3.7:1 on white. WCAG AA asks
-4.5:1 for small text, and the project's own bar for tertiary text is 3:1
-(`themeContrast.test.ts`). The Task List's keyboard-hint strip (tertiary at
-55% opacity, hidden from screen readers) is about 1.8:1, under either bar.
+`--text-tertiary`. In the Light theme it is `#6b7075`: 5.0:1 on white and
+4.7:1 on the app background, so it meets WCAG AA's 4.5:1 for small text
+there, and the Task List's keyboard-hint strip is drawn at that full colour.
+On a hovered or selected row it is just under (4.5:1 and 4.2:1). The other
+built-in themes (Dark, Blueprint, Retro, Nature) keep the project's 3:1 bar
+for tertiary text on the app background (3.0–3.3:1); on a card or panel
+surface it is lower (2.1–2.9:1).
 
-**Where:** the theme palettes in [src/css/style.css](src/css/style.css);
-the E2E axe scan leaves colour contrast to `themeContrast.test.ts`.
+**Where:** the theme palettes in [src/css/style.css](src/css/style.css),
+checked by `themeContrast.test.ts` (4.5:1 for Light's tertiary text, 3:1
+for the others); the E2E axe scan leaves colour contrast to that test.
 
-**Why accepted (for now):** A darker tertiary makes the secondary /
-tertiary hierarchy harder to see. The palette is the owner's decision.
+**Why accepted:** A darker tertiary makes the secondary / tertiary hierarchy
+harder to see, and each palette is the owner's call. Light, the default, was
+raised; the others can follow the same way if wanted.
 
-**Impact:** Small grey text can be hard to read on some screens.
+**Impact:** Small grey text in the darker and coloured themes can be hard to
+read on some screens.
 
 ## 48. Replace All leaves matches inside Markdown formatting alone
 

@@ -5,7 +5,8 @@
  * These change many files at once and belong to no single board, so they
  * aren't on a board's Ctrl+Z stack (that would file them under whichever
  * board happened to be active). Instead each one offers Undo on the toast
- * that reports it.
+ * that reports it, until the toast is dismissed or the next vault-wide tag
+ * action's toast replaces it.
  *
  * A removal records exactly what it changed: the notes it rewrote, the tag's
  * registry definition, the attachments that carried it (`.filo/tags.json`),
@@ -42,8 +43,23 @@ import { reportError } from '../lib/utils/errorBus';
 import { captureVaultIdentity, isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 import { tagSweepStatus, whenTagSweepsIdle, withTagSweepProgress } from './tagSweepProgress.svelte';
 
-/** How long the Undo stays on offer. */
-export const TAG_UNDO_TOAST_MS = 15_000;
+/**
+ * The key every vault-wide tag action's toast shares, so a newer one replaces
+ * the older and its Undo. The Undo stays until then (or until dismissed): it
+ * checks what it finds when it runs. Kept beside a newer action's toast, it
+ * would undo the older action under the newer one.
+ */
+const TAG_ACTION_TOAST_KEY = 'vault-tag-action';
+
+/** Reports a vault-wide tag action, with its Undo when it has one. */
+function pushTagActionToast(text: string, undo?: () => Promise<void>): void {
+  uiStore.pushToast({
+    text,
+    type: 'success',
+    dedupeKey: TAG_ACTION_TOAST_KEY,
+    ...(undo ? { sticky: true, actions: [{ label: 'Undo', handler: undo }] } : {}),
+  });
+}
 
 interface FilterChip {
   boardId: string;
@@ -167,12 +183,10 @@ export async function removeTagWithUndo(tagName: string): Promise<boolean> {
   if (!outcome.committed || !isStillSameVault(identity)) return outcome.committed;
   snapshot.writtenPaths = outcome.writtenPaths;
   const touched = outcome.writtenPaths.length + snapshot.mediaPaths.length + snapshot.tiles.length;
-  uiStore.pushToast({
-    text: `Deleted tag "#${tagName}"${touched > 0 ? ` from ${touched} item${touched === 1 ? '' : 's'}` : ''}.`,
-    type: 'success',
-    duration: TAG_UNDO_TOAST_MS,
-    actions: [{ label: 'Undo', handler: () => undoRemoval(snapshot) }],
-  });
+  pushTagActionToast(
+    `Deleted tag "#${tagName}"${touched > 0 ? ` from ${touched} item${touched === 1 ? '' : 's'}` : ''}.`,
+    () => undoRemoval(snapshot),
+  );
   return true;
 }
 
@@ -288,16 +302,11 @@ export async function renameTagWithUndo(oldName: string, newName: string): Promi
   if (!outcome.committed || !isStillSameVault(identity)) return outcome.committed;
   if (merging) {
     // A merge can't be split again, so it has no Undo; it still says it's done.
-    uiStore.pushToast({ text: `Merged "#${oldName}" into "#${newName}".`, type: 'success', duration: TAG_UNDO_TOAST_MS });
+    pushTagActionToast(`Merged "#${oldName}" into "#${newName}".`);
     return true;
   }
   snapshot.writtenPaths = outcome.writtenPaths;
-  uiStore.pushToast({
-    text: `Renamed "#${oldName}" to "#${newName}".`,
-    type: 'success',
-    duration: TAG_UNDO_TOAST_MS,
-    actions: [{ label: 'Undo', handler: () => undoRename(snapshot) }],
-  });
+  pushTagActionToast(`Renamed "#${oldName}" to "#${newName}".`, () => undoRename(snapshot));
   return true;
 }
 

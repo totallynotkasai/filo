@@ -19,7 +19,7 @@ import { newNoteText } from '../notes/noteFile';
 import { noteTitle } from '../../stores/noteMeta';
 import { reportError } from '../utils/errorBus';
 import { sectionIdForPlacementIndex } from './sectionMath';
-import { getTaskDepth } from './blockMove';
+import { getTaskDepth, subtaskInsertIndex } from './blockMove';
 import {
   fileNameSafe,
   getActiveContentFolder,
@@ -330,7 +330,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const placementsNow = getPlacements();
     const sectionsNow = getSections();
     const parentIdx = placementsNow.findIndex((p) => p.tileId === parentTileId);
-    const insertAt = parentIdx >= 0 ? parentIdx + 1 : placementsNow.length;
+    const insertAt = subtaskInsertIndex(rows, placementsNow, sectionsNow, parentTileId);
     const parentSection = parentIdx >= 0 ? sectionIdForPlacementIndex(sectionsNow, parentIdx) : null;
     // Success announcement gated on the chain resolving (see createTaskInSection).
     const cmd = new AddTaskCommand(board.id, def, insertAt, undefined, parentSection ?? undefined, () =>

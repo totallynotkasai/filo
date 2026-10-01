@@ -5,6 +5,7 @@ import {
   resolveDragBlockIds,
   spliceBlockContiguous,
   rebuildPlacementsFromDndItems,
+  subtaskInsertIndex,
   type RowLike,
   type RowDndItem,
 } from '@renderer/lib/tasklist/blockMove';
@@ -49,6 +50,42 @@ describe('collectDescendantIds', () => {
     const out = collectDescendantIds(rows, 'a');
     expect(out).toContain('a');
     expect(out.length).toBeLessThan(10); // no infinite recursion
+  });
+});
+
+describe('subtaskInsertIndex', () => {
+  const placed = (...ids: string[]): TaskPlacement[] => ids.map((id, i) => p(id, i));
+
+  it('goes right under a parent with no subtasks', () => {
+    expect(subtaskInsertIndex([r('a'), r('b')], placed('a', 'b'), [], 'a')).toBe(1);
+  });
+
+  it('goes after the subtasks already there, so they keep the order they were added in', () => {
+    const rows = [r('a'), r('a1', 'a'), r('a2', 'a'), r('b')];
+    expect(subtaskInsertIndex(rows, placed('a', 'a1', 'a2', 'b'), [], 'a')).toBe(3);
+  });
+
+  it('goes after a subtask\'s own subtasks', () => {
+    const rows = [r('a'), r('a1', 'a'), r('a1x', 'a1'), r('b')];
+    expect(subtaskInsertIndex(rows, placed('a', 'a1', 'a1x', 'b'), [], 'a')).toBe(3);
+    expect(subtaskInsertIndex(rows, placed('a', 'a1', 'a1x', 'b'), [], 'a1')).toBe(3);
+  });
+
+  it('goes after the last subtask even when another task sits between them', () => {
+    const rows = [r('a'), r('a1', 'a'), r('b'), r('a2', 'a')];
+    expect(subtaskInsertIndex(rows, placed('a', 'a1', 'b', 'a2'), [], 'a')).toBe(4);
+  });
+
+  it('stays in the parent\'s section', () => {
+    const rows = [r('a'), r('a1', 'a'), r('b'), r('a2', 'a')];
+    const sections = [s('S1', 0), s('S2', 2)];
+    // a2 is shown under its parent but placed in S2: the new subtask stays in S1.
+    expect(subtaskInsertIndex(rows, placed('a', 'a1', 'b', 'a2'), sections, 'a')).toBe(2);
+    expect(subtaskInsertIndex([r('a'), r('b')], placed('a', 'b'), [s('S1', 0), s('S2', 1)], 'a')).toBe(1);
+  });
+
+  it('goes at the end when the parent is gone', () => {
+    expect(subtaskInsertIndex([r('a')], placed('a'), [], 'gone')).toBe(1);
   });
 });
 

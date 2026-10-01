@@ -408,8 +408,12 @@ export interface ExpectedStat {
   hash?: string;
 }
 
-/** Files up to this size have their content compared too before a write over them. */
-export const STALE_HASH_MAX_BYTES = 2 * 1024 * 1024;
+/**
+ * Files up to this size have their content compared too before a write over
+ * them. Reading and hashing 16 MB again takes about 20 ms; a note that large
+ * is rare, and a larger one is checked by its stat.
+ */
+export const STALE_HASH_MAX_BYTES = 16 * 1024 * 1024;
 
 /**
  * False when `filePath` no longer holds the bytes whose hash is `hash`. True

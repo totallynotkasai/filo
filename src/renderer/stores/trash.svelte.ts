@@ -42,20 +42,38 @@ export interface DeleteUndo {
   /** Whether the delete removed any tile (the restore toast says so). */
   tilesBack: boolean;
   undo: () => Promise<boolean>;
+  /**
+   * Whether the delete's step is still in the history. Once it isn't (undone
+   * from the toast or Settings → Trash, or dropped), its undo can't run again.
+   */
+  inHistory: () => boolean;
 }
 
 // allow-module-state: this session's undoable deletes, emptied at every vault swap
 let deleteUndos: DeleteUndo[] = [];
+
+/** Drops the deletes whose step has left the history, so the list never outgrows it. */
+function pruneDeleteUndos(): void {
+  if (deleteUndos.some((d) => !d.inHistory())) deleteUndos = deleteUndos.filter((d) => d.inHistory());
+}
 
 /**
  * Lets Settings → Trash restore an item through its delete's undo, so the
  * tiles come back with it, while that undo is still in the history.
  */
 export function registerDeleteUndo(entry: DeleteUndo): void {
+  pruneDeleteUndos();
   deleteUndos = [...deleteUndos, entry];
 }
 
+/** How many deletes Settings → Trash can still restore through their undo. */
+export function deleteUndoCount(): number {
+  pruneDeleteUndos();
+  return deleteUndos.length;
+}
+
 function deleteUndoFor(trashId: string): DeleteUndo | undefined {
+  pruneDeleteUndos();
   return deleteUndos.find((d) => d.trashId() === trashId);
 }
 

@@ -680,7 +680,7 @@ E2E: the session-end spec, if one exists, plus the full suite (this phase touche
 
 - **DECISION D6:** Light `--text-tertiary` goes from `#80868b` to `#6b7075` (≈5:1 on white). The Task List's keyboard-hint strip drops its 55% opacity.
 
-  *Default: yes. It is the owner's palette call, so confirm before Phase 4.*
+  *Default: yes. It is the owner's palette call, so confirm before Phase 4.* **Confirmed by the owner, 2026-10-01.**
 - `themeContrast.test.ts`: raise the Light theme's tertiary bar to 4.5:1. Leave the other built-in themes at their current bar unless the owner wants them raised too.
 - Docs: KNOWN_LIMITATIONS #47 removed or rewritten.
 
@@ -696,6 +696,111 @@ E2E: the session-end spec, if one exists, plus the full suite (this phase touche
   *Default: include #36, skip #34 unless the owner uses hard links.*
 
 E2E: not needed unless 4.7 #34 is taken (it touches the read path in main; then run it).
+
+### Phase 4 outcome (done 2026-10-01)
+
+**What changed**
+
+| Item | Change |
+|---|---|
+| 4.1 U-02 | `blockMove.ts`: new `subtaskInsertIndex(rows, placements, sections, parentId)`: after the last task under the parent (its subtasks and theirs) inside the parent's section; the end of the list when the parent is gone. `taskCreation.ts` `addSubtaskFor` uses it instead of `parentIdx + 1`. |
+| 4.2 U-03 | `pastePlainText.ts`: `pasteEdges(text)` splits the paste into the text to parse and its closing newlines (CRLF read as LF; newlines opening it dropped; spaces before a closing newline dropped). `closeWithNewlines` then ends the parsed slice: one newline is a soft break at the end of its paragraph text, two or more close the paragraph. A paste ending in a list, quote, heading or code block is left as today. A paste of nothing but newlines goes to the literal paste. |
+| 4.3 F-04 | `vaultDeleteOps.ts`: the "moved to Filo's trash" toast's Undo first checks `command.trashId === null` and says `"X" is already back.`, whichever stack held the step. |
+| 4.4 F-05 | `trash.svelte.ts`: a registered delete carries `inHistory()`; the list drops every delete whose step has left the history whenever a delete is registered or looked up. New `historyStore.holds(command)` (on any undo or redo stack, or held off-stack) and `deleteUndoCount()`. |
+| 4.5 #28 | `tagUndo.svelte.ts`: `pushTagActionToast` gives every vault-wide tag action's toast one `dedupeKey`; the delete and rename toasts are `sticky` with their Undo. `TAG_UNDO_TOAST_MS` is gone. |
+| 4.6 #47 | `style.css`: Light `--text-tertiary` `#80868b` → `#6b7075`. `TaskListBoard.svelte`: the shortcut strip loses its 0.55 opacity (and the 0.95 hover opacity and its transition, which only animated that). |
+| 4.7 #36 | `filenameUtils.ts`: `STALE_HASH_MAX_BYTES` 2 MB → 16 MB. Measured here: reading and hashing 16 MB takes about 20 ms (2 MB: about 3 ms). |
+| 4.7 #34 | Not taken (D7 default: no hard links in use). |
+
+Docs:
+- KNOWN_LIMITATIONS:
+  - #28 rewritten: the Undo stays until dismissed or replaced by the next tag action's toast.
+  - #36: 16 MB, and the measured cost.
+  - #47 rewritten: Light meets 4.5:1 on its plain backgrounds; what is still under (hovered and selected rows in Light; the other four themes).
+  - #41: what a paste's first and last newlines do.
+  - #17: "no `\` at each line end, the last one included".
+  - #15: its two mentions of the 2 MB hash limit.
+- CLAUDE.md: the hash limit in the note writer's gotcha, the tag Undo line under Undo/Redo, and the project-tree lines for `tagUndo.svelte.ts` and `pastePlainText.ts`.
+
+**Tests**
+
+| File | Cases | On `b8fe878` (fix files put back) |
+|---|---|---|
+| `src/tests/characterisation/taskSubtasks.test.ts`, new case | 1 | fails |
+| `src/tests/unit/blockMove.test.ts`, `subtaskInsertIndex` | 6 | new function |
+| `src/tests/unit/pastePlainText.test.ts` | 10 new | 8 fail; the 2 guards for unchanged behaviour pass |
+| `src/tests/characterisation/trash.test.ts`, new case | 1 | fails |
+| `src/tests/unit/trashDeleteUndoRegistry.test.ts` (new) | 5 | all 5 fail (new API) |
+| `src/tests/unit/tagUndo.test.ts` | 2 new | both fail |
+| `src/tests/unit/themeContrast.test.ts` | 3 new | all 3 fail |
+| `src/tests/unit/staleWriteContentCheck.test.ts` | 1 new | fails |
+
+- **Subtasks** (characterisation): a Task List with "Plan trip" and "Pack". "Add subtask" twice from the context menu shows Plan trip, Subtask 1, Subtask 2, Pack, on screen and in the saved board; Ctrl+Z takes back Subtask 2. The harness gains `addSubtask(app, row)`; the gate minimum for the spec goes from 2 to 3. The unit cases: no subtasks yet, after earlier subtasks, after a subtask's own subtasks, a subtask placed after an unrelated task, the section end, a parent that is gone.
+- **Paste** (unit, the real editor): `just one line\n` then typing saves `just one line\ntyped after`, as a soft break. Also:
+  - CRLF;
+  - pasted after text;
+  - `abc  \n` (the spaces would read back as a hard break);
+  - two and three closing newlines (a new paragraph);
+  - several paragraphs;
+  - a list or heading (unchanged);
+  - opening newlines dropped, as Ctrl+Shift+V drops them;
+  - Ctrl+Shift+V unchanged;
+  - `pasteEdges` itself.
+
+  Every saved text is reopened and must save the same.
+- **Trash Undo after a restore** (characterisation): with no board open, delete a note, restore it from Settings → Trash, click the toast's Undo. The toast reads `"Solo.md" is already back.`, no "reloaded from disk" warning, and the note is unchanged. The gate minimum for `trash.test.ts` goes from 9 to 10.
+- **The Trash list** (unit, real history store): `holds` on the undo stack, the redo stack and off-stack. A delete leaves the list when undone from its toast or off-stack. Undone with Ctrl+Z it stays, since a redo trashes it again, and leaves once the history drops it. 20 deletes, 15 undone, leave 5.
+- **Tag Undo** (unit, fake timers): the delete's Undo is still there after 10 minutes and goes when dismissed. A rename's toast replaces it. A merge's toast (no Undo) replaces that, and goes after 15 s.
+- **Contrast**: Light tertiary at 4.5:1 on `--ui-bg`, `--ui-surface` and `--ui-bg-secondary`.
+- **Hash limit**: a 10 MB note changed to a same-size, same-stat version is refused (`STALE`); past the limit the stat alone decides.
+
+**Verification**
+- **The tests bite.** The eight fix files were put back to `b8fe878`, the new tests run, and the files restored byte-for-byte (table above).
+- **Each part of the new logic is pinned.** Each mutation below was applied in turn, its tests run, and the file restored byte-for-byte:
+
+  | Mutation | Tests that fail |
+  |---|---|
+  | subtask slot ignores the section end | 1 |
+  | subtask slot goes after direct subtasks only | 1 |
+  | subtask slot stops at the first other task | 1 |
+  | paste keeps the spaces before a closing newline | 2 |
+  | paste reads two closing newlines as one | 1 |
+  | paste keeps opening newlines | 2 |
+  | the Trash list is never pruned | 4 |
+  | `holds` ignores the redo stack | 2 |
+  | tag action toasts not keyed | 1 |
+- **The real app.** A Playwright script drove the built app over a vault with a Task List and a note (`phase4check.mjs`, this session's scratchpad). All 12 checks passed, with no renderer errors:
+  - the theme is Light, and the shortcut strip's computed colour is `rgb(107, 112, 117)` at opacity 1;
+  - "Add subtask" twice from the context menu shows Plan trip, Subtask 1, Subtask 2, Pack, and the saved board has the same order;
+  - in a Document tab, Enter, then Ctrl+V of `just one line\r\n` from the system clipboard, then typing, saves `just one line\ntyped after` with no `\`, shown as a soft break.
+- `npm run ci:verify` on Windows: green.
+  - lint, svelte-check (859 files) and `typecheck:main` clean;
+  - `test:unit:strict`: 791 files, 7,491 tests passed, 5 skipped;
+  - build;
+  - 89/89 gates, including `characterisation-suite` (the new minimums), `test-typecheck` (the new test file type-checks clean), `css-vars` and `no-audit-narration`.
+- E2E on the built app: 23 passed in 1.9 min, including the quit, crash-recovery, sync-delivery and editor-fidelity specs (every note write goes through the #36 check). The 3 skipped are the scale budgets, which run only with `FILO_E2E_SCALE=1` (Phase 6).
+
+**Deviations from the plan**
+1. **4.2 handles both ends of the paste, and more than one newline.** The plan covered one trailing newline.
+   - Newlines opening a paste are dropped. They became a hard break too (`existing\` then `abc`, the same stray `\`). Ctrl+Shift+V already drops them.
+   - Two or more closing newlines close the paragraph, as a blank line does in the paste and as Ctrl+Shift+V does. Before, they were two hard breaks (`a\` `\`).
+   - Spaces before a closing newline are dropped. Kept, two of them before the soft break read back as a hard break.
+   - Only a paste that ends in paragraph text takes the soft break. One that ends in a list, quote, heading or code block already ended its block and still does: a soft break in a heading would be saved as HTML.
+2. **4.3 says "already back"** rather than closing quietly (the plan offered either). It is the wording the toast already used when Ctrl+Z had undone the delete.
+3. **4.4 drops a delete when its step leaves the history**, checked when a delete is registered or looked up, not at the moment of the restore.
+   - A delete undone with Ctrl+Z stays listed: its step is on the redo stack, and a redo puts the item back in the trash, where Settings → Trash should again restore it with its tiles.
+   - The list is therefore bounded by the history itself.
+4. **4.5: a merge's toast takes the same key.** It has no Undo and still closes after 15 s, but it replaces an older Undo, as D5 asks for "a newer vault-wide tag action". Closing or switching the vault also closes the toast, as it did.
+5. **4.6: the strip's hover rule and transition went with its opacity.** The hover only raised the opacity to 0.95, which at full colour would have dimmed it. The contrast test also checks `--ui-bg-secondary`. KNOWN_LIMITATIONS #47 is rewritten rather than removed, since hovered and selected rows in Light (4.5:1 and 4.2:1) and the other themes are still under 4.5:1.
+6. **4.7 #36 adds a test**, which the plan called "its test": there was no size-limit case before.
+7. **Not in the plan:** KNOWN_LIMITATIONS #15 and #41, and the CLAUDE.md lines above, which named the old behaviour.
+8. **The `file-sizes` allowlist:** `TaskListBoard.svelte` lost 3 lines of CSS, so its ceiling is pinned at its new count (1,371 → 1,368), as Phase 0 did.
+9. **E2E was run** although the plan didn't ask for it without #34: #36 changes the check every note write makes in main.
+
+**New findings** (low, not fixed)
+- **Ctrl+Shift+V of a line ending in two spaces, with a line after it**, puts the spaces before a soft break. The file then holds `abc··` and a newline, which Markdown (Filo included, on reopening) reads as a hard break. Nothing is lost, but a later save may write it as `\`. Ctrl+V now drops such spaces only at the end of the paste.
+- **Tertiary text in the four other built-in themes** is 3.0–3.3:1 on the app background (the test's 3:1 bar) but 2.1–2.9:1 on card and panel surfaces, which no test checks. Raising them is a palette call, like D6.
+- **Light's hovered and selected rows** take tertiary text to 4.49:1 and 4.15:1, just under 4.5:1.
 
 ---
 
@@ -804,7 +909,7 @@ Not part of this round. Start only after Phases 0–6 have had some weeks of dai
 | D3 | When a tile / frame title commits on blur | Unless focus moved into the formatting toolbar or one of its popups |
 | D4 | A trailing newline in a plain-text Ctrl+V | A soft break, like the paste's other newlines |
 | D5 | Several vault-wide tag Undo notifications | Sticky; the newest replaces the older |
-| D6 | Light theme tertiary text colour | `#6b7075` (≈5:1); the Task List hint strip at full tertiary (owner to confirm) |
+| D6 | Light theme tertiary text colour | `#6b7075` (≈5:1); the Task List hint strip at full tertiary (confirmed by the owner, 2026-10-01) |
 | D7 | Optional quick wins | Take #36 (hash limit 16 MB); skip #34 (hard links) unless needed |
 | D8 | Board-format migrations | Steps up to current; no write until edited; original kept in `.filo/recovery/<ts>-keep/`; a failed step leaves the file untouched |
 | D9 | Source-preserving editor | Spike and go / no-go note only |

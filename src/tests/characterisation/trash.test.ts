@@ -148,6 +148,21 @@ describe('a delete no board undo holds', () => {
     expect(app.read('Solo.md')).toBe('on its own\n');
     expect(trashedPaths(app)).toEqual([]);
   });
+
+  it("restored from Settings → Trash, the toast's Undo then finds it back already", async () => {
+    const app = await startApp({ 'Solo.md': 'on its own\n' });
+    await deleteInSidebar(app, 'Solo.md');
+    await openTrashSettings(app);
+    await restoreFromTrashSettings('Solo.md');
+    await closeModal();
+    await waitFor(() => app.exists('Solo.md'), 'the note back');
+
+    await chooseToastAction('Undo');
+    expect(toastTexts()).toContain('"Solo.md" is already back.');
+    expect(toastTexts().some((t) => t.includes('reloaded from disk'))).toBe(false);
+    expect(app.read('Solo.md')).toBe('on its own\n');
+    expect(trashedPaths(app)).toEqual([]);
+  });
 });
 
 describe('Settings → Trash', () => {

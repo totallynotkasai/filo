@@ -44,6 +44,35 @@ export function collectDescendantIds(rows: RowLike[], tileId: string): string[] 
 }
 
 /**
+ * Where a new subtask of `parentTileId` goes in `placements`: after the last
+ * task under the parent (its subtasks and theirs) in the parent's section, so
+ * subtasks stay in the order they were added. Siblings show in placement
+ * order, so right after the parent would put the newest first. Past the
+ * section's end the task would join the next section. The end of the list
+ * when the parent isn't placed.
+ */
+export function subtaskInsertIndex(
+  rows: RowLike[],
+  placements: TaskPlacement[],
+  sections: TaskListSection[],
+  parentTileId: string,
+): number {
+  const parentIdx = placements.findIndex((p) => p.tileId === parentTileId);
+  if (parentIdx < 0) return placements.length;
+  const sectionEnd = sections.reduce(
+    (end, s) => (s.position > parentIdx && s.position < end ? s.position : end),
+    placements.length,
+  );
+  const under = new Set(collectDescendantIds(rows, parentTileId));
+  let last = parentIdx;
+  for (let i = parentIdx + 1; i < sectionEnd; i++) {
+    const tileId = placements[i]?.tileId;
+    if (tileId !== undefined && under.has(tileId)) last = i;
+  }
+  return last + 1;
+}
+
+/**
  * Walks the parent chain and returns the depth in the subtask hierarchy:
  * 0 = top-level, 1 = subtask, 2 = sub-subtask. Returns `Infinity` if a cycle
  * is detected (defensive, capped at 8 hops). Used to enforce the 3-level cap.

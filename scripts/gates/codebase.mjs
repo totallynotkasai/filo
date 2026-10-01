@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fail, stripComments, stripCommentsKeepLines, blank, scriptOnly, functionBody, matchBrace, lineAt } from './lib.mjs';
+import { countCodeLines } from './codeLines.mjs';
 
 // Per-file type-error counts for the test sources (tsconfig.tests.json) when
 // the ratchet was introduced. A file may only improve; a file not listed must
@@ -9,17 +10,18 @@ import { fail, stripComments, stripCommentsKeepLines, blank, scriptOnly, functio
 const TEST_TYPECHECK_BASELINE = 'scripts/gates/testTypecheckBaseline.json';
 
 const SRC_EXT = ['.svelte', '.svelte.ts', '.ts'];
+// Lines of code (codeLines.mjs: blank and comment-only lines don't count), so
+// a comment explaining a hazard never pushes a file toward a split.
 const LOC_LIMIT = 1000;
 
-// Files over LOC_LIMIT, each pinned at its current LOC. They may shrink, not
-// grow; the remedy for an over-limit file is to split it, not to raise its row.
+// Files over LOC_LIMIT, each pinned at its current lines of code. They may
+// shrink, not grow; the remedy for an over-limit file is to split it, not to
+// raise its row. A file back within the limit leaves the list.
 const FILE_SIZE_ALLOWLIST = {
-  'src/renderer/components/boards/TaskListBoard.svelte': 1940,
-  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1439,
-  'src/renderer/components/boards/TaskItem.svelte': 1481,
-  'src/renderer/components/boards/KanbanBoard.svelte': 1416,
-  'src/renderer/components/boards/KanbanColumn.svelte': 1170,
-  'src/renderer/stores/vault.svelte.ts': 1467,
+  'src/renderer/components/boards/TaskListBoard.svelte': 1371,
+  'src/renderer/components/boards/KanbanSideToolbar.svelte': 1248,
+  'src/renderer/components/boards/TaskItem.svelte': 1225,
+  'src/renderer/components/boards/KanbanBoard.svelte': 1027,
 };
 
 // The refactor characterisation suite: user-visible behaviour the file-model
@@ -124,30 +126,23 @@ function allKeys(decls, name, seen = new Set()) {
   return keys;
 }
 
-function countLines(text) {
-  if (text.length === 0) return 0;
-  let count = 1;
-  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) count++;
-  if (text.charCodeAt(text.length - 1) === 10) count--;
-  return count;
-}
-
 export const checks = [
   {
     id: 'file-sizes',
-    title: 'source files stay under 1000 LOC (allowlisted files may not grow)',
-    hint: 'Split the file. Only lower an allowlist ceiling; raising one needs a reviewed reason.',
+    title: 'source files stay under 1000 lines of code, blank and comment-only lines aside (allowlisted files may not grow)',
+    hint: 'Split the file. Only lower an allowlist ceiling, and remove the entry once the file is within the limit; raising one needs a reviewed reason.',
     run(ctx) {
       const out = [];
       const remaining = new Map(Object.entries(FILE_SIZE_ALLOWLIST));
       for (const rel of ctx.files(['src/main', 'src/renderer'], { ext: SRC_EXT })) {
-        const loc = countLines(ctx.read(rel));
+        const loc = countCodeLines(ctx.read(rel), { svelte: rel.endsWith('.svelte') });
         if (remaining.has(rel)) {
           const ceiling = remaining.get(rel);
-          if (loc > ceiling) out.push(fail(rel, undefined, `${loc} LOC grew past its allowlist ceiling ${ceiling}`));
+          if (loc > ceiling) out.push(fail(rel, undefined, `${loc} lines of code grew past its allowlist ceiling ${ceiling}`));
+          else if (loc <= LOC_LIMIT) out.push(fail(rel, undefined, `${loc} lines of code is within the ${LOC_LIMIT} limit — remove its allowlist entry`));
           remaining.delete(rel);
         } else if (loc > LOC_LIMIT) {
-          out.push(fail(rel, undefined, `${loc} LOC exceeds the ${LOC_LIMIT} LOC limit`));
+          out.push(fail(rel, undefined, `${loc} lines of code exceeds the ${LOC_LIMIT} limit`));
         }
       }
       for (const rel of remaining.keys()) out.push(fail(rel, undefined, 'allowlist entry no longer exists — remove it'));

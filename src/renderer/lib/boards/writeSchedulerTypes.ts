@@ -1,7 +1,6 @@
 /**
  * writeSchedulerTypes — the type surface of the `createScheduler` primitive.
  *
- * Split out of `writeScheduler.ts` to keep it under the `gates:file-sizes` limit.
  * Pure declarations only; every name is re-exported from `writeScheduler.ts`.
  * The behavioural documentation lives here with the contracts it describes;
  * the implementation comments stay with the code.

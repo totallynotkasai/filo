@@ -1,7 +1,6 @@
 /**
- * writeSchedulerFailures — failure attribution + RETENTION for `createScheduler`
- * (split out of writeScheduler.ts, which sits at the 1000-LOC gates:file-sizes
- * limit).
+ * writeSchedulerFailures — failure attribution + RETENTION for `createScheduler`,
+ * kept apart from the queueing in writeScheduler.ts.
  *
  * A board write held for a drift answer (`BOARD_DRIFT_HELD`) is retained so
  * Keep local can re-fire it, but the scheduler's `holdRetained` keeps it from

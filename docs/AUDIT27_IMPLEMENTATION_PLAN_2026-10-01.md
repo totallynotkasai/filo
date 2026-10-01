@@ -247,6 +247,115 @@ Fix in the shared scheduler, so every user of `createScheduler` gets it:
 | Characterisation | `harness/slowDisk.ts` `holdNextMainCall('board:save', …)` holds board A's save. Press Ctrl+S, drag a tile on board B, release A, quit and reopen. B shows the drag. |
 | E2E | Full suite with `FILO_E2E_SCALE=1`: flushAll runs at every quit. |
 
+### Phase 1 outcome (done 2026-10-01)
+
+**What changed** (all in the shared `createScheduler`, so the board, settings, misc and note writers all get it)
+- `writeScheduler.ts`:
+  - `flushAll` records each entry it captures in a new per-key `captures` map, beside the parked set it already used.
+  - `schedule(key)` takes the key's capture out (`takeCapture`) when it finds one:
+    - the capture is marked `superseded`, leaves the parked set, and its promise resolves;
+    - the new pending entry replaces it as a reschedule replaces a pending entry. Its write-state count carries over, so there is no extra `endWrite` or `beginWrite`. The path bookkeeping (`onReschedule`, pending-path retarget) is the same as for a reschedule.
+  - The `flushAll` loop skips a superseded capture, both before and after it waits for an earlier write of the key.
+  - `flush(key)`: the pending-entry send is now a local `sendPending`. If an entry it waited for turns out to be superseded, it sends the key's newer pending write too, and returns only once that has landed.
+  - `cancel(key)` removes the key's capture (it settles it as a parked fire, so no later schedule may take it over), and `reset()` clears the map.
+  - The file is now 601 lines of code (998 raw), up from 579 (947). Under the old raw count it would have been 2 lines from the limit.
+- `writeSchedulerTypes.ts`: `ParkedEntry.superseded`; the `schedule` doc now says a full save's copy of the key is dropped.
+- `writeSchedulerParked.ts`: header comment; `newParkedEntry` sets `superseded: false`.
+- CLAUDE.md: the `writeSchedulerParked.ts` line in the project tree.
+- No change to `boardCacheDelete.ts` (1.2): with 1.1, the delete's save-first flush returns once the newest version has landed, as expected.
+
+**Tests**
+
+| File | Cases | On `de8562b` (same scheduler as `abf5212`) |
+|---|---|---|
+| `src/tests/unit/fullSaveKeepsNewerWrite.test.ts` (generic scheduler) | 11 | 7 fail; the 4 accounting guards pass |
+| `src/tests/unit/fullSaveKeepsNewerWriteSchedulers.test.ts` (real writers) | 5 | all 5 fail |
+| `src/tests/characterisation/slowRenames.test.ts`, new case | 1 | fails |
+
+- **Generic scheduler** (`fullSaveKeepsNewerWrite.test.ts`):
+  - a key edited again while an earlier key is slow ends on its newer version, for both `full` and `pending-path` tracking. The older copy is never sent, and `hasWork` is false as soon as the newer write has landed.
+  - the key's newer write is still being written when the full save reaches it;
+  - a key's `flush` during the full save (a board delete) returns without waiting for the slow key, with the newer version on disk:
+    - when the newer write is still waiting;
+    - when it has already landed;
+    - when the flush was already waiting for the old copy before the key was edited again.
+  - a newer write that fails stays failed (the old copy no longer papers over it), and Retry writes the newer version;
+  - accounting guards: cancelled after its newer schedule; cancelled, then edited again; edited again after the full save sent it; after a vault swap (`reset`). Each one checks `unsavedWork()`, `hasWork` and `hasParked` end empty, or count the new write while it is out.
+- **Real writers** (`fullSaveKeepsNewerWriteSchedulers.test.ts`):
+  - boards: `scheduleBoardWrite` / `flushAllScheduledBoards` / `writeBoardFile` with drift baselines stamped. Board B on disk is edit 2, nothing failed, nothing unsaved.
+  - board delete through the real `boardCacheStore.deleteBoard`. The file moved to the trash is the newest version, whether the newer edit had already been saved or was still waiting.
+  - the settings bundle (N-2): see below.
+  - `.filo/tags.json` on the misc writer, using the real `fileTagsStore` (N-2): see below.
+- **Characterisation** (`slowRenames.test.ts`, "a rename whose board saves are slow"):
+  1. A note is on two Kanban boards.
+  2. A sidebar rename's save writes both boards. The first board's `board:save` is held with `holdNextMainCall`.
+  3. A column is added to the second board meanwhile.
+  4. The held save is released, and the vault reopened.
+  5. The second board still has both columns, on disk and on screen.
+  - The gate's minimum for the spec goes from 5 to 6.
+- **Each part of the fix is pinned.** Each mutation below was applied in turn, the two unit files run, and the source restored byte-for-byte:
+
+  | Mutation | Tests that fail |
+  |---|---|
+  | `schedule` doesn't take the capture over | 12 |
+  | the `flushAll` loop sends a superseded capture | 11 |
+  | `flush(key)` doesn't send the newer write | 1 |
+  | `cancel` keeps the capture | 1 |
+  | `unpark` keeps a sent capture | 1 |
+  | `reset` keeps captures | 1 |
+
+**N-2: the settings and misc writers were affected too**
+- **Misc writer:** `.filo/tags.json` takes its snapshot when its args are read, which for a full save is when the save starts.
+  - Behind a slow write of another `.filo/` file, a tag change made meanwhile was saved by its own timer.
+  - The save's older copy then landed on top: the test's disk held `one` instead of `two`, with nothing left unsaved.
+  - The 3-way merge didn't catch it, because the merge base had moved to the newer save.
+  - Viewports, sidebar order and hotkeys serialise inside their write, so their old copies wrote current data. Those three were not affected in content.
+- **Settings bundle:** it has one key, so the race needs an earlier bundle write still out when the full save starts.
+  - The save's copy (bundle 2) and the newer bundle 3, which was parked behind bundle 1, were both sent when bundle 1 landed. They raced each other.
+  - When bundle 2 landed last, `app.json` held the older settings and nothing was pending: the test read `Two` instead of `Three`.
+  - Now bundle 2 is dropped.
+- **Note writer (not asked):** not affected. Its captures hold only the note's path, and the write reads the queued change when it runs.
+  - With the fix, a superseded note capture is skipped.
+  - The note writer's own `flushAll` already drains again while any timer is armed, so the change is still written inside that `flushAll`.
+
+**Verification**
+- **Repro tests bite.** The three scheduler files were put back to `de8562b` and the new tests run, then the files restored byte-for-byte:
+  - unit: 12 of 16 fail (the 4 accounting guards pass, as they should);
+  - characterisation: the new case fails, with the second board on 1 column instead of 2.
+- **The scheduler's existing tests.** Every unit file that touches a scheduler or a full save (125 files, 734 tests) passed before the full run.
+- `npm run ci:verify` on Windows: green.
+  - lint, svelte-check and `typecheck:main` clean;
+  - `test:unit:strict`: 787 files, 7,420 tests passed, 5 skipped;
+  - build;
+  - 89/89 gates, including `file-sizes`, `test-typecheck` (both new test files type-check clean) and `characterisation-suite`.
+- E2E on the built app, `FILO_E2E_SCALE=1`: 26 passed, none skipped (2.6 min). That includes the quit, crash-recovery and sync-delivery specs (a full save runs at every quit) and the three scale budgets.
+
+**Deviations from the plan**
+1. **Detected at `schedule`, not with a per-key sequence.** The plan wanted a per-key sequence, checked when `flushAll` reaches the captured entry. Instead, `schedule(key)` finds the capture and takes it out at once.
+   - Checked only when the loop reaches it, the superseded entry would stay parked until then. So `flush(key)` (a board delete's save) would still wait for the slow earlier board, and `hasWork` would report a write that is never sent.
+   - It is still decision D1 (skip, don't make `onDue` wait), only detected earlier.
+2. **What waits on the old copy.** The plan said its parked promise "resolves when that newer write settles". Instead it resolves at once, and the one waiter that matters, a `flush(key)` already waiting for it, sends the newer write itself and returns once it has landed.
+   - Same guarantee for the waiter.
+   - It avoids threading a promise through every way a pending entry can end (timer, flush, a second capture, cancel, reset).
+3. **Accounting by carry-over, not a separate `endWrite`.** The plan asked for `endWrite` to "stay balanced". It does, but by carrying the old copy's count over to the newer schedule, as a reschedule does.
+   - A separate `endWrite(success)` would wrongly clear the failed mark of a newer write that had failed: the board, settings and misc writers clear a path's failed mark on any successful `endWrite`.
+   - The test "the newer write's failure stays reported" pins this.
+4. **The characterisation case uses a rename, not Ctrl+S.**
+   - The race needs both boards waiting to save when the full save starts.
+   - The harness can't make edits on two boards inside one 300 ms debounce reliably. A rename's save schedules both boards at once, and it is one of the full saves the review names.
+   - "Quit and reopen" is `reopenVault`, the specs' usual reopen.
+   - The case went into the existing `slowRenames.test.ts` (gate minimum 5 → 6) rather than a new spec.
+5. **More tests than the plan listed.**
+   - The delete case drives the real `boardCacheStore.deleteBoard`, in both orders, rather than only the generic scheduler.
+   - Added: the failure case, the four accounting guards, the flush already waiting, and the six-mutation check.
+6. **CLAUDE.md:** one line in the project tree, not in the plan.
+
+**New findings**
+- Unit tests that make their own `createScheduler` leave its armed-path check registered for the rest of the file. A scheduler left armed by one test keeps that path pending for the next.
+  - The new generic test resets its schedulers after each case.
+  - Other files that make ad-hoc schedulers rely on distinct paths.
+  - Low value; not fixed.
+
 ---
 
 ## Phase 2: Find and Replace (U-01, U-04; Impact 5/10 each, Hard 2/10 each)

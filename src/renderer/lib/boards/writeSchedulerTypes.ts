@@ -186,7 +186,8 @@ export interface InFlightEntry {
 
 /**
  * Internal — one PARKED fire's tracking entry (a debounce fire deferred
- * behind `drainPriorInFlight`; see the `parked` map in `writeScheduler.ts`).
+ * behind `drainPriorInFlight`, or a full save's capture waiting its turn; see
+ * `writeSchedulerParked.ts`).
  *
  * Carries the schedule-time sentinel info plus a `cancelled` flag so
  * `cancel(key)` can reach a parked fire (e.g. a board deleted mid-park):
@@ -201,6 +202,12 @@ export interface ParkedEntry {
   path: string | undefined;
   /** Set by `cancel(key)`; the parked closure then neither fires nor endWrites. */
   cancelled: boolean;
+  /**
+   * Set when a newer `schedule` of the key replaced this full-save capture:
+   * it is never sent, and a `flush(key)` that waited for it sends the newer
+   * write instead.
+   */
+  superseded: boolean;
 }
 
 /**
@@ -230,7 +237,9 @@ export interface FlushAllResult {
 export interface Scheduler<TArgs> {
   /**
    * Arms a debounced write for `key`. Subsequent calls cancel the previous
-   * timer and replace the args getter — last call wins. The getter is
+   * timer and replace the args getter — last call wins. That includes a
+   * full save's copy of the key not sent yet (`flushAll` captures args up
+   * front): it is dropped, never sent after this write. The getter is
    * invoked at fire/flush time so the write captures the latest in-memory
    * state, not the state at schedule time.
    */

@@ -5,7 +5,8 @@
  *    flight, and waits behind it (`drainPriorInFlight`) so the newest lands
  *    last;
  *  - an entry a full save (`flushAll`) has captured and not yet sent, since
- *    it sends them one after another.
+ *    it sends them one after another. A newer schedule of its key takes it
+ *    out (`superseded`): its args are older than that schedule's.
  * Each registers here before it waits, and resolves once it has fired (its
  * in-flight entry registered, synchronously) or dropped out, so `flush` /
  * `flushAll` await it and `hasWork` counts it. An entry carries the
@@ -20,7 +21,7 @@ import type { ParkedEntry } from './writeSchedulerTypes';
 export function newParkedEntry(vaultRoot: string | undefined, path: string | undefined): { entry: ParkedEntry; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((res) => { resolve = res; });
-  return { entry: { promise, vaultRoot, path, cancelled: false }, resolve };
+  return { entry: { promise, vaultRoot, path, cancelled: false, superseded: false }, resolve };
 }
 
 export class ParkedWrites {

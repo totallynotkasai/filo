@@ -4,8 +4,9 @@
  * files have moved: nothing is written with the new name while the rename is
  * out, a refused rename leaves every board as it was on disk (and keeps an
  * edit made meanwhile), and a board whose folder is renamed never gets a
- * second copy. An undo doesn't wait for the watcher's queue, and a save
- * waiting on a slow undo says so.
+ * second copy. A board edited while the rename's save of another board is
+ * slow keeps the edit. An undo doesn't wait for the watcher's queue, and a
+ * save waiting on a slow undo says so.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, quiesce, reopenVault, settle, waitFor, type CharApp } from './harness/app';
@@ -19,6 +20,8 @@ import {
   pressShortcut,
   errorToasts,
   toastTexts,
+  openBoardFromSidebar,
+  kanbanColumns,
 } from './harness/actions';
 import { setBoardFolders, toggleRootDirectory } from './harness/vaultFolders';
 import {
@@ -129,6 +132,50 @@ describe("a board rename whose folder rename takes a while", () => {
     await quiesce(1000);
     expect(kanbanCards(app)).toHaveLength(1);
     expect(toastTexts().some((t) => /same id/i.test(t))).toBe(false);
+  });
+});
+
+/** The `.board.json` holding the board `boardId`, as on disk. */
+function boardFileOf(app: CharApp, boardId: string): string {
+  const rel = app.userFiles().find((p) => p.endsWith('.board.json') && (JSON.parse(app.read(p)) as { board: { id: string } }).board.id === boardId);
+  if (!rel) throw new Error(`no board file for ${boardId}`);
+  return rel;
+}
+
+describe('a rename whose board saves are slow', () => {
+  it('keeps an edit made meanwhile to a board the same save writes later', async () => {
+    const app = await startApp({ 'n.md': 'N\n' });
+    const first = await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    await placeNoteOnBoard(app, 'kanban', 'n.md');
+    const second = await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    await placeNoteOnBoard(app, 'kanban', 'n.md');
+    await quiesce(1000);
+    const firstRel = boardFileOf(app, first);
+    const secondRel = boardFileOf(app, second);
+
+    // The rename saves both boards with the new link, the first one slowly
+    // (Windows holding its file); the second board, on screen, is edited
+    // meanwhile and saves that edit on its own.
+    const slowSave = holdNextMainCall('board:save', (args) =>
+      String(args[1] ?? '').replace(/\\/g, '/').toLowerCase().endsWith(firstRel.toLowerCase()));
+    await startSidebarRename(app, 'n.md', 'm');
+    await slowSave.reached;
+    await addKanbanColumnNow(app);
+    await settle(900); // longer than a board's save debounce
+
+    slowSave.release();
+    await quiesce(1500);
+    expect(boardOnDisk(app, firstRel)).toEqual({ links: ['m.md'], columns: 1 });
+    expect(boardOnDisk(app, secondRel)).toEqual({ links: ['m.md'], columns: 2 });
+
+    await reopenVault(app);
+    await quiesce(1000);
+    expect(boardOnDisk(app, secondRel)).toEqual({ links: ['m.md'], columns: 2 });
+    await openBoardFromSidebar(app, secondRel, 'kanban');
+    expect(kanbanColumns(app)).toHaveLength(2);
+    expect(errorToasts()).toEqual([]);
   });
 });
 

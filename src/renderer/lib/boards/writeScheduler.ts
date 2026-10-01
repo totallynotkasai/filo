@@ -76,6 +76,44 @@ export function createScheduler<TArgs>(
   const inFlight = new Map<string, Set<InFlightEntry>>();
   /** Writes in neither `pending` nor `inFlight` (see `writeSchedulerParked.ts`). */
   const parked = new ParkedWrites();
+
+  /** An entry a full save (`flushAll`) took from `pending`, to send in its turn. */
+  interface Capture {
+    key: string;
+    /** Args + snapshot captured synchronously upfront — frozen before any await. */
+    args: TArgs | null;
+    scheduleVaultRoot: string | undefined;
+    schedulePath: string | undefined;
+    getArgs: () => TArgs | null;
+    /** Registered as parked until it fires, so `flush(key)` / `hasWork` still see it while it waits its turn. */
+    parked: ParkedEntry;
+    resolveParked: () => void;
+  }
+  /**
+   * A full save's captures not sent yet, per key. Each holds its key's args as
+   * they were when the save began, so a newer `schedule` of the key takes its
+   * place (`takeCapture`) and the full save skips it: sent after the newer
+   * write (which doesn't wait for it), it would land the older bytes last,
+   * and nothing would report the newer change unsaved.
+   */
+  const captures = new Map<string, Capture>();
+
+  /**
+   * Takes `key`'s capture out of the full save that holds it: marked
+   * superseded so the save skips it, no longer parked, its waiters released
+   * (a `flush(key)` among them sends the newer write instead). Its write
+   * tracking carries over to the schedule that replaces it.
+   */
+  function takeCapture(key: string): Capture | undefined {
+    const capture = captures.get(key);
+    if (!capture) return undefined;
+    captures.delete(key);
+    capture.parked.superseded = true;
+    parked.remove(key, capture.parked);
+    capture.resolveParked();
+    return capture;
+  }
+
   /**
    * Writes that outlived `writeTimeoutMs`, per key. They were reported as
    * failed, but they can still land, so the next write of the key waits for
@@ -379,19 +417,24 @@ export function createScheduler<TArgs>(
   ): void {
     ledger.release(key); // newer args supersede a retained failed fire
     const existing = pending.get(key);
+    // A full save's capture of the key, not sent yet, is older than these
+    // args: this schedule replaces it as it would a pending entry.
+    const replaced = existing ?? takeCapture(key);
     const probe = getArgs();
     const nextSentinel: SchedulerSentinelInfo = probe
       ? opts.getSentinelInfo(probe)
       : { vaultRoot: undefined, path: undefined };
 
-    if (existing) {
-      clearTimeout(existing.timer);
+    if (replaced) {
       // Out of the armed set before its old path is released below; the new
       // entry is set at the end.
-      pending.delete(key);
+      if (existing) {
+        clearTimeout(existing.timer);
+        pending.delete(key);
+      }
       const prevSentinel: SchedulerSentinelInfo = {
-        vaultRoot: existing.scheduleVaultRoot,
-        path: existing.schedulePath,
+        vaultRoot: replaced.scheduleVaultRoot,
+        path: replaced.schedulePath,
       };
       opts.onReschedule?.(prevSentinel, nextSentinel);
       // Pending-path mode: retarget the sentinel entry when a reschedule
@@ -514,6 +557,9 @@ export function createScheduler<TArgs>(
       safeEndWrite({ vaultRoot: entry.scheduleVaultRoot, path: resolvedPath }, true);
     }
     if (pendingOnly) return; // skip the parked-fire cancel below; a teardown that already flushed owns it (see Scheduler.cancel doc).
+    // A full save's capture is one of the parked fires settled below, so no
+    // later schedule may take it over (and settle it a second time).
+    captures.delete(key);
     // Also reach PARKED fires (in neither `pending` nor `inFlight` while they
     // await the drain). Otherwise a board deleted mid-park would have its fire
     // resume after the delete and mark the deleted path failed for the session.
@@ -569,10 +615,11 @@ export function createScheduler<TArgs>(
       }
     };
 
-    if (pendingEntry) {
+    // Sends the key's pending write now, after any write of it still in flight.
+    const sendPending = async (entry: PendingEntry<TArgs>): Promise<void> => {
       // Disarm the pending timer UP-FRONT (before any await), so it can't
       // self-fire during the in-flight drain below and double-write.
-      clearTimeout(pendingEntry.timer);
+      clearTimeout(entry.timer);
       pending.delete(key);
 
       // Drain any write already in flight for this key BEFORE firing the pending
@@ -588,7 +635,7 @@ export function createScheduler<TArgs>(
       // Fire the pending write. Args are read NOW (after the drain) so a
       // live-cache getter captures the freshest state; the just-disarmed timer
       // guarantees this is the only fire of this pending entry.
-      const argsGetter = overrideGetArgs ?? pendingEntry.getArgs;
+      const argsGetter = overrideGetArgs ?? entry.getArgs;
       const args = argsGetter();
       if (!args) {
         const message = opts.missingSourceMessage?.(key);
@@ -600,7 +647,7 @@ export function createScheduler<TArgs>(
           );
         }
         safeEndWrite(
-          { vaultRoot: pendingEntry.scheduleVaultRoot, path: pendingEntry.schedulePath },
+          { vaultRoot: entry.scheduleVaultRoot, path: entry.schedulePath },
           false,
         );
         success = false;
@@ -612,7 +659,9 @@ export function createScheduler<TArgs>(
         // doesn't double-report them.
         for (const f of failureList) ledger.consume(f);
       }
-    }
+    };
+
+    if (pendingEntry) await sendPending(pendingEntry);
 
     // Await every remaining in-flight write for this key AND any PARKED fire
     // until both are quiescent. Overlapping fires each own a bucket entry; the
@@ -628,8 +677,13 @@ export function createScheduler<TArgs>(
       for (const inflightEntry of bucket ? Array.from(bucket) : []) {
         await consumeInflight(inflightEntry);
       }
-      const parkedSet = parked.of(key);
-      if (parkedSet.size > 0) await Promise.all(Array.from(parkedSet, (p) => p.promise));
+      const waited = Array.from(parked.of(key));
+      if (waited.length > 0) await Promise.all(waited.map((p) => p.promise));
+      // A full save's capture this flush waited for was replaced by a newer
+      // schedule of the key (`takeCapture`), whose write now carries its
+      // change: send that one, rather than return while it is still armed.
+      const newer = waited.some((p) => p.superseded) ? pending.get(key) : undefined;
+      if (newer) await sendPending(newer);
       guard++;
     } while ((inFlight.get(key)?.size || parked.of(key).size) && guard < 50);
     if (guard >= 50) {
@@ -640,17 +694,6 @@ export function createScheduler<TArgs>(
   }
 
   async function flushAll(): Promise<FlushAllResult> {
-    interface DrainedEntry {
-      key: string;
-      /** Args + snapshot captured synchronously upfront — frozen before any await. */
-      args: TArgs | null;
-      scheduleVaultRoot: string | undefined;
-      schedulePath: string | undefined;
-      getArgs: () => TArgs | null;
-      /** Registered as parked until it fires, so `flush(key)` / `hasWork` still see it while it waits its turn. */
-      parked: ParkedEntry;
-      resolveParked: () => void;
-    }
     drainRetained(); // re-fire every retained failed write once
 
     // Capture pending entries' args AND snapshot synchronously upfront.
@@ -659,8 +702,9 @@ export function createScheduler<TArgs>(
     // path onto another, or a mid-flush cache mutation could leak into a
     // later board's payload. Calling `getArgs` and `snapshotArgs` inside
     // this synchronous loop freezes both the path AND the payload before
-    // any disk I/O begins.
-    const drained: DrainedEntry[] = [];
+    // any disk I/O begins. A key scheduled again meanwhile drops its
+    // capture (see `captures`).
+    const drained: Capture[] = [];
     for (const [key, entry] of pending.entries()) {
       clearTimeout(entry.timer);
       const rawArgs = entry.getArgs();
@@ -672,7 +716,7 @@ export function createScheduler<TArgs>(
       // no longer pending, and without this a `flush(key)` (a board delete's
       // save first) would report it saved before it had even been sent.
       parked.add(key, parkedEntry);
-      drained.push({
+      const capture: Capture = {
         key,
         args,
         scheduleVaultRoot: entry.scheduleVaultRoot,
@@ -680,7 +724,9 @@ export function createScheduler<TArgs>(
         getArgs: entry.getArgs,
         parked: parkedEntry,
         resolveParked,
-      });
+      };
+      captures.set(key, capture);
+      drained.push(capture);
     }
     pending.clear();
 
@@ -703,15 +749,18 @@ export function createScheduler<TArgs>(
     // denominator under us.
     const drainedTotal = drained.length + inflightSnapshot.length;
 
-    const unpark = (entry: DrainedEntry): void => {
+    const unpark = (entry: Capture): void => {
       parked.remove(entry.key, entry.parked);
+      if (captures.get(entry.key) === entry) captures.delete(entry.key);
       entry.resolveParked();
     };
+    // Not sent: `cancel(key)` reached it while it waited (the board was
+    // deleted) and settled its write tracking, or a newer schedule of its key
+    // took its place and its tracking with it (`takeCapture`).
+    const dropped = (entry: Capture): boolean => entry.parked.cancelled || entry.parked.superseded;
     try {
       for (const entry of drained) {
-        // `cancel(key)` reached it while it waited (the board was deleted) and
-        // has already settled its write tracking.
-        if (entry.parked.cancelled) {
+        if (dropped(entry)) {
           unpark(entry);
           continue;
         }
@@ -743,7 +792,7 @@ export function createScheduler<TArgs>(
         // dispatch — callers that fire-and-don't-await `flushAll()` rely on the
         // write having begun synchronously.
         if (hasPriorWrite(entry.key)) await drainPriorInFlight(entry.key);
-        if (entry.parked.cancelled) {
+        if (dropped(entry)) {
           unpark(entry);
           continue;
         }
@@ -839,6 +888,7 @@ export function createScheduler<TArgs>(
     // missing-source branch never reaches `fireWrite`'s `trackerIsCurrent` guard).
     pending.clear();
     parked.clear();
+    captures.clear();
     for (const entry of armed) {
       clearTimeout(entry.timer);
       // Pending-path mode owns its entries in the shared ledger; drop

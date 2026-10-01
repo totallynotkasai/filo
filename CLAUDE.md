@@ -411,7 +411,7 @@ filo/
 │   │   │   │   ├── configDriftHold.ts # `.filo/` settings / hotkeys whose write waits for Reload / Keep local (refused at once; the answer re-fires or drops it)
 │   │   │   │   ├── writeSchedulerTypes.ts # createScheduler's type surface (re-exported by writeScheduler.ts)
 │   │   │   │   ├── writeSchedulerFailures.ts # Failure attribution + retention of transient failures for Retry / Ctrl+S
-│   │   │   │   ├── writeSchedulerParked.ts # Writes neither pending nor in flight (a timer fire behind an earlier write, an entry flushAll hasn't sent yet): flush / hasWork / cancel see them
+│   │   │   │   ├── writeSchedulerParked.ts # Writes neither pending nor in flight (a timer fire behind an earlier write, an entry flushAll hasn't sent yet): flush / hasWork / cancel see them; a newer schedule of its key replaces a flushAll entry, which is then never sent
 │   │   │   │   ├── retryFeedback.ts   # A toast's Retry: fires every kept failed write, then names what still isn't on disk, per kind
 │   │   │   │   ├── writeErrorToast.ts # The toast for a failed debounced write (names a preserved temp file)
 │   │   │   │   ├── lastViewFlush.ts   # Writes a Kanban / Task List `lastView` by the captured board id at teardown, only when a value it owns changed

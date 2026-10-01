@@ -6,13 +6,15 @@
  * "Could lose work" covers anything unsaved, a change held for the user's
  * answer, unapplied Settings, and a focused text field whose text changed
  * since it took focus (a title or a filter that saves on blur may not be in
- * any writer yet). A focused note editor counts only through its unserialised
- * keystrokes, which `nothingUnsaved` already reports: counting the caret
- * alone held back nearly every Windows shutdown, since an editor keeps focus
- * while Filo is in the background, and a routine "preventing shutdown"
- * screen teaches the click that cuts a real rescue short.
+ * any writer yet). A tile, frame or connection title being typed is such a
+ * field, though its editor is a `.ProseMirror` like a note's. A focused note
+ * editor counts only through its unserialised keystrokes, which
+ * `nothingUnsaved` already reports: counting the caret alone held back nearly
+ * every Windows shutdown, since an editor keeps focus while Filo is in the
+ * background, and a routine "preventing shutdown" screen teaches the click
+ * that cuts a real rescue short.
  */
-import { isEditableTextTarget } from '../utils/editableTarget';
+import { isEditableTextTarget, isInNoteEditor } from '../utils/editableTarget';
 
 export interface UnsavedStateSources {
   nothingUnsaved: () => boolean;
@@ -26,19 +28,15 @@ function fieldText(el: Element): string {
   return el.textContent ?? '';
 }
 
-/** A note editor: its keystrokes reach `nothingUnsaved` through the note store. */
-function isNoteEditor(el: Element): boolean {
-  return el.closest('.ProseMirror') !== null;
-}
-
 /**
  * True when the focused field (outside a note editor) holds text it didn't
  * hold when it took focus. `textAtFocus` has what each field held then; a
- * field with no record counts as changed.
+ * field with no record counts as changed. A note editor's keystrokes reach
+ * `nothingUnsaved` through the note store instead.
  */
 export function focusedFieldEdited(textAtFocus: WeakMap<Element, string>): boolean {
   const el = document.activeElement;
-  if (!el || !isEditableTextTarget(el) || isNoteEditor(el)) return false;
+  if (!el || !isEditableTextTarget(el) || isInNoteEditor(el)) return false;
   const before = textAtFocus.get(el);
   return before === undefined || before !== fieldText(el);
 }
@@ -76,7 +74,7 @@ export function startUnsavedStateReport(
   let last: boolean | null = null;
   const textAtFocus = new WeakMap<Element, string>();
   const remember = (el: Element | null): void => {
-    if (el && isEditableTextTarget(el) && !isNoteEditor(el)) textAtFocus.set(el, fieldText(el));
+    if (el && isEditableTextTarget(el) && !isInNoteEditor(el)) textAtFocus.set(el, fieldText(el));
   };
   remember(document.activeElement);
   const check = (): void => {

@@ -24,6 +24,8 @@ import {
   mindMapTiles,
   taskRows,
   renameTileTitle,
+  typeTileTitle,
+  clickEmptyCanvas,
   renameInSidebar,
   renameFileToMatchTitle,
   sidebarRenameMessage,
@@ -78,6 +80,20 @@ describe('titles', () => {
     await undo(app);
     await waitFor(() => app.read('Plans.md') === note, 'the old title back');
     expect(mindMapTiles(app)[0].title).toBe('Old title');
+  });
+
+  it('a title typed and then clicked away from is saved, with no Enter', async () => {
+    const note = '---\ntitle: Old title\n---\nBody line\n';
+    const app = await startApp({ 'Plans.md': note });
+    await createBoard(app, 'mindmap');
+    await placeNoteOnBoard(app, 'mindmap', 'Plans.md');
+
+    await typeTileTitle(mindMapTiles(app)[0].el, 'Clicked away');
+    await clickEmptyCanvas(app);
+    await waitFor(() => frontmatter(app, 'Plans.md').title === 'Clicked away', 'the title saved');
+    await quiesce();
+    expect(app.read('Plans.md')).toBe(note.replace('Old title', 'Clicked away'));
+    expect(mindMapTiles(app)[0].title).toBe('Clicked away');
   });
 
   it('a note without title: shows its filename stem, and a title edit adds the key', async () => {

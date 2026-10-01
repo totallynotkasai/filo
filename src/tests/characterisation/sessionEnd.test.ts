@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, quiesce, waitFor, recoveryCopies, endWindowsSession, unsavedStateReports } from './harness/app';
-import { $$, editors, openNoteFromSidebar, typeAtEnd } from './harness/actions';
+import { $$, editors, openNoteFromSidebar, typeAtEnd, createBoard, placeNoteOnBoard, mindMapTiles, typeTileTitle } from './harness/actions';
 
 afterEach(async () => {
   await stopApp();
@@ -41,6 +41,20 @@ describe('Windows ends the session', () => {
 
     await endWindowsSession(app);
     expect(app.read('Note.md')).toContain('typed before the restart');
+  });
+
+  it('a tile title being typed holds the shutdown back, and is saved', async () => {
+    const app = await startApp({ 'Note.md': NOTE });
+    const reports = unsavedStateReports(app);
+    await createBoard(app, 'mindmap');
+    await placeNoteOnBoard(app, 'mindmap', 'Note.md');
+    await quiesce();
+    await waitFor(() => reports.last() === false, 'a "nothing to lose" report');
+
+    await typeTileTitle(mindMapTiles(app)[0].el, 'Typed before the restart');
+    await waitFor(() => reports.last() === true, 'a "could lose work" report');
+    await endWindowsSession(app);
+    expect(app.read('Note.md')).toContain('title: Typed before the restart');
   });
 
   it('a change that can\'t be saved is kept in .filo/recovery, with no dialog', async () => {

@@ -356,7 +356,7 @@ filo/
 │   │   │   │   ├── handleFlushAndQuit.ts # The quit drain: save, then rescue copies if work is left
 │   │   │   │   ├── historySettleNotice.ts # A save waiting over 2 s on a running undo says so (a toast)
 │   │   │   │   ├── handleSessionEnding.ts # Windows ending the session: save, rescue copies (unapplied Settings too), no dialog
-│   │   │   │   ├── unsavedStateReport.ts # Tells main whether leaving now could lose work (`app:unsaved-state`)
+│   │   │   │   ├── unsavedStateReport.ts # Tells main whether leaving now could lose work (`app:unsaved-state`); a title being typed counts, a note editor (`data-note-editor`) only through the note store
 │   │   │   │   ├── conventionPaths.ts # Default folders + free-name helpers for new files
 │   │   │   │   ├── droppedFiles.ts    # classifyDroppedFile: a file dropped from Explorer is in the vault (link it, by `toVaultRelative`) or outside (copy it); isInsideVault
 │   │   │   │   ├── extension.ts
@@ -476,6 +476,7 @@ filo/
 │   │   │   │   ├── lossyChanges.ts    # The lines a read-only note would change: the banner's "Line N would change…" / "would add a blank line above line N", Take ownership's list
 │   │   │   │   ├── renderedSame.ts    # Lossy check past the cosmetic rules: same markdown-it HTML and reference definitions, no escape another app reads differently
 │   │   │   │   ├── titleCommit.ts     # TileHeader / Frame title commit: trim, default, drop unstyled HTML
+│   │   │   │   ├── titleEditFocus.ts  # commitWhenLeft: a tile, frame or connection title edit ends (and saves) on a press elsewhere or once focus moves elsewhere, except into the app toolbar or its popups; a window switch keeps it open
 │   │   │   │   ├── toolbarConfig.ts   # Formatting toolbar ↔ active editor bridge (every command runs via chainIfEditable)
 │   │   │   │   ├── insertLink.ts      # Insert Link popup target + apply/remove (a caret inside or right after a link edits it; else inserts)
 │   │   │   │   ├── linkUrl.ts         # normaliseLinkUrl: bare domain → https://, address → mailto:; isOpenable (the one scheme list)
@@ -576,7 +577,7 @@ filo/
 │   │   │       ├── color.ts           # Colour manipulation helpers
 │   │   │       ├── cloneTile.ts
 │   │   │       ├── contextMenuKey.ts
-│   │   │       ├── editableTarget.ts  # isEditableTextTarget; wantsNativeTextMenu / keepFocusOnSecondaryPress (tile or card text not being edited: its menu, no caret moved)
+│   │   │       ├── editableTarget.ts  # isEditableTextTarget; wantsNativeTextMenu / keepFocusOnSecondaryPress (tile or card text not being edited: its menu, no caret moved); isInNoteEditor (a note editor, not a title's)
 │   │   │       ├── modalOpen.ts       # isModalDialogOpen: a `dialog[open]` or `aria-modal="true"` is up
 │   │   │       ├── errorBus.ts        # Renderer error → toast routing
 │   │   │       ├── openExternal.ts    # openExternalUrl: every link click; http:// refused with a toast

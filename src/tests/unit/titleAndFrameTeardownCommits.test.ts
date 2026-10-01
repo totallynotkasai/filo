@@ -204,15 +204,13 @@ describe('Audit-17 4.1 — TileHeader teardown commits instead of cancelling (so
   // A title typed but not committed is committed whether or not the blur window is open.
   const teardownStart = TILE_HEADER_SRC.indexOf('const snap = uncommittedTitle();');
 
-  it('snapshots the editor BEFORE destroy, clears the timer, and commits', () => {
+  it('snapshots the editor BEFORE destroy, then commits', () => {
     expect(teardownStart).toBeGreaterThan(-1);
     const region = TILE_HEADER_SRC.slice(teardownStart, teardownStart + 400);
-    // Order matters: snapshot → clearTimeout → destroy → commit.
-    const clearIdx = region.indexOf('clearTimeout(blurCommitTimer)');
+    // Order matters: snapshot → destroy → commit.
     const destroyIdx = region.indexOf('destroyTitleEditor()');
     const commitIdx = region.indexOf('applyTitleCommit(snap, true)');
-    expect(clearIdx).toBeGreaterThan(-1);
-    expect(destroyIdx).toBeGreaterThan(clearIdx);
+    expect(destroyIdx).toBeGreaterThan(-1);
     expect(commitIdx).toBeGreaterThan(destroyIdx);
   });
 
@@ -229,18 +227,18 @@ describe('Audit-17 4.1 — TileHeader teardown commits instead of cancelling (so
 
 // ── 4.2 — frame title twin ───────────────────────────────────────────────
 
-describe('Audit-17 4.2 — Frame title blur timer is tracked and commits on unmount', () => {
-  it('declares the handle, arms it in onBlur, and clears it in destroyTitleEditor', () => {
-    expect(FRAME_SRC).toContain('let blurCommitTimer: ReturnType<typeof setTimeout> | null = null;');
-    expect(FRAME_SRC).toContain('blurCommitTimer = setTimeout(() => {');
+describe('the frame title commits when focus leaves, and on unmount', () => {
+  it('ends the edit through the shared focus rule (behaviour: titleCommitsOnClickAway.test.ts)', () => {
+    expect(FRAME_SRC).toContain('commitWhenLeft(host, () => {');
   });
 
-  it('the unmount teardown snapshots then commits via the teardown-safe path', () => {
+  it('the unmount teardown snapshots, destroys, then commits via the teardown-safe path', () => {
     const idx = FRAME_SRC.indexOf('const snap = uncommittedTitle();');
     expect(idx).toBeGreaterThan(-1);
     const region = FRAME_SRC.slice(idx, idx + 400);
-    expect(region).toContain('clearTimeout(blurCommitTimer)');
-    expect(region).toContain('applyFrameTitleCommit(snap, true)');
+    const destroyIdx = region.indexOf('destroyTitleEditor()');
+    expect(destroyIdx).toBeGreaterThan(-1);
+    expect(region.indexOf('applyFrameTitleCommit(snap, true)')).toBeGreaterThan(destroyIdx);
   });
 
   it('the teardown commit writes through the cache (persistUpdateFrame), not history', () => {

@@ -22,6 +22,7 @@
   import { effectiveFrameStyle } from '../../lib/styles/effectiveStyle';
   import { createLabelEditor } from '../../lib/editor/createEditor';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
+  import { commitWhenLeft } from '../../lib/editor/titleEditFocus';
   import { sanitizeInlineHtml } from '../../lib/utils/sanitizeHtml';
   import { resolveTitleCommitValues, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
   import { revertFrameDragOnTeardown } from '../../lib/frames/frameDragCancel';
@@ -56,11 +57,6 @@
   let titleEditorElement = $state<HTMLDivElement | null>(null);
   let titleEditor: Editor | null = $state(null);
   let showStyle = $state(false);
-  // Handle for the inline blur→commit defer: stored so teardown/destroy can
-  // cancel it and so repeated blur/focus cycles don't stack timers. Cleared by hand in
-  // `destroyTitleEditor()` — the `gates:component-timer-cleanup` gate can't see
-  // a timer armed inside a TipTap callback.
-  let blurCommitTimer: ReturnType<typeof setTimeout> | null = null;
 
   let titleDisplay = $derived.by(() => {
     const raw = (frame as FrameType & { titleHtml?: string }).titleHtml;
@@ -163,12 +159,6 @@
   }
 
   function destroyTitleEditor() {
-    // Cancel a pending blur→commit defer so it can't fire
-    // after the editor is gone (commit/cancel/unmount all route through here).
-    if (blurCommitTimer) {
-      clearTimeout(blurCommitTimer);
-      blurCommitTimer = null;
-    }
     if (titleEditor) {
       tiptapToolbar.releaseEditor(titleEditor);
       titleEditor.destroy();
@@ -255,19 +245,6 @@
         onFocus: () => {
           if (titleEditor) tiptapToolbar.setActiveEditor(titleEditor);
         },
-        onBlur: () => {
-          // Slight delay so toolbar-button clicks (which blur the editor)
-          // don't trigger a premature commit. Store the handle (and clear any
-          // prior one) so a teardown inside the window can commit-not-drop;
-          // null it once it fires.
-          if (blurCommitTimer) clearTimeout(blurCommitTimer);
-          blurCommitTimer = setTimeout(() => {
-            blurCommitTimer = null;
-            if (titleEditor && tiptapToolbar.activeEditor !== titleEditor) {
-              commitTitle();
-            }
-          }, 200);
-        },
         onTransaction: () => {
           if (titleEditor && tiptapToolbar.activeEditor === titleEditor) {
             tiptapToolbar.syncState();
@@ -281,16 +258,23 @@
     }
   });
 
-  // Commit-on-unmount: a title typed but not committed (the 200 ms blur
-  // window still open, or the view closed while editing) is committed rather
-  // than dropped. Snapshot before the editor is destroyed,
-  // clear the timer (inline so `gates:component-timer-cleanup` recognises it),
-  // then commit through the teardown-safe path.
+  // Clicking or tabbing away ends the edit and saves the title; the
+  // formatting toolbar and its popups don't (see `titleEditFocus.ts`). The
+  // host is bound only while editing, so the watch stops when the edit ends.
+  $effect(() => {
+    const host = titleEditorElement;
+    if (!host) return;
+    return commitWhenLeft(host, () => {
+      if (titleEditor) commitTitle();
+    });
+  });
+
+  // Commit-on-unmount: a title typed but not committed (focus just left, or
+  // the view closed while editing) is committed rather than dropped. Snapshot
+  // before the editor is destroyed, then commit through the teardown-safe path.
   $effect(() => {
     return () => {
       const snap = uncommittedTitle();
-      if (blurCommitTimer) clearTimeout(blurCommitTimer);
-      blurCommitTimer = null;
       destroyTitleEditor();
       if (snap) applyFrameTitleCommit(snap, true);
     };

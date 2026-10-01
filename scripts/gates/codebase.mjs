@@ -32,7 +32,7 @@ const CHARACTERISATION_SPECS = {
   'metadataEdits.test.ts': 5,
   'renamesAndDiskChanges.test.ts': 8,
   'bytesOnDisk.test.ts': 5,
-  'noteModel.test.ts': 13,
+  'noteModel.test.ts': 14,
   'oneModel.test.ts': 4,
   'trash.test.ts': 9,
   'tagUndo.test.ts': 7,
@@ -62,6 +62,7 @@ const CHARACTERISATION_SPECS = {
   'explorerDrops.test.ts': 3,
   'taskSubtasks.test.ts': 2,
   'slowRenames.test.ts': 6,
+  'sessionEnd.test.ts': 4,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

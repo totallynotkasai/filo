@@ -19,6 +19,7 @@
   import { UpdateConnectionCommand } from '../../commands/index';
   import { createLabelEditor } from '../../lib/editor/createEditor';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
+  import { commitWhenLeft } from '../../lib/editor/titleEditFocus';
   import { getClosestTOnPolyline, type PathPoint } from '../../lib/connections/pathRouter';
   import { effectiveConnectionLabelStyle } from '../../lib/styles/effectiveStyle';
   import { sanitizeInlineHtml } from '../../lib/utils/sanitizeHtml';
@@ -230,29 +231,17 @@
     }
   });
 
-  // Commit the edit when the user clicks anywhere outside the editor
-  // host. Without this, `isEditing` sticks to true and the next attempt
-  // to edit the label silently no-ops (the editor element is gone but
-  // the flag prevents `startEdit` from firing).
-  //
-  // Whitelist the formatting toolbar and editor-driven popups: pointerdown
-  // fires before mousedown, so the toolbar's mousedown-preventDefault focus
-  // guard is too late to stop us from committing — we have to skip the
-  // commit here instead, otherwise clicking Bold/Italic/Color destroys the
-  // editor before the format command can apply.
+  // Commit the edit when the user clicks anywhere outside the editor host,
+  // or focus moves elsewhere (Tab), by the same rule as a tile or frame
+  // title (`titleEditFocus.ts`); the formatting toolbar and its popups keep
+  // it open. Without this, `isEditing` sticks to true and the next attempt
+  // to edit the label silently no-ops (the editor element is gone but the
+  // flag prevents `startEdit` from firing).
   $effect(() => {
     if (!isEditing || !labelEditorElement) return;
-    const editorEl = labelEditorElement;
-    const onDocPointerDown = (e: PointerEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (editorEl.contains(target)) return;
-      if (target.closest('.global-toolbar')) return;
-      if (target.closest('[data-keeps-editor-focus]')) return;
-      commitEdit();
-    };
-    document.addEventListener('pointerdown', onDocPointerDown, true);
-    return () => document.removeEventListener('pointerdown', onDocPointerDown, true);
+    return commitWhenLeft(labelEditorElement, () => {
+      if (isEditing) commitEdit();
+    });
   });
 
   // Leaving the vault, quitting and Ctrl+S save a label being edited: the

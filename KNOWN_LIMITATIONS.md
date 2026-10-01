@@ -196,8 +196,9 @@ anyway** or **Stay open**. The dialog names each file and why it wasn't saved
 app first, so the quit flush above doesn't run. The renderer keeps main told
 whether leaving now could lose work (anything unsaved, keystrokes an editor
 hasn't handed over yet, a question waiting for an answer, unapplied Settings,
-a focused field whose text changed since it took focus; a caret resting in a
-note is not work). Only then does main hold
+a focused field whose text changed since it took focus, a tile, frame or
+connection title being typed included; a caret resting in a note is not
+work). Only then does main hold
 the session back (Windows shows its "Filo is preventing shutdown" screen) for
 at most about 4 s, while the renderer saves and writes rescue copies of what
 is left, unapplied Settings and theme-editor edits included

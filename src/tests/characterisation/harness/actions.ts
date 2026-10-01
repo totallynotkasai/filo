@@ -496,6 +496,13 @@ export function mindMapTiles(app: CharApp): TileView[] {
  * double-click on the title opens the card as a document instead.)
  */
 export async function renameTileTitle(tileRoot: HTMLElement, title: string): Promise<void> {
+  await typeTileTitle(tileRoot, title);
+  key($(document, '.tile-title-editor'), 'Enter');
+  await quiesce(1200);
+}
+
+/** As {@link renameTileTitle}, but the edit is left open: no Enter, no click away. */
+export async function typeTileTitle(tileRoot: HTMLElement, title: string): Promise<void> {
   const titleEl = $(tileRoot, '.tile-title');
   titleEl.focus();
   key(titleEl, 'F2');
@@ -507,8 +514,6 @@ export async function renameTileTitle(tileRoot: HTMLElement, title: string): Pro
   ed.commands.selectAll();
   ed.commands.insertContent(title);
   await settle();
-  key(host, 'Enter');
-  await quiesce(1200);
 }
 
 /** Card due-date button → date input. */
@@ -1006,6 +1011,24 @@ export async function panAndZoomMindMap(app: CharApp, dx = 120, dy = 80): Promis
   window.dispatchEvent(new PointerEvent('pointerup', { ...opts(300 + dx, 300 + dy), buttons: 0 }));
   board.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -100, clientX: 300, clientY: 300 }));
   await quiesce(3500);
+}
+
+/**
+ * A click on empty mind map canvas. The press focuses the canvas (it is
+ * focusable), as the browser does, so whatever had focus loses it.
+ */
+export async function clickEmptyCanvas(app: CharApp): Promise<void> {
+  const board = $(app.el, '.mindmap-board');
+  const opts = { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: 5, clientY: 5, pointerType: 'mouse', isPrimary: true };
+  board.dispatchEvent(new PointerEvent('pointerdown', { ...opts, buttons: 1 }));
+  const down = new MouseEvent('mousedown', opts);
+  board.dispatchEvent(down);
+  if (!down.defaultPrevented) board.focus();
+  board.dispatchEvent(new PointerEvent('pointerup', opts));
+  window.dispatchEvent(new PointerEvent('pointerup', opts));
+  board.dispatchEvent(new MouseEvent('mouseup', opts));
+  board.dispatchEvent(new MouseEvent('click', opts));
+  await settle(50);
 }
 
 /** The mind map's current camera transform (what the user sees move). */

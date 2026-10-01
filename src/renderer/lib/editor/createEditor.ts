@@ -49,6 +49,7 @@ import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
 import { FiloTextAlign, ListItemLayout, isListItem } from './listItemLayout';
 import { installNoteSerializer } from './delimiterRuns';
 import { FiloLink } from './autolinkMarkdown';
+import { NOTE_EDITOR_ATTRIBUTE } from '../utils/editableTarget';
 
 const lowlight = createLowlight(common);
 
@@ -265,6 +266,9 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
     editorProps: {
       attributes: {
         spellcheck: 'true',
+        // Tells a note editor from a title or label editor (the shutdown
+        // report counts a title being typed, and leaves a note to its store).
+        [NOTE_EDITOR_ATTRIBUTE]: 'true',
       },
     },
 

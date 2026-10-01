@@ -14,6 +14,7 @@
   import { effectiveTileStyle } from '../../lib/styles/effectiveStyle';
   import { createLabelEditor } from '../../lib/editor/createEditor';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
+  import { commitWhenLeft } from '../../lib/editor/titleEditFocus';
   import { sanitizeInlineHtml } from '../../lib/utils/sanitizeHtml';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { resolveTitleCommitValues, visibleTitleHtml, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
@@ -58,13 +59,6 @@
   let isEditing = $state(false);
   let titleEditorElement = $state<HTMLDivElement | null>(null);
   let titleEditor: Editor | null = $state(null);
-  // Handle for the inline blur→commit defer below. Stored so it
-  // can be cancelled on teardown (and re-armed cleanly on a fresh blur);
-  // otherwise a tile deleted / board switched inside the 200ms window leaves a
-  // dangling timer that fires `commitTitleEdit()` against a torn-down editor.
-  // The `gates:component-timer-cleanup` gate can't see a timer armed inside a
-  // TipTap callback, so this is cleaned up by hand in `destroyTitleEditor()`.
-  let blurCommitTimer: ReturnType<typeof setTimeout> | null = null;
 
   // The rendered title falls back to plain text when no rich-text version
   // has been authored, or when the stored formatting no longer spells the
@@ -94,13 +88,6 @@
   }
 
   function destroyTitleEditor() {
-    // Cancel a pending blur→commit defer so it can't fire after
-    // the editor is gone (commit/cancel/unmount all route through here; the
-    // `$effect` teardown at the bottom calls this on unmount).
-    if (blurCommitTimer) {
-      clearTimeout(blurCommitTimer);
-      blurCommitTimer = null;
-    }
     if (titleEditor) {
       tiptapToolbar.releaseEditor(titleEditor);
       titleEditor.destroy();
@@ -194,21 +181,6 @@
         onFocus: () => {
           if (titleEditor) tiptapToolbar.setActiveEditor(titleEditor);
         },
-        onBlur: () => {
-          // Slight delay so toolbar-button clicks (which blur the editor)
-          // don't trigger a premature commit. The Tile commit fires after
-          // 200ms — long enough for a toolbar interaction to keep the
-          // editor alive via `keepActiveEditor`.
-          // Store the handle (and clear any prior one) so a
-          // teardown inside the window cancels it; null it once it fires.
-          if (blurCommitTimer) clearTimeout(blurCommitTimer);
-          blurCommitTimer = setTimeout(() => {
-            blurCommitTimer = null;
-            if (titleEditor && tiptapToolbar.activeEditor !== titleEditor) {
-              commitTitleEdit();
-            }
-          }, 200);
-        },
         onTransaction: () => {
           if (titleEditor && tiptapToolbar.activeEditor === titleEditor) {
             tiptapToolbar.syncState();
@@ -223,14 +195,22 @@
     }
   });
 
-  // Guard against unmount during edit. A title typed but not committed (the
-  // 200 ms blur window still open, or the view closed while editing) is
-  // committed rather than dropped: snapshot the editor's
-  // value BEFORE tearing it down, clear the timer (kept inline so
-  // `gates:component-timer-cleanup` sees it in a recognised `$effect` teardown;
-  // `destroyTitleEditor` also clears it for the commit/cancel paths), then
-  // commit fire-and-forget (the rename helper is async-safe and self-guards
-  // when the tile is already gone, e.g. mid-vault-swap).
+  // Clicking or tabbing away ends the edit and saves the title; the
+  // formatting toolbar and its popups don't (see `titleEditFocus.ts`). The
+  // host is bound only while editing, so the watch stops when the edit ends.
+  $effect(() => {
+    const host = titleEditorElement;
+    if (!host) return;
+    return commitWhenLeft(host, () => {
+      if (titleEditor) void commitTitleEdit();
+    });
+  });
+
+  // Guard against unmount during edit. A title typed but not committed (focus
+  // just left, or the view closed while editing) is committed rather than
+  // dropped: snapshot the editor's value BEFORE tearing it down, then commit
+  // fire-and-forget (the rename helper is async-safe and self-guards when the
+  // tile is already gone, e.g. mid-vault-swap).
   //
   // DEFER the commit one microtask past the synchronous
   // teardown so the `.md` rename doesn't race the board switch's own
@@ -240,8 +220,6 @@
   $effect(() => {
     return () => {
       const snap = uncommittedTitle();
-      if (blurCommitTimer) clearTimeout(blurCommitTimer);
-      blurCommitTimer = null;
       destroyTitleEditor();
       if (snap) queueMicrotask(() => void applyTitleCommit(snap, true));
     };

@@ -67,3 +67,16 @@ export function wantsNativeTextMenu(e: MouseEvent): boolean {
 export function keepFocusOnSecondaryPress(e: MouseEvent, host: Element): void {
   if (e.button !== 0 && !host.contains(document.activeElement)) e.preventDefault();
 }
+
+/**
+ * The attribute a note editor carries (`createTiptapEditor`) and a title or
+ * label editor doesn't. Both are `.ProseMirror` elements, but a note's
+ * keystrokes reach the note store, while a title's are only in its editor
+ * until the edit ends.
+ */
+export const NOTE_EDITOR_ATTRIBUTE = 'data-note-editor';
+
+/** Whether `el` is in a note editor (not a title or label editor). */
+export function isInNoteEditor(el: Element): boolean {
+  return el.closest(`[${NOTE_EDITOR_ATTRIBUTE}]`) !== null;
+}

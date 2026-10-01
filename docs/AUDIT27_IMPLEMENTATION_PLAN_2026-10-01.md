@@ -532,6 +532,103 @@ Tests:
 
 E2E: the session-end spec, if one exists, plus the full suite (this phase touches the shutdown report).
 
+### Phase 3 outcome (done 2026-10-01)
+
+**What changed: a title is saved when you click away (N-1)**
+- New `src/renderer/lib/editor/titleEditFocus.ts`, one rule for every title and label editor:
+  - `commitWhenLeft(host, commit)` ends the edit:
+    - at once, on a press anywhere outside the editor;
+    - 200 ms after focus moves anywhere outside it (Tab, a click on something that takes focus).
+  - Neither counts when it lands in the app toolbar (`.global-toolbar`, which holds the formatting toolbar and its colour panels) or in a popup marked `data-keeps-editor-focus` (the colour picker, the link popup). So Bold, a colour or a font can still be applied mid-edit.
+  - Every focus move in the document is watched, not only the editor's own blur. Focus that went into the toolbar (the font box) and from there elsewhere ends the edit too.
+  - A window switch doesn't end the edit: the editor stays the focused element. F-03 below makes a shutdown in that state safe.
+  - `keepsEditing`, `KEEPS_EDITING_SELECTOR` and `TITLE_FOCUS_LEAVE_MS` are exported for the tests.
+- `TileHeader.svelte` (Mind Map tiles and Kanban cards) and `Frame.svelte`:
+  - the TipTap `onBlur` timer, which committed only when another editor had become the toolbar's active editor, is gone, with its `blurCommitTimer` handle;
+  - an `$effect` runs `commitWhenLeft` while the title editor's host is bound;
+  - Enter, Escape, the save before leaving (component flush) and the unmount commit are unchanged.
+- `ConnectionLabel.svelte` already committed on a press outside the label. Its own press handler is replaced by `commitWhenLeft`, so it now also commits when focus leaves by Tab.
+
+**What changed: a half-typed title holds back a Windows shutdown (F-03)**
+- `createTiptapEditor` sets `data-note-editor="true"` on every note editor (text tiles, Kanban cards, Document tabs). `createLabelEditor` (titles, labels) doesn't.
+- `editableTarget.ts`: `NOTE_EDITOR_ATTRIBUTE` and `isInNoteEditor`.
+- `unsavedStateReport.ts` treats only an element inside `[data-note-editor]` as a note editor. A title or label editor falls under the existing rule: a focused field whose text changed since it took focus.
+- The session-end save already commits the title: its `vaultStore.save()` runs the component flushes. No change was needed there.
+
+**Docs**
+- KNOWN_LIMITATIONS #4: the list of what holds a shutdown back now names "a tile, frame or connection title being typed".
+- CLAUDE.md: project-tree lines for `titleEditFocus.ts`, `unsavedStateReport.ts` and `editableTarget.ts`.
+
+**Tests**
+
+| File | Cases | On `c92f14e` (fix files put back) |
+|---|---|---|
+| `src/tests/component/titleCommitsOnClickAway.test.ts` (new) | 8 | 6 fail; the window-switch and Escape guards pass |
+| `src/tests/unit/titleEditFocus.test.ts` (new) | 9 | new module: no old code to run against |
+| `src/tests/unit/unsavedStateReport.test.ts` | 3 new, 2 updated | 1 fails: the title case; the two guards pass |
+| `src/tests/characterisation/noteModel.test.ts`, new case | 1 | fails (times out waiting for the title) |
+| `src/tests/characterisation/sessionEnd.test.ts`, new case | 1 | fails (main is never told) |
+| `src/tests/unit/titleAndFrameTeardownCommits.test.ts` | 3 updated | — |
+
+- **Component** (`titleCommitsOnClickAway.test.ts`): the real `TileHeader`, `Frame`, `ConnectionLabel` and `TextFormattingToolbar`, with a focusable canvas beside them.
+  - A tile title is saved, as one undo step, when focus goes to the canvas.
+  - A press on the toolbar's Bold, and focus on it, keep the title open; Bold applies; a click on the canvas then saves it, bold (`titleHtml` holds `<strong>`).
+  - Focus in the font box keeps it open; focus on to the canvas saves it.
+  - A press that moves no focus (the Mind Map canvas) saves it, with focus still in the font box.
+  - A window switch (blur without focus moving) keeps it open, unsaved.
+  - Escape still drops the typed title, and leaves no undo step.
+  - A frame title is saved when focus goes to the canvas.
+  - A connection label is saved when focus moves away with no press (Tab).
+- **Unit** (`titleEditFocus.test.ts`): `keepsEditing` for the editor, the toolbar, a popup, elsewhere and nothing; `commitWhenLeft` for a press outside, presses inside / on the toolbar / in a popup, focus elsewhere (only after 200 ms), focus to nothing, toolbar then elsewhere, focus back within the check, a window switch, and stopping.
+- **Unit** (`unsavedStateReport.test.ts`), with real editors: a title being typed holds a shutdown back; an unchanged focused title doesn't; a note editor's changed text is left to the note store. The two existing note-editor cases now carry `data-note-editor`.
+- **Characterisation**:
+  - `noteModel.test.ts`: a title typed and then clicked away from is saved, with no Enter; the file changes only on its `title:` line. Gate minimum 13 → 14.
+  - `sessionEnd.test.ts`: a tile title being typed makes main hold a shutdown back, and the session-end save writes it. The spec joins the gate's list (minimum 4).
+  - Harness: `typeTileTitle` (F2, type, no Enter; `renameTileTitle` now calls it) and `clickEmptyCanvas`.
+- `titleAndFrameTeardownCommits.test.ts` pinned the old timer by source shape. Its three cases now pin "snapshot, destroy, then commit" and the shared rule; the behaviour is in the component test.
+
+**Verification**
+- **The tests bite.** The five fix files (`TileHeader.svelte`, `Frame.svelte`, `ConnectionLabel.svelte`, `createEditor.ts`, `unsavedStateReport.ts`) were put back to `c92f14e` and the new tests run, then the files restored byte-for-byte (table above). On the old code the titles stay `Old title`, `Old frame` and `Old label`, and main is told "nothing to lose" while a title is typed.
+- **Each part of the new rule is pinned.** Each mutation of `titleEditFocus.ts` below was applied in turn, its unit and component tests run, and the file restored byte-for-byte:
+
+  | Mutation | Tests that fail |
+  |---|---|
+  | no press listener | 2 |
+  | no focus listener | 8 |
+  | the toolbar doesn't keep the edit open | 5 |
+  | a popup doesn't keep it open | 2 |
+  | the editor itself doesn't keep it open (a window switch) | 10 |
+  | focus checked at once, not after 200 ms | 1 |
+  | stopping leaves the pending check armed | 1 |
+- **The real app.** A Playwright script drove the built app over a vault with a Mind Map (a note's tile and a frame) and a Kanban board (`phase3check.mjs`, this session's scratchpad). All 23 checks passed, with no renderer errors:
+  - main is told "nothing to lose" at rest, "could lose work" while a title is typed, and "nothing to lose" once it is saved;
+  - a window switch keeps the title open and unsaved;
+  - a click on the canvas saves the title (`title:` in the note) and closes the editor;
+  - the toolbar's Bold keeps it open and is saved with it (`<strong>` on the board);
+  - focus in the font box keeps it open; a click on the canvas then saves it;
+  - Tab saves it; Escape drops it;
+  - a frame title is saved on a canvas click;
+  - a Kanban card's title opened with F2 stays open, and a click on the board saves it.
+- `npm run ci:verify` on Windows: green.
+  - lint, svelte-check (859 files) and `typecheck:main` clean;
+  - `test:unit:strict`: 790 files, 7,462 tests passed, 5 skipped;
+  - build;
+  - 89/89 gates, including `test-typecheck` (the new test files type-check clean), `characterisation-suite` (the new minimums), `file-sizes` and `no-audit-narration`.
+- E2E on the built app: 23 passed in 2.5 min, including the quit, crash-recovery, sync-delivery and Kanban click specs. The 3 skipped are the scale budgets, which run only with `FILO_E2E_SCALE=1` (the plan asks for them in Phases 1 and 6). There is no session-end E2E spec; the characterisation case above covers it.
+
+**Deviations from the plan**
+1. **A press ends the edit, as well as focus leaving.** D3 checks only where focus is 200 ms after the editor's blur. The real-app check showed that is not enough: a press on the Mind Map canvas moves no focus (its pan handler cancels the press's default; the canvas click handler blurs a focused editor, but not a focused toolbar control). With focus in the font box, a click on the canvas left the title open. ConnectionLabel already had the press rule, so all three editors now share it.
+2. **Every focus move is watched, not only the editor's blur.** Focus that went into the toolbar and then elsewhere fires no second blur of the editor.
+3. **Focus still on the editor keeps it open.** A window switch fires the editor's blur but leaves it focused. Committing then would close the title whenever you switch apps mid-title, which the old code didn't do either. F-03 covers a shutdown in that state.
+4. **The keep-open zone is the whole app toolbar**, not only its formatting section: the selector ConnectionLabel already used. The toolbar's Undo / Redo act on the title editor too. A press on another toolbar control (the vault menu, the sidebar toggle) leaves the title open until the next press or focus move, or the save before leaving.
+5. **ConnectionLabel "aligned"** means it uses the shared helper: its press rule is unchanged, and Tab away now commits.
+6. **The note-editor attribute lives in `editableTarget.ts`**, not `createEditor.ts`, so the shutdown report doesn't import TipTap.
+7. **More tests than the plan listed**: the helper's own unit test, the press-without-focus, font box, window switch, Escape, frame and connection label cases, and the two characterisation cases. `sessionEnd.test.ts` joins the characterisation gate's list.
+8. **KNOWN_LIMITATIONS #4** held as written, but its list of what holds a shutdown back now names titles, so the promise is explicit.
+
+**New findings** (low, not fixed)
+- At a window about 1,380 px wide, the formatting toolbar overflows: its section is centred and scrolls, so its left end is clipped and the font box shows only its arrow. Phase 2's screenshot shows the same, so it predates this phase.
+
 ---
 
 ## Phase 4: small bugs and quick wins (each Hard 1–2/10)

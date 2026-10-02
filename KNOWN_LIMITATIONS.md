@@ -171,7 +171,9 @@ only way to harden it on Windows — deferred unless a user actually hits it.
 writes, but waits at most `FLUSH_TIMEOUT_MS = 5000` ms.
 
 **Where:** [src/main/main.ts](src/main/main.ts) (`FLUSH_TIMEOUT_MS`, the
-`before-quit` / window-`close` flush coordination).
+`before-quit` / window-`close` flush coordination),
+[src/renderer/lib/vault/handleFlushAndQuit.ts](src/renderer/lib/vault/handleFlushAndQuit.ts)
+(`QUIT_DRAIN_DEADLINE_MS`).
 
 **Why accepted:** A wedged or unresponsive renderer must not block the app from
 quitting indefinitely. Five seconds is generous for a normal flush.
@@ -1500,7 +1502,7 @@ instead.
 `--text-tertiary`. In the Light theme it is `#6b7075`: 5.0:1 on white and
 4.7:1 on the app background, so it meets WCAG AA's 4.5:1 for small text
 there, and the Task List's keyboard-hint strip is drawn at that full colour.
-On a hovered or selected row it is just under (4.5:1 and 4.2:1). The other
+On a hovered or selected row it is just under (4.49:1 and 4.15:1). The other
 built-in themes (Dark, Blueprint, Retro, Nature) keep the project's 3:1 bar
 for tertiary text on the app background (3.0–3.3:1); on a card or panel
 surface it is lower (2.1–2.9:1).

@@ -90,6 +90,10 @@
 
   function handleDragStart(e: PointerEvent): void {
     if (e.button !== 0) return;
+    // A press on the close button is a click, not a drag: with the pointer
+    // captured by the header, the browser sends the click to the header and
+    // the button never sees it.
+    if ((e.target as Element | null)?.closest('button')) return;
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture(e.pointerId);
     const rect = (panelEl ?? target).getBoundingClientRect();

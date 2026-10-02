@@ -1,5 +1,7 @@
 # Audit-27: implementation plan
 
+**Status (2026-10-02): Phases 0–6 are done.** Each phase's outcome, deviations and new findings follow its plan below; Phase 6 lists what is still open. Track B is for later.
+
 Source: [AUDIT27_REVIEW_2026-10-01.md](AUDIT27_REVIEW_2026-10-01.md), the 2026-10-01 review of `abf5212`.
 
 How it was reviewed:
@@ -1008,6 +1010,104 @@ The synthetic format: **format 7, in which a Kanban board called its columns `la
 3. Add an "after fixes" column to the review's bug table.
 4. Move the review and this plan to `docs/archive/`.
 5. Commit, and push after the owner's go-ahead.
+
+### Phase 6 outcome (done 2026-10-02)
+
+**The checks (1)**, all on Windows, on a quiet machine (CPU load about 5% before each run; Phase 5's runs had a game running).
+- **`npm run ci:verify` on `2771755`:** green in 4 min 55 s.
+  - lint, svelte-check (860 files, 0 errors) and `typecheck:main` clean;
+  - `test:unit:strict`: 794 files, 7,523 tests passed, 5 skipped;
+  - build;
+  - 89/89 gates.
+- **E2E on `2771755`, `FILO_E2E_SCALE=1`:** 26/26 passed in 2.8 min, the three scale budgets included. Phase 5's misses were the busy machine, as its A/B run suggested. The scale spec was run twice more with the JSON reporter to record its timings (the list reporter doesn't print them):
+
+  | Budget | Phase 5 (busy machine, 4 runs) | Phase 6 (2 runs) |
+  |---|---|---|
+  | Kanban 300 opens (1,000 ms) | 1,050–1,256 ms | 572 / 554 ms |
+  | Kanban switch back (500 ms) | 666–1,642 ms | 340 / 268 ms |
+  | Task List fields right after its rows (1,000 ms) | 941–1,794 ms | 897 / 655 ms |
+  | 2,000-note folder: first rows (300 ms) | — | 61 / 54 ms |
+  | 2,000-note folder: all rows (5,000 ms) | 1,642–6,852 ms | 1,220 / 1,247 ms |
+
+- **The 5,000-note real-app pass** (`sim.pass.ts` and `phase1.pass.ts` from the Audit-26 sessions, run from this session's scratchpad against the built app).
+  - **The first `sim.pass.ts` run stopped at the folder rename:** the Search panel, still open after Replace All, covered the sidebar's `Notes` row, and the click timed out. Everything before it had passed byte for byte. The script's "Close search" click had landed but closed nothing: a bug, fixed in this phase (below).
+  - With the fix, each script was run twice. All four runs passed, with every byte check holding:
+    - the Keep-style note and the character sheet open editable, and each edit changes only the line typed in;
+    - the Kanban card keeps its BOM and CRLF, and only the typed line changes;
+    - the task tick changes only `completed:` (its comment kept), and undo puts the file back byte for byte;
+    - the tag rename changes only the `tags` line in each of the 1,484 notes and nothing else in the vault, and its Undo restores all 1,484 byte for byte;
+    - Replace All changes exactly the replaced word in 25 notes; its confirm reads `Replace "zephyrquill" with "windpen" (25 matches in 25 notes)?` (Phase 2's wording), and its Undo restores all 25;
+    - the 1,107-file folder rename leaves no board path pointing at the old folder or at a missing file, and no broken tile;
+    - delete + undo puts the note back byte for byte and its card back on the Kanban; the sync delivery shows on the card and is never written back;
+    - each quit exits with no sentinel and no recovery files; the relaunch shows no Recovery modal, the typed text is there, and looking at every board changes no file;
+    - the refused folder rename (a file held open) changes no board link; the media tiles keep playing after their folder's rename; quit right after an undo keeps the card;
+    - no renderer errors in any run.
+
+    | Measure | Audit-26 Phase 7 | Phase 6, run 1 | Phase 6, run 2 |
+    |---|---|---|---|
+    | Vault open (5,000 notes) | 951 ms | 960 ms | 981 ms |
+    | Tag rename, 1,484 notes | 23.1 s | 24.9 s | 26.0 s |
+    | Tag rename Undo | 23.6 s | 38.9 s | 25.3 s |
+    | Delete undo: file back | 166 ms | 489 ms | 148 ms |
+    | Quit, launch 1 | 192 ms | 139 ms | 132 ms |
+    | Quit, launch 2 (after looking) | 230 ms | 1,519 ms | 198 ms |
+    | Folder rename, 1,107 files (`phase1`) | 526 ms | 458 ms | 631 ms |
+    | Card back after undo (`phase1`) | 622 ms | 573 ms | 484 ms |
+    | Quit right after an undo (`phase1`) | 378 ms | 962 ms | 325 ms |
+
+    Run 1's three slow figures came back to Audit-26's in run 2, on the same build: see "New findings".
+  - No corpus run, as planned.
+- **After the fix** (below), on the final tree:
+  - `npm run ci:verify`: green. 795 files, 7,525 tests passed, 5 skipped; 89/89 gates (`test-typecheck` and `e2e-drives-built-app` include the new test files).
+  - E2E, `FILO_E2E_SCALE=1`: 28/28 passed in 2.7 min (the 26 before and the new spec's 2).
+
+**Fixed in this phase: the Search panel's close button never closed it**
+- The button sits in the panel's header, which is also its drag handle. A press on the button reached the header's `pointerdown`, which captured the pointer for a drag. With the pointer captured by the header, Chromium sends the click to the header, so the button's `onclick` never ran. Escape (with focus in the panel) did close it.
+- It dates from the initial commit. It shows more since Phase 2, which raised the panel above the docked sidebar (`--z-floating`): a panel that the mouse can't close now covers the top of the sidebar, where it used to sit underneath it.
+- Fix (`SearchPanel.svelte`): a press on a button inside the header never starts a drag, the rule `FloatingTocPanel` already uses.
+- Tests:
+
+  | File | Cases | Without the fix |
+  |---|---|---|
+  | `src/tests/component/searchPanelClose.test.ts` (new) | 2: a press on the close button captures nothing and its click closes the panel; a press on the header still starts a drag | the first fails (the header captured the pointer); the second passes |
+  | `src/tests/e2e/searchPanel.e2e.ts` (new) | 2: the close button closes the panel; the header still moves it, by exactly the distance dragged | the first fails on a build without the fix (the panel stays) |
+
+  jsdom doesn't retarget the click, so the component test checks the capture itself; the E2E spec clicks the real button.
+- The other elements that capture the pointer were checked for the same trap. None has it: the Table of Contents panel skips presses on its buttons, the floating sidebar's header buttons stop `pointerdown` from reaching it, the waypoint marker skips its drag while its icon picker is open, and the style popups, frames and connection labels capture on the pressed element itself, so a click still reaches the button.
+
+**Docs (2–4)**
+- **KNOWN_LIMITATIONS**, each checked against the code:
+  - #4 matches (`FLUSH_TIMEOUT_MS` 5 s, the 4 s session-end bound, a title being typed counts, a caret in a note doesn't). Its "Where" named only `main.ts`, but `QUIT_DRAIN_DEADLINE_MS` lives in `handleFlushAndQuit.ts`: added.
+  - #17 matches: pasted plain text saves bare newlines, the closing one included (Phase 4). So does #41.
+  - #28 matches: one sticky toast per tag action (`dedupeKey`), replaced by the next, closed when the vault closes.
+  - #29 matches: `MIGRATION_STEPS` empty, format 8, the copy before the first save, the 25 MB copy limit.
+  - #34 (not taken, D7) and #36 (16 MB) match.
+  - #47: Light's figures match (5.0:1 on white, 4.7:1 on the app background), and so do the other themes' (3.0–3.3:1 on the background, 2.1–2.9:1 on surfaces). But it gave the hovered and selected rows as "4.5:1 and 4.2:1" while calling them "just under" 4.5:1. They are 4.49:1 and 4.15:1: corrected.
+- **The review:**
+  - an "After fixes" column in the bug table (each bug's phase, commit and tests), and a note that N-2 was confirmed and fixed with F-01;
+  - the same column on "What I'd do first";
+  - a status line at the top.
+- **CLAUDE.md:** the E2E spec list names the new Search panel spec.
+- The review and this plan are moved to `docs/archive/`.
+- **Not pushed:** the six Audit-27 commits and this one wait for the owner's go-ahead.
+
+**Deviations from the plan**
+1. **A fix in the verification phase.** The Search panel bug was found by the 5,000-note pass. It is small (Hard 1/10) and made more visible by Phase 2, so it was fixed here, with a test in each suite, rather than left as a finding.
+2. **More runs than listed:** the 5,000-note scripts twice each, and the scale spec twice more for its timings. ci:verify and the E2E suite were run again after the fix.
+3. **Two KNOWN_LIMITATIONS corrections** (#4's "Where", #47's hover and selected figures), where the plan asked only to confirm the entries.
+4. **The review gets more than the bug table's column:** the same column on "What I'd do first", and a status line at the top, as Audit-26's report has.
+5. **CLAUDE.md**, not in the plan: the E2E spec list.
+
+**New findings** (low, not fixed)
+- **Escape closes the Search panel only while focus is in it.** A press on its header (to drag it), or anywhere outside it, takes focus out, and Escape then does nothing. The close button works.
+- **One run's timings are not a regression signal.** On the same build, the tag rename Undo took 38.9 s in one run and 25.3 s in the next, the quit after the relaunch 1.5 s and 0.2 s, and the quit right after an undo 1.0 s and 0.3 s. Every byte check held in both runs. The scale budgets passed in all four runs; the closest is the Task List's, at 897 ms of its 1,000 in one timed run and 655 ms in the other, so it may miss on a slower or busier machine.
+
+**Still open from earlier phases** (all low; none loses data)
+- Phase 1: a unit test that makes its own `createScheduler` leaves its armed-path check registered for the rest of its file.
+- Phase 2: with a filter in the query, `tag:x C:\foo` searches `C:foo`; a Replace skipped because the note changed still moves on past that match.
+- Phase 3: at about 1,380 px wide, the formatting toolbar clips its left end (the font box).
+- Phase 4: Ctrl+Shift+V of a line ending in two spaces, with a line after it, reads back as a hard break; tertiary text in the four other themes is 2.1–2.9:1 on surfaces; Light's hovered and selected rows are just under 4.5:1 (#47).
+- Phase 5: opening a Kanban board with no saved view writes one; two real-filesystem watcher tests can miss under heavy load.
 
 ---
 

@@ -1,5 +1,7 @@
 # Audit-27: whole-codebase review, the line-limit gate, and the known limitations (2026-10-01)
 
+**Status (2026-10-02): every bug below is fixed** (the "After fixes" column has the phase, commit and tests), and so are the five changes taken from "What I'd do first": the code-line count, #29, #28, #47 for Light, and #36. #34 was not taken, and #32 is Track B, for later. Verified in the plan's Phase 6 on Windows: `ci:verify` (7,525 tests, 89 gates), E2E 28/28 with the scale budgets, and the 5,000-note real-app pass twice. That pass found one more bug, the Search panel's close button, fixed there. The plan, [AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md), lists what is still open.
+
 Audited: `main` @ `abf5212`. The eight Audit-26 commits (`db1af24..abf5212`) were pushed to GitHub first, as asked. They were verified on Windows in the Phase 7 session (`ci:verify` 7,394 tests and 89 gates, E2E 26/26 with scale budgets).
 
 How it was done (three reviewers in all, per the "as few agents as possible" brief):
@@ -61,18 +63,20 @@ Only #32 (with #17) is genuinely a library or framework question. The rest are a
 
 ## 1. Bugs
 
-| ID | What | Impact | Hard to fix | New since Audit-26? | Proof |
-|---|---|---|---|---|---|
-| F-01 | A full save can write an older copy of a board over a newer one | **7/10** | 4/10 | No (older design) | Test, real board scheduler |
-| U-01 | After Replace, the shown match and the replaced match drift apart | **5/10** | 2/10 | Yes (fd7718a) | Component test |
-| U-04 | Search trims and re-spaces the text you type | **5/10** | 2/10 | No (known-open, undocumented) | Unit test |
-| N-1 | Clicking away from a tile or frame title doesn't save it | 4/10 | 3/10 | No | Component test + code |
-| F-02 | Deleting a board during a slow save can trash an older copy | 3/10 | 0/10 (fixed with F-01) | Yes (0983a46) | Test |
-| F-03 | A half-typed tile, frame or connection title doesn't hold back a Windows restart | 3/10 | 2/10 | Yes (0983a46) | Test |
-| U-02 | Each new subtask appears above the earlier ones | 2/10 | 1/10 | No | Whole-app test |
-| U-03 | Ctrl+V of plain text ending in a newline saves a stray `\` | 2/10 | 1/10 | Partly (incomplete fix in 0983a46) | Unit test |
-| F-04 | Wrong message from the delete notification's Undo after a Trash restore | 1/10 | 1/10 | Yes (fd7718a) | Code |
-| F-05 | The Trash restore list keeps one small entry per delete for the session | 0/10 | 1/10 | Yes (fd7718a) | Code |
+| ID | What | Impact | Hard to fix | New since Audit-26? | Proof | After fixes |
+|---|---|---|---|---|---|---|
+| F-01 | A full save can write an older copy of a board over a newer one | **7/10** | 4/10 | No (older design) | Test, real board scheduler | **Fixed** (Phase 1, `5f25a70`): a full save's copy of a board edited again is dropped, and the newer write is the one saved. Impact now 0/10. Tests: `fullSaveKeepsNewerWrite.test.ts`, `fullSaveKeepsNewerWriteSchedulers.test.ts`, `slowRenames.test.ts`. |
+| U-01 | After Replace, the shown match and the replaced match drift apart | **5/10** | 2/10 | Yes (fd7718a) | Component test | **Fixed** (Phase 2, `c92f14e`): after Replace the results refresh at once, and the match shown is the one the next Replace changes. Impact now 0/10. Test: `searchReplaceShowsNextMatch.test.ts`. |
+| U-04 | Search trims and re-spaces the text you type | **5/10** | 2/10 | No (known-open, undocumented) | Unit test | **Fixed** (Phase 2, `c92f14e`): text with no operator is searched exactly as typed, and the Replace All confirm quotes it. Impact now 0/10. Tests: `queryParser.test.ts`, `runSearch.test.ts`, `replaceAllText.test.ts`. |
+| N-1 | Clicking away from a tile or frame title doesn't save it | 4/10 | 3/10 | No | Component test + code | **Fixed** (Phase 3, `b8fe878`): a press elsewhere, or focus moving elsewhere, commits the title, unless it goes into the formatting toolbar. Impact now 0/10. Tests: `titleCommitsOnClickAway.test.ts`, `titleEditFocus.test.ts`, `noteModel.test.ts`. |
+| F-02 | Deleting a board during a slow save can trash an older copy | 3/10 | 0/10 (fixed with F-01) | Yes (0983a46) | Test | **Fixed** with F-01 (Phase 1, `5f25a70`): the file moved to the trash is the newest version. Impact now 0/10. Test: `fullSaveKeepsNewerWriteSchedulers.test.ts`. |
+| F-03 | A half-typed tile, frame or connection title doesn't hold back a Windows restart | 3/10 | 2/10 | Yes (0983a46) | Test | **Fixed** (Phase 3, `b8fe878`): note editors carry `data-note-editor`, so a title being typed counts as a changed field. Impact now 0/10. Tests: `unsavedStateReport.test.ts`, `sessionEnd.test.ts`. |
+| U-02 | Each new subtask appears above the earlier ones | 2/10 | 1/10 | No | Whole-app test | **Fixed** (Phase 4, `f6c76b9`): a new subtask goes below its parent's existing subtasks. Impact now 0/10. Tests: `taskSubtasks.test.ts`, `blockMove.test.ts`. |
+| U-03 | Ctrl+V of plain text ending in a newline saves a stray `\` | 2/10 | 1/10 | Partly (incomplete fix in 0983a46) | Unit test | **Fixed** (Phase 4, `f6c76b9`): a closing newline is a soft break (two or more close the paragraph), so no `\` is saved. Impact now 0/10. Test: `pastePlainText.test.ts`. |
+| F-04 | Wrong message from the delete notification's Undo after a Trash restore | 1/10 | 1/10 | Yes (fd7718a) | Code | **Fixed** (Phase 4, `f6c76b9`): the Undo says the item is already back. Impact now 0/10. Test: `trash.test.ts`. |
+| F-05 | The Trash restore list keeps one small entry per delete for the session | 0/10 | 1/10 | Yes (fd7718a) | Code | **Fixed** (Phase 4, `f6c76b9`): an entry is dropped once its step has left the history. Test: `trashDeleteUndoRegistry.test.ts`. |
+
+**After fixes, one more.** The follow-up F-01's fix sketch left unverified, whether the settings and misc writers share its race (N-2 in the plan), was confirmed in Phase 1: `.filo/tags.json` and the settings bundle could be left one step behind in the same way. The same change fixed both (`fullSaveKeepsNewerWriteSchedulers.test.ts`). Every phase's outcome, deviations and new findings are in [AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md).
 
 ### F-01: a full save can write an older copy of a board over a newer one (Impact 7/10, Hard 4/10)
 
@@ -336,17 +340,17 @@ All constants and claims spot-checked against the code match. The exceptions are
 
 ### What I'd do first
 
-| Order | What | Useful | Hard |
-|---|---|---|---|
-| 1 | Bugs F-01 (with F-02) | Impact 7/10 | 4/10 |
-| 2 | Bugs U-01 and U-04 | Impact 5/10 each | 2/10 each |
-| 3 | #29 migration scaffold, before the next board-format change | 8/10 | 4/10 |
-| 4 | Count only code lines in the line-limit gate | 6/10 | 1/10 |
-| 5 | #28 keep the tag Undo notification until dismissed | 5/10 | 2/10 |
-| 6 | #47 contrast | 4/10 | 1/10 |
-| 7 | #36 raise the hash limit | 1/10 | 1/10 |
-| 8 | #34 hard-link check | 1/10 | 2/10 |
-| 9 | #32 Step 1, when you next touch the editor: the biggest long-term fidelity win | 6/10 | 6/10 |
+| Order | What | Useful | Hard | After fixes |
+|---|---|---|---|---|
+| 1 | Bugs F-01 (with F-02) | Impact 7/10 | 4/10 | Done (Phase 1, `5f25a70`) |
+| 2 | Bugs U-01 and U-04 | Impact 5/10 each | 2/10 each | Done (Phase 2, `c92f14e`) |
+| 3 | #29 migration scaffold, before the next board-format change | 8/10 | 4/10 | Done (Phase 5, `2771755`): KNOWN_LIMITATIONS #29 rewritten |
+| 4 | Count only code lines in the line-limit gate | 6/10 | 1/10 | Done (Phase 0, `de8562b`): four files are still allowlisted |
+| 5 | #28 keep the tag Undo notification until dismissed | 5/10 | 2/10 | Done (Phase 4, `f6c76b9`) |
+| 6 | #47 contrast | 4/10 | 1/10 | Done for Light (Phase 4, `f6c76b9`): tertiary `#6b7075`, 5.0:1 on white; the other themes are unchanged (#47) |
+| 7 | #36 raise the hash limit | 1/10 | 1/10 | Done (Phase 4, `f6c76b9`): 16 MB |
+| 8 | #34 hard-link check | 1/10 | 2/10 | Not taken (D7) |
+| 9 | #32 Step 1, when you next touch the editor: the biggest long-term fidelity win | 6/10 | 6/10 | Later: Track B1 in the plan |
 
 ---
 

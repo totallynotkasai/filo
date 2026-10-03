@@ -16,7 +16,9 @@ import {
   showBoard,
   openNoteFromSidebar,
   toggleRawView,
-  rawTextArea,
+  rawText,
+  setRawText,
+  leaveRawField,
   rawConflictShown,
   taskRows,
   click,
@@ -29,11 +31,6 @@ afterEach(async () => {
 
 const NOTE = '---\ntitle: Buy milk\ncompleted: false\n---\nOne\n';
 
-function setRawText(ta: HTMLTextAreaElement, text: string): void {
-  ta.value = text;
-  ta.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
 describe('raw view and a change queued during its save', () => {
   it('typing on during a save, then a Task List tick, then saving again: the tick is kept and the banner shows', async () => {
     const app = await startApp({ 'Buy milk.md': NOTE });
@@ -43,19 +40,17 @@ describe('raw view and a change queued during its save', () => {
     await splitActiveTabRight(app);
     await showBoard(app, 'tasklist');
     await toggleRawView(app);
-    const ta = await rawTextArea(app);
+    await rawText(app);
     await waitFor(() => taskRows(app).length > 0, 'the task row');
 
-    ta.focus();
-    setRawText(ta, '---\ntitle: Buy milk\ncompleted: false\n---\nTwo\n');
+    await setRawText(app, '---\ntitle: Buy milk\ncompleted: false\n---\nTwo\n');
     // Leaving the field starts the save; the tick and more typing arrive while it runs.
-    ta.blur();
+    leaveRawField(app);
     click($(taskRows(app)[0].el, '.task-checkbox'));
-    ta.focus();
-    setRawText(ta, '---\ntitle: Buy milk\ncompleted: false\n---\nThree\n');
+    await setRawText(app, '---\ntitle: Buy milk\ncompleted: false\n---\nThree\n');
     await quiesce(1500);
 
-    ta.blur();
+    leaveRawField(app);
     await quiesce(1500);
 
     expect(app.read('Buy milk.md')).toContain('completed: true');

@@ -194,23 +194,47 @@ export async function toggleRawView(app: CharApp): Promise<void> {
   await quiesce(600);
 }
 
-/** The raw view's text area, once it has loaded. */
-export async function rawTextArea(app: CharApp): Promise<HTMLTextAreaElement> {
-  await waitFor(() => {
-    const ta = app.el.querySelector('.document-board .raw-text') as HTMLTextAreaElement | null;
-    return ta !== null && !ta.disabled;
-  }, 'raw view text');
-  return $(app.el, '.document-board .raw-text') as HTMLTextAreaElement;
+/** The raw view's text field once it has loaded, else null. */
+function loadedRawField(app: CharApp): HTMLTextAreaElement | null {
+  const ta = app.el.querySelector('.document-board .raw-text') as HTMLTextAreaElement | null;
+  return ta !== null && !ta.disabled ? ta : null;
+}
+
+async function rawField(app: CharApp): Promise<HTMLTextAreaElement> {
+  await waitFor(() => loadedRawField(app) !== null, 'raw view text');
+  return loadedRawField(app) as HTMLTextAreaElement;
+}
+
+/** The raw view's text, once it has loaded. */
+export async function rawText(app: CharApp): Promise<string> {
+  return (await rawField(app)).value;
+}
+
+/** The raw view's text right now ('' while none is loaded), for a `waitFor`. */
+export function rawTextNow(app: CharApp): string {
+  return loadedRawField(app)?.value ?? '';
+}
+
+/** Focus the raw view and replace its text, staying in the field (nothing saves it yet). */
+export async function setRawText(app: CharApp, text: string): Promise<void> {
+  const ta = await rawField(app);
+  ta.focus();
+  ta.value = text;
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** Leave the raw view's text field, which starts its save; returns without waiting for it. */
+export function leaveRawField(app: CharApp): void {
+  const ta = loadedRawField(app);
+  if (!ta) throw new Error('no loaded raw view to leave');
+  ta.blur();
 }
 
 /** Replace the raw view's text, then leave the field (which saves). */
 export async function editRawText(app: CharApp, text: string): Promise<void> {
-  const ta = await rawTextArea(app);
-  ta.focus();
-  ta.value = text;
-  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  await setRawText(app, text);
   await settle();
-  ta.blur();
+  leaveRawField(app);
   await quiesce(800);
 }
 
@@ -223,10 +247,7 @@ export function confirmText(): string {
 
 /** Type into the raw view without leaving the field (so nothing has saved it yet). */
 export async function typeInRawView(app: CharApp, text: string): Promise<void> {
-  const ta = await rawTextArea(app);
-  ta.focus();
-  ta.value = text;
-  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  await setRawText(app, text);
   await settle();
 }
 
@@ -235,8 +256,8 @@ export async function typeInRawView(app: CharApp, text: string): Promise<void> {
  * the field first, which starts a save the toggle then races.
  */
 export async function leaveRawFieldAndToggle(app: CharApp): Promise<void> {
-  const ta = await rawTextArea(app);
-  ta.blur();
+  await rawField(app);
+  leaveRawField(app);
   click($(app.el, '.document-board .raw-toggle'));
   await quiesce(800);
 }

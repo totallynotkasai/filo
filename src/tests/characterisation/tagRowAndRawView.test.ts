@@ -14,13 +14,15 @@ import {
   typeInTagRow,
   removeFromTagRow,
   toggleRawView,
-  rawTextArea,
+  rawText,
+  rawTextNow,
+  setRawText,
+  leaveRawField,
   editRawText,
   rawConflictShown,
   chooseRawConflict,
   undo,
   editors,
-  $,
 } from './harness/actions';
 
 afterEach(async () => {
@@ -84,7 +86,7 @@ describe('raw view', () => {
     await openNoteFromSidebar(app, 'Plan.md');
 
     await toggleRawView(app);
-    expect((await rawTextArea(app)).value).toBe(note);
+    expect(await rawText(app)).toBe(note);
 
     const edited = '---\ntitle: Plan v2\ntags: [work]\nstatus: draft\n---\nBody text, edited raw\n';
     await editRawText(app, edited);
@@ -99,7 +101,7 @@ describe('raw view', () => {
     const app = await startApp({ 'Win.md': note });
     await openNoteFromSidebar(app, 'Win.md');
     await toggleRawView(app);
-    expect((await rawTextArea(app)).value).toBe('---\ntitle: Win\n---\nLine one\nLine two\n');
+    expect(await rawText(app)).toBe('---\ntitle: Win\n---\nLine one\nLine two\n');
 
     await editRawText(app, '---\ntitle: Win\n---\nLine one\nLine 2\n');
     await waitFor(() => app.read('Win.md').includes('Line 2'), 'the raw edit on disk');
@@ -110,27 +112,25 @@ describe('raw view', () => {
     const app = await startApp({ 'Plan.md': '---\ntitle: Plan\n---\nOld\n' });
     await openNoteFromSidebar(app, 'Plan.md');
     await toggleRawView(app);
-    await rawTextArea(app);
+    await rawText(app);
 
     app.writeExternally('Plan.md', '---\ntitle: Plan\n---\nNew from elsewhere\n');
-    await waitFor(() => $(app.el, '.document-board .raw-text').matches('textarea') && (app.el.querySelector('.document-board .raw-text') as HTMLTextAreaElement).value.includes('New from elsewhere'), 'the raw view to follow');
+    await waitFor(() => rawTextNow(app).includes('New from elsewhere'), 'the raw view to follow');
   });
 
   it('a change made elsewhere during a raw edit is not overwritten; Keep mine backs it up first', async () => {
     const app = await startApp({ 'Plan.md': '---\ntitle: Plan\n---\nOriginal\n' });
     await openNoteFromSidebar(app, 'Plan.md');
     await toggleRawView(app);
-    const ta = await rawTextArea(app);
+    await rawText(app);
 
     // The user starts typing, then another program changes the file.
-    ta.focus();
-    ta.value = '---\ntitle: Plan\n---\nMine\n';
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    await setRawText(app, '---\ntitle: Plan\n---\nMine\n');
     await quiesce(200);
     app.writeExternally('Plan.md', '---\ntitle: Plan\n---\nTheirs\n');
     await quiesce(1200);
 
-    ta.blur();
+    leaveRawField(app);
     await waitFor(() => rawConflictShown(app), 'the raw conflict banner');
     expect(app.read('Plan.md')).toBe('---\ntitle: Plan\n---\nTheirs\n');
 

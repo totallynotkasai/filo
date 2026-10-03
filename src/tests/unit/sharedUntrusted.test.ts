@@ -143,10 +143,16 @@ describe.each(CSS_SUPPORTS_MODES)('asSafeThemeValue — theme CSS variable value
     }
   });
 
-  it('refuses what no declaration can hold only where CSS.supports is there to say so', () => {
-    for (const value of ['a)', '{x', '!']) {
-      expect(asSafeThemeValue(value)).toBe(removed ? value : null);
+  it('refuses `!` and the brackets other than ( ), which no colour or shadow holds', () => {
+    // CSS parsers disagree here (Chromium accepts `red !important` and refuses
+    // `[x`; jsdom does the opposite), so the check is Filo's own.
+    for (const value of ['red !important', 'a!important', '!', '[x', 'x]', '{x', 'x}']) {
+      expect(asSafeThemeValue(value), value).toBeNull();
     }
+  });
+
+  it('refuses what no declaration can hold only where CSS.supports is there to say so', () => {
+    expect(asSafeThemeValue('a)')).toBe(removed ? 'a)' : null);
   });
 
   it('rejects url(...) — CSS-injection / info-leak', () => {

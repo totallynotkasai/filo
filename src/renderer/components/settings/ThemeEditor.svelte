@@ -25,7 +25,7 @@
     type ThemeEditorSession,
   } from '../../lib/themes/themeFiles';
   import { asSafeThemeValue } from '../../../shared/untrusted';
-  import { isCssColour } from '../../lib/utils/color';
+  import { isThemeTokenValue } from '../../lib/themes/themeValues';
   import { captureVaultIdentity, isStillSameVault } from '../../lib/vault/vaultIdentity';
 
   interface Props {
@@ -71,9 +71,10 @@
 
   function setToken(token: string, value: string): void {
     // Every row here is a colour: a value the sanitiser passes but CSS can't
-    // read as one (a mistyped `#12`) would save and then paint nothing.
+    // read as one (a mistyped `#12`), or one that names no colour of its own
+    // (`currentColor`, `var()`), would save and then paint nothing.
     const safe = asSafeThemeValue(value);
-    if (safe === null || !isCssColour(safe)) {
+    if (safe === null || !isThemeTokenValue(token, safe)) {
       invalid = { ...invalid, [token]: value };
       return;
     }

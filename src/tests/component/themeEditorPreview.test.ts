@@ -81,6 +81,18 @@ describe('ThemeEditor', () => {
     expect(root.style.getPropertyValue('--ui-bg')).toBe('#111111');
   });
 
+  it('refuses a value that names no colour of its own (currentColor, inherit, var())', async () => {
+    await mountEditor();
+    const box = valueInput('App background');
+    for (const value of ['currentColor', 'inherit', 'var(--accent-primary)']) {
+      box.value = value;
+      box.dispatchEvent(new Event('change', { bubbles: true }));
+      await frame();
+      expect(box.getAttribute('aria-invalid'), value).toBe('true');
+      expect(root.style.getPropertyValue('--ui-bg'), value).toBe('#111111');
+    }
+  });
+
   it('Cancel paints the active theme again', async () => {
     await mountEditor();
     const cancel = [...document.querySelectorAll<HTMLButtonElement>('.editor-actions button')]

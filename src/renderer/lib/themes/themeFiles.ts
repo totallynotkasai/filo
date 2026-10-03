@@ -13,6 +13,7 @@ import type { ThemeId } from '../../../shared/types';
 import { asSafeThemeValue } from '../../../shared/untrusted';
 import type { ThemeFile, ThemeVariableMap } from './themeManager';
 import { THEME_TOKEN_NAMES } from './themeTokens';
+import { isThemeTokenValue } from './themeValues';
 
 export const BUILTIN_THEME_LABELS: Record<ThemeId, string> = {
   light: 'Light Mode',
@@ -88,10 +89,11 @@ const THEME_TOKENS: ReadonlySet<string> = new Set(THEME_TOKEN_NAMES);
 
 /**
  * The variables a theme may carry: the theme tokens (`themeTokens.ts`) whose
- * values pass the theme-value sanitiser. Anything else is dropped, not
- * refused, so a theme from a newer version still loads. A theme that could set
- * any variable could also set the app's own (`--z-modal` would put every
- * dialog behind the app) or the user's settings.
+ * values pass the theme-value sanitiser and are values a theme can hold
+ * (`themeValues.ts`: a colour, or a shadow for the shadow tokens). Anything
+ * else is dropped, not refused, so a theme from a newer version still loads.
+ * A theme that could set any variable could also set the app's own
+ * (`--z-modal` would put every dialog behind the app) or the user's settings.
  */
 export function cleanThemeVariables(raw: Record<string, unknown>): ThemeVariableMap {
   const out: ThemeVariableMap = {};
@@ -99,7 +101,7 @@ export function cleanThemeVariables(raw: Record<string, unknown>): ThemeVariable
     if (!THEME_TOKENS.has(name)) continue;
     if (typeof value !== 'string') continue;
     const safe = asSafeThemeValue(value);
-    if (safe !== null) out[name] = safe;
+    if (safe !== null && isThemeTokenValue(name, safe)) out[name] = safe;
   }
   return out;
 }

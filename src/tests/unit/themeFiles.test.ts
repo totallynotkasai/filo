@@ -69,6 +69,24 @@ describe('theme variables', () => {
     expect(vars).toEqual({ '--ui-bg': '#101010', '--accent-primary': 'rgba(1, 2, 3, 0.5)' });
   });
 
+  it('drops a value that names no colour or shadow of its own, and a non-colour on a colour token', () => {
+    const vars = cleanThemeVariables({
+      '--ui-bg': 'currentColor',
+      '--ui-surface': 'inherit',
+      '--menu-bg': 'var(--ui-surface)',
+      '--accent-primary': 'color-mix(in srgb, var(--accent-info) 20%, transparent)',
+      '--text-primary': '12px',
+      '--ui-border': 'transparent',
+      '--ui-shadow': '0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08)',
+      '--ui-shadow-lg': 'unset',
+      '--toolbar-shadow': 'var(--ui-shadow)',
+    });
+    expect(vars).toEqual({
+      '--ui-border': 'transparent',
+      '--ui-shadow': '0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08)',
+    });
+  });
+
   it('a saved theme file takes its id from its name', () => {
     const file = buildThemeFile('  Dark Forest ', 'dark', { '--ui-bg': '#000000', '--font-system': 'Comic Sans' });
     expect(file).toEqual({ id: 'dark-forest', name: 'Dark Forest', base: 'dark', variables: { '--ui-bg': '#000000' } });
@@ -126,6 +144,21 @@ describe('theme files set only theme tokens', () => {
     applyCustomTheme({ id: 'hostile', name: 'Hostile', base: 'dark', variables: HOSTILE.variables });
     expect(root.style.getPropertyValue('--z-modal')).toBe('');
     expect(root.style.getPropertyValue('--ui-bg')).toBe('#101010');
+    __resetThemeManagerForTests();
+  });
+
+  it('applying a theme never paints a value no token can hold, so the base theme\'s colour shows', () => {
+    const root = document.documentElement;
+    __resetThemeManagerForTests();
+    applyCustomTheme({
+      id: 'odd',
+      name: 'Odd',
+      base: 'dark',
+      variables: { '--ui-bg': 'currentColor', '--text-primary': 'inherit', '--ui-border': '#123456' },
+    });
+    expect(root.style.getPropertyValue('--ui-bg')).toBe('');
+    expect(root.style.getPropertyValue('--text-primary')).toBe('');
+    expect(root.style.getPropertyValue('--ui-border')).toBe('#123456');
     __resetThemeManagerForTests();
   });
 });

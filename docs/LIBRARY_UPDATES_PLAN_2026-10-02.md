@@ -839,7 +839,45 @@ The slower `ci:verify` is most likely load on the machine, not jsdom: the gates 
   | a control character (`\u0001`), a newline inside the value | refuses | accepts |
 
   - The control characters are now refused by Filo first (decision 1), so all three environments agree on them.
-  - The other three aren't pinned by any test, since jsdom's answer isn't the app's. → BACKLOG BL-13, which Phase 6's browser project could take.
+  - The other three were left unpinned at first, since jsdom's answer isn't the app's. Logged as BL-13, then fixed: see the follow-up below.
   - None is an injection risk: `setProperty` takes one value, and `url(`, `;` and the rest are refused before `CSS.supports` is asked.
-- **The fallback branches now run only in tests.** The renderer and jsdom both have `CSS.supports`, and nothing in the main process calls `asSafeThemeValue`. The tests keep both covered, as the plan asked. (Noted under BL-13.)
-- **The theme editor takes `currentColor`, `inherit`, `initial` and `unset` as colours**, because Chromium's parser counts them as `color` values. Checked in Electron: `currentColor` paints with the text colour (an App background set to it hides the text), and the keywords leave the token with no value. This is older than this phase and has nothing to do with jsdom. → BACKLOG BL-12. (`var(…)` passes too; BL-12 leaves keeping it as a decision for the fix.)
+- **The fallback branches now run only in tests.** The renderer and jsdom both have `CSS.supports`, and nothing in the main process calls `asSafeThemeValue`. The tests keep both covered, as the plan asked.
+- **The theme editor takes `currentColor`, `inherit`, `initial` and `unset` as colours**, because Chromium's parser counts them as `color` values. Checked in Electron: `currentColor` paints with the text colour (an App background set to it hides the text), and the keywords leave the token with no value. This is older than this phase and has nothing to do with jsdom. Logged as BL-12, then fixed: see the follow-up below.
+
+#### Follow-up: BL-12 and BL-13 fixed (owner, 2026-10-03)
+
+The two findings above went into the backlog first. The owner then asked for both to be fixed now, since neither is hard. Each was removed from `docs/BACKLOG.md` once fixed, as its rules say for an item a plan takes.
+
+**Decision (owner):** a theme colour may not be `var(…)`, the recommended option. Nothing Filo writes holds one (built-in themes and Duplicate hold plain colours), the editor's swatch can't show it, and a wrong or circular reference leaves the token with no value, as `inherit` does.
+
+**What changed**
+- **`src/renderer/lib/themes/themeValues.ts` (new):** `isThemeTokenValue(name, value)`, asked after `asSafeThemeValue`. It refuses:
+  - the CSS-wide keywords (`inherit`, `initial`, `unset`, `revert`, `revert-layer`) and `currentColor`, in any case;
+  - a value borrowed from elsewhere: `var()`, `env()`, `attr()`, `if()` or `inherit()`, anywhere in the value (so `color-mix(… var(--x) …)` too);
+  - on a colour token, anything `isCssColour` doesn't take. The five shadow tokens keep full `box-shadow` values.
+- **Used on every way into a theme:**
+  - the theme editor (`ThemeEditor.svelte`), in place of `isCssColour`;
+  - a theme file read from `.filo/themes/` or imported (`cleanThemeVariables` in `themeFiles.ts`);
+  - the paint (`applySafeThemeVar` in `themeManager.ts`). The `theme-css-var` sink gate still finds `asSafeThemeValue` beside each `setProperty`.
+  
+  A refused value is dropped the way an unsafe one is: the base theme's colour shows, with the devtools breadcrumb.
+- **BL-13, `asSafeThemeValue` (`src/shared/untrusted.ts`):** the Phase 2 control-character check now also refuses `!` and the brackets other than `( )`: one check, `/[\p{Cc}!{}[\]]/u`. Those were the values where jsdom 30 and Chromium disagree, and no colour or shadow holds them, so every environment now gives the same answer. Only `a)`-style values are still refused by `CSS.supports` alone, and jsdom and Chromium agree on those.
+- **CLAUDE.md:** the `themeValues.ts` line in the project structure, and the theme rule under "Override Cascade".
+
+**Nothing built in is lost.** In Electron 44.5.1, every token of the five built-in themes was read the way `readBuiltinThemeVariables` reads them: 480 values (96 a theme), 0 refused by the new rules. That covers system-only paints and Duplicate, which store those values.
+
+**Tests** (13 added, 7,558 → 7,571):
+- `themeValues.test.ts` (new), with and without `CSS.supports`: plain colours held; every keyword and borrowed value refused on a colour token and a shadow token; a size or shadow refused on a colour token; shadows and `none` held on a shadow token.
+- `themeFiles.test.ts`: a theme file's `currentColor`, `inherit`, `var()`, `color-mix(… var() …)` and `12px` colours are dropped, and so are its `unset` and `var()` shadows; a theme painted with such values leaves those tokens to the base theme.
+- `themeEditorPreview.test.ts`: `currentColor`, `inherit` and `var(--accent-primary)` typed into a colour box are marked invalid and paint nothing.
+- `sharedUntrusted.test.ts`: `red !important`, `a!important`, `!`, `[x`, `x]`, `{x` and `x}` refused in both modes. The branch-only case is now just `a)`.
+
+**The new tests catch both problems.** Run against the code before the fix (a worktree of `a722877` with these test files copied in), exactly the 5 new cases those files hold fail and the other 98 pass: both themeFiles cases, the editor case, and the bracket case in each mode.
+
+**Pass test**
+
+| Check | Result |
+|---|---|
+| `npm run ci:verify` (Windows) | **Green in 241 s.** 797 files: 7,571 passed, 5 skipped. eslint 0 warnings; svelte-check 861 files, 0 errors, 0 warnings; 89/89 gates in 8.2 s. The gates being back at 8.2 s supports the guess that the slow 279 s run above was machine load. |
+| E2E, `FILO_E2E_SCALE=1` | **28 passed in 2.6 min**, the scale budgets included. |
+| Built app | `main.js` and `preload.js` unchanged to the byte (420,366 and 193,825); no `require("zod")`. Renderer `index.js` 2,553,472 → 2,553,929 bytes (+457); the other 24 assets unchanged. |

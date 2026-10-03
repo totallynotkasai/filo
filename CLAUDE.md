@@ -556,6 +556,7 @@ filo/
 │   │   │   ├── themes/                # Theme loading + CSS variable injection
 │   │   │   │   ├── themeManager.ts    # Paints a built-in or custom theme onto :root; snapshotThemeVariables
 │   │   │   │   ├── themeTokens.ts     # The colours a theme holds, grouped for the editor; the settings variables it never holds
+│   │   │   │   ├── themeValues.ts     # isThemeTokenValue: a colour (a shadow on the shadow tokens), never currentColor, a CSS-wide keyword or var(); editor, file read and paint
 │   │   │   │   ├── themeFiles.ts      # Custom theme names / ids (no built-in name, no overwrite); import and disk reads keep only theme tokens, unknown base → Light
 │   │   │   │   ├── themeActions.ts    # Pick (saved to appearance.json), System colours only, card previews, delete to Filo's trash, editor sessions
 │   │   │   │   ├── themeEditorGuard.ts # Unsaved theme-editor changes: Save / Discard / Keep editing before a tab switch or Settings closing
@@ -985,7 +986,7 @@ A board follows the Global Defaults, live, for every style field it leaves blank
 
 Font sizes have one more layer, under the Global Defaults: General → Default Board Font Size (`.filo/app.json`, `generalFontSize` in `effectiveStyle.ts`). Element factories never copy a size into a new element, so a new tile, card, task, section, column, frame or connection label follows the cascade, and a later change of any default reaches it.
 
-Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, UI scales and toolbar / tab bar colour are settings and a theme never carries them. A theme may set only the theme tokens; any other variable in a theme file is dropped on import, on read from disk and on paint. Text on the accent is `--text-inverse`, 4.5:1 or better in every built-in. A blank toolbar / tab bar colour setting leaves the bar to the theme. The built-in palettes live only in `style.css` (`[data-theme='…']`); custom themes are `.filo/themes/<id>.json`, and `appearance.json` names the active one, built-in or custom. Picking a theme clears the Global Defaults colours so the theme shows, after asking when the user set any. Deleting a custom theme moves it to Filo's trash (the one `.filo/` path a trash manifest may name).
+Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, UI scales and toolbar / tab bar colour are settings and a theme never carries them. A theme may set only the theme tokens; any other variable in a theme file is dropped on import, on read from disk and on paint, and so is a value no token can hold (`themeValues.ts`: a colour token holds a real colour, never `currentColor`, `inherit` or `var()`, which Chromium reads as colours but which leave the token empty or paint it with the text colour). Text on the accent is `--text-inverse`, 4.5:1 or better in every built-in. A blank toolbar / tab bar colour setting leaves the bar to the theme. The built-in palettes live only in `style.css` (`[data-theme='…']`); custom themes are `.filo/themes/<id>.json`, and `appearance.json` names the active one, built-in or custom. Picking a theme clears the Global Defaults colours so the theme shows, after asking when the user set any. Deleting a custom theme moves it to Filo's trash (the one `.filo/` path a trash manifest may name).
 
 ---
 

@@ -24,6 +24,7 @@ import { asSafeThemeValue } from '../../../shared/untrusted';
 import { reportError } from '../utils/errorBus';
 import { themeVersion } from '../../stores/themeVersion.svelte';
 import { THEME_TOKEN_NAMES } from './themeTokens';
+import { isThemeTokenValue } from './themeValues';
 
 /** Every CSS custom property a Filo theme may set. Used to drive cleanup. */
 export type ThemeVariableMap = Record<string, string>;
@@ -34,7 +35,9 @@ export type ThemeVariableMap = Record<string, string>;
  * `expression(`, `image(`, `@import`) and over-long / unparsable values.
  * A vault-shipped theme JSON containing `'red; background-image:
  * url(https://evil.example/p)'` would otherwise inject an external-
- * resource fetch via CSS — info-leak.
+ * resource fetch via CSS — info-leak. A value no theme token can hold
+ * (`isThemeTokenValue`: `currentColor`, `inherit`, `var()`, or a non-colour on
+ * a colour token) is dropped too, so the base theme's colour shows instead.
  *
  * Dropped variables fire a devtools breadcrumb but no toast — a
  * malformed theme JSON may carry dozens of bad keys and toast-spamming
@@ -46,7 +49,7 @@ function applySafeThemeVar(
   rawValue: string,
 ): string | null {
   const safe = asSafeThemeValue(rawValue);
-  if (safe === null) { reportError('themeManager', null, `Dropped theme variable "${prop}"`); return null; }
+  if (safe === null || !isThemeTokenValue(prop, safe)) { reportError('themeManager', null, `Dropped theme variable "${prop}"`); return null; }
   root.style.setProperty(prop, safe);
   return safe;
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   asSafeIframeSrc,
   asSafeThemeValue,
@@ -75,7 +75,32 @@ describe('asSafeIframeSrc — iframe src allowlist', () => {
   });
 });
 
-describe('asSafeThemeValue — theme CSS variable value sanitiser', () => {
+/**
+ * `asSafeThemeValue` asks `CSS.supports` where there is one (the renderer, and
+ * jsdom) and relies on its own checks where there is none (the main process).
+ * Every case runs both ways. With `CSS.supports`, each expected answer is also
+ * what Electron's Chromium gives, so jsdom answering otherwise fails here.
+ */
+const CSS_SUPPORTS_MODES = [
+  { name: 'with CSS.supports', removed: false },
+  { name: 'without CSS.supports', removed: true },
+];
+
+const ctl = (code: number): string => String.fromCharCode(code);
+
+describe.each(CSS_SUPPORTS_MODES)('asSafeThemeValue — theme CSS variable value sanitiser ($name)', ({ removed }) => {
+  beforeEach(() => {
+    if (removed) vi.stubGlobal('CSS', undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('runs where CSS.supports is there exactly when the mode says', () => {
+    const cssApi = (globalThis as { CSS?: { supports?: unknown } }).CSS;
+    expect(typeof cssApi?.supports === 'function').toBe(!removed);
+  });
+
   it('accepts hex colours', () => {
     expect(asSafeThemeValue('#1a2b3c')).toBe('#1a2b3c');
     expect(asSafeThemeValue('#fff')).toBe('#fff');
@@ -97,6 +122,31 @@ describe('asSafeThemeValue — theme CSS variable value sanitiser', () => {
     expect(asSafeThemeValue('var(--accent-primary)')).toBe(
       'var(--accent-primary)',
     );
+  });
+
+  it('accepts sizes, shadows, font lists and calc()', () => {
+    for (const value of ['12px', '1rem', '0 1px 2px rgba(0,0,0,0.2)', '"Arial Rounded MT Bold", sans-serif', 'calc(100% - 2px)']) {
+      expect(asSafeThemeValue(value)).toBe(value);
+    }
+  });
+
+  it('trims the value, a newline or tab at either end included', () => {
+    expect(asSafeThemeValue('  red  ')).toBe('red');
+    expect(asSafeThemeValue(`${ctl(0x0a)}#fff${ctl(0x09)}`)).toBe('#fff');
+  });
+
+  it('refuses a control character inside the value: newline, tab, DEL and the rest', () => {
+    // Chromium's CSS.supports accepts every one of these, so the check is
+    // Filo's own.
+    for (const code of [0x00, 0x01, 0x09, 0x0a, 0x0d, 0x1b, 0x1f, 0x7f, 0x85, 0x9f]) {
+      expect(asSafeThemeValue(`red${ctl(code)}blue`)).toBeNull();
+    }
+  });
+
+  it('refuses what no declaration can hold only where CSS.supports is there to say so', () => {
+    for (const value of ['a)', '{x', '!']) {
+      expect(asSafeThemeValue(value)).toBe(removed ? value : null);
+    }
   });
 
   it('rejects url(...) — CSS-injection / info-leak', () => {
@@ -125,11 +175,11 @@ describe('asSafeThemeValue — theme CSS variable value sanitiser', () => {
 
   it('rejects a bare `;` even without url()/@import (6.2 — defends the single-declaration contract)', () => {
     // No url()/@import/expression/image — the ONLY suspect token is the
-    // `;`. In a real renderer the `CSS.supports('--probe: …')` gate rejects
-    // a multi-declaration value, but in jsdom (and any env where
-    // `CSS.supports` is absent) the substring blocklist is the sole line of
-    // defence — so `;` must be on it. A single CSS custom-property value
-    // never legitimately contains `;`.
+    // `;`. In the renderer the `CSS.supports('--probe: …')` gate rejects
+    // a multi-declaration value, but where `CSS.supports` is absent (the main
+    // process) the substring blocklist is the sole line of defence — so `;`
+    // must be on it. A single CSS custom-property value never legitimately
+    // contains `;`.
     expect(asSafeThemeValue('red; color: blue')).toBeNull();
     expect(asSafeThemeValue('#fff;')).toBeNull();
     expect(asSafeThemeValue('1rem ;')).toBeNull();

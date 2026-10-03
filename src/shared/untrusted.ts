@@ -113,7 +113,7 @@ export function asSafeIframeSrc(raw: string | null | undefined): SanitisedSrc | 
  * delimiter that would let a tampered value append a follow-up declaration.
  * `setProperty` and the `CSS.supports` gate below already stop that in the
  * renderer, but blocklisting `;` keeps the contract where `CSS.supports` is
- * absent (jsdom, main), where the substring list is the only defence.
+ * absent (the main process), where the substring list is the only defence.
  */
 const THEME_VALUE_BLOCKED_SUBSTRINGS = [
   'url(',
@@ -127,11 +127,18 @@ const THEME_VALUE_BLOCKED_SUBSTRINGS = [
 ];
 
 /**
+ * No colour or size holds a control character (newline and tab included).
+ * Chromium's `CSS.supports` accepts one in a custom property's value, so it is
+ * refused here, the same in the renderer, the main process and the tests.
+ */
+const THEME_VALUE_CONTROL_CHARACTER = /\p{Cc}/u;
+
+/**
  * Wraps a vault-shipped theme variable value for use with
  * `root.style.setProperty(<--var>, value)`. Returns `null` for input that
- * contains any of the CSS-injection patterns above or fails a basic
- * parsability check (`CSS.supports` where available, falling back to a
- * permissive accept).
+ * contains any of the CSS-injection patterns above or a control character, or
+ * fails a basic parsability check (`CSS.supports` where available, falling
+ * back to a permissive accept).
  *
  * The matcher is intentionally substring-based (not regex) to catch
  * obfuscation like `url\( …` — any literal occurrence of `url(` in a
@@ -147,17 +154,20 @@ export function asSafeThemeValue(raw: string | null | undefined): SanitisedColor
   for (const bad of THEME_VALUE_BLOCKED_SUBSTRINGS) {
     if (lower.includes(bad)) return null;
   }
-  // CSS.supports is available in the renderer (DOM) but not in the main
-  // process or jsdom. Reach for it through `globalThis` (typed, not the bare
+  if (THEME_VALUE_CONTROL_CHARACTER.test(trimmed)) return null;
+  // CSS.supports is available in the renderer (DOM) and in jsdom, but not in
+  // the main process. Reach for it through `globalThis` (typed, not the bare
   // identifier) so this shared module type-checks under BOTH the DOM lib
   // (renderer) and the no-DOM lib (main). When unavailable, the substring
-  // blocklist + length cap are the load-bearing defence.
+  // blocklist, the control-character check and the length cap are the
+  // load-bearing defence.
   const cssApi = (globalThis as { CSS?: { supports?: (cond: string) => boolean } }).CSS;
   if (cssApi && typeof cssApi.supports === 'function') {
     // `--probe` is a synthetic property name; CSS.supports returns true
     // for any value the engine considers parsable for a custom property.
-    // Failing the check rejects values containing control chars,
-    // unterminated tokens, etc.
+    // That is nearly anything: failing it means a value no declaration can
+    // hold, such as an unmatched `)` or `{`. Chromium accepts an unterminated
+    // string or an unclosed `(` here.
     if (!cssApi.supports(`--probe: ${trimmed}`)) return null;
   }
   return trimmed as SanitisedColor;

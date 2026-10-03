@@ -1,6 +1,6 @@
 # Library updates and new tools: implementation plan
 
-**Status (2026-10-03): Phases 0 and 1 done; Phases 2–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
+**Status (2026-10-03): Phases 0, 1 and 2 done; Phases 3–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
 
 Source: [TRACK_B_INVESTIGATION_2026-10-02.md](TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
 
@@ -743,3 +743,103 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
 #### New findings
 
 None. BL-11 stays open as written.
+
+### Phase 2 outcome (2026-10-03)
+
+**Status:** done, verified on Windows. Committed on `main`; not pushed (owner, at the start).
+- **No test changed result.** On jsdom 30, before any other change, `test:unit:strict` gave the baseline's counts exactly: 795 files, 7,525 passed, 5 skipped.
+- **One app change** (deviation 1): the theme-value check now refuses control characters itself.
+
+#### Decisions at the start (owner, 2026-10-03)
+
+1. **Refuse control characters in `asSafeThemeValue`, and correct its comment** (the recommended option; the other was to correct the comment only).
+   - A probe before the update found that jsdom 30's `CSS.supports` and Electron's Chromium disagree on five theme values (see "New findings").
+   - `untrusted.ts` said `CSS.supports` "rejects values containing control chars, unterminated tokens". Chromium accepts both in a custom property's value.
+   - With the check in Filo's own code, Chromium, jsdom and the main process all give the same answer for these values.
+2. **Commit, don't push**, as in Phase 1.
+
+#### What changed
+
+**`package.json`:** jsdom `^29.1.1` → `^30.1.1` (30.1.1 installed).
+
+**`npm install`:** 4 packages added, 3 removed, 10 changed. All of them are jsdom and its own dependencies, so dev only:
+
+| Package | From | To |
+|---|---|---|
+| jsdom | 29.1.1 | 30.1.1 |
+| @asamuzakjp/css-color | 5.1.11 | 7.1.3 |
+| @asamuzakjp/dom-selector | 7.1.1 | 9.2.4 |
+| @csstools/color-helpers, css-calc, css-color-parser, css-parser-algorithms, css-tokenizer | 6.1.1, 3.4.0, 4.2.3, 4.0.0, 4.0.1 | 6.1.2, 3.4.3, 4.2.6, 4.0.2, 4.0.2 |
+| html-encoding-sniffer | 6.0.0 | 7.0.0 |
+| w3c-xmlserializer | 5.0.0 | 6.0.0 |
+| Added under jsdom's dependencies | | `undici` 8.11.2 and `whatwg-url` 17.1.2 (jsdom's copies), and an `lru-cache` 11.5.3 copy each for css-color and dom-selector |
+| Removed | `@asamuzakjp/generational-cache`, `@asamuzakjp/nwsapi`, `symbol-tree` | |
+
+The new Node range (`^22.22.2 || ^24.15.0 || >=26`) is met: Node 24.16 locally, and CI's `node-version: '22'` takes the newest 22.x (22.23 when the plan was written).
+
+**`src/shared/untrusted.ts`:**
+- `asSafeThemeValue` refuses a value holding a control character (`\p{Cc}`: C0, newline and tab included, DEL, C1) after the blocklist and before `CSS.supports`. `trim()` still strips a newline or tab at either end first, so only one inside the value is refused.
+- The comments say where `CSS.supports` exists now (the renderer and jsdom, not the main process), and what failing it means in Chromium: an unmatched `)` or `{`, not control characters or an unterminated string.
+
+**Tests:**
+- **`sharedUntrusted.test.ts`:** the `asSafeThemeValue` block runs twice, with jsdom's `CSS.supports` and with it removed (`vi.stubGlobal('CSS', undefined)`). Each run first checks that `CSS.supports` is present or absent as its mode says, so neither run can quietly take the other's branch. New cases:
+  - sizes, shadows, a font list and `calc()` are accepted;
+  - a value is trimmed, a newline or tab at either end included;
+  - ten control characters inside a value are refused;
+  - `a)`, `{x` and `!` are refused only where `CSS.supports` is there, and pass the fallback.
+  
+  The `;` case's comment no longer names jsdom as an environment without `CSS.supports`.
+- **`isCssColour.test.ts` (new):** `isCssColour` had no direct test (deviation 2). It now runs both ways too:
+  - 22 colours accepted and 9 non-colours refused in both;
+  - `var(--accent-primary)` is a colour only to the browser's parser;
+  - `notacolour` and `hsl(nonsense)` pass only the fallback.
+- 33 tests added in all (7,525 → 7,558).
+
+**Checked against Chromium.** Every answer the two files pin with `CSS.supports` present was asked of Electron 44.5.1's Chromium (152.0.7977.130), in a hidden window run by a scratch script outside the repo (deviation 3): 48 questions, 48 the same as jsdom 30's.
+
+#### What the plan said to watch
+
+| Watch item | Result |
+|---|---|
+| `CSS.supports` in `untrusted.ts` | Every existing case gives the same result both ways: the values it refuses are caught by the blocklist before `CSS.supports` is asked. Both branches are now pinned. |
+| `CSS.supports` in `color.ts` | jsdom 30 agrees with Chromium on all 30 colour values probed. The branches differ on purpose for three values (`var()`, an unknown word, a bad colour function), now pinned. |
+| Focus and blur tests | All pass unchanged, 46 tests in 9 files: component `titleCommitsOnClickAway` (8), `noteRawViewFollow`, `lossyBannerNamesLine`; unit `titleEditFocus` (9), `noteRawView`; characterisation `tagRowAndRawView` (8), `rawViewSaveBase`, `rawViewUnsaved`, `rawViewRescueAndIndicator`. No test worked around a jsdom 29 focus bug (none of their comments names one), so none relied on the spurious events jsdom 30 drops. |
+| `getComputedStyle` pixel lengths | No test reads a computed length. The app's reads are custom properties (`themeManager.ts`, `BoardBackground`, the two floating panels), which aren't lengths, plus `NoteRawView`'s line height, which falls back to 20 px when it isn't a number; no test checks the scroll position it sets. |
+| Noise in the strict run | Nothing new. The one jsdom message in the log, "Not implemented: HTMLCanvasElement's getContext() method", comes from the colour picker's wheel and reads the same in jsdom 29 (checked in a scratch install). |
+
+#### Pass test
+
+| Check | Result | Before |
+|---|---|---|
+| `npm run test:unit:strict`, jsdom 30 alone | **Green in 218 s.** 795 files: 7,525 passed, 5 skipped. | Phase 1: 199–202 s; the same counts |
+| `npm run ci:verify` (Windows), final tree | **Green in 279 s.** 796 files: 7,558 passed, 5 skipped. `test:unit:strict` 215 s. eslint 0 warnings; svelte-check 860 files, 0 errors, 0 warnings; 89/89 gates in 13.9 s (`test-typecheck` checks the new test file). | Phase 1: 238–242 s; gates 8.2 s |
+| E2E, `FILO_E2E_SCALE=1` | **28 passed in 2.7 min**, the three scale budgets included (deviation 4). | 28 passed in 2.7 min |
+| Built app | `main.js` 420,366 bytes and `preload.js` 193,825 bytes, the same to the byte; no `require("zod")`. `asSafeThemeValue` isn't bundled into main, so the new check isn't there. Renderer `index.js` 2,553,342 → 2,553,472 bytes (+130, the new check); the other 24 assets are unchanged. | Phase 1 sizes |
+| `npm audit` | 8 high, all GHSA-ch52-4w7c-c8xp (BL-11). | The same |
+| `npm outdated` | jsdom is gone from the list. Left: the 25 `@tiptap/*` packages (Phase 3) and the "wait" / "skip" majors. | |
+
+The slower `ci:verify` is most likely load on the machine, not jsdom: the gates use no jsdom and took 70% longer too.
+
+#### Deviations from the plan
+
+1. **App code changed in a "tests only" phase** (owner, decision 1). `asSafeThemeValue` refuses control characters, a one-line check with its comments. A theme file holding one inside a value now has that variable dropped (with the usual devtools breadcrumb), as a `url(` would be. No real colour or size holds one.
+2. **A new test file for `isCssColour`.** The plan said both checks' tests "were written for the fallback". That held for `asSafeThemeValue`; `isCssColour` had none of its own, only the theme editor's component test reaching it.
+3. **The Chromium comparison used the Electron already installed** (44.5.1), in a hidden window, with a scratch script that isn't in the repo. Nothing was downloaded. The results are recorded above.
+4. **The E2E suite was run.** The plan doesn't ask for it in this phase, but the theme sanitiser is app code.
+5. **The new control-character test was not proven to bite by mutation.** This session's permission mode refused a run of the suite with the sanitiser's check switched off, so the proof was left to the owner. The reasoning stands without it: Chromium's `CSS.supports` accepts these values, and the run without `CSS.supports` has no other check that would refuse them.
+
+#### New findings
+
+- **jsdom 30's `CSS.supports` and Chromium 152 disagree on five theme values** (`CSS.supports('--probe: …')`):
+
+  | Value | jsdom 30 | Chromium |
+  |---|---|---|
+  | `[x` | accepts | refuses |
+  | `a!important`, `red !important` | refuses | accepts |
+  | a control character (`\u0001`), a newline inside the value | refuses | accepts |
+
+  - The control characters are now refused by Filo first (decision 1), so all three environments agree on them.
+  - The other three aren't pinned by any test, since jsdom's answer isn't the app's.
+  - None is an injection risk: `setProperty` takes one value, and `url(`, `;` and the rest are refused before `CSS.supports` is asked.
+- **The fallback branches now run only in tests.** The renderer and jsdom both have `CSS.supports`, and nothing in the main process calls `asSafeThemeValue`. The tests keep both covered, as the plan asked.
+- **`isCssColour` accepts `inherit`, `currentColor` and `var(…)` in the app**, because Chromium's parser counts them as `color` values. So the theme editor takes them as a colour; the swatch can't show them, and `inherit` on `:root` leaves the variable unset. This is older than this phase and has nothing to do with jsdom. It is noted here only, with no backlog item, since a user has to type one of them on purpose.

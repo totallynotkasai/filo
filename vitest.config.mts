@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { playwright } from '@vitest/browser-playwright';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -12,12 +13,13 @@ export default defineConfig({
     exclude: ['src/tests/e2e/**'],
     globals: true,
     setupFiles: ['src/tests/setup.ts'],
-    // Three projects. `unit` runs the plain unit tests. `component` mounts
+    // Four projects. `unit` runs the plain unit tests. `component` mounts
     // real `.svelte` components in jsdom, which needs the `browser` export
     // condition (the bare `svelte` import otherwise resolves to the server
     // entry and `mount()` throws
     // `lifecycle_outside_component`). The condition is scoped to the
-    // component project so the unit suite keeps its resolution.
+    // component project so the unit suite keeps its resolution. `browser`
+    // runs in real Chromium, for what jsdom can't imitate.
     projects: [
       {
         extends: true,
@@ -48,6 +50,25 @@ export default defineConfig({
           // Each case opens a real vault and waits out real debounces.
           testTimeout: 120000,
           hookTimeout: 30000,
+        },
+      },
+      {
+        // The editor in the engine Filo ships: jsdom lays nothing out, and its
+        // selection, focus and contenteditable behaviour differ from Chromium's.
+        // Playwright's headless Chromium, installed once per machine with
+        // `npx playwright install --only-shell chromium`. The root `jsdom`
+        // environment doesn't apply here.
+        extends: true,
+        resolve: { conditions: ['browser'] },
+        test: {
+          name: 'browser',
+          include: ['src/tests/browser/**/*.test.ts'],
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright(),
+            instances: [{ browser: 'chromium' }],
+          },
         },
       },
     ],

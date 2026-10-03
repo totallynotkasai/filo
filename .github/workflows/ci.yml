@@ -1,11 +1,11 @@
 name: CI
 
 # GitHub runs only the Linux jobs. Every push and PR runs `verify`: the full
-# `npm run ci:verify` chain (lint, svelte-check, main type-check, strict unit
-# tests, build, every gate). `coverage` (the coverage ratchet) repeats the
-# whole suite instrumented, so it runs weekly and on demand (Actions tab -> CI
-# -> Run workflow). A push that touches only `docs/` runs nothing: no gate
-# reads it.
+# `npm run ci:verify` chain (lint, knip, svelte-check, main type-check, strict
+# unit tests (the jsdom projects and the Chromium one), build, every gate).
+# `coverage` (the coverage ratchet) repeats the whole suite instrumented, so it
+# runs weekly and on demand (Actions tab -> CI -> Run workflow). A push that
+# touches only `docs/` runs nothing: no gate reads it.
 #
 # The Windows checks run on the developer's Windows machine before pushing,
 # not here (Windows minutes bill double): `npm run test:unit:strict` covers
@@ -39,6 +39,10 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      # The `browser` test project runs in Playwright's headless Chromium
+      # (the headless shell is all a headless run uses), with the system
+      # libraries it needs.
+      - run: npx playwright install --with-deps --only-shell chromium
       # The whole chain in one place, so CI and a local `npm run ci:verify`
       # can't drift apart.
       - run: npm run ci:verify
@@ -62,6 +66,8 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      # The instrumented run includes the `browser` project too.
+      - run: npx playwright install --with-deps --only-shell chromium
       - run: npm run test:unit:coverage
       - if: failure()
         uses: actions/upload-artifact@v4

@@ -4,6 +4,8 @@ release/
 coverage/
 playwright-report/
 test-results/
+# Vitest browser mode: screenshots of failed browser tests
+.vitest/
 *.tsbuildinfo
 .env
 .env.local

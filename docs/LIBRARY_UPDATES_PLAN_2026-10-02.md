@@ -1,6 +1,6 @@
 # Library updates and new tools: implementation plan
 
-**Status (2026-10-03): Phases 0–5 done; Phases 6–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
+**Status (2026-10-03): Phases 0–6 done; Phases 7–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
 
 Source: [TRACK_B_INVESTIGATION_2026-10-02.md](TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
 
@@ -306,7 +306,9 @@ jsdom only imitates a browser: it lays nothing out, and its selection, focus and
   - `@vitest/browser-playwright` `^5.0.3` (it requires exactly the installed Vitest, so after Phase 1);
   - `playwright` `^1.63.0` (already installed through `@playwright/test`; declared because browser mode needs it directly).
 - **Chromium for the tests:** `npx playwright install chromium`, once per machine. It downloads Playwright's build of Chromium (roughly 150–200 MB) from Playwright's servers. **It needs your go-ahead at the time**; this machine has none yet.
+  - *Changed at the start of Phase 6 (owner, 2026-10-03):* `npx playwright install --only-shell chromium`, the headless shell only (about 122 MB). The plan's command also fetches the full Chrome for Testing (205 MB more), which only a headed run uses.
 - **GitHub CI** (`.github/workflows/ci.yml`, job `verify`): add `npx playwright install --with-deps chromium` before `npm run ci:verify` (decision 1).
+  - *Done in Phase 6:* with `--only-shell`, as above.
 
 ### 6.2 `vitest.config.mts`: a fourth project
 
@@ -331,6 +333,7 @@ import { playwright } from '@vitest/browser-playwright';
 
 - The root `environment: 'jsdom'` doesn't apply in browser mode.
 - `src/tests/setup.ts` stays safe there: its PointerEvent polyfill only applies when the browser has none.
+  - *Found in Phase 6:* not quite. Its `process.env` line threw in Chromium, which has no `process`; that line now runs only under Node (Phase 6 outcome, deviation 1).
 - `test:unit:strict` runs `vitest run`, so it runs the new project too, with the same noise checks.
 
 ### 6.3 First specs (`src/tests/browser/`)
@@ -344,6 +347,8 @@ import { playwright } from '@vitest/browser-playwright';
    - arrow keys across a soft break.
 
 **Pass test:** `ci:verify` on Windows and in GitHub CI; the three specs run in Chromium; the added run time is recorded in the outcome.
+
+*Phase 6 (owner, at the start):* committed, not pushed, so the GitHub CI half of the pass test waits for the next push (Phase 6 outcome).
 
 ---
 
@@ -516,6 +521,7 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
     - *From Phase 4:* the `corpus:*` lines (Phase 0) and the `knip` line are already in;
   - Testing Strategy: the browser project and the second parser;
     - *From Phase 5:* the second-parser line and the gate count (90) are already in.
+    - *From Phase 6:* the browser project's Testing Strategy line and the Quick Reference line (`npx playwright install --only-shell chromium`) are already in.
   - the gate count.
 - **TRACK_B_INVESTIGATION §6:** mark what was done. **BACKLOG:** add any new findings.
   - *From Phase 4:* also correct §6's knip row, which says knip needs Svelte's compiler or it reports components' exports as unused (see the Phase 4 outcome's new findings).
@@ -528,7 +534,7 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
 
 | # | Question | Default |
 |---|---|---|
-| 1 | Browser-mode tests run in `ci:verify`, and GitHub CI installs Chromium for them | Yes |
+| 1 | Browser-mode tests run in `ci:verify`, and GitHub CI installs Chromium for them | Yes. *Confirmed at the start of Phase 6 (owner).* |
 | 2 | knip stays a report you run by hand (not in `ci:verify`) | Yes; revisit after Phase 4's triage. *Revisited in Phase 4 (owner): no, knip runs in `ci:verify`.* |
 | 3 | The Raw view keeps today's box: at least 480 px, resizable, scrolling inside | Yes |
 | 4 | Tab in the Raw view leaves the field, as today | Yes |
@@ -536,7 +542,7 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
 | 6 | Line numbers, and invisible characters shown, in the Raw view | Yes |
 | 7 | The corpus list walks the repo, the vaults folder and `node_modules` READMEs, not other sessions' temporary folders | Yes |
 
-**Needs your go-ahead when the time comes:** Phase 6's one-time download of Playwright's Chromium on this machine (roughly 150–200 MB).
+**Needs your go-ahead when the time comes:** Phase 6's one-time download of Playwright's Chromium on this machine (roughly 150–200 MB). *Given at the start of Phase 6, for the headless shell only (about 122 MB).*
 
 ## Risks, and how each is contained
 
@@ -1218,3 +1224,112 @@ The E2E suite was not run: nothing in Electron, the build, the editor's behaviou
 - **BL-17:** a bare web address in text can be saved with a `\` inside it (`…/A\_(b)`), which GitHub's own linking keeps in the link, breaking it. micromark as set up here can't see it.
 - **BL-18:** italic, struck-through and coloured text holding `**` is saved as `<span …>*~~2** -~~*</span>`, without the escapes Filo writes everywhere else (`minimalEscapes.ts` finds markdown-it doesn't need them there); GitHub closes the italic on the `**`. micromark agrees with markdown-it here, so the test can't see it.
 - **micromark's own quirk** (emphasis and strikethrough paired in separate passes): not Filo's, so no backlog item; the test's header tells the next reader to check such a difference against GitHub first.
+
+### Phase 6 outcome (2026-10-03)
+
+**Status:** done, verified on Windows. Committed on `main`; not pushed (owner, at the start), so GitHub CI hasn't run it yet.
+- A fourth Vitest project, `browser`, runs three spec files (88 tests) in Playwright's headless Chromium 153. On its own it takes about 2.6 s; ten runs in a row all passed.
+- **Chromium writes exactly what jsdom writes** for all 70 toolbar cases and all 7 colour spellings, and every one reopens editable with the same bytes.
+- **The caret spec found no Filo bug.** It found two ProseMirror behaviours that only show at machine speed (below), and a gap in an existing jsdom test, which is fixed.
+
+#### Decisions at the start (owner, 2026-10-03)
+
+1. **Chromium: the headless shell only** (the recommended option), `npx playwright install --only-shell chromium`. On this machine that is Chrome Headless Shell 153.0.8010.12 (120 MB), plus ffmpeg (1.4 MB) and winldd (0.1 MB). The other options were:
+   - the plan's `npx playwright install chromium`: about 327 MB, adding the full Chrome for Testing (205 MB), which only a headed run uses;
+   - no download, using the installed Edge 154: the engine would change with every Edge update and differ from CI's.
+   
+   Electron 44's Chromium is 152.0.7977.130.
+2. **The browser tests run in `ci:verify`** (decision 1, the plan's default).
+3. **Commit, don't push**, as in Phases 1–5.
+
+#### What changed
+
+- **`package.json`:** devDependencies `@vitest/browser-playwright` `^5.0.3` and `playwright` `^1.63.0`. `playwright` 1.63.0 was already installed through `@playwright/test`; knip counts it as used, since the provider needs it.
+- **The lockfile:** 14 entries added, all dev-only; none changed or removed (checked by comparing the parsed lockfiles):
+  - `@vitest/browser`, `@vitest/browser-playwright`, `@vitest/ui`, `@vitest/utils` and `@vitest/pretty-format` (all 5.0.3);
+  - `sirv`, `@polka/url`, `mrmime`, `totalist`, `ws`, `fflate`, `pathe`, `@blazediff/core`, and a nested `magic-string`.
+- **`vitest.config.mts`:** the fourth project, as 6.2 has it, with a comment on what it is for and how Chromium is installed.
+- **`src/tests/setup.ts`:** its `process.env` line runs only under Node (deviation 1).
+- **`src/tests/browser/` (new), 88 tests:**
+  - `toolbarFormattingInChromium.test.ts` (70): each case in `TOOLBAR_CASES`, applied in Chromium through `applyToolbarCase`, saved, reopened in a fresh editor and saved again: the same document (`normalisedDoc`), the same bytes, not read-only.
+  - `colourSpellingInChromium.test.ts` (7): the exact bytes Chromium writes for colours, as the colour picker hands them over (lower-case hex, or `rgba(…)` when translucent). Each one also reopens editable with the same bytes:
+    - text colour: `#e03e3e` → `<span style="color: rgb(224, 62, 62);">…</span>`;
+    - a preset text colour;
+    - a translucent text colour (`rgba(…)` kept);
+    - a highlight colour: the picked value in `data-color`, `rgb(…)` in the style, plus `color: inherit`;
+    - a translucent highlight colour;
+    - colour, font and size on bold text, in one span;
+    - a coloured bold word in a centred paragraph (the HTML line).
+  - `editorCaretInChromium.test.ts` (11): real key presses through Playwright, with the app's `style.css` loaded so the editor lays out as in Filo:
+    - Enter beside a soft break: End on the first line, Home on the second, in a list item, and away from a break;
+    - Tab types a tab and the note keeps the focus, a letter typed next lands after it, and Backspace takes each back;
+    - Shift+Tab, including with no tab left to remove (focus stays);
+    - Backspace at the start of an indented paragraph, reached with ArrowDown: one indent step at a time, then an ordinary join;
+    - lines selected with Shift+ArrowDown: Tab indents them, Shift+Tab outdents;
+    - ArrowRight and ArrowLeft across a soft break, ArrowDown and ArrowUp keeping the column.
+    
+    After a key that only moves the caret, the spec waits until the editor holds the caret the browser placed, and checks where that is (`caretAt`, deviation 3).
+- **`src/tests/component/softBreakEnter.test.ts`:** each case also checks that the editor shows what reopening the saved file shows (deviation 5).
+- **`tsconfig.tests.json`:** includes `src/tests/browser/`, so the `test-typecheck` gate covers the new specs (no errors).
+- **`.gitignore`:** `.vitest/`, where Vitest saves a screenshot of each failed browser test (deviation 6).
+- **`.github/workflows/ci.yml`:** the `verify` job runs `npx playwright install --with-deps --only-shell chromium` before `npm run ci:verify`. The header comment now names knip (missed in Phase 4) and the Chromium project. The weekly `coverage` job runs the same install before `npm run test:unit:coverage` (deviation 8).
+- **CLAUDE.md:** written now, as Phases 4 and 5 did with their own lines:
+  - the Quick Reference (the four projects; the one-time Chromium install);
+  - the Tech Stack "Testing" row;
+  - the `src/tests/browser/` line in the project structure;
+  - Testing Strategy: four projects, a "Browser tests" entry, and where browser specs go.
+- **This plan:** the status line, notes under 6.1, 6.2 and 6.3, decision 1's row, the go-ahead line, Phase 8's CLAUDE.md note, and this outcome.
+
+#### What the specs found
+
+| Spec | Tests | Result |
+|---|---|---|
+| Toolbar cases in Chromium | 70 | All pass. The bytes each case writes are identical to jsdom's for all 70 (a throwaway comparison, deleted afterwards). |
+| Colour spellings | 7 | Chromium's bytes equal jsdom's for all 7 (also compared), as the investigation's W1 found on Chromium 152. All reopen editable. |
+| Caret keys | 11 | All pass, once a caret key is followed by a wait for the editor to read the caret. Without the wait, 5 failed, all for one reason (below). |
+
+**Do the specs bite?** Five mutations, each applied to app code, run against the browser project and restored. None of them touches a security check.
+
+| Mutation | Browser tests that fail |
+|---|---|
+| Enter beside a soft break leaves the break in (`SoftBreakEnter` off) | 3 of the 4 Enter cases. The fourth case, away from a break, doesn't involve the handler. Before the document check (deviation 5), "Home on the second line" passed too. |
+| Tab falls through to the browser | 3: the two Tab / Shift+Tab cases and the Shift+Down case |
+| Backspace at an indented paragraph's start joins the line (`IndentBackspace` off) | 1 |
+| Shift+Tab over several lines does nothing | 1 |
+| Backspace after a tab left to the browser | 0. Chromium 153 deletes the tab itself (below). |
+
+**Found along the way** (none of them Filo's code):
+- **Keys sent back to back can beat the editor's caret update.** ProseMirror learns that the browser moved the caret from `selectionchange`, which Chromium fires a moment after the key. Playwright sent `{End}{Enter}` with no gap, so Enter split the line where the caret had been before End. A person's keys are tens of milliseconds apart, so this can't happen while typing; a macro tool sending keys at machine speed could hit it. The spec waits after each caret key; CLAUDE.md says why.
+- **ProseMirror's focus guard.** Within 200 ms of the editor taking focus, ProseMirror treats a caret landing on the document's very start as the browser resetting it, and puts the old caret back (prosemirror-view 1.42.5, `DOMObserver.flush`). In a probe, Home pressed at once after focusing seemed to do nothing on the first line. Plain ProseMirror and a bare TipTap StarterKit editor do the same. A person can't press a key within 200 ms of focusing by keyboard; after a click it doesn't apply. The spec's header notes it.
+- **Backspace after a tab:** `tabKeys.ts` deletes a tab itself, because the browser's handling "next to a non-editable span is unreliable". With that handler switched off, Chromium 153 deleted the tab correctly in all eight positions tried: mid-line, opening a line, the second of two opening a line, ending a line, before a soft break, in bold, in a heading and in a list item. The handler is harmless and may matter in other engines or cases, so it stays.
+
+#### Pass test
+
+| Check | Result | Before |
+|---|---|---|
+| `npm run ci:verify` (Windows) | **Green in 261 s.** eslint 0 warnings; knip no findings; svelte-check 851 files, 0 errors, 0 warnings; 801 files: 7,805 passed, 5 skipped (+88 in the 3 new files; the 4 edited jsdom cases still pass); vitest 215 s; 90/90 gates in 9.0 s. The strict runner found no noise lines in the browser project's output. | Phase 5: 270 s, 798 files, 7,717 passed, 5 skipped, 90 gates |
+| The browser project alone | 3 files, 88 tests; ten runs in a row, each 88 passed in 2.56–2.65 s | |
+| Added run time | About 2.6 s for the project on its own, Chromium's start included. In `ci:verify` it runs beside the jsdom projects, and the whole chain took 261 s against Phase 5's 270 s: within the usual run-to-run spread (Phases 1–5: 234–270 s). | |
+| GitHub CI | **Not run**: nothing was pushed (decision 3). The new install step (`--with-deps --only-shell chromium` on `ubuntu-latest`) first runs in `verify` on the next push, and in `coverage` on the next weekly or manual run. | |
+| `npm run test:unit:coverage` (Windows, all four projects) | Green in 245 s: 801 files, 7,805 passed, 5 skipped. Coverage of `lib/` is 91.92 % lines, 81.29 % branches, 93.47 % functions and 89.49 % statements, above every floor (88 / 77 / 90 / 85). The floors are unchanged. | |
+| Built app | All 28 files in `dist/` are identical to the byte to the Phase 5 build (`main.js` 420,366 bytes); no `require("zod")`. The new packages are dev-only and nothing in the app imports them. | Phase 5 build |
+| `npm run lint`, `npm run knip`, gates | 0 warnings; knip no findings; 90/90 gates (the `test-typecheck` gate reads the new specs) | |
+| `npm audit` | 8 high, all GHSA-ch52-4w7c-c8xp in electron-builder's chain (BL-11). The browser packages add none. | 8 high, BL-11 |
+
+The E2E suite was not run: no app code, Electron or build setting changed, and the built app is unchanged (above).
+
+#### Deviations from the plan
+
+1. **`src/tests/setup.ts` wasn't safe in the browser as it stood.** Its `process.env.FILO_LOCK_RETRY_BUDGET_MS` line threw `process is not defined` in Chromium. The line only matters to main-process code, which runs under Node, so it now runs only where `process` exists. All four projects keep sharing the one setup file (and its default `window.filo` stub, which Phase 7's browser spec may want).
+2. **The headless shell only** (decision 1): `--only-shell` in the local install, in CI and in CLAUDE.md.
+3. **The caret spec waits after each caret key** (`caretAt`), for the reason under "Found along the way". It also checks where the caret landed, so it tests Chromium's caret placement as well as Filo's keys. It loads the app's stylesheet, and covers more than the plan listed: a typed letter after a tab, Shift+Down then Tab and Shift+Tab, and Backspace at an indented paragraph's start.
+4. **The colour spec pins seven spellings, not one**, including highlight, translucent colours and the HTML line. Each must also reopen editable.
+5. **An existing jsdom test was strengthened** (test-only). With the soft-break Enter handler switched off, `softBreakEnter.test.ts`'s "at the start of the next line" case still passed: the old paragraph keeps a trailing break, which shows as an empty line until the note is reopened, but the save doesn't write it. Each case now also compares the editor with a fresh load of the saved text, and the mutation fails 3 of its 4 cases. The browser spec does the same.
+6. **`.vitest/` is git-ignored.** Vitest saves a screenshot of every failed browser test there, inside the repo.
+7. **CLAUDE.md and the CI header comment are written now**, not in Phase 8. The header comment also gains the knip step Phase 4 added to `ci:verify`.
+8. **The weekly `coverage` job installs Chromium too.** The plan named only `verify`, but `test:unit:coverage` is `vitest run --coverage`, which runs all four projects; without Chromium the job would fail. A local coverage run with the browser project passed (above). CLAUDE.md's line on the coverage job says so.
+
+#### New findings
+
+- No Filo defect, so no backlog item. The two ProseMirror behaviours above aren't Filo's code and need machine-speed input; the Backspace handler isn't a defect. If you want any of them tracked, they would be BL-19 onwards.
+- The jsdom soft-break test's gap was a test weakness, fixed here (deviation 5).

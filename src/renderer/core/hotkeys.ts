@@ -42,8 +42,8 @@ export interface Shortcut extends ShortcutBinding {
    * element (typically a Tiptap editor). Required for editor-targeted
    * commands like Insert Link, since the global handler otherwise skips
    * shortcuts to keep editor typing unaffected. Note: INPUT and TEXTAREA
-   * elements always block — `allowInEditor` only relaxes the
-   * contenteditable filter.
+   * elements, and anything inside `[data-plain-text-field]` (the Raw view),
+   * always block — `allowInEditor` only relaxes the contenteditable filter.
    */
   allowInEditor?: boolean;
   /**
@@ -106,7 +106,11 @@ function handleKeyDown(e: KeyboardEvent) {
   // `allowInEditor` so editor-targeted commands like Insert Link can fire
   // without the user having to defocus the editor first.
   const target = e.target as HTMLElement;
-  const inFormInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+  // The Raw view's text (`data-plain-text-field`) is a contenteditable that
+  // behaves as a textarea: an editor shortcut there would act on the hidden
+  // rich editor, and its own Ctrl+S already saves.
+  const inFormInput =
+    target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('[data-plain-text-field]') !== null;
   const inContentEditable = target.isContentEditable;
 
   if (inFormInput && e.key !== 'Escape') return;

@@ -9,7 +9,9 @@
  * any writer yet). A tile, frame or connection title being typed is such a
  * field, though its editor is a `.ProseMirror` like a note's. A focused note
  * editor counts only through its unserialised keystrokes, which
- * `nothingUnsaved` already reports: counting the caret alone held back nearly
+ * `nothingUnsaved` already reports (the Raw view's text likewise, through the
+ * raw-view registry; what that field renders changes as it scrolls, so its
+ * rendered text says nothing): counting the caret alone held back nearly
  * every Windows shutdown, since an editor keeps focus while Filo is in the
  * background, and a routine "preventing shutdown" screen teaches the click
  * that cuts a real rescue short.

@@ -6,6 +6,7 @@ import {
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
+import { loadedRawView, selectedText } from './helpers/rawView';
 
 /**
  * A note Filo can't save without changing it opens read-only. The banner says
@@ -35,15 +36,21 @@ describe('the read-only banner names what would change', () => {
     );
     expect(button).toBeTruthy();
     button!.click();
-    let textarea: HTMLTextAreaElement | null = null;
-    for (let i = 0; i < 50 && !textarea?.value; i++) {
-      await settle();
-      textarea = m.target.querySelector('textarea.raw-text');
-    }
-    expect(textarea?.value).toContain('<!-- a comment -->');
+    const field = await loadedRawView(m.target);
+    expect(field.state.doc.toString()).toContain('<!-- a comment -->');
     await settle();
-    const selected = textarea!.value.slice(textarea!.selectionStart, textarea!.selectionEnd);
-    expect(selected).toBe('A paragraph with a <!-- a comment --> comment.');
+    expect(selectedText(field)).toBe('A paragraph with a <!-- a comment --> comment.');
+    expect(field.hasFocus).toBe(true);
+    // The line stays marked once the selection moves on, until it is edited.
+    const named = (): string[] => [...m.target.querySelectorAll('.cm-filo-named-line')].map((l) => l.textContent ?? '');
+    expect(named()).toEqual(['A paragraph with a <!-- a comment --> comment.']);
+    field.dispatch({ selection: { anchor: 0 } });
+    await settle();
+    expect(named()).toHaveLength(1);
+    const line = field.state.doc.line(6);
+    field.dispatch({ changes: { from: line.to, insert: ' Edited.' }, userEvent: 'input.type' });
+    await settle();
+    expect(named()).toEqual([]);
     await m.unmount();
   });
 

@@ -33,6 +33,13 @@
     "package:dir": "npm run icons && npm run build && electron-builder --dir --publish never"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@lezer/highlight": "^1.2.5",
+    "@lezer/markdown": "^1.7.2",
     "@tiptap/core": "^3.31.4",
     "@tiptap/extension-blockquote": "^3.31.4",
     "@tiptap/extension-code-block-lowlight": "^3.31.4",

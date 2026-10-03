@@ -4,6 +4,8 @@ import NoteRawView from '@renderer/components/boards/NoteRawView.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { recordingFilo, settle, resetEditorHarness, teardownEditorHarness, VAULT } from './helpers/mountEditor';
+import { loadedRawView, typeOver } from './helpers/rawView';
+import { holdCloseDrainUntilSwap } from '@renderer/lib/editor/closeDrainGate.svelte';
 
 /**
  * The raw view follows a change made elsewhere while nothing is typed in it.
@@ -54,9 +56,8 @@ describe('raw view following a change made elsewhere', () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
     const view = mount(NoteRawView, { target, props: { path: 'Plan.md' } });
-    await waitMs(50);
-    const ta = target.querySelector('textarea') as HTMLTextAreaElement;
-    expect(ta.value).toBe(NOTE);
+    const field = await loadedRawView(target);
+    expect(field.state.doc.toString()).toBe(NOTE);
 
     const hold = holdNoteReads();
     // Another view changes the note: the raw view schedules its follow.
@@ -65,15 +66,61 @@ describe('raw view following a change made elsewhere', () => {
     expect(hold.held()).toBeGreaterThan(0);
 
     const typed = '---\ntitle: Plan\n---\nTyped during the read\n';
-    ta.value = typed;
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    typeOver(field, typed);
     await settle();
     hold.release();
     await waitMs(600);
 
-    expect(ta.value).toBe(typed);
+    expect(field.state.doc.toString()).toBe(typed);
     await unmount(view);
     await settle();
     noteStore.release('Plan.md', 'test:other');
+  });
+});
+
+describe('raw view editability', () => {
+  beforeEach(() => resetEditorHarness());
+  afterEach(() => teardownEditorHarness());
+
+  it('a field made before the note is read becomes editable once it is', async () => {
+    recordingFilo({ 'Plan.md': NOTE });
+    vaultStore.setPath(VAULT);
+    const hold = holdNoteReads();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const view = mount(NoteRawView, { target, props: { path: 'Plan.md' } });
+    // The field's code is in before the read comes back: it waits, read-only.
+    let content: HTMLElement | null = null;
+    for (let i = 0; i < 100 && !content; i++) {
+      await settle();
+      content = target.querySelector<HTMLElement>('.cm-content');
+    }
+    expect(content?.getAttribute('contenteditable')).toBe('false');
+    expect(target.querySelector('.raw-text')?.getAttribute('aria-busy')).toBe('true');
+    hold.release();
+    const field = await loadedRawView(target);
+    expect(field.state.doc.toString()).toBe(NOTE);
+    expect(field.contentDOM.getAttribute('contenteditable')).toBe('true');
+    await unmount(view);
+    await settle();
+  });
+
+  it('freezes while a close saves, and thaws if the close is called off', async () => {
+    recordingFilo({ 'Plan.md': NOTE });
+    vaultStore.setPath(VAULT);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const view = mount(NoteRawView, { target, props: { path: 'Plan.md' } });
+    const field = await loadedRawView(target);
+    expect(field.state.readOnly).toBe(false);
+    const release = holdCloseDrainUntilSwap();
+    await settle();
+    expect(field.state.readOnly).toBe(true);
+    expect(field.contentDOM.getAttribute('contenteditable')).toBe('false');
+    release();
+    await settle();
+    expect(field.state.readOnly).toBe(false);
+    await unmount(view);
+    await settle();
   });
 });

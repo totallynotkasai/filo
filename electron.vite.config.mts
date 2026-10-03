@@ -7,21 +7,23 @@ import { fileURLToPath } from 'url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 /**
- * The editor's dependencies, pre-bundled when the dev server starts. The
- * boards that use them are lazy chunks, so without this Vite can find them
- * only when a board first opens, then re-optimises and reloads the page.
- * Read from package.json so a new TipTap extension is covered without an edit
- * here. `@tiptap/pm` has no root entry, so its subpaths are named.
+ * The editors' dependencies, pre-bundled when the dev server starts. The
+ * boards and the Raw view that use them are lazy chunks, so without this Vite
+ * can find them only when one first opens, then re-optimises and reloads the
+ * page. Read from package.json so a new TipTap extension or CodeMirror package
+ * is covered without an edit here. `@tiptap/pm` has no root entry, so its
+ * subpaths are named.
  */
 function editorDepsToPrebundle(): string[] {
   const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8')) as {
     dependencies?: Record<string, string>;
   };
-  const tiptap = Object.keys(pkg.dependencies ?? {}).filter(
-    (name) => name.startsWith('@tiptap/') && name !== '@tiptap/pm',
-  );
+  const names = Object.keys(pkg.dependencies ?? {});
+  const tiptap = names.filter((name) => name.startsWith('@tiptap/') && name !== '@tiptap/pm');
+  const codemirror = names.filter((name) => name.startsWith('@codemirror/') || name.startsWith('@lezer/'));
   return [
     ...tiptap,
+    ...codemirror,
     '@tiptap/pm/model',
     '@tiptap/pm/state',
     '@tiptap/pm/view',
@@ -100,6 +102,8 @@ export default defineConfig({
           // of the whole renderer bundle. Order-of-magnitude breakdown:
           //   • tiptap-core    ~1.0 MB (TipTap + ProseMirror)
           //   • lowlight       ~400 KB (syntax highlighting languages)
+          //   • codemirror     the Raw view's editor, fetched only when a
+          //                    Raw view first opens
           // Per Vite docs, `manualChunks` runs only on the production
           // build — `npm run dev` still uses ESM dynamic imports.
           manualChunks: (id: string) => {
@@ -109,6 +113,15 @@ export default defineConfig({
             }
             if (id.includes('lowlight') || id.includes('highlight.js')) {
               return 'lowlight';
+            }
+            if (
+              id.includes('@codemirror') ||
+              id.includes('@lezer') ||
+              id.includes('style-mod') ||
+              id.includes('crelt') ||
+              id.includes('@marijn')
+            ) {
+              return 'codemirror';
             }
             return undefined;
           },

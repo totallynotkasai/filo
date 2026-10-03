@@ -348,6 +348,69 @@ describe('hotkeys', () => {
         input.remove();
       }
     });
+
+    it('treats a contenteditable inside [data-plain-text-field] as a form field: only Escape passes', () => {
+      const fired: string[] = [];
+      registerShortcut({
+        commandId: 'editor:insert-link',
+        key: 'k',
+        ctrl: true,
+        description: 'Insert Link',
+        allowInEditor: true,
+        action: () => { fired.push('link'); },
+      });
+      registerShortcut({
+        commandId: 'file:save',
+        key: 's',
+        ctrl: true,
+        description: 'Save',
+        allowInEditor: true,
+        action: () => { fired.push('save'); },
+      });
+      registerShortcut({
+        commandId: 'app:cancel',
+        key: 'Escape',
+        description: 'Cancel',
+        action: () => { fired.push('cancel'); },
+      });
+
+      // The Raw view's text: the attribute sits on the contenteditable itself,
+      // and a key can come from a node inside it.
+      const field = makeEditable();
+      field.setAttribute('data-plain-text-field', '');
+      const line = document.createElement('div');
+      field.appendChild(line);
+      try {
+        dispatchKey(field, { key: 'k', ctrlKey: true });
+        dispatchKey(line, { key: 's', ctrlKey: true });
+        expect(fired).toEqual([]);
+        dispatchKey(field, { key: 'Escape' });
+        expect(fired).toEqual(['cancel']);
+      } finally {
+        field.remove();
+      }
+    });
+
+    it('blocks shortcuts in a read-only [data-plain-text-field] too (contenteditable="false")', () => {
+      let fired = 0;
+      registerShortcut({
+        commandId: 'history:undo',
+        key: 'z',
+        ctrl: true,
+        description: 'Undo',
+        action: () => { fired += 1; },
+      });
+      const field = document.createElement('div');
+      field.setAttribute('contenteditable', 'false');
+      field.setAttribute('data-plain-text-field', '');
+      document.body.appendChild(field);
+      try {
+        dispatchKey(field, { key: 'z', ctrlKey: true });
+        expect(fired).toBe(0);
+      } finally {
+        field.remove();
+      }
+    });
   });
 
   describe('while a modal dialog is open', () => {

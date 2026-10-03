@@ -1,6 +1,6 @@
 # Library updates and new tools: implementation plan
 
-**Status (2026-10-03): Phases 0–6 done; Phases 7–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
+**Status (2026-10-04): Phases 0–7 done; Phase 8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
 
 Source: [TRACK_B_INVESTIGATION_2026-10-02.md](TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
 
@@ -395,11 +395,15 @@ Keep `editRawText`, `typeInRawView`, `leaveRawFieldAndToggle`, `rawViewShown`, `
 
 **Pass:** the characterisation project green on the textarea before anything else changes, then committed on its own.
 
+*Done in Phase 7:* as planned, plus `rawTextNow(app)`, a reader a `waitFor` can poll (`rawText` waits, so it can't sit in one). Committed on its own (Phase 7 outcome).
+
 ### 7.2 Dependencies
 
 `@codemirror/view` `^6.43.13`, `@codemirror/state` `^6.7.6`, `@codemirror/commands` `^6.11.1`, `@codemirror/language` `^6.12.4`, `@codemirror/lang-markdown` `^6.5.2`, `@codemirror/search` `^6.7.2` and `@lezer/highlight` `^1.2.5`.
 
 Not the `codemirror` package: its `basicSetup` brings autocompletion, linting and more that the Raw view doesn't want.
+
+*Changed in Phase 7:* `@lezer/markdown` `^1.7.2` instead of `@codemirror/lang-markdown`, which brings the HTML, CSS and JavaScript languages, autocompletion and linting with it, and whose `markdown()` adds list continuation on Enter, HTML tag completion and a link made from a pasted address (Phase 7 outcome, deviation 1).
 
 ### 7.3 `src/renderer/lib/editor/rawTextEditor.ts` (new) and the component
 
@@ -446,10 +450,13 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
   - the `tok-*` colours come from existing theme tokens, so every theme stays readable, and every `var(--x)` must be defined (gate);
   - no `EditorView.theme` objects, which would be CSS-in-JS.
 
+*Changed in Phase 7 (owner, at the start):* the frontmatter shows as muted metadata, "Edit in Raw view" also marks its line until it is edited, and the colouring is subtle. `setEditable` is named `allowEditing`, `setLabel` is added, and the field reports leaving when focus leaves both the text and its find bar. The Phase 7 outcome lists every deviation.
+
 ### 7.4 Keyboard: the Raw view stays a plain text field
 
 - `src/renderer/core/hotkeys.ts`, `handleKeyDown`: an element inside `[data-plain-text-field]` counts as a form field, like `INPUT` and `TEXTAREA`, so only Escape passes. Add a case to `src/tests/unit/hotkeys.test.ts`.
 - `src/renderer/lib/vault/unsavedStateReport.ts` already treats any focused editable element outside a note editor as a field the shutdown check watches, as it does the textarea today. Add a case to its test that a CodeMirror field with typed text counts.
+  - *Changed in Phase 7:* CodeMirror draws only the lines in view, so the field's text on screen changes as it scrolls, and that check would hold a Windows shutdown back for nothing. The field carries the note-editor attribute instead, and its typed text counts through the raw-view registry, as it already did (Phase 7 outcome, deviation 7).
 
 ### 7.5 Build
 
@@ -522,7 +529,9 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
   - Testing Strategy: the browser project and the second parser;
     - *From Phase 5:* the second-parser line and the gate count (90) are already in.
     - *From Phase 6:* the browser project's Testing Strategy line and the Quick Reference line (`npx playwright install --only-shell chromium`) are already in.
+    - *From Phase 7:* the Raw view's lines (Tech Stack, project structure, Testing Strategy, the E2E list) are already in, and the design doc's Raw view paragraph and technology list.
   - the gate count.
+- *From Phase 7:* BL-19 (the design doc's VaultIndex and technology lines are out of date) is a docs-only fix that fits this phase.
 - **TRACK_B_INVESTIGATION §6:** mark what was done. **BACKLOG:** add any new findings.
   - *From Phase 4:* also correct §6's knip row, which says knip needs Svelte's compiler or it reports components' exports as unused (see the Phase 4 outcome's new findings).
 - **Optional, if a larger corpus is needed (owner, 2026-10-03):** once every change is in, generate a vault with `node scripts/perf/genVault.mjs <dir>` (deterministic) and add it to the corpus with `corpus:list -- … --extra <dir>`. Its notes are generated, so they add volume rather than variety.
@@ -536,10 +545,10 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
 |---|---|---|
 | 1 | Browser-mode tests run in `ci:verify`, and GitHub CI installs Chromium for them | Yes. *Confirmed at the start of Phase 6 (owner).* |
 | 2 | knip stays a report you run by hand (not in `ci:verify`) | Yes; revisit after Phase 4's triage. *Revisited in Phase 4 (owner): no, knip runs in `ci:verify`.* |
-| 3 | The Raw view keeps today's box: at least 480 px, resizable, scrolling inside | Yes |
-| 4 | Tab in the Raw view leaves the field, as today | Yes |
-| 5 | Ctrl+F in the Raw view opens CodeMirror's find bar for that note | Yes |
-| 6 | Line numbers, and invisible characters shown, in the Raw view | Yes |
+| 3 | The Raw view keeps today's box: at least 480 px, resizable, scrolling inside | Yes. *Done in Phase 7.* |
+| 4 | Tab in the Raw view leaves the field, as today | Yes. *Done in Phase 7.* |
+| 5 | Ctrl+F in the Raw view opens CodeMirror's find bar for that note | Yes. *Done in Phase 7* (with Replace, as CodeMirror's bar has it). |
+| 6 | Line numbers, and invisible characters shown, in the Raw view | Yes. *Done in Phase 7.* |
 | 7 | The corpus list walks the repo, the vaults folder and `node_modules` READMEs, not other sessions' temporary folders | Yes |
 
 **Needs your go-ahead when the time comes:** Phase 6's one-time download of Playwright's Chromium on this machine (roughly 150–200 MB). *Given at the start of Phase 6, for the headless shell only (about 122 MB).*
@@ -1359,3 +1368,165 @@ The E2E suite was not run: no app code, Electron or build setting changed, and t
     It is kept: it stops a browser dropping the caret at the top of a note that regains focus, which would be the worse problem. A Filo-side workaround (handling Ctrl+Home itself) was considered and not taken, since it would cover Ctrl+Home only, not Home, Up or Left on the first line.
   - **The Backspace handler in `tabKeys.ts`:** not needed in Chromium 153 for the eight positions tried. It is harmless and stays.
 - The jsdom soft-break test's gap was a test weakness, fixed here (deviation 5).
+
+### Phase 7 outcome (2026-10-04)
+
+**Status:** done, verified on Windows. Two commits on branch `feat/raw-view-codemirror` (7.1, then the swap), fast-forwarded to `main`; not pushed (owner, at the start), so GitHub CI hasn't run it yet.
+- The Raw view's `<textarea>` is now CodeMirror 6. It colours the Markdown, numbers the lines, shows invisible characters, finds inside the note (Ctrl+F) and keeps its own undo. Everything around the text field is unchanged: the save on leaving the field, Ctrl+S, switching back and closing; the base-hash check and the conflict banner; the raw-view registry; rescue copies; the pending path; the follow-while-untouched reload.
+- **No characterisation spec changed** after 7.1: all 21 raw-view cases pass on CodeMirror through the harness alone.
+- CodeMirror is its own chunk, fetched only when a Raw view first opens (checked in the built app). The app's main bundle grew 133 bytes (the shortcut guard).
+
+#### Decisions at the start (owner, 2026-10-03)
+
+1. **The frontmatter shows as muted metadata** (recommended): fences as markup, keys stronger, values muted. A small Filo-written extension, no new packages. (The other options: full YAML colouring with `@codemirror/lang-yaml`, or leaving it as Markdown reads it: a rule and a heading.)
+2. **"Edit in Raw view" selects the line and marks it** (recommended), with a warning-coloured band that stays until the line is edited or the Raw view closes.
+3. **Subtle colouring** (recommended): the words keep the text colour; markup is muted; headings bold; links underlined; code on a faint background.
+4. **Merge, don't push** (recommended), as in Phases 1–6.
+
+#### What changed
+
+- **7.1 (`ffd5b9e`, committed first):** `rawViewSaveBase.test.ts` and `tagRowAndRawView.test.ts` drive the harness (`rawText`, `rawTextNow`, `setRawText`, `leaveRawField`) instead of the `<textarea>`. No assertion changed. The characterisation project passed on the textarea (51 files, 253 tests) before anything else changed.
+- **`package.json`** (runtime dependencies): `@codemirror/view` `^6.43.13`, `@codemirror/state` `^6.7.6`, `@codemirror/commands` `^6.11.1`, `@codemirror/language` `^6.12.4`, `@codemirror/search` `^6.7.2`, `@lezer/highlight` `^1.2.5`, `@lezer/markdown` `^1.7.2`. The lockfile adds 12 entries, none changed or removed: those seven, plus `@lezer/common` 1.5.3, `@lezer/lr` 1.4.10, `@marijn/find-cluster-break` 1.0.4, `crelt` 1.0.7 and `style-mod` 4.1.4. `w3c-keyname`, which CodeMirror shares with ProseMirror, was already there.
+- **`src/renderer/lib/editor/rawTextEditor.ts` (new):** `createRawTextEditor(host, options)`. Options: `text`, `label`, `editable`, `onChange`, `onBlur`, `onSave`. The editor: `text()`, `setText(value)`, `allowEditing(on)`, `setLabel(label)`, `revealLine(n)`, `focus()`, `destroy()`.
+  - Extensions: line numbers; invisible characters shown; history; line wrapping; tab size 4; the find bar at the top; the default, history and search keymaps with Ctrl+S first (in the field and its find bar). No `indentWithTab`, so Tab leaves the field.
+  - Markdown from `@lezer/markdown` with GFM tables, task lists and strikethrough, not bare-URL links (Filo's own parser makes none). Inline HTML tags read as markup.
+  - Classes from a `tagHighlighter` of Filo's own (`tok-heading`, `tok-strong`, `tok-emphasis`, `tok-strikethrough`, `tok-link`, `tok-url`, `tok-monospace`, `tok-quote`, `tok-comment`, `tok-meta`).
+  - The frontmatter block, found by `splitFrontmatterFence` (the fence parser the note writer uses), drawn as `cm-filo-fm` with `cm-filo-fm-fence` and `cm-filo-fm-key` marks. Only a change inside the block, or one when no block is closed yet and the first line is a fence (`openingFenceEol`), looks for it again.
+  - The named line (`cm-filo-named-line`), cleared by an edit that touches it.
+  - Text attributes: `aria-label`, `spellcheck="false"`, `autocorrect` and `autocapitalize` off, `tabindex="0"`, `data-plain-text-field`, `data-note-editor`.
+  - A dropped file is left to the app (CodeMirror would read a text file into the note).
+  - `setText` replaces only the stretch that differs, as one step that undo skips, and returns false while an IME composition is open (`compositionStarted`).
+  - `onBlur` fires when focus leaves both the text and the find bar (`focusout` on the editor with the new focus outside it).
+- **`NoteRawView.svelte`:**
+  - The `<textarea>` is a host `div.raw-text` with `aria-busy` while the note loads or the field's code is still coming. `onMount` loads the module with a dynamic `import()`; a load that fails says "Filo couldn't open the raw view." and reports the error.
+  - One `$effect` makes the field once the module and the host are both there (and destroys it with the host). The text reaches the component through `onChange`; text read from disk reaches the field through `showText`, used by `load` and the two refreshes after a save. No effect copies `text` into the field.
+  - `fieldEditable()` = not read-only, not draining, not loading; one effect applies it, another the label after a rename.
+  - `revealLine` and the registry's `focus` use the field; `onKeydown` is gone (Ctrl+S is in the field's keymap).
+  - Styles: the textarea's box on `.cm-editor` (480 px, resizable vertically, scrolling inside, the border and focus outline, mono 13 px, line height 1.55, no ligatures), `isolation: isolate` so CodeMirror's sticky gutter and find bar stack only over the text, and every colour from a theme token (the table below). No `EditorView.theme`, no z-index.
+- **`src/renderer/core/hotkeys.ts`:** a target inside `[data-plain-text-field]` counts as a form field: only Escape passes.
+- **`src/renderer/lib/utils/editableTarget.ts`, `unsavedStateReport.ts`:** comments only (deviation 7).
+- **`electron.vite.config.mts`:** the `@codemirror/*` and `@lezer/*` names in `package.json` join the dev pre-bundle list; a `codemirror` chunk (`@codemirror`, `@lezer`, `style-mod`, `crelt`, `@marijn`).
+- **`src/tests/setup.ts`:** `Range.prototype.getClientRects` / `getBoundingClientRect`, each only where missing.
+- **Tests:** below.
+- **Docs:** CLAUDE.md (Tech Stack "Raw view" row; `hotkeys.ts`, `editor/`, `rawTextEditor.ts`, `NoteRawView.svelte` and `browser/` lines; Testing Strategy: the polyfill, the browser spec, the component helper, the E2E list); the design doc's Raw view paragraph and technology list; BACKLOG BL-19; this plan (the status line, notes under 7.1, 7.2, 7.3 and 7.4, decision rows 3–6, Phase 8's notes, this outcome). KNOWN_LIMITATIONS #30 needed no change: the Raw view still saves the whole file, and its wording names no textarea.
+
+#### Colours (subtle; every one a theme token)
+
+| What | Token | Contrast on the box (`--ui-bg`), lowest of the five themes |
+|---|---|---|
+| Text, headings (bold), link words (underlined in `--accent-primary`), frontmatter keys (600) | `--text-primary` | 6.15:1 (Nature) |
+| Quotes, frontmatter values | `--text-secondary` | 5.74:1 (Light) |
+| Markup (`#`, `**`, `>`, list and task markers, link brackets and addresses, HTML tags, fences, escapes), comments (italic), line numbers | `--text-tertiary` | 3.02:1 (Blueprint), the large-text bar the palette holds tertiary text to |
+| Inline and fenced code | `--text-primary` on `--ui-surface` | 4.54:1 (Nature) |
+| The named line | `--ui-warn-text` on `--ui-warn-bg` | 6.37:1 (Light) |
+| Invisible characters | `--accent-danger` | 3.04:1 (Nature) |
+| Find matches | `--accent-primary-alpha` behind, `--accent-primary` outline; the current one `--selection-bg` | |
+
+Link words keep the text colour rather than `--accent-primary`, which is 3.7:1 in three themes: under the 4.5:1 normal-text bar. Measured in the built app below.
+
+#### Tests
+
+| Where | What | Count |
+|---|---|---|
+| `unit/rawTextEditor.test.ts` (new, jsdom) | text and a user change reported; `setText` not reported, caret kept, no undo step, refused during a composition; `revealLine` selects, focuses, marks until edited, clamps; `allowEditing`, and a read-only field still focusable; Ctrl+S; leaving vs moving into the find bar (Ctrl+S there too); Tab not taken; the attributes and `setLabel`; invisible characters; the Markdown classes; the frontmatter marks (fences, keys, nothing past the block; none until a block closes; none once its opening fence breaks); Enter adds no list marker | 16 |
+| `unit/hotkeys.test.ts` | a contenteditable inside `[data-plain-text-field]`: Ctrl+K, Ctrl+S blocked, Escape passes; a read-only one blocks too | +2 |
+| `unit/unsavedStateReport.test.ts` | a Raw view field whose drawn text changes counts only through the registry; typed text does | +1 |
+| `component/noteRawViewFollow.test.ts`, `lossyBannerNamesLine.test.ts` | read and type through the field (`component/helpers/rawView.ts`); the named line stays marked after the selection moves and clears when the line is edited | changed |
+| `component/noteRawViewFollow.test.ts` | a field made before the note is read becomes editable once it is; it freezes while a close saves and thaws when the close is called off | +2 |
+| `component/noteRawViewUnsavedState.test.ts` (new) | typed text counts for the shutdown check through the real registry, and stops once Ctrl+S saved it | 1 |
+| Characterisation | the 7.1 harness helpers drive CodeMirror (`EditorView.findFromDOM`); no spec changed | 21 raw-view cases |
+| `browser/rawViewInChromium.test.ts` (new, real Chromium, the app's stylesheet) | typing and Ctrl+Z; Ctrl+S saves, focus kept; Tab leaves (no tab typed) and leaving saves; a dropped file not read in; Ctrl+F puts the focus in the find bar, finds, Enter selects, moving there saves nothing, Escape returns; the box (480 px, resizable, 13 px mono, no ligatures, scrolls, line numbers); the colours (heading 700; markup tertiary; the link's words underlined in the text colour, its `[` and address muted; frontmatter key 600, value secondary and not bold, fence tertiary); Edit in Raw view: selected, focused, marked, inside the box between 20 % and 45 % down; Ctrl+K, Ctrl+Shift+F, Ctrl+O do nothing in the field and still work outside it | 9 |
+| `e2e/rawView.e2e.ts` (new, built app) | the editor chunk not fetched until a Raw view opens; Edit in Raw view: line selected, marked, in view inside the box; typing over it and Tab writes exactly that change; back in the formatted view the note is editable again; text still in the field at quit is saved | 1 (5 steps) |
+| `e2e/a11y.e2e.ts` | axe scans the Raw view, and again with its find bar open | +1 step |
+
+**Do the tests bite?** Each mutation applied to app code, the tests run, the file restored. None touches a security check.
+
+| Mutation | Tests that fail |
+|---|---|
+| `setText` adds an undo step | unit 1 |
+| No drop handler (a dropped file read in) | browser 1 (the jsdom version passed either way: deviation 8) |
+| No `data-note-editor` on the field | unit 2 |
+| Any focus leaving the text counts as leaving | unit 1, browser 1 |
+| No Ctrl+S binding | unit 2, component 1, browser 1 |
+| The named line never cleared | unit 1, component 1 |
+| No `data-plain-text-field` | unit 1, browser 1 |
+| Tab types a tab | unit 1, browser 1 |
+| The `[data-plain-text-field]` guard out of `hotkeys.ts` | unit 2, browser 1 |
+| Text read from disk not put in the field | characterisation 2 |
+| The editability effect removed | component 2 (none before those two tests were added: deviation 10) |
+| The field not frozen while a close saves | component 1 |
+
+#### Pass test
+
+| Check | Result | Before |
+|---|---|---|
+| `npm run ci:verify` (Windows) | **Green in 264 s.** eslint 0 warnings; knip no findings; svelte-check 862 files, 0 errors, 0 warnings; 804 files: 7,836 passed, 5 skipped (+3 files, +31 tests); vitest 210 s; 90/90 gates. The strict runner found no noise lines. The first full run failed one existing test, which led to deviation 6. | Phase 6: 261 s, 801 files, 7,805 passed, 5 skipped, 90 gates |
+| The browser project alone | 4 files, 97 tests (+9); three runs in a row, all passed, 6.8–7.5 s each with Chromium's start | 3 files, 88 tests |
+| E2E with `FILO_E2E_SCALE=1` | **29 passed in 2.7 min** (the new `rawView.e2e.ts`; `a11y.e2e.ts` with its Raw view step). After the last change (no ligatures, CSS only), `rawView` and `a11y` ran again on the final build: both passed. | Phase 0: 28 passed |
+| Built app | Below. `main.js` and `preload.js` byte-identical to Phase 6; no `require("zod")`. | Phase 6 build |
+| `npm run dev` | No re-optimise or reload when the Raw view first opens, on a cold cache (below) | |
+| `npm audit` | 8 high, all GHSA-ch52-4w7c-c8xp in electron-builder's chain (BL-11). The CodeMirror packages add none. | 8 high, BL-11 |
+| GitHub CI | **Not run**: nothing was pushed (decision 4). | |
+
+**The build (7.5):**
+
+| File | Phase 6 (bytes) | Phase 7 (bytes) | Change |
+|---|---|---|---|
+| `index.js` (the app's start-up bundle) | 2,553,929 | 2,554,062 | +133 (the shortcut guard) |
+| `DocumentEditor.js` | 38,737 | 40,055 | +1,318 |
+| `DocumentEditor.css` | 10,634 | 15,118 | +4,484 (the Raw view's styles) |
+| `rawTextEditor.js` | | 9,296 | new |
+| `codemirror.js` | | 710,567 | new; unminified, like every chunk |
+| `tiptap.js` | 1,194,432 | 1,194,475 | +43 (now exports `w3c-keyname`, which CodeMirror shares) |
+| All renderer assets | 5,671,377 | 6,397,218 | +725,841 |
+
+- CodeMirror is only in `codemirror.js`, which only `rawTextEditor.js` imports; `DocumentEditor.js` names both only in its dynamic import's preload list. In the built app the chunk isn't fetched until a Raw view opens (`rawView.e2e.ts`).
+- The plan's "the main bundle is no bigger than the Phase 0 baseline" isn't met to the byte: `index.js` is 720 bytes over Phase 0's 2,553,342. This phase added 133 of them (the shortcut guard); Phases 1–6 added the other 587. None of it is CodeMirror, which is what the check is for.
+
+#### By hand, in the built app
+
+Driven with Playwright in the built app (a throwaway script, deleted afterwards), on a scratch vault; screenshots kept in the session's scratch folder.
+
+| Check | Result |
+|---|---|
+| A 5,000-line note: typing stays smooth | 180 characters typed at the end. Each key's handlers: 95th percentile 2.0 ms, longest 16.2 ms (the first key). Each key on screen within 24 ms, 95th percentile 16 ms (one frame). A 50-line note for comparison: 1.3 ms and 4.9 ms. CodeMirror drew 41 lines of the 5,000. |
+| Each of the five themes: the text and its colours readable | Picked through Settings → Themes. Contrast measured on the rendered page against the box: text 6.15–15.27:1; headings, link words and frontmatter keys the same as text; quotes and frontmatter values 5.74–6.94:1; code on its background 4.54–16.10:1; the named line 6.37–10.25:1; markup, fences, addresses and line numbers 3.02–4.74:1 (tertiary); invisible characters 3.04–4.99:1. Screenshots of each theme, the frontmatter and the find bar (Dark) looked right. |
+| Edit in Raw view lands on the named line | Selected, focused, marked, inside the box (also in `rawView.e2e.ts`). |
+| A conflict shows its banner; Keep mine backs the other version up first | Typed, the file changed outside, Tab: the banner showed and the file kept the other version. Keep mine: the file holds mine, and `.filo/recovery/<ts>-keep/Conflict.md` holds the other. |
+| Closing the tab with unsaved raw text saves it | The typed text was on disk after the tab's close button. (Quitting with text in the field is in `rawView.e2e.ts`.) |
+| Console errors | None. |
+
+The screenshots showed one thing the plan didn't cover: `--font-mono` starts with Cascadia Code, whose ligatures drew `<!--` as an arrow and `-->` as a long arrow, in the textarea too. The Raw view now turns ligatures off (deviation 13); the run after the change showed the characters as written.
+
+**`npm run dev` (7.5's check):** on a scratch profile and vault, with Vite's cache deleted first, opening a Document tab and then its Raw view gave no "new dependencies optimized" line and no reload; Vite's metadata lists no late discovery, and the five `@codemirror` and two `@lezer` packages among the pre-bundled ones. The real profile wasn't touched (its `recent-vaults.json` last written on 2 October). The dev run rebuilt `dist/main` in development mode, so `npm run build` (in the last `ci:verify`) ran again before the last E2E runs.
+
+#### Deviations from the plan
+
+1. **`@lezer/markdown` instead of `@codemirror/lang-markdown`.** `lang-markdown` depends on `@codemirror/lang-html`, which brings `lang-css`, `lang-javascript`, `@codemirror/autocomplete` and `@codemirror/lint` (and their Lezer grammars). Its `markdown()` also adds list continuation on Enter, HTML tag completion and a link made from a pasted address: changes to the text a raw view shouldn't make. The language is built from `@lezer/markdown` directly (`Language`, `defineLanguageFacet`), with tables, task lists and strikethrough, which is what Filo's markdown-it reads. `@lezer/markdown` colours only; it never reads a note for Filo (CLAUDE.md says so), so the "one Markdown parser" gate, which names app-side parsers of notes, is unchanged.
+2. **A `tagHighlighter` of Filo's own instead of `classHighlighter`.** `classHighlighter` has no class for code, quotes, strikethrough or a rule. The classes keep its `tok-*` names.
+3. **The frontmatter is recognised by the fence parser, not by a Lezer extension** (decision 1 asked for "a small Filo-written parser extension"). A Lezer block parser would be a second place deciding where frontmatter ends, which gate `single-fence-parser` exists to prevent: this one asks `splitFrontmatterFence`, so the Raw view and the note writer can't disagree. The block is drawn with CodeMirror decorations; the Markdown reading underneath (`title: Plan` and the closing `---` read as a heading) is overridden by CSS. Colouring only: a YAML block scalar holding a line that opens a code fence would carry code colouring past the block.
+4. **`setText` replaces only the stretch that differs**, not the whole text, so the caret and the scroll stay put without being clamped back. It is still one step undo skips. It refuses, and the view retries through its follow timer, from the moment an IME composition opens (`compositionStarted`), not only once it has changed text.
+5. **Leaving the field means leaving the text and its find bar.** The plan hung the save on the text's DOM `blur`; moving into the field's own find bar would then save in the middle of a search. The save hangs on the DOM `focusout` of the whole editor when the focus goes outside it (the same DOM event, so it starts when the textarea's did). Ctrl+S works in the find bar too.
+6. **`setEditable` is named `allowEditing`.** An existing test (`editorSetEditableDiscipline.test.ts`) keeps every `.setEditable(` call behind TipTap's helper, since TipTap's emits a phantom update. CodeMirror's method shares only the name; renaming it keeps that scan exact. `setLabel` is added, so the field's name follows a rename, as the textarea's did.
+7. **The shutdown check counts the Raw view through its registry only.** The plan expected the focused-field check to cover the new field as it did the textarea. CodeMirror draws only the lines in view, so the field's text on screen changes as it scrolls, and that check would read a scroll as an edit and hold a Windows shutdown back for nothing. The field carries the note-editor attribute (`data-note-editor`), whose meaning now includes the Raw view ("its keystrokes reach the unsaved-work check by themselves"); typed text already counts through `unsavedWork()`. Tested both ways (unit, and component with the real registry).
+8. **A file dropped on the field is not read in.** Not in the plan: CodeMirror reads a dropped text file into the document, which the textarea never did. The drop is left to the app. Its test is in Chromium, since jsdom can't place a drop.
+9. **A read-only field stays focusable** (`tabindex="0"`), as the read-only textarea was, so its text can be selected, copied and searched. While the note loads the field is not editable and its host is `aria-busy` (the textarea was `disabled`).
+10. **More tests than planned:** the editability tests (added after removing the editability effect broke no test), the component shutdown-check test, the drop test, the find bar in Chromium, the E2E chunk and quit checks, and the axe scan of the find bar.
+11. **The find bar's words match the Search panel** ("Match case", "Whole word", "Regular expression", "Replace all"), and it opens at the top of the box. It has Replace, as CodeMirror's bar does.
+12. **The design doc is updated now** (its Raw view paragraph and technology list), as Phase 3 did for the editor packages.
+13. **No font ligatures in the Raw view** (`font-variant-ligatures: none`). Found in the built-app check: Cascadia Code, first in `--font-mono`, drew `<!--` and `-->` as arrows. The textarea did the same; a view for editing the file exactly as it is should show each character. Pinned in the Chromium spec.
+
+#### What changes for someone using the Raw view
+
+- The text is coloured, numbered, and shows invisible characters as a red dot (named in its tooltip).
+- Ctrl+F finds (and replaces) in the note; Ctrl+Z / Ctrl+Y undo and redo typing there, but never a reload from disk.
+- Enter keeps the previous line's indent, and CodeMirror's standard editing keys work: Alt+Up / Alt+Down move a line, Shift+Alt+Up / Down copy it, Ctrl+Shift+K deletes it, Ctrl+/ wraps it in an HTML comment, Ctrl+D selects the next match, Ctrl+Alt+G goes to a line, Ctrl+[ / Ctrl+] outdent and indent. The textarea ignored all of these; none changes the text unless pressed.
+- Tab still leaves the field, and the app's shortcuts still don't act from inside it (only Escape).
+
+#### New findings
+
+- **BL-19:** the design doc still says the vault index parses Markdown with unified / remark and searches with MiniSearch, and its Testing line predates Vitest's browser mode and the characterisation suite. CLAUDE.md is right. Docs only; Phase 8 is a natural place for it.
+- No Filo defect. Found along the way:
+  - CodeMirror's base stylesheet gives the caret, gutter, find bar and matches light-theme colours unless a dark theme is declared to it; every one is overridden from the theme tokens, so all five themes are covered without telling CodeMirror which is dark.
+  - Chromium's `input.select()` moves the focus into the find bar; jsdom's doesn't (the unit test focuses it itself, the Chromium spec checks the real behaviour).
+  - A line near the end of a note can't be scrolled a third of the way down: the box is at its end. The textarea behaved the same.

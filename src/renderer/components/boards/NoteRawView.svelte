@@ -13,6 +13,9 @@
    * While mounted the view is in the raw-view registry, so text typed here is
    * unsaved work to close, open-another-vault and quit. Text it closes with
    * and can't write (a conflict, a failure) is copied to `.filo/recovery/`.
+   *
+   * The text field is CodeMirror (`lib/editor/rawTextEditor.ts`), loaded when
+   * the view first opens so it stays out of the app's start-up bundle.
    */
   import { onMount, onDestroy, untrack } from 'svelte';
   import { noteStore } from '../../stores/notes.svelte';
@@ -25,6 +28,9 @@
   import { dropPendingPath, noteAdditionalPendingPath } from '../../lib/boards/writeStateTracking';
   import { getActiveVaultPath } from '../../lib/vault/activeVaultPath';
   import { vaultPath } from '@shared/vaultPath';
+  import type { RawTextEditor } from '../../lib/editor/rawTextEditor';
+
+  type RawTextEditorModule = typeof import('../../lib/editor/rawTextEditor');
 
   let {
     path,
@@ -48,7 +54,12 @@
   let saving = $state(false);
   let followTimer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
-  let textarea = $state<HTMLTextAreaElement | null>(null);
+  /** Where the text field goes. */
+  let host = $state<HTMLDivElement | null>(null);
+  let editorModule = $state.raw<RawTextEditorModule | null>(null);
+  let editorFailed = $state(false);
+  /** The text field, once its code has loaded. It shows `text` at all times. */
+  let editor = $state.raw<RawTextEditor | null>(null);
   /** The save running now, which a second save waits for. */
   let inFlight: Promise<RawSaveResult> | null = null;
   /**
@@ -63,6 +74,20 @@
 
   function isRescued(current: string): boolean {
     return rescuedText !== null && current === rescuedText;
+  }
+
+  /**
+   * Shows `value`, read from disk, in the field. False, with nothing changed,
+   * while the field can't take it (an IME composition is open).
+   */
+  function showText(value: string): boolean {
+    if (editor && !editor.setText(value)) return false;
+    text = value;
+    return true;
+  }
+
+  function fieldEditable(): boolean {
+    return !(readOnly || closeDrainGate.draining || loading);
   }
 
   /**
@@ -84,10 +109,14 @@
       scheduleFollow();
       return;
     }
+    const shown = rawTextForView(snapshot.raw);
+    if (!showText(shown)) {
+      scheduleFollow();
+      return;
+    }
     unreadable = false;
-    baseText = rawTextForView(snapshot.raw);
+    baseText = shown;
     baseHash = snapshot.hash;
-    text = baseText;
     conflict = false;
   }
 
@@ -140,21 +169,16 @@
   }
 
   function applyReveal(): void {
-    const ta = textarea;
-    if (!revealPending || !ta || loading) return;
-    const lines = text.split('\n');
-    const index = Math.min(Math.max(revealPending, 1), lines.length) - 1;
+    const ed = editor;
+    if (!revealPending || !ed || loading) return;
+    const line = revealPending;
     revealPending = 0;
-    const start = lines.slice(0, index).reduce((n, l) => n + l.length + 1, 0);
-    ta.focus();
-    ta.setSelectionRange(start, start + (lines[index]?.length ?? 0));
-    const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 20;
-    ta.scrollTop = Math.max(0, index * lineHeight - ta.clientHeight / 3);
+    ed.revealLine(line);
   }
 
   // A line asked for before the text was in is shown once it is.
   $effect(() => {
-    if (loading || !textarea) return;
+    if (loading || !editor) return;
     untrack(applyReveal);
   });
 
@@ -177,14 +201,22 @@
       const after = await noteStore.readRaw(path);
       if (!after || after.hash === result.hash) {
         // The file shows as the view does (BOM and line ending aside).
-        if (after && text === sent) baseText = text = rawTextForView(after.raw);
+        if (after && text === sent) {
+          const shown = rawTextForView(after.raw);
+          if (showText(shown)) baseText = shown;
+        }
         return 'saved';
       }
       // Something landed on top of this save.
       if (text === sent) {
-        // Nothing typed since: follow it.
-        baseHash = after.hash;
-        baseText = text = rawTextForView(after.raw);
+        // Nothing typed since: follow it (once a composition is over, if one is open).
+        const shown = rawTextForView(after.raw);
+        if (showText(shown)) {
+          baseHash = after.hash;
+          baseText = shown;
+        } else {
+          scheduleFollow();
+        }
       } else {
         // Typing went on: it was built on the version before that change,
         // so the user decides (Keep mine backs the other version up first).
@@ -215,13 +247,6 @@
     await save();
   }
 
-  function onKeydown(e: KeyboardEvent): void {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      void save();
-    }
-  }
-
   const handle: RawViewHandle = {
     path: () => path,
     isDirty: hasUnsavedText,
@@ -235,11 +260,48 @@
       rescuedText = null;
     },
     focus: () => {
-      textarea?.scrollIntoView({ block: 'nearest' });
-      textarea?.focus();
+      editor?.focus();
     },
   };
   const unregister = registerRawView(handle);
+
+  // The field is made once its code and its host are both in, and goes with
+  // the host. Changes reach `text` through `onChange`; text read from disk
+  // reaches the field through `showText`, so nothing copies one into the other.
+  $effect(() => {
+    const el = host;
+    const mod = editorModule;
+    if (!el || !mod) return;
+    const ed = untrack(() =>
+      mod.createRawTextEditor(el, {
+        text,
+        label: `Raw Markdown of ${path}`,
+        editable: fieldEditable(),
+        onChange: (value) => {
+          text = value;
+        },
+        onBlur: () => void save(),
+        onSave: () => void save(),
+      }),
+    );
+    editor = ed;
+    return () => {
+      ed.destroy();
+      editor = null;
+    };
+  });
+
+  $effect(() => {
+    const ed = editor;
+    const on = fieldEditable();
+    if (ed) untrack(() => ed.allowEditing(on));
+  });
+
+  $effect(() => {
+    const ed = editor;
+    const label = `Raw Markdown of ${path}`;
+    if (ed) untrack(() => ed.setLabel(label));
+  });
 
   // The banner is a question only the user can answer: hold it as a decision.
   $effect(() => {
@@ -271,6 +333,16 @@
 
   onMount(() => {
     void load();
+    import('../../lib/editor/rawTextEditor').then(
+      (mod) => {
+        if (!destroyed) editorModule = mod;
+      },
+      (err: unknown) => {
+        if (destroyed) return;
+        editorFailed = true;
+        reportError('NoteRawView.editor', err, `Couldn't open the raw view of "${path}"`);
+      },
+    );
   });
 
   onDestroy(() => {
@@ -318,18 +390,10 @@
   {/if}
   {#if unreadable}
     <p class="raw-message" role="alert">Filo couldn't read this file.</p>
+  {:else if editorFailed}
+    <p class="raw-message" role="alert">Filo couldn't open the raw view.</p>
   {:else}
-    <textarea
-      class="raw-text"
-      aria-label="Raw Markdown of {path}"
-      spellcheck="false"
-      disabled={loading}
-      readonly={readOnly || closeDrainGate.draining}
-      bind:value={text}
-      bind:this={textarea}
-      onblur={() => void save()}
-      onkeydown={onKeydown}
-    ></textarea>
+    <div class="raw-text" bind:this={host} aria-busy={loading || !editor}></div>
     <div class="raw-status" aria-live="polite">
       {#if readOnly}
         Read-only: this file isn't UTF-8.
@@ -349,26 +413,190 @@
     gap: 8px;
   }
 
-  .raw-text {
-    width: 100%;
+  /*
+   * The text field (CodeMirror). The box is the textarea's: at least 480 px,
+   * resizable vertically, scrolling inside. Every colour is a theme token, so
+   * each theme keeps its contrast; these rules outrank CodeMirror's base
+   * stylesheet by one class.
+   */
+  .raw-text :global(.cm-editor) {
+    height: 480px;
     min-height: 480px;
-    padding: 12px;
+    resize: vertical;
+    overflow: hidden;
+    /* CodeMirror's sticky gutter and find bar stack above the text only. */
+    isolation: isolate;
     border: 1px solid var(--ui-border);
     border-radius: 4px;
     background: var(--ui-bg);
     color: var(--text-primary);
+  }
+
+  .raw-text :global(.cm-editor.cm-focused) {
+    outline: 2px solid var(--accent-primary, #3a86ff);
+    outline-offset: -1px;
+  }
+
+  .raw-text :global(.cm-scroller) {
+    overflow: auto;
     font-family: var(--font-mono);
     font-size: 13px;
     line-height: 1.55;
-    tab-size: 4;
-    resize: vertical;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    /* The file as written: Cascadia Code would draw `<!--` and `-->` as arrows. */
+    font-variant-ligatures: none;
   }
 
-  .raw-text:focus {
+  .raw-text :global(.cm-content) {
+    padding: 12px 0;
+    caret-color: var(--text-primary);
+  }
+
+  .raw-text :global(.cm-line) {
+    padding: 0 12px 0 8px;
+  }
+
+  .raw-text :global(.cm-gutters) {
+    border-right: 1px solid var(--ui-border);
+    background: var(--ui-bg);
+    color: var(--text-tertiary);
+  }
+
+  .raw-text :global(.cm-lineNumbers .cm-gutterElement) {
+    padding: 0 8px 0 12px;
+  }
+
+  /* A zero-width space, a stray BOM, a control character. */
+  .raw-text :global(.cm-specialChar) {
+    color: var(--accent-danger);
+  }
+
+  /* Markdown: markup reads as markup; the words keep the text colour. */
+  .raw-text :global(.tok-heading),
+  .raw-text :global(.tok-strong) {
+    font-weight: 700;
+  }
+
+  .raw-text :global(.tok-emphasis) {
+    font-style: italic;
+  }
+
+  .raw-text :global(.tok-strikethrough) {
+    text-decoration: line-through;
+  }
+
+  .raw-text :global(.tok-link) {
+    text-decoration: underline;
+    text-decoration-color: var(--accent-primary);
+  }
+
+  .raw-text :global(.tok-quote) {
+    color: var(--text-secondary);
+  }
+
+  .raw-text :global(.tok-monospace) {
+    border-radius: 3px;
+    background: var(--ui-surface);
+  }
+
+  .raw-text :global(.tok-meta),
+  .raw-text :global(.tok-url),
+  .raw-text :global(.tok-comment) {
+    color: var(--text-tertiary);
+    text-decoration: none;
+  }
+
+  .raw-text :global(.tok-comment) {
+    font-style: italic;
+  }
+
+  /* The frontmatter: values muted, keys stronger, fences as markup. */
+  .raw-text :global(.cm-filo-fm),
+  .raw-text :global(.cm-filo-fm [class*='tok-']) {
+    color: var(--text-secondary);
+    font-weight: normal;
+    font-style: normal;
+    text-decoration: none;
+    background: none;
+  }
+
+  .raw-text :global(.cm-filo-fm-key),
+  .raw-text :global(.cm-filo-fm-key [class*='tok-']) {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .raw-text :global(.cm-filo-fm-fence),
+  .raw-text :global(.cm-filo-fm-fence [class*='tok-']) {
+    color: var(--text-tertiary);
+  }
+
+  /* The line "Edit in Raw view" named, until it is edited. */
+  .raw-text :global(.cm-filo-named-line) {
+    background: var(--ui-warn-bg);
+    box-shadow: inset 3px 0 0 var(--ui-warn-border);
+  }
+
+  .raw-text :global(.cm-filo-named-line),
+  .raw-text :global(.cm-filo-named-line [class*='tok-']),
+  .raw-text :global(.cm-filo-named-line [class*='cm-filo-fm']) {
+    color: var(--ui-warn-text);
+  }
+
+  .raw-text :global(.cm-filo-named-line [class*='tok-']) {
+    background: none;
+  }
+
+  /* The find bar (Ctrl+F). */
+  .raw-text :global(.cm-panels) {
+    background: var(--ui-bg-secondary);
+    color: var(--text-primary);
+    font-family: var(--font-system);
+  }
+
+  .raw-text :global(.cm-panels-top) {
+    border-bottom: 1px solid var(--ui-border);
+  }
+
+  .raw-text :global(.cm-textfield) {
+    border: 1px solid var(--ui-border);
+    border-radius: 3px;
+    background: var(--ui-bg);
+    color: var(--text-primary);
+  }
+
+  .raw-text :global(.cm-textfield:focus) {
     outline: 2px solid var(--accent-primary, #3a86ff);
     outline-offset: -1px;
+  }
+
+  .raw-text :global(.cm-button) {
+    border: 1px solid var(--ui-border);
+    border-radius: 3px;
+    background: var(--ui-surface);
+    background-image: none;
+    color: var(--text-primary);
+  }
+
+  .raw-text :global(.cm-button:hover) {
+    background: var(--ui-surface-hover);
+  }
+
+  .raw-text :global(.cm-panel button[name='close']) {
+    color: var(--text-secondary);
+  }
+
+  .raw-text :global(.cm-panel input[type='checkbox']) {
+    accent-color: var(--accent-primary);
+  }
+
+  .raw-text :global(.cm-searchMatch) {
+    outline: 1px solid var(--accent-primary);
+    background: var(--accent-primary-alpha);
+  }
+
+  .raw-text :global(.cm-searchMatch-selected) {
+    outline-width: 2px;
+    background: var(--selection-bg);
   }
 
   .raw-status {

@@ -5,6 +5,7 @@
  * moves an internal API, only this adapter changes.
  */
 import type { Editor } from '@tiptap/core';
+import { EditorView } from '@codemirror/view';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { osFilePaths } from './mainBridge';
@@ -194,40 +195,47 @@ export async function toggleRawView(app: CharApp): Promise<void> {
   await quiesce(600);
 }
 
-/** The raw view's text field once it has loaded, else null. */
-function loadedRawField(app: CharApp): HTMLTextAreaElement | null {
-  const ta = app.el.querySelector('.document-board .raw-text') as HTMLTextAreaElement | null;
-  return ta !== null && !ta.disabled ? ta : null;
+/**
+ * The raw view's text field (a CodeMirror view) once the note has loaded into
+ * it, else null. The view's host says `aria-busy="false"` from then on.
+ */
+function loadedRawField(app: CharApp): EditorView | null {
+  const host = app.el.querySelector('.document-board .raw-text');
+  if (!host || host.getAttribute('aria-busy') !== 'false') return null;
+  const dom = host.querySelector('.cm-editor');
+  return dom instanceof HTMLElement ? EditorView.findFromDOM(dom) : null;
 }
 
-async function rawField(app: CharApp): Promise<HTMLTextAreaElement> {
+async function rawField(app: CharApp): Promise<EditorView> {
   await waitFor(() => loadedRawField(app) !== null, 'raw view text');
-  return loadedRawField(app) as HTMLTextAreaElement;
+  return loadedRawField(app) as EditorView;
 }
 
 /** The raw view's text, once it has loaded. */
 export async function rawText(app: CharApp): Promise<string> {
-  return (await rawField(app)).value;
+  return (await rawField(app)).state.doc.toString();
 }
 
 /** The raw view's text right now ('' while none is loaded), for a `waitFor`. */
 export function rawTextNow(app: CharApp): string {
-  return loadedRawField(app)?.value ?? '';
+  return loadedRawField(app)?.state.doc.toString() ?? '';
 }
 
-/** Focus the raw view and replace its text, staying in the field (nothing saves it yet). */
+/**
+ * Focus the raw view and replace its text, as typing does (a user change, not
+ * a reload), staying in the field: nothing saves it yet.
+ */
 export async function setRawText(app: CharApp, text: string): Promise<void> {
-  const ta = await rawField(app);
-  ta.focus();
-  ta.value = text;
-  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  const view = await rawField(app);
+  view.focus();
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, userEvent: 'input.type' });
 }
 
 /** Leave the raw view's text field, which starts its save; returns without waiting for it. */
 export function leaveRawField(app: CharApp): void {
-  const ta = loadedRawField(app);
-  if (!ta) throw new Error('no loaded raw view to leave');
-  ta.blur();
+  const view = loadedRawField(app);
+  if (!view) throw new Error('no loaded raw view to leave');
+  view.contentDOM.blur();
 }
 
 /** Replace the raw view's text, then leave the field (which saves). */

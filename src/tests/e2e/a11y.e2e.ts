@@ -126,6 +126,20 @@ test('every main view passes a WCAG 2.1 AA scan', async () => {
       expect.soft(await scan(win, '.document-board', ['aria-input-field-name']), 'Document tab').toEqual([]);
     });
 
+    await test.step('Raw view, and its find bar', async () => {
+      await win.locator('.document-board .raw-toggle').click();
+      const field = win.locator('.document-board .raw-text[aria-busy="false"] .cm-content');
+      await expect(field).toBeVisible({ timeout: 10_000 });
+      expect.soft(await scan(win, '.note-raw-view'), 'Raw view').toEqual([]);
+      await field.click();
+      await win.keyboard.press('Control+F');
+      await expect(win.locator('.note-raw-view .cm-search input[name="search"]')).toBeFocused();
+      expect.soft(await scan(win, '.note-raw-view'), 'Raw view find bar').toEqual([]);
+      await win.keyboard.press('Escape');
+      await win.locator('.document-board .raw-toggle').click();
+      await expect(win.locator('.note-raw-view')).toHaveCount(0);
+    });
+
     await test.step('Settings', async () => {
       await win.keyboard.press('Control+,');
       await expect(modal).toBeVisible({ timeout: 5_000 });

@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import type { Editor } from '@tiptap/core';
 import { startUnsavedStateReport, type UnsavedStateSources } from '@renderer/lib/vault/unsavedStateReport';
 import { createLabelEditor, createTiptapEditor } from '@renderer/lib/editor/createEditor';
+import { createRawTextEditor } from '@renderer/lib/editor/rawTextEditor';
 
 /**
  * What main is told about a Windows shutdown: hold it back only when leaving
@@ -134,6 +135,36 @@ describe('unsaved-state report', () => {
     unserialised = true;
     nudge();
     expect(flags.at(-1)).toBe(true);
+  });
+
+  it("the Raw view's text is left to the raw-view registry: what the field renders doesn't count", async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const raw = createRawTextEditor(host, {
+      text: '---\ntitle: Plan\n---\nBody\n',
+      label: 'Raw Markdown of Plan.md',
+      editable: true,
+      onChange: () => {},
+      onBlur: () => {},
+      onSave: () => {},
+    });
+    let typed = false;
+    try {
+      const { flags, nudge } = report({ ...clean, nothingUnsaved: () => !typed });
+      (host.querySelector('.cm-content') as HTMLElement).focus();
+      await settle();
+      // A follow-reload (or a scroll) changes what the field renders; nothing is typed.
+      raw.setText('---\ntitle: Plan\n---\nBody, changed elsewhere\n');
+      await settle();
+      nudge();
+      expect(flags.at(-1)).toBe(false);
+      // Typed text is unsaved work, which the registry reports.
+      typed = true;
+      nudge();
+      expect(flags.at(-1)).toBe(true);
+    } finally {
+      raw.destroy();
+    }
   });
 
   it('anything unsaved still counts with no field focused', () => {

@@ -69,10 +69,12 @@ export function keepFocusOnSecondaryPress(e: MouseEvent, host: Element): void {
 }
 
 /**
- * The attribute a note editor carries (`createTiptapEditor`) and a title or
- * label editor doesn't. Both are `.ProseMirror` elements, but a note's
- * keystrokes reach the note store, while a title's are only in its editor
- * until the edit ends.
+ * The attribute a note editor carries (`createTiptapEditor`, and the Raw
+ * view's text, `createRawTextEditor`) and a title or label editor doesn't.
+ * Both kinds may be `.ProseMirror` elements, but a note's keystrokes reach
+ * the unsaved-work check by themselves (through the note store, or the
+ * raw-view registry), while a title's are only in its editor until the edit
+ * ends.
  */
 export const NOTE_EDITOR_ATTRIBUTE = 'data-note-editor';
 

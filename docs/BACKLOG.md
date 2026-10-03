@@ -12,7 +12,7 @@ Everything known to be open that no current plan covers, in one place. Start the
 - **Useful** (improvements): 0/10 = no gain; 5/10 = a clear improvement you'd notice every week or so; 10/10 = essential.
 - **Hard**: 0/10 = minutes; 5/10 = a few days, several files, new tests; 10/10 = weeks, rewriting a major part of Filo.
 
-Last updated 2026-10-03, after the library updates plan's Phase 5 ([LIBRARY_UPDATES_PLAN_2026-10-02.md](LIBRARY_UPDATES_PLAN_2026-10-02.md)), which added BL-15 to BL-18. Phase 3 added BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
+Last updated 2026-10-04, after the library updates plan's Phase 7 ([LIBRARY_UPDATES_PLAN_2026-10-02.md](LIBRARY_UPDATES_PLAN_2026-10-02.md)), which added BL-19. Phase 5 added BL-15 to BL-18, Phase 3 added BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
 
 ---
 
@@ -38,6 +38,7 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-16 | A `~` typed right before struck text makes GitHub show the tildes and strike nothing | Library updates Phase 5 | 1/10 | 2/10 |
 | BL-17 | A bare web address in text can get a `\` that GitHub's own linking keeps in the link | Library updates Phase 5 | 1/10 | 3/10 |
 | BL-18 | Italic, struck-through and coloured text holding `**` reads differently on GitHub | Library updates Phase 5 | 1/10 | 2/10 |
+| BL-19 | The design doc still says the vault index parses Markdown with remark and searches with MiniSearch | Library updates Phase 7 | 1/10 | 1/10 |
 
 ### BL-01: the formatting toolbar cuts off its left end (Impact 2/10, Hard 2/10)
 - **What you see:** at a window about 1,380 px wide or narrower, the text-formatting toolbar overflows. Its left end is cut off, so the font box shows only its arrow, and you can't scroll to it.
@@ -126,6 +127,12 @@ None of these loses data. Scores are estimates made when the item was written do
 - **Only with all three:** without the colour, or without the strikethrough, Filo escapes the stars (`*~~2\*\* -~~*`, `<span …>*2\*\* -*</span>`), which GitHub reads as Filo does; so does bold with strikethrough in a span (`**~~2\*\* -~~**`).
 - **Where:** `src/renderer/lib/editor/minimalEscapes.ts` drops each escape markdown-it doesn't need. Inside the span it finds markdown-it reads the text the same without the `\*\*`, so it drops them; GitHub needs them.
 - **Fix idea:** keep a `\*` or `\_` inside text that emphasis and strikethrough both wrap (markdown-it and CommonMark order that pairing differently), or more generally keep an escape whose removal changes how a strict CommonMark reader pairs delimiters. Check the result against GitHub (`gh api markdown -f mode=gfm -f text=…`), since neither markdown-it nor micromark reads this one as GitHub does.
+
+### BL-19: the design doc's VaultIndex and technology lines are out of date (Impact 1/10, Hard 1/10)
+- **What it says:** `Filo_Design_Doc_Rework_V5.md` says the VaultIndex parses Markdown "using the unified/remark pipeline (remark-parse + remark-frontmatter)" and keeps headings, with full-text search "powered by a MiniSearch instance" (the VaultIndex section), and the technology list repeats both ("Markdown Processing: unified + remark", "Full-Text Search: MiniSearch … Powers plain-text and regex vault-wide search"). Its "Testing" line names only Vitest with jsdom and Playwright.
+- **What is true:** the vault index reads frontmatter with the `yaml` package and keeps the body as text, with no Markdown parse (`lib/vault/vaultIndex.ts`); gate `one-markdown-parser` forbids remark and unified in the app. The Search panel matches over the vault index itself (`lib/search/runSearch.ts`); MiniSearch only filters template titles in the Template Browser. The tests also run in Chromium (Vitest browser mode) and as the characterisation suite. CLAUDE.md has all of this right.
+- **Why it matters:** the design doc is the specification CLAUDE.md tells every change to read first; a reader following it would reach for a second Markdown parser the gates refuse. Found while updating its Raw view lines in the library updates plan's Phase 7.
+- **Fix:** rewrite the VaultIndex paragraph's parsing and search sentences and the three technology lines from CLAUDE.md's Tech Stack table. Docs only.
 
 ---
 

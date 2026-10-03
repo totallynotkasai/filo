@@ -37,6 +37,21 @@ if (typeof process !== 'undefined') process.env.FILO_LOCK_RETRY_BUDGET_MS = '310
 // suites that touch them (and the vault-open path) name a stable file.
 __setMachineIdentityForTests(TEST_MACHINE_IDENTITY);
 
+// jsdom lays nothing out and has no client rects for a text range. The Raw
+// view's editor (CodeMirror) measures ranges as it draws, and throws without
+// these; empty answers are what a text range with no layout would give.
+// Chromium (the browser project) has them, so nothing changes there.
+if (typeof Range !== 'undefined') {
+  const rangeProto = Range.prototype as { getClientRects?: unknown; getBoundingClientRect?: unknown };
+  if (typeof rangeProto.getClientRects !== 'function') {
+    rangeProto.getClientRects = (): DOMRectList => Object.assign([], { item: () => null }) as unknown as DOMRectList;
+  }
+  if (typeof rangeProto.getBoundingClientRect !== 'function') {
+    rangeProto.getBoundingClientRect = (): DOMRect =>
+      ({ x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}) }) as DOMRect;
+  }
+}
+
 if (typeof globalThis.PointerEvent === 'undefined') {
   class JsDomPointerEvent extends MouseEvent {
     pointerId: number;

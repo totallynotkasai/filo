@@ -13,6 +13,7 @@ Filo is a local-first, visual-first Personal Knowledge Management (PKM) desktop 
 ```
 Run dev:        npm run dev
 Lint:           npm run lint             (eslint, --max-warnings 0: a warning fails CI)
+Dead code:      npm run knip             (unused files, exports and dependencies: any finding fails CI)
 Type-check:     npm run check            (renderer + shared, svelte-check)
                 npm run typecheck:main   (main process)
                 npm run ci:test-typecheck (test sources, per-file ratchet)
@@ -27,7 +28,7 @@ Corpus check:   npm run corpus:list -- <list.txt> --vaults <dir> [--extra <dir>]
 
 ### CI gates (`.github/workflows/ci.yml`)
 
-`npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. It runs on Linux on every push and PR (a push touching only `docs/` runs none).
+`npm run ci:verify` mirrors the GitHub Actions `verify` job: **lint → knip → check (svelte-check) → typecheck:main → test:unit:strict → build → ci:gates**. It runs on Linux on every push and PR (a push touching only `docs/` runs none).
 
 **GitHub runs only Linux jobs; the Windows checks run on the local Windows machine.** Windows runner minutes bill double and the suite took over an hour there, so there is no Windows job in `ci.yml`. Before pushing, run `npm run ci:verify` locally: on Windows it covers what the Linux job can't (the `itOnWindows` cases, case-insensitive path handling, and the characterisation cases skipped on Linux). Run the E2E suite locally too (`npm run build && npm run test:e2e`, adding `FILO_E2E_SCALE=1` for the scale budgets) after changes to the Electron shell, startup, quit, file watching or anything the unit suites can't reach. A green GitHub run therefore says nothing about Windows: report a change as verified on Windows only after one of these local runs.
 
@@ -48,6 +49,8 @@ Corpus check:   npm run corpus:list -- <list.txt> --vaults <dir> [--extra <dir>]
 **Adding a check:** put it in the matching group module as `{ id, title, run(ctx) }` using the shared lib. Don't add a standalone `scripts/check-*.mjs`. Before relying on it, prove it bites: introduce the violation in real source, confirm the check fails, then revert.
 
 `test:unit:strict` ([scripts/test-unit-strict.mjs](scripts/test-unit-strict.mjs)) runs vitest and also fails on known noise patterns in its output: a missing `window.filo` mock, a duplicate object key, the `yaml` collection-key warning, and Svelte effect-loop / unsafe-mutation warnings.
+
+`knip` ([knip.ts](knip.ts)) fails on a file, an export or a dependency nothing uses, and on an import of a package `package.json` doesn't list. An export used inside its own file counts as used. It reads a component through Svelte's compiler, with the component's type-only imports added back (the compiler drops them, so a type or file only components use would look unused). A dependency loaded by a computed name is invisible to it: write the import out (`() => import('sharp')`, as `scripts/generate-icons.mjs` does).
 
 The `coverage` job (the vitest coverage ratchet, on Linux) runs weekly (Monday 06:00 UTC) and on demand (Actions tab → CI → Run workflow), since it repeats the whole suite instrumented. The local E2E run drives the built app with Playwright, opening real Filo windows: the axe scan and, with `FILO_E2E_SCALE=1`, the 5,000-note scale budgets included (`FILO_E2E_BUDGET_FACTOR` loosens those budgets on a slower machine).
 
@@ -87,6 +90,7 @@ filo/
 ├── svelte.config.mjs
 ├── vitest.config.mts
 ├── playwright.config.ts
+├── knip.ts                            # Dead-code check (npm run knip, in ci:verify)
 ├── CLAUDE.md                          # This file
 ├── KNOWN_LIMITATIONS.md               # Accepted trade-offs (do NOT "fix")
 ├── Filo_Design_Doc_Rework_V5.md
@@ -743,7 +747,7 @@ filo/
 │   │   ├── systemLocale.ts            # OS regional-format locale, passed to the preload as a process argument
 │   │   ├── ipcSchemas.ts              # Per-channel Zod payload validation
 │   │   ├── ipcContracts.ts            # Per-channel arg/result TYPE contracts (ChannelResult<C>, etc.)
-│   │   ├── untrusted.ts               # Branded `Untrusted<T>` + asSafe* validators (untrusted-sink discipline); iframeSrcProblem is the one iframe URL rule
+│   │   ├── untrusted.ts               # asSafe* validators and their branded `Sanitised*` results (untrusted-sink discipline); iframeSrcProblem is the one iframe URL rule
 │   │   └── ipcEnvelope.ts             # IPC ok/error envelope + IpcEnvelopeError
 │   │
 │   └── tests/
@@ -1036,7 +1040,7 @@ Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, U
 - **Unit tests (Vitest):** Cover all `lib/` modules. Stores should have unit tests for their logic. Target: every function in `lib/` has at least one test.
 - **Component tests (jsdom + Vitest):** `vitest.config.mts` has three projects: `unit` (`src/tests/unit/`), `component` (`src/tests/component/`, resolved with the `browser` export condition so Svelte 5 client `mount()` works) and `characterisation` (below). Component tests mount the REAL components with [src/tests/component/helpers/mountEditor.ts](src/tests/component/helpers/mountEditor.ts) (`recordingFilo`, `mountTextTile`, `mountDocumentEditor`, `pressUndo`, `settle`, `drainDebounce`). All three projects run in `test:unit:strict`. Heavy interaction coverage still lives in Playwright E2E.
 - **Characterisation suite:** `src/tests/characterisation/` mounts the whole `App.svelte` against a real temp vault, with the real main-process IPC handlers behind `window.filo` (only the Electron shell is faked). The specs pin what the user sees (views, one model across views, frontmatter edits, renames, disk changes, delete + undo through the trash, tag undo, the tag row and raw view, bytes never written by looking) and call only the `harness/` adapter. When an internal API moves, update the harness, not the specs; the `characterisation-suite` gate enforces this. The one skip allowed is `it.skipIf(onLinux)` (`harness/platform.ts`), for the few cases that time out only on the Linux CI runner's file watcher; Filo targets Windows, where they run. `npm run scratch-vault` uses the same harness to build the dogfooding vault.
-- **E2E tests (Playwright):** `src/tests/e2e/*.e2e.ts` drive the **built** app (`dist/main/main.js`, so `npm run build` first) the way the user does, through [src/tests/e2e/helpers/app.ts](src/tests/e2e/helpers/app.ts): `launchBuilt` (fresh user-data dir, the folder picker and native message boxes stubbed in main, window restored and un-throttled), `quitLikeUser` (the window's close, so the quit flow runs), `openNoteByName`, `toasts`, `confirmDialogs`, `freshVault`, `generateVault(n)`, `hashVault`. A spec checks what is on screen or on disk, never a store; gate `e2e-drives-built-app` forbids `import('/src/…')` in the page. One worker (parallel Electron instances fight over `DevToolsActivePort`). The specs: editor fidelity (formatting reopens editable), the Kanban click, Syncthing-style deliveries, quit while minimized, no bytes written by looking (1,000 generated notes), a day's first use across launches, vault switch mid-edit and a BOM edit, crash recovery, keyboard access, the Search panel's close button and drag, an axe scan of each view (injected into the page; colour contrast is `themeContrast.test.ts`'s job), and `scaleBudgets` (only with `FILO_E2E_SCALE=1`). The suite runs locally on Windows, not in GitHub CI. `FILO_E2E_MAIN` points the suite at another build, to see a spec fail where its bug is still present.
+- **E2E tests (Playwright):** `src/tests/e2e/*.e2e.ts` drive the **built** app (`dist/main/main.js`, so `npm run build` first) the way the user does, through [src/tests/e2e/helpers/app.ts](src/tests/e2e/helpers/app.ts): `launchBuilt` (fresh user-data dir, the folder picker and native message boxes stubbed in main, window restored and un-throttled), `quitLikeUser` (the window's close, so the quit flow runs), `openNoteByName`, `toasts`, `freshVault`, `generateVault(n)`, `hashVault`. A spec checks what is on screen or on disk, never a store; gate `e2e-drives-built-app` forbids `import('/src/…')` in the page. One worker (parallel Electron instances fight over `DevToolsActivePort`). The specs: editor fidelity (formatting reopens editable), the Kanban click, Syncthing-style deliveries, quit while minimized, no bytes written by looking (1,000 generated notes), a day's first use across launches, vault switch mid-edit and a BOM edit, crash recovery, keyboard access, the Search panel's close button and drag, an axe scan of each view (injected into the page; colour contrast is `themeContrast.test.ts`'s job), and `scaleBudgets` (only with `FILO_E2E_SCALE=1`). The suite runs locally on Windows, not in GitHub CI. `FILO_E2E_MAIN` points the suite at another build, to see a spec fail where its bug is still present.
 - **Corpus check (by hand):** run it after any change to the editor, TipTap, markdown-it or prosemirror-markdown. `corpus:list` lists the repo's notes, a vaults folder and `node_modules` READMEs (de-duplicated by content; `--extra <dir>` adds any folder, e.g. one made by `scripts/perf/genVault.mjs`). `corpus:run` loads each note into a real editor and records its read-only verdict and what a save would write. Run it on the base commit too, with the same list: `git worktree add --detach <dir> <sha>`, a `node_modules` junction to this checkout's (PowerShell `New-Item -ItemType Junction`; unlink it with `cmd /c rmdir` before `git worktree remove`), and the runner and its config copied in when the base predates them. Then `corpus:compare`: it exits 1 when an output changed or a note became read-only, and counts notes edited between the runs apart.
 - **Test file location:** Unit tests go flat in `src/tests/unit/`, named after the module or behaviour they cover (`noteWriter.test.ts`). `src/tests/unit/contracts/` holds checks that read the whole codebase (IPC envelope, untrusted sinks, command coverage); it is not the characterisation suite. Component tests go in `src/tests/component/`, characterisation specs in `src/tests/characterisation/`, E2E specs in `src/tests/e2e/` as `<behaviour>.e2e.ts`.
 

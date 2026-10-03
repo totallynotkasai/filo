@@ -1,6 +1,6 @@
 # Library updates and new tools: implementation plan
 
-**Status (2026-10-03): Phases 0–3 done; Phases 4–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
+**Status (2026-10-03): Phases 0–4 done; Phases 5–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
 
 Source: [TRACK_B_INVESTIGATION_2026-10-02.md](TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
 
@@ -235,7 +235,10 @@ All `@tiptap/*` packages from `^3.31.3` to `^3.31.4`, in one `npm install` that 
   ```
 
   Entries are explicit because electron-vite's three-part config isn't a plain Vite config. knip's Vitest, Playwright and ESLint plug-ins switch on by themselves; check each reads the right config files.
+
+  *Changed in Phase 4 (2026-10-03):* this config reported a false unused file, and knip 6.39 finds the five app entries itself. The `knip.ts` written is in the Phase 4 outcome (deviations 1 and 2).
 - npm script `knip`, report only. It is **not** in `ci:verify` (decision 2).
+  - *Changed in Phase 4 (owner, 2026-10-03):* knip runs in `ci:verify`, after lint.
 
 ### 4.2 Triage the first run
 
@@ -507,9 +510,11 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
   yaml 3 and electron-builder 27 are pre-releases, which `npm outdated` doesn't show.
 - **CLAUDE.md:**
   - Quick Reference: the `corpus:*` and `knip` scripts, and the one-time `npx playwright install chromium`;
+    - *From Phase 4:* the `corpus:*` lines (Phase 0) and the `knip` line are already in;
   - Testing Strategy: the browser project and the second parser;
   - the gate count.
 - **TRACK_B_INVESTIGATION §6:** mark what was done. **BACKLOG:** add any new findings.
+  - *From Phase 4:* also correct §6's knip row, which says knip needs Svelte's compiler or it reports components' exports as unused (see the Phase 4 outcome's new findings).
 - **Optional, if a larger corpus is needed (owner, 2026-10-03):** once every change is in, generate a vault with `node scripts/perf/genVault.mjs <dir>` (deterministic) and add it to the corpus with `corpus:list -- … --extra <dir>`. Its notes are generated, so they add volume rather than variety.
 - Move this plan to `docs/archive/` with its outcomes.
 
@@ -520,7 +525,7 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
 | # | Question | Default |
 |---|---|---|
 | 1 | Browser-mode tests run in `ci:verify`, and GitHub CI installs Chromium for them | Yes |
-| 2 | knip stays a report you run by hand (not in `ci:verify`) | Yes; revisit after Phase 4's triage |
+| 2 | knip stays a report you run by hand (not in `ci:verify`) | Yes; revisit after Phase 4's triage. *Revisited in Phase 4 (owner): no, knip runs in `ci:verify`.* |
 | 3 | The Raw view keeps today's box: at least 480 px, resizable, scrolling inside | Yes |
 | 4 | Tab in the Raw view leaves the field, as today | Yes |
 | 5 | Ctrl+F in the Raw view opens CodeMirror's find bar for that note | Yes |
@@ -1024,3 +1029,105 @@ Found by reading the 3.31.3 → 3.31.4 diff of every `@tiptap/*` package's `dist
 
 - **BL-14: an empty text tile or Kanban card never shows its "Start typing..." placeholder.** The editor marks the empty paragraph, but only the Document editor has CSS that displays it, and that editor sets its placeholder to `''`. It is the same before and after this phase: `@tiptap/extensions` is byte-identical between 3.31.3 and 3.31.4.
 - **The golden corpus had no table saved as HTML**, so finding 1 passed every round-trip suite and the corpus check. It took a diff of the package and a probe to find. The `html-tables` fixture now covers it.
+
+### Phase 4 outcome (2026-10-03)
+
+**Status:** done, verified on Windows. Committed on `main`; not pushed (owner, at the start).
+- knip 6.39.0 takes about 5 s and now reports nothing. It runs in `ci:verify`, after lint (owner: decision 2 changed).
+- Every first-run finding is triaged below. The two false positives are fixed where they came from, so `knip.ts` holds no ignore entries.
+- 38 exports that nothing used are gone; an export used inside its own file counts as used (owner). The built app is unchanged: with chunk and CSS-class hashes masked, every built file matches a build of `HEAD`.
+
+#### Decisions at the start (owner, 2026-10-03)
+
+Asked after the first knip run, so each question named real findings.
+1. **Remove the 38 exports nothing uses, and count an export used inside its own file as used** (knip's `ignoreExportsUsedInFile`). The other options were the plan's one backlog item with no code change, and removing all 171 (dropping `export` from 132 more names in about 90 files).
+2. **knip runs in `ci:verify`, all of it** (the recommended option). The others were only unused files and dependencies in `ci:verify`, or by hand only, as decision 2 said.
+3. **Commit, don't push**, as in Phases 1–3.
+
+#### The first run, triaged
+
+The first run used the plan's `knip.ts` as written. It found 1 unused file, 3 unused devDependencies, 108 unused exports, 69 unused exported types, 1 duplicate export, and 5 configuration hints.
+
+| Plan group | Finding | Verdict | What was done |
+|---|---|---|---|
+| 1. Unused dependencies | `sharp`, `png-to-ico`, `png2icons` | False positive. `scripts/generate-icons.mjs` loaded each by a computed name (`import(name)`), which knip can't follow. | Each import is written out (`optionalImport(() => import('sharp'))`). With `HEAD`'s script and the new one, `npm run icons` writes the same `icon.png`, `icon.ico` and `icon.icns`, byte for byte. |
+| 2. Unused files | `components/boards/taskListRowProps.ts` | False positive, from the plan's Svelte reader: `compile()` drops `import type`, and three components import only types from this file. | The reader adds type-only imports back (deviation 1). |
+| 3. Unused exports and types | With the reader fixed: 108 exports, 62 types and 1 duplicate (170 names, plus the duplicate `default`) in 96 files. 132 are used inside their own file; 38 are used nowhere. | Real. | The 38 removed (list below); the 132 accepted by `ignoreExportsUsedInFile` (decision 1). No backlog item is needed. |
+| 4. False positives | The 5 configuration hints: the plan's entries `src/main/main.ts`, `src/main/preload.ts`, `src/renderer/main.ts`, `src/tests/corpus/corpusRun.ts` and `buildScratchVault.ts` are redundant. | knip finds them itself (deviation 2). | Removed from `entry`. |
+
+**The 38 removed** (33 in app code, 5 in tests), plus one knip didn't list:
+- `schema/index.ts`, the barrel: 14 value re-exports (`TileStyleSchema`, `LinkTileSchema`, `IframeTileSchema`, the six `…TileDefSchema` for image, video, file, audio, link and iframe, `TaskPlacementSchema`, `PartialTaskStyleSchema`, `TileGroupSchema`, `DecodedFiloLinkSchema`, `isFiloLink`) and 2 type re-exports (`GeneralSettings`, `TagsFile`). Each is still exported by its own module, which uses it or is imported directly.
+- `schema/settings.ts`: the type `GeneralSettings` (never used).
+- `schema/board.ts`: the type `KanbanSavedView`, marked "test-only", which no test used.
+- `shared/types.ts`: the re-exports of `IpcChannelMap`, `EnvelopeChannel` and `SuccessOf`, and their import.
+- `shared/untrusted.ts`: the `Untrusted<T>` brand, which nothing ever stamped, with its symbol. The header comment and CLAUDE.md's line for the file now describe only the `Sanitised*` brands the validators return.
+- `main/services/fileWatcher.ts`: the re-exports of `correlateRenames` and `WatcherStatePayload` (the file still imports `correlateRenames` for its own use).
+- `lib/boards/writeScheduler.ts`: the re-exports of `FlushAllResult`, `PerformWriteContext`, `PerformWriteResult` and `SchedulerSentinelInfo`. Callers import them from `writeSchedulerTypes.ts`.
+- `lib/mindmap/mindMapContextMenus.ts`: the re-exports of `Tile` and `Frame`, the `Tile` import left unused, and the `ContextMenuItem` re-export on the same line, which knip didn't list but nothing imports from there (deviation 4).
+- `stores/board.svelte.ts` (`Command`), `core/boardRegistry.ts` (`Board`), `lib/styles/effectiveStyle.ts` (`TileStyle`): one type re-export each, and the import it left unused.
+- Tests:
+  - `electronFake`'s `export default` (the duplicate). The `electron` mock in `characterisation/setup.ts` builds its own `default`.
+  - `cancelThemeEditor` (characterisation harness) and `pressRedo` (component helpers).
+  - `setAnswers` and `confirmDialogs` (E2E helpers; CLAUDE.md named `confirmDialogs`). With `setAnswers` gone, nothing could fill the native-box stub's answer queue, so the queue went too: the stub answers every box with its cancel button. It already did that whenever no answer was queued, which was every spec.
+
+#### What changed
+
+- **`package.json`:**
+  - devDependency `knip` `^6.39.0` (6.39.0 installed);
+  - npm script `knip`;
+  - `ci:verify` is lint → **knip** → check → typecheck:main → test:unit:strict → build → ci:gates. GitHub's `verify` job runs `ci:verify`, so it runs knip too.
+- **`npm install`:** 56 lockfile entries added and none changed or removed (checked by comparing the parsed lockfiles; git's 1,102-line diff only aligns them badly):
+  - knip and its parts: `oxc-parser` 0.150.0, `oxc-resolver` 11.24.2 and 10 small helpers;
+  - 43 optional per-platform builds of the two oxc packages. This machine installed 15 packages in all.
+- **`knip.ts` (new):**
+  - `entry`: `scripts/**/*.mjs` (the `perf/` scripts are in no npm script) and the test files;
+  - `project`: `src/**/*.{ts,svelte}` and `scripts/**/*.mjs`;
+  - `ignoreExportsUsedInFile: true`;
+  - the Svelte reader (deviation 1).
+  - It type-checks under `--strict` with no cast, and `npm run lint` covers it.
+- **App and test code:** the removals above, and the literal imports in `scripts/generate-icons.mjs`.
+- **CLAUDE.md:**
+  - Quick Reference: the `knip` line;
+  - the `ci:verify` chain, and a paragraph on what knip checks and the import-by-name trap;
+  - the root file list (`knip.ts`);
+  - the `untrusted.ts` line;
+  - the E2E helper list (no `confirmDialogs`).
+- **This plan:** the status line, notes under 4.1 and in Phase 8, decision 2's row, and this outcome.
+- **BACKLOG:** unchanged. Nothing found here is left open (decision 1 settles the 132).
+
+#### Pass test
+
+| Check | Result | Before |
+|---|---|---|
+| `npm run ci:verify` (Windows) | **Green in 244 s.** eslint 0 warnings (`knip.ts` included); knip no findings; svelte-check 851 files, 0 errors, 0 warnings; 797 files: 7,593 passed, 5 skipped; 89/89 gates in 8.1 s (`test-typecheck` checks the edited helpers). | Phase 3: 234 s, the same counts |
+| knip bites | Each probe, added to the tree and then removed, failed `npm run knip` (exit 1) under the right heading: a new file nothing imports (unused file), a new export nothing uses (unused export), `left-pad` added to `dependencies` (unused dependency), and an import of `lodash-es` (unlisted dependency). With all of them removed, exit 0. | |
+| The Svelte reader | With the final config: `compile()` alone (the plan's reader) reports 1 unused file and 7 unused types, all false (`taskListRowProps.ts`; `LinkTile`, `IframeTile`, `TimerTile` twice each; `ResolvedTileStyleHolder`). knip's own reader reports 1 unresolved import, `,` in `KanbanBoard.svelte`. The final reader reports nothing. | |
+| Built app | `main.js` 420,366 and `preload.js` 193,825 bytes, identical to the byte; no `require("zod")`. Against a build of `HEAD` in a scratch worktree, every renderer chunk is identical once chunk-name and Svelte class hashes are masked; `lowlight.js` and `tiptap.js` are identical outright. Every size equals the Phase 3 figures. | Phase 3 sizes |
+| E2E, `FILO_E2E_SCALE=1` | **28 passed in 2.6 min**, the scale budgets included (deviation 5). | 28 passed in 2.6 min |
+| `npm audit` | 8 high, all GHSA-ch52-4w7c-c8xp (BL-11). knip adds none. | The same |
+| `npm outdated` | Only the "wait" / "skip" majors: vite-plugin-svelte 7, js-yaml 5, markdown-it 15, nanoid 6, TypeScript 7, Vite 8. | The same |
+
+The renderer's CSS sizes differ between the two checkouts (`index.css` 204,665 bytes here and 204,366 in the worktree). Svelte's class hashes depend on the component's path, so CSS sizes compare only within one checkout. Here it is 204,665 bytes, as in Phase 0.
+
+#### Deviations from the plan
+
+1. **The Svelte reader is not the plan's `compile(source, {}).js.code`.**
+   - The compiler drops type-only imports. A type, or a whole file, used only by components then reads as unused: the first run's one "unused file" and 8 of its "unused types" were that.
+   - knip's built-in reader keeps type imports, but it finds imports with a regex over the script text. It read `'Open a vault first to import files', 'info'` in `KanbanBoard.svelte` as an import of `, `.
+   - `knip.ts` therefore takes the compiler's output, which gets markup `{#await import(…)}` and component methods right, and adds back the type-only imports from `svelte/compiler`'s `parse`. No component has a `<script module>`, so the plan's reason for the compiler (exports in `.svelte` files) doesn't arise yet; the reader handles one if it appears.
+2. **No app entries in `knip.ts`.**
+   - knip 6.39 has an electron-vite plug-in that reads `electron.vite.config.mts` (main, preload, and the renderer through `index.html`).
+   - Its Vitest plug-in reads every config an npm script names with `--config`: the corpus and scratch-vault runners.
+   - knip flagged the five listed entries as redundant. The plug-ins knip enabled: electron-vite, ESLint, GitHub Actions, Node.js, Playwright, Prettier, Svelte, TypeScript, Vite and Vitest. Each reads the right config file (checked with `--debug`).
+3. **The triage outcome differs from the plan's groups 3 and 4** (decision 1):
+   - the 38 unused exports are removed now, not listed in a backlog item;
+   - the false positives are fixed at their source rather than given `ignore` entries.
+4. **Beyond knip's list:** the `ContextMenuItem` re-export (nothing imports it from `mindMapContextMenus.ts`) and the E2E stub's answer queue, both left dead by the removals.
+5. **The E2E suite was run.** The plan doesn't ask for it in this phase, but the E2E helpers' dialog stub changed.
+6. **knip is in `ci:verify`, and CLAUDE.md is updated now** (decision 2), not in Phase 8.
+
+#### New findings
+
+- **knip's built-in Svelte reader can read a string as an import** (knip 6.39.0, `importsWithinScripts`). It's knip's bug, not Filo's, and the reader above avoids it, so there is no backlog item. It could be reported upstream.
+- **TRACK_B_INVESTIGATION §6 says knip "needs Svelte's own compiler plugged in, or it reports components' exports as unused".** For this codebase the reverse held: no component exports anything, and the compiler alone caused false positives. Phase 8 corrects that line when it marks §6.
+- **`convertToUtf8.js` is 63,759 bytes at `HEAD`**, not the 63,389 that Phase 0 recorded. The later outcomes said every other asset kept its size, so one of Phases 1–3 changed it without the tables noticing. It is a shared chunk; this phase leaves it as it was.

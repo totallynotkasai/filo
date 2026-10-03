@@ -34,9 +34,8 @@ import { OwnMoves, moveCaches, moveRecords, putRecords, takeRecords } from './fi
  */
 const OWN_WRITE_COMPARE_MAX_BYTES = 2 * 1024 * 1024;
 
-export { correlateRenames } from './renameCorrelation';
 export type { FileChangeEvent, FileChangeType } from './fileWatcherTypes';
-export type { WatcherState, WatcherStatePayload } from './watcherSupervisor';
+export type { WatcherState } from './watcherSupervisor';
 
 /**
  * How long between reconciliation passes. The walker has to stat every file

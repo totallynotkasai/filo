@@ -245,9 +245,6 @@ const KanbanSavedViewSchema = z.object({
     .default(null),
 }).passthrough();
 
-/** @internal test-only */
-export type KanbanSavedView = z.infer<typeof KanbanSavedViewSchema>;
-
 /**
  * Kanban board-specific settings.
  */

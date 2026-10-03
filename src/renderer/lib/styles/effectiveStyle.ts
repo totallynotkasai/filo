@@ -33,7 +33,6 @@ import type {
   Board,
   Connection,
   ProjectSettings,
-  TileStyle,
 } from '../../schema/index';
 import { resolveStyle } from './resolveStyle';
 import {
@@ -783,6 +782,3 @@ export function effectiveTaskSectionStyle(
     fontSizeTitle,
   };
 }
-
-// ── Re-exports so consumers can import everything from one place ──
-export type { TileStyle };

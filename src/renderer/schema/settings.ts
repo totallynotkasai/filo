@@ -346,4 +346,3 @@ export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 export function defaultProjectSettings(): ProjectSettings {
   return ProjectSettingsSchema.parse({});
 }
-export type GeneralSettings = z.infer<typeof GeneralSettingsSchema>;

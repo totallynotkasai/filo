@@ -53,14 +53,7 @@ import { newParkedEntry, ParkedWrites } from './writeSchedulerParked';
 const WRITE_TIMEOUT: unique symbol = Symbol('write-timeout');
 
 // Public types live in writeSchedulerTypes.ts; re-exported unchanged.
-export type {
-  CreateSchedulerOptions,
-  FlushAllResult,
-  PerformWriteContext,
-  PerformWriteResult,
-  Scheduler,
-  SchedulerSentinelInfo,
-} from './writeSchedulerTypes';
+export type { CreateSchedulerOptions, Scheduler } from './writeSchedulerTypes';
 
 export function createScheduler<TArgs>(
   opts: CreateSchedulerOptions<TArgs>,

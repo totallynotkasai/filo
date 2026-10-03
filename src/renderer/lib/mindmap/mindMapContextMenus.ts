@@ -1,5 +1,5 @@
 import type { ContextMenuItem } from '../../stores/ui.svelte';
-import type { Frame, Tile } from '../../schema/index';
+import type { Frame } from '../../schema/index';
 import { STYLE_ICON_PATH } from '../../constants/icons';
 import { MENU_ICON, MENU_LABEL, lockLabel, selectedHeading } from '../../constants/menuVocabulary';
 
@@ -213,6 +213,3 @@ export function buildCanvasContextMenu(opts: BuildCanvasMenuOpts): ContextMenuIt
 
   return items;
 }
-
-/** Re-export shape exposed by the orchestrator's local Tile/Frame proxies. */
-export type { Tile, Frame, ContextMenuItem };

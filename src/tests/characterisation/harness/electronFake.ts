@@ -123,5 +123,3 @@ export const electronFake = {
   session: { defaultSession: {} },
   webUtils: { getPathForFile: () => '' },
 };
-
-export default electronFake;

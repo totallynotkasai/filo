@@ -1,6 +1,6 @@
 /**
- * `Untrusted<T>` / `Sanitised*` — branded string types that distinguish
- * "value read from the vault" from "value safe to pass to a security sink".
+ * `Sanitised*` — branded string types that mark a value read from the vault
+ * as safe to pass to a security sink.
  *
  * The renderer routes three classes of vault-shipped string into security sinks that, without
  * sanitisation, can execute attacker-controlled code or leak info to
@@ -23,26 +23,15 @@
  * callsite passes its value through one of these validators (or is
  * annotated `// allow-untrusted-sink: <reason>` with explicit human review).
  *
- * `Untrusted<T>` is provided for downstream schema layers that want to
- * stamp parser output, but the validators below currently accept raw
- * `string` for ergonomics — the brand is asymmetric (output-side only)
- * because every renderer-side string flowing into a sink is by definition
- * untrusted, and forcing the brand at every callsite would mean stamping
- * dozens of vault reads that are not security-relevant.
+ * The validators take a plain `string`: the brand is output-side only,
+ * because every renderer-side string flowing into a sink is untrusted by
+ * definition, and an input-side brand would have to be stamped on dozens of
+ * vault reads that are not security-relevant.
  */
 
-declare const _u: unique symbol;
 declare const _sUrl: unique symbol;
 declare const _sColor: unique symbol;
 declare const _sSrc: unique symbol;
-
-/**
- * Marker brand for "this string was read from vault contents and has not
- * been sanitised yet". Optional to apply; provided so schema layers that
- * want a compile-time reminder can stamp their output (e.g. `tile.url:
- * Untrusted<string>`).
- */
-export type Untrusted<T> = T & { readonly [_u]: 'Untrusted' };
 
 /** Output of `asSafeOpenExternal`. */
 export type SanitisedUrl = string & { readonly [_sUrl]: 'SanitisedUrl' };

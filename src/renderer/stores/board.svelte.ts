@@ -10,7 +10,7 @@ import type {
 import type { SpatialScope } from './spatial.svelte';
 import type { CanvasScope } from './canvas.svelte';
 import type { SelectionScope } from './selection.svelte';
-import { historyStore, type Command } from './history.svelte';
+import { historyStore } from './history.svelte';
 import { boardCacheStore } from './boardCache.svelte';
 import { boardRefIntegrityStore } from './boardRefIntegrity.svelte';
 import { tabStore } from './tabs.svelte';
@@ -579,6 +579,3 @@ export type BoardScopeBoard = ReturnType<typeof createBoardScopeBoard>;
  * get the active scope's board view transparently.
  */
 export const boardStore: BoardScopeBoard = makeFacade(() => getActiveScope().board);
-
-// Re-export Command type for downstream consumers that import it from board.svelte.
-export type { Command };

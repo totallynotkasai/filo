@@ -258,23 +258,9 @@ export type VaultGroupField = 'none' | 'name' | 'modified' | 'type' | 'size';
  * data. The renderer-side helper applies `assertIpcOk` in the
  * renderer's context where the throw preserves the full error shape.
  */
-import type {
-  IpcChannelMap,
-  ChannelArgs,
-  ChannelResult,
-  EnvelopeChannel,
-  SuccessOf,
-  InvokeChannel,
-} from './ipcContracts';
+import type { ChannelArgs, ChannelResult, InvokeChannel } from './ipcContracts';
 
-export type {
-  IpcChannelMap,
-  ChannelArgs,
-  ChannelResult,
-  EnvelopeChannel,
-  SuccessOf,
-  InvokeChannel,
-};
+export type { ChannelArgs, ChannelResult, InvokeChannel };
 
 export interface FiloAPI {
   /**

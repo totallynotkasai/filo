@@ -30,16 +30,18 @@ mkdirSync(resourcesDir, { recursive: true });
 
 const svgBuffer = readFileSync(svgPath);
 
-async function tryRequire(name) {
+// Each caller writes its import out (`() => import('sharp')`) rather than
+// passing a name, so knip can see the converters are used.
+async function optionalImport(load) {
   try {
-    return await import(name);
+    return await load();
   } catch {
     return null;
   }
 }
 
 async function rasterise() {
-  const sharpMod = await tryRequire('sharp');
+  const sharpMod = await optionalImport(() => import('sharp'));
   if (!sharpMod) {
     console.error('sharp is not installed. Install with: npm i -D sharp png-to-ico png2icons');
     process.exit(1);
@@ -57,7 +59,7 @@ async function rasterise() {
   console.log('Wrote resources/icon.png (1024×1024)');
 
   // ICO (Windows) — multi-size
-  const pngToIco = await tryRequire('png-to-ico');
+  const pngToIco = await optionalImport(() => import('png-to-ico'));
   if (pngToIco) {
     const pngToIcoFn = pngToIco.default ?? pngToIco;
     const ico = await pngToIcoFn([16, 24, 32, 48, 64, 128, 256].map((s) => buffers[s]));
@@ -68,7 +70,7 @@ async function rasterise() {
   }
 
   // ICNS (macOS) — multi-size
-  const png2icons = await tryRequire('png2icons');
+  const png2icons = await optionalImport(() => import('png2icons'));
   if (png2icons) {
     const lib = png2icons.default ?? png2icons;
     const icns = lib.createICNS(buffers[1024], lib.BICUBIC, 0);

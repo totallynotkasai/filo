@@ -7,8 +7,8 @@
  * Main-process stubs (test scaffolding, not app changes):
  *  - `dialog.showOpenDialog` answers with the vault the spec picked, so the
  *    Home screen's "Open Vault" opens it;
- *  - `dialog.showMessageBox` records every native box and answers from a queue
- *    of button labels (`setAnswers`), else with the box's cancel button.
+ *  - `dialog.showMessageBox` records every native box and answers with its
+ *    cancel button.
  */
 import { _electron as electron, expect } from '@playwright/test';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
@@ -94,19 +94,15 @@ export async function launchBuilt(vault: string, opts: LaunchOptions = {}): Prom
     env: { ...process.env, NODE_ENV: 'test' },
   });
   await app.evaluate(({ dialog }, picked) => {
-    const g = globalThis as unknown as { __boxes: NativeBox[]; __answers: string[]; __picked: string };
+    const g = globalThis as unknown as { __boxes: NativeBox[]; __picked: string };
     g.__boxes = [];
-    g.__answers = [];
     g.__picked = picked;
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [g.__picked] })) as typeof dialog.showOpenDialog;
     dialog.showMessageBox = (async (a: unknown, b?: unknown) => {
       const o = (b ?? a) as { title?: string; message?: string; detail?: string; buttons?: string[]; cancelId?: number };
       const buttons = o.buttons ?? ['OK'];
       g.__boxes.push({ title: o.title, message: o.message, detail: o.detail, buttons });
-      const want = g.__answers.shift();
-      let idx = want === undefined ? -1 : buttons.findIndex((x) => x.toLowerCase().includes(want.toLowerCase()));
-      if (idx < 0) idx = o.cancelId ?? buttons.length - 1;
-      return { response: idx, checkboxChecked: false };
+      return { response: o.cancelId ?? buttons.length - 1, checkboxChecked: false };
     }) as typeof dialog.showMessageBox;
   }, vault);
   const win = await app.firstWindow();
@@ -202,24 +198,12 @@ export const setPickedVault = (app: ElectronApplication, vault: string): Promise
     (globalThis as unknown as { __picked: string }).__picked = v;
   }, vault);
 
-/** Queues answers (button labels, matched case-insensitively by substring) for the next native boxes. */
-export const setAnswers = (app: ElectronApplication, answers: string[]): Promise<void> =>
-  app.evaluate((_e, a) => {
-    (globalThis as unknown as { __answers: string[] }).__answers = a;
-  }, answers);
-
 /** The text of every toast on screen. */
 export const toasts = (win: Page): Promise<string[]> =>
   win.evaluate(() =>
     [...document.querySelectorAll('.toast')].map((t) =>
       ((t.querySelector('.toast-text') ?? t).textContent ?? '').replace(/\s+/g, ' ').trim(),
     ),
-  );
-
-/** The text of every in-app confirm dialog on screen. */
-export const confirmDialogs = (win: Page): Promise<string[]> =>
-  win.evaluate(() =>
-    [...document.querySelectorAll('.confirm-dialog')].map((d) => (d.textContent ?? '').replace(/\s+/g, ' ').trim()),
   );
 
 /** A sidebar row by its file name (the row's `title` is the full path). */

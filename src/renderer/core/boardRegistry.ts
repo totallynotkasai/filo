@@ -1,6 +1,5 @@
 import type { Component } from 'svelte';
 import type { BoardType } from '../../shared/types';
-import type { Board } from '../schema/index';
 import { boardDefaults, type BoardDefaultFactory } from './boardDefaults';
 
 /**
@@ -84,7 +83,3 @@ export const boardRegistry: Record<BoardType, BoardRegistryEntry> = {
     createDefault: boardDefaults.document,
   },
 };
-
-// Re-export `Board` so existing callers of `boardRegistry` that destructure
-// the type stay backward-compatible.
-export type { Board };

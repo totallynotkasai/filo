@@ -277,11 +277,6 @@ export function pressUndo(m: Mounted): void {
   pressKey(m, 'z');
 }
 
-/** Ctrl+Y through the real ProseMirror keymap. */
-export function pressRedo(m: Mounted): void {
-  pressKey(m, 'y');
-}
-
 /** Capture console.error lines (e.g. Svelte's `effect_update_depth_exceeded`). */
 export function captureConsoleErrors(): { lines: string[]; restore(): void } {
   const lines: string[] = [];

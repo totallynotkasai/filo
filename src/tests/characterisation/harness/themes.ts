@@ -70,14 +70,6 @@ export async function createTheme(name: string): Promise<string> {
   return document.querySelector('#theme-editor-problem')?.textContent?.trim() ?? '';
 }
 
-/** The theme editor's Cancel. */
-export async function cancelThemeEditor(): Promise<void> {
-  const cancel = $$(document, '.editor-actions button').find((b) => (b.textContent ?? '').trim() === 'Cancel');
-  if (!cancel) throw new Error('no Cancel button');
-  click(cancel);
-  await quiesce(600);
-}
-
 /** Themes tab: Delete on a custom theme. Leaves the confirm open. */
 export async function clickDeleteTheme(name: string): Promise<void> {
   const btn = document.querySelector(`button[aria-label="Delete ${name}"]`) as HTMLElement | null;

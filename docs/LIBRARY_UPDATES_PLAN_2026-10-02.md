@@ -1,6 +1,6 @@
 # Library updates and new tools: implementation plan
 
-**Status (2026-10-03): Phases 0–4 done; Phases 5–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
+**Status (2026-10-03): Phases 0–5 done; Phases 6–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
 
 Source: [TRACK_B_INVESTIGATION_2026-10-02.md](TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
 
@@ -274,6 +274,7 @@ These are deliberately not the all-in-one `micromark-extension-gfm`. It also tur
   - render it with micromark (`allowDangerousHtml: true`, the three GFM extensions and their HTML extensions);
   - read both results with `DOMParser` and compare the visible text (`textContent`, whitespace collapsed).
 - Any known difference is listed in the test with its reason. None is expected for Filo's own output.
+- *Changed in Phase 5 (owner, 2026-10-03):* the test also compares ticked boxes and link and image addresses, and checks that saving a fixture that opens editable changes nothing micromark shows. The cases moved as `TOOLBAR_CASES`, with `applyToolbarCase`, `normalisedDoc` and `selectFirstBlock` beside them. None of the inputs differs; two differences found elsewhere are pinned as "known differences" (Phase 5 outcome).
 - **What it pins:** the words of every note Filo writes read the same in a strict CommonMark + GFM parser, which is how "content stays the same in other apps" is checked. js-yaml plays the same oracle role for YAML today.
 
 ### 5.3 Gate `one-markdown-parser` (group `markdownFormat`, next to `no-jsyaml`)
@@ -282,6 +283,7 @@ These are deliberately not the all-in-one `micromark-extension-gfm`. It also tur
 - **Hint:** "markdown-it is the one Markdown parser in the app; a second one reads notes differently (the YAML lesson). Tests may use others as oracles."
 - Prove it bites, as the conventions say.
 - Optional, in the same commit: extend the existing `markdown-body-roundtrip` pinning so the new test must exist, un-skipped, with at least as many inputs as the golden corpus has fixtures.
+  - *Done in Phase 5 (owner):* the gate pins the test's parts; the test itself checks it read every fixture and every toolbar case. `toolbar-formatting-saved` now reads the cases from `src/tests/helpers/toolbarCases.ts`.
 
 ### 5.4 Docs
 
@@ -334,6 +336,7 @@ import { playwright } from '@vitest/browser-playwright';
 ### 6.3 First specs (`src/tests/browser/`)
 
 1. **`toolbarFormattingInChromium.test.ts`:** every case in `src/tests/helpers/toolbarCases.ts` (moved there in Phase 5, or here if Phase 5 hasn't run), in real Chromium: apply, save, reload into a fresh editor, the same document, the same bytes, not read-only. This is the toolbar suite's promise checked in the engine Filo ships.
+   - *From Phase 5:* the file exports `TOOLBAR_CASES`, `applyToolbarCase(editor, case)` (load, select the first block, run, return the saved Markdown) and `normalisedDoc` (the document comparison the jsdom suite uses). The cases call `expect` from `vitest`.
 2. **`colourSpellingInChromium.test.ts`:** pins what Chromium writes for a picked colour today (`#e03e3e` becomes `color: rgb(224, 62, 62);`, investigation W1). When the Markdown profile changes this on purpose, this test changes with it.
 3. **`editorCaretInChromium.test.ts`:** caret behaviour jsdom can't lay out, driven with `userEvent` from `vitest/browser`:
    - Enter beside a soft break;
@@ -512,6 +515,7 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
   - Quick Reference: the `corpus:*` and `knip` scripts, and the one-time `npx playwright install chromium`;
     - *From Phase 4:* the `corpus:*` lines (Phase 0) and the `knip` line are already in;
   - Testing Strategy: the browser project and the second parser;
+    - *From Phase 5:* the second-parser line and the gate count (90) are already in.
   - the gate count.
 - **TRACK_B_INVESTIGATION §6:** mark what was done. **BACKLOG:** add any new findings.
   - *From Phase 4:* also correct §6's knip row, which says knip needs Svelte's compiler or it reports components' exports as unused (see the Phase 4 outcome's new findings).
@@ -1131,3 +1135,86 @@ The renderer's CSS sizes differ between the two checkouts (`index.css` 204,665 b
 - **knip's built-in Svelte reader can read a string as an import** (knip 6.39.0, `importsWithinScripts`). It's knip's bug, not Filo's, and the reader above avoids it, so there is no backlog item. It could be reported upstream.
 - **TRACK_B_INVESTIGATION §6 says knip "needs Svelte's own compiler plugged in, or it reports components' exports as unused".** For this codebase the reverse held: no component exports anything, and the compiler alone caused false positives. Phase 8 corrects that line when it marks §6.
 - **`convertToUtf8.js` is 63,759 bytes at `HEAD`**, not the 63,389 that Phase 0 recorded. The later outcomes said every other asset kept its size, so one of Phases 1–3 changed it without the tables noticing. It is a shared chunk; this phase leaves it as it was.
+
+### Phase 5 outcome (2026-10-03)
+
+**Status:** done, verified on Windows. Committed on `main`; not pushed (owner, at the start).
+- Every note in the plan's inputs reads the same in micromark as in Filo's markdown-it: the same words, the same ticked boxes, the same link addresses. Saving a golden fixture that opens editable changes nothing micromark shows. A one-off run on the real corpus found the same for all 333 notes there that open editable.
+- Gate `one-markdown-parser` is in (90 gates) and proven to bite, as are the two gates this phase changed.
+- Beyond the plan's inputs, 3,000 documents from the property test's generator found four ways a note Filo saves reads differently on GitHub. All four are edge cases that no fixture, toolbar case or real note holds: BL-15 to BL-18, two of them pinned in the new test.
+
+#### Decisions at the start (owner, 2026-10-03)
+
+Asked after a first probe had already found no difference on any planned input or on the real corpus, so the plan's open question (what to do if the parsers disagree on Filo's output) didn't come up.
+1. **Commit, don't push**, as in Phases 1–4.
+2. **The test compares more than visible text** (the recommended option): ticked boxes and link and image addresses too, and, for each golden fixture that opens editable, that micromark shows the same before and after the save. The other option was the plan's visible text only.
+3. **Pin the new test in a gate** (the plan's optional item): yes.
+4. **The real-corpus result goes in this outcome only**; `corpus:run` and `corpus:compare` are unchanged. The other option was to add a "reads the same elsewhere" flag to the corpus tooling.
+
+#### What the second parser found
+
+| Input | Notes | Differ |
+|---|---|---|
+| Golden fixtures, as a save writes them | 27 | 0 |
+| Toolbar cases, as saved | 70 | 0 |
+| Golden fixtures that open editable: micromark before and after the save | 24 | 0 |
+| Real corpus (713 notes: repo 104, vaults 32, `node_modules` READMEs 577), the 333 that open editable: the saved note in both parsers, and micromark before and after the save | 333 | 0 |
+| Documents from the round-trip property test's generator (its seed, 20260930) | 3,000 | 97 |
+
+The 97 generated documents:
+- **70 differ only through single tildes.** With GitHub's single-tilde strikethrough turned off, micromark agrees with markdown-it. GitHub strikes `a ~one~ b` through, as micromark does: **BL-15**.
+- **27 differ otherwise.** Each was sent to GitHub's own renderer (`gh api markdown`, `mode=gfm`; generated text only, no note content) and its text compared:
+  - **18: GitHub shows what markdown-it shows.** These are micromark's own quirk: it pairs emphasis and strikethrough in separate passes, so where `*` and `~~` interleave (`*~~*a~~*`) it reads the note differently from both. Not Filo's; the test's header says so.
+  - **2: GitHub shows what micromark shows.** One is a run of three tildes, a `~` typed right before struck text (**BL-16**). The other involves a single tilde.
+  - **7: GitHub differs from both.** Four are bare web addresses in text where Filo wrote a `\` that GitHub's own linking keeps in the link (**BL-17**). One is a single-tilde pair, one a run of three tildes. One is italic, struck-through and coloured text holding `**`: GitHub closes the italic on the `**` (**BL-18**).
+- Each finding was then reduced to a few characters and checked on all three (markdown-it, micromark, GitHub); BACKLOG has those examples.
+
+#### What changed
+
+- **`package.json`:** devDependencies `micromark` `^4.0.3`, `micromark-extension-gfm-strikethrough` `^2.1.0`, `micromark-extension-gfm-table` `^2.1.2` and `micromark-extension-gfm-task-list-item` `^2.1.0` (each the latest). The lockfile gained 26 entries, all dev-only; none changed or was removed.
+- **`src/tests/helpers/toolbarCases.ts` (new):** the toolbar cases, moved unchanged as `TOOLBAR_CASES`, with `applyToolbarCase` (load, select the first block, run, return the saved Markdown), `normalisedDoc` and `selectFirstBlock`, so Phase 6 can run them in Chromium the same way.
+- **`toolbarFormattingRoundTrip.test.ts`:** reads the cases from the helper. Its 74 tests are the same.
+- **`markdownContentElsewhere.test.ts` (new), 124 tests:**
+  - one that checks it read every fixture and every toolbar case;
+  - 97 inputs: the note's own markdown-it (through `markdownRenderer`) against micromark with the three GFM extensions, raw HTML and every link address kept;
+  - 24 "a save changes nothing another app shows" cases (the 27 fixtures less the 3 that open read-only);
+  - 2 known differences (BL-15, BL-16), each pinning what Filo saves and what each parser shows. They are also the proof that the comparison can fail.
+  - Where blocks meet, and at a `<br>`, the text counts a space: Filo's markdown-it render and micromark's don't put the same white space between blocks, and words apart on screen must compare apart.
+- **`src/renderer/lib/editor/markdownSync.ts`:** `markdownRenderer` is exported, so the test reads exactly the markdown-it instance the read-only check uses. No other app code changed.
+- **Gates (`scripts/gates/markdownFormat.mjs`):**
+  - `one-markdown-parser` (new): in `src/renderer`, `src/main` and `src/shared` (`.ts`, `.svelte`, `.mts`, `.mjs`), no static, dynamic, `require` or bare import of `marked`, `micromark*`, `remark*`, `unified`, `mdast-*`, `commonmark` or `@tiptap/markdown`, a subpath included; none of them in `dependencies` or `optionalDependencies`; the plan's hint.
+  - `markdown-body-roundtrip`: also pins the new test (it renders with micromark and with `markdownRenderer`, reads the golden corpus and `TOOLBAR_CASES`, keeps the save check, nothing skipped or focused).
+  - `toolbar-formatting-saved`: looks for each toolbar command in the cases file (comments stripped), requires the round-trip test to loop over `TOOLBAR_CASES` from the helper, and refuses a skip in either file.
+- **CLAUDE.md:** the gate count (90); the Tech Stack "Markdown parsing" row; the `markdownFormat` row; the `helpers/` line; the toolbar sentence in Common Gotchas; a Testing Strategy line for the second parser (deviation 6).
+- **BACKLOG:** BL-15 to BL-18, with a shared note on how they were found.
+- **This plan:** the status line, notes under 5.2, 5.3, 6.3 and Phase 8, and this outcome.
+
+#### Pass test
+
+| Check | Result | Before |
+|---|---|---|
+| `npm run ci:verify` (Windows) | **Green in 270 s.** eslint 0 warnings; knip no findings; svelte-check 851 files, 0 errors, 0 warnings; 798 files: 7,717 passed, 5 skipped (+124, all in the new file: a per-test comparison with a run of `HEAD` shows no other file's tests changed); 90/90 gates in 9.2 s. | Phase 4: 244 s, 797 files, 7,593 passed, 89 gates |
+| Gates bite | 16 probes, each a violation written into the real source, the gate run, the file restored: 8 for `one-markdown-parser` (an import of `marked` in a renderer `.ts`, a dynamic `import('micromark')` in a component, `import 'remark-gfm'` in main, `require('unified')` in shared, a `mdast-util-from-markdown/…` subpath, `@tiptap/markdown`, `commonmark`, and `micromark` in `dependencies`), 4 for the new test's pinning (a skipped case, the save check removed, the toolbar cases not read, micromark not called), 4 for `toolbar-formatting-saved` (a toolbar command's case removed, the same case left only in a comment, the test running a slice of the cases, a skipped case). All 16 fail with the right message; the tree is clean afterwards. The first run missed the last probe: the skip check on the cases file had been left out, and was added. | |
+| Built app | All 28 files in `dist/` are identical to the byte to the Phase 4 build (`main.js` 420,366, `preload.js` 193,825, renderer `index.js` 2,553,929, `tiptap.js` 1,194,432); no `require("zod")`. micromark is a dev dependency and nothing in the app imports it. | Phase 4 build |
+| `npm run lint`, `npm run knip` | 0 warnings; knip reports nothing (the new packages count as used by the test). | |
+| `npm audit` | 8 high, all GHSA-ch52-4w7c-c8xp in electron-builder's chain (BL-11). The micromark packages add none. | 8 high, BL-11 |
+
+The E2E suite was not run: nothing in Electron, the build, the editor's behaviour or the Raw view changed (the one app-code change is an `export`), and the built app is unchanged (above).
+
+#### Deviations from the plan
+
+1. **The test compares more than visible text** (decision 2): ticked boxes, link and image addresses, and a save check for editable fixtures.
+2. **Inputs beyond the plan were probed, and not committed:** the real corpus (713 notes) and 3,000 generated documents, in throwaway test files deleted afterwards. The 27 generated documents micromark couldn't explain, and the reduced examples, were checked against GitHub's renderer through `gh api markdown`. That sent generated test text to GitHub, nothing from a note.
+3. **Known differences are pinned as tests**, not only listed in a comment, so a fix to the writer shows up as a failing case.
+4. **The helper holds more than `CASES`:** `applyToolbarCase`, `normalisedDoc` and `selectFirstBlock` moved with it, since both suites (and Phase 6) run a case the same way.
+5. **App code:** `markdownRenderer` exported from `markdownSync.ts`; and the `toolbar-formatting-saved` gate changed to follow the moved cases, which the plan didn't mention.
+6. **CLAUDE.md's Testing Strategy line is written now**, not in Phase 8, as Phase 4 did for its own lines.
+7. **The text comparison counts a space where blocks meet and at a `<br>`.** With `textContent` alone, 23 of the 27 fixtures and 4 toolbar cases "differed": Filo's markdown-it render runs the text of adjacent blocks together where micromark's doesn't.
+
+#### New findings
+
+- **BL-15:** text typed with a single `~` each side (`a ~one~ b`) is saved as typed; GitHub strikes it through. Pinned in the test.
+- **BL-16:** a `~` typed right before (or after) struck text is saved as a run of three tildes (`x ~~~a~~ y`); GitHub shows the tildes and strikes nothing. Pinned in the test.
+- **BL-17:** a bare web address in text can be saved with a `\` inside it (`…/A\_(b)`), which GitHub's own linking keeps in the link, breaking it. micromark as set up here can't see it.
+- **BL-18:** italic, struck-through and coloured text holding `**` is saved as `<span …>*~~2** -~~*</span>`, without the escapes Filo writes everywhere else (`minimalEscapes.ts` finds markdown-it doesn't need them there); GitHub closes the italic on the `**`. micromark agrees with markdown-it here, so the test can't see it.
+- **micromark's own quirk** (emphasis and strikethrough paired in separate passes): not Filo's, so no backlog item; the test's header tells the next reader to check such a difference against GitHub first.

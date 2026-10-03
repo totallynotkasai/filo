@@ -132,7 +132,22 @@ const SKIPPED_TEST_RE = /\b(?:it|describe)\.skip\b|\bit\.todo\b/;
 // no button can produce formatting the file can't hold.
 const TOOLBAR_CONFIG = 'src/renderer/lib/editor/toolbarConfig.ts';
 const TOOLBAR_ROUNDTRIP_TEST = 'src/tests/unit/toolbarFormattingRoundTrip.test.ts';
+const TOOLBAR_CASES = 'src/tests/helpers/toolbarCases.ts';
 const PROPERTY_TEST = 'src/tests/unit/editorRoundTripProperty.test.ts';
+
+// Markdown parsers other than markdown-it, by package name (a subpath included).
+const OTHER_MARKDOWN_PARSER =
+  /^(?:marked|micromark(?:-[\w.-]+)?|remark(?:-[\w.-]+)?|unified|mdast-[\w.-]+|commonmark|@tiptap\/markdown)(?:\/.*)?$/;
+// The module named by an import, a dynamic import, a require, or a bare `import '…'`.
+const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s*)(['"])([^'"\n]+)\1/g;
+const ELSEWHERE_TEST = 'src/tests/unit/markdownContentElsewhere.test.ts';
+const ELSEWHERE_TOKENS = [
+  { token: /\bmicromark\s*\(/, why: 'renders with the second parser' },
+  { token: /\bmarkdownRenderer\s*\(/, why: "renders with the note's own markdown-it" },
+  { token: /fixtures\/markdown-body-roundtrip/, why: 'reads the golden corpus' },
+  { token: /\bTOOLBAR_CASES\b/, why: "reads every toolbar case's saved note" },
+  { token: /saving a note that opens editable changes nothing another app shows/, why: 'checks a save changes nothing micromark shows' },
+];
 
 const INVARIANT_TEST = 'src/tests/unit/frontmatterInvariant.test.ts';
 const NOTE_WRITER = 'src/renderer/lib/notes/noteWriter.ts';
@@ -286,6 +301,34 @@ export const checks = [
     },
   },
   {
+    id: 'one-markdown-parser',
+    title: 'markdown-it is the only Markdown parser in the app (no marked / micromark / remark / unified / mdast / commonmark / @tiptap/markdown)',
+    hint:
+      'markdown-it is the one Markdown parser in the app; a second one reads notes differently (the YAML lesson). ' +
+      'Tests may use others as oracles.',
+    run(ctx) {
+      const out = [];
+      const files = ctx.files(['src/renderer', 'src/main', 'src/shared'], { ext: ['.ts', '.svelte', '.mts', '.mjs'] });
+      for (const rel of files) {
+        const raw = ctx.read(rel);
+        const rawLines = raw.split(/\r?\n/);
+        stripCommentsKeepLines(raw).split(/\r?\n/).forEach((line, i) => {
+          for (const m of line.matchAll(IMPORT_SPECIFIER)) {
+            if (OTHER_MARKDOWN_PARSER.test(m[2])) out.push(fail(rel, i + 1, `imports ${m[2]}: ${(rawLines[i] ?? '').trim()}`));
+          }
+        });
+      }
+      const pkg = JSON.parse(ctx.read('package.json') ?? '{}');
+      for (const field of ['dependencies', 'optionalDependencies']) {
+        for (const name of Object.keys(pkg[field] ?? {})) {
+          if (OTHER_MARKDOWN_PARSER.test(name)) out.push(fail('package.json', undefined, `${name} is a runtime dependency (${field})`));
+        }
+      }
+      if (files.length < 150) out.push(fail('src', undefined, `tripwire: only ${files.length} files scanned (expected >= 150)`));
+      return out;
+    },
+  },
+  {
     id: 'editor-body-discipline',
     title: 'editor load / reload / unmount never turns an unedited note into a write or an undo step',
     hint: 'Each rule pins the mechanism behind a behaviour proven in src/tests/component/.',
@@ -379,8 +422,10 @@ export const checks = [
   },
   {
     id: 'markdown-body-roundtrip',
-    title: 'the golden-corpus body round-trip test and editor integration suite stay in place',
-    hint: 'These tests pin the bytes an unedited note is written back with. Restore them; re-baseline an .expected.md only with a byte-level justification.',
+    title: 'the golden-corpus body round-trip test, the second-parser check and the editor integration suite stay in place',
+    hint:
+      'These tests pin the bytes an unedited note is written back with, and that those bytes read the same in another ' +
+      'parser. Restore them; re-baseline an .expected.md only with a byte-level justification.',
     run(ctx) {
       const out = [];
       const test = ctx.read(ROUNDTRIP_TEST);
@@ -398,6 +443,15 @@ export const checks = [
         if (sources.length < ROUNDTRIP_MIN_FIXTURES) out.push(fail(ROUNDTRIP_FIXTURES, undefined, `only ${sources.length} source fixtures (< ${ROUNDTRIP_MIN_FIXTURES})`));
         for (const f of ROUNDTRIP_REQUIRED_FIXTURES) if (!sources.includes(f)) out.push(fail(`${ROUNDTRIP_FIXTURES}/${f}`, undefined, 'missing'));
       }
+      const elsewhere = ctx.read(ELSEWHERE_TEST);
+      if (elsewhere === null) out.push(fail(ELSEWHERE_TEST, undefined, 'missing (a saved note reads the same in another parser)'));
+      else {
+        const src = stripComments(elsewhere);
+        out.push(...tokenChecks(ELSEWHERE_TEST, src, { required: ELSEWHERE_TOKENS }));
+        if (SKIPPED_TEST_RE.test(src) || /\bit\.only\b|\bdescribe\.only\b/.test(src)) {
+          out.push(fail(ELSEWHERE_TEST, undefined, 'contains a skipped / focused / todo test'));
+        }
+      }
       for (const s of EDITOR_SUITE) {
         const raw = ctx.read(s.file);
         if (raw === null) { out.push(fail(s.file, undefined, 'missing (editor integration suite)')); continue; }
@@ -412,31 +466,38 @@ export const checks = [
     id: 'toolbar-formatting-saved',
     title: "every formatting toolbar command has a save → reload case (no button makes formatting the file can't hold)",
     hint:
-      'Add a case to toolbarFormattingRoundTrip.test.ts that runs the command, saves, reloads and compares. If the reload ' +
-      'differs or is flagged lossy, give the formatting a Markdown or HTML form first (see blockLayout.ts).',
+      'Add a case to src/tests/helpers/toolbarCases.ts that runs the command; toolbarFormattingRoundTrip.test.ts saves, ' +
+      'reloads and compares every case. If the reload differs or is flagged lossy, give the formatting a Markdown or HTML ' +
+      'form first (see blockLayout.ts).',
     run(ctx) {
       const out = [];
       const toolbar = ctx.read(TOOLBAR_CONFIG);
       const toolbarTest = ctx.read(TOOLBAR_ROUNDTRIP_TEST);
+      const rawCases = ctx.read(TOOLBAR_CASES);
       if (toolbar === null) out.push(fail(TOOLBAR_CONFIG, undefined, 'missing'));
       if (toolbarTest === null) out.push(fail(TOOLBAR_ROUNDTRIP_TEST, undefined, 'missing (toolbar save → reload suite)'));
-      if (toolbar !== null && toolbarTest !== null) {
+      if (rawCases === null) out.push(fail(TOOLBAR_CASES, undefined, 'missing (the toolbar cases)'));
+      if (toolbar !== null && toolbarTest !== null && rawCases !== null) {
+        const cases = stripComments(rawCases);
         out.push(...tokenChecks(TOOLBAR_ROUNDTRIP_TEST, toolbarTest, {
           required: [
             { token: /\bcreateTiptapEditor\s*\(/, why: 'drives the real editor factory' },
             { token: /\bloadMarkdownIntoEditor\s*\(/, why: 'reloads through the production load path' },
             { token: /expect\(lossy\)\.toBe\(false\)/, why: 'a reloaded note must not open read-only' },
+            { token: /for\s*\(\s*const\s+\w+\s+of\s+TOOLBAR_CASES\s*\)/, why: 'runs every toolbar case' },
+            { token: /from\s+['"]\.\.\/helpers\/toolbarCases['"]/, why: 'reads the cases from helpers/toolbarCases.ts' },
           ],
         }));
         if (SKIPPED_TEST_RE.test(toolbarTest)) out.push(fail(TOOLBAR_ROUNDTRIP_TEST, undefined, 'contains a skipped/todo test'));
+        if (SKIPPED_TEST_RE.test(cases)) out.push(fail(TOOLBAR_CASES, undefined, 'contains a skipped/todo test'));
         const commands = new Set();
         for (const m of toolbar.matchAll(/chainIfEditable\(\)\?\.focus\(\)((?:\.\w+\([^)]*\))+)\.run\(\)/g)) {
           for (const c of m[1].matchAll(/\.(\w+)\(/g)) commands.add(c[1]);
         }
         if (commands.size === 0) out.push(fail(TOOLBAR_CONFIG, undefined, 'found no toolbar commands to check (did the chain shape change?)'));
         for (const name of commands) {
-          if (!new RegExp(`\\.${name}\\(`).test(toolbarTest)) {
-            out.push(fail(TOOLBAR_ROUNDTRIP_TEST, undefined, `no save → reload case runs the toolbar command ${name}()`));
+          if (!new RegExp(`\\.${name}\\(`).test(cases)) {
+            out.push(fail(TOOLBAR_CASES, undefined, `no save → reload case runs the toolbar command ${name}()`));
           }
         }
       }

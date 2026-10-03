@@ -258,7 +258,7 @@ export function isLossyMarkdownRoundTrip(original: string, roundTripped: string,
 }
 
 /** The editor's markdown-it, when it has tiptap-markdown's parser. */
-function markdownRenderer(editor: Editor): MarkdownRenderer | undefined {
+export function markdownRenderer(editor: Editor): MarkdownRenderer | undefined {
   return (editor as { storage?: { markdown?: { parser?: { md?: MarkdownRenderer } } } }).storage?.markdown?.parser?.md;
 }
 

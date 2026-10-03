@@ -12,7 +12,7 @@ Everything known to be open that no current plan covers, in one place. Start the
 - **Useful** (improvements): 0/10 = no gain; 5/10 = a clear improvement you'd notice every week or so; 10/10 = essential.
 - **Hard**: 0/10 = minutes; 5/10 = a few days, several files, new tests; 10/10 = weeks, rewriting a major part of Filo.
 
-Last updated 2026-10-03, after the library updates plan's Phase 3 ([LIBRARY_UPDATES_PLAN_2026-10-02.md](LIBRARY_UPDATES_PLAN_2026-10-02.md)), which added BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
+Last updated 2026-10-03, after the library updates plan's Phase 5 ([LIBRARY_UPDATES_PLAN_2026-10-02.md](LIBRARY_UPDATES_PLAN_2026-10-02.md)), which added BL-15 to BL-18. Phase 3 added BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
 
 ---
 
@@ -34,6 +34,10 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-10 | A unit test that makes its own write scheduler leaves state behind for the next test | Audit-27 Phase 1 | 0/10 | 1/10 |
 | BL-11 | `npm audit` reports 8 high findings in electron-builder's download chain (build time only) | Library updates Phase 0 | 0/10 | 2/10 |
 | BL-14 | An empty text tile or Kanban card never shows its "Start typing..." placeholder | Library updates Phase 3 | 1/10 | 1/10 |
+| BL-15 | Text typed with a single `~` each side (`a ~one~ b`) shows struck through on GitHub | Library updates Phase 5 | 1/10 | 3/10 |
+| BL-16 | A `~` typed right before struck text makes GitHub show the tildes and strike nothing | Library updates Phase 5 | 1/10 | 2/10 |
+| BL-17 | A bare web address in text can get a `\` that GitHub's own linking keeps in the link | Library updates Phase 5 | 1/10 | 3/10 |
+| BL-18 | Italic, struck-through and coloured text holding `**` reads differently on GitHub | Library updates Phase 5 | 1/10 | 2/10 |
 
 ### BL-01: the formatting toolbar cuts off its left end (Impact 2/10, Hard 2/10)
 - **What you see:** at a window about 1,380 px wide or narrower, the text-formatting toolbar overflows. Its left end is cut off, so the font box shows only its arrow, and you can't scroll to it.
@@ -99,6 +103,29 @@ None of these loses data. Scores are estimates made when the item was written do
 - **Why:** the editor does mark the empty paragraph (`data-placeholder="Start typing..."`, from `createTiptapEditor`'s Placeholder), but only the Document editor has CSS that shows it (`DocumentEditor.svelte`, `.tiptap .is-empty::before`), and the Document editor sets its own placeholder to `''` on purpose. Tiles and cards have no such rule. Found in the library updates plan's Phase 3 built-app check; the same before and after the TipTap 3.31.4 update (`@tiptap/extensions` is byte-identical between them).
 - **Where:** `src/renderer/lib/editor/createEditor.ts` (`Placeholder.configure`), `src/renderer/components/boards/DocumentEditor.svelte` (the only `attr(data-placeholder)` rule), `TextTile.svelte` / `LazyTextTileBody.svelte`.
 - **Decide first:** show it (move the `::before` rule to `style.css` for every note editor, in `--text-tertiary`), or drop the default text so nothing pretends to show one. Showing it fits the design doc's placeholder line ("Placeholder text in empty editors"). Check the axe scan and a Kanban card's static preview (`LazyTextTileBody`) either way.
+
+**BL-15 to BL-18 in common.** Each is a note Filo saves that reads the same in Filo (and opens editable) but reads differently on GitHub, checked against GitHub's own renderer. Nothing is lost in Filo. None occurs in the golden corpus, the toolbar cases, or the 333 notes of the real corpus that open editable. They were found by running 3,000 documents from the round-trip property test's generator through micromark, then the documents that differed through GitHub (the library updates plan's Phase 5 outcome has the counts). BL-15 and BL-16 are pinned under "known differences" in `src/tests/unit/markdownContentElsewhere.test.ts`: a fix makes those cases fail, and each then moves into that test's inputs. BL-17 and BL-18 are outside what micromark, as that test sets it up, can see. Changing what Filo writes here is Markdown-profile work (Track B), where the readings of other apps are weighed together.
+
+### BL-15: single tildes show as strikethrough on GitHub (Impact 1/10, Hard 3/10)
+- **What you see:** type `a ~one~ b` in a note. Filo shows it as typed and saves it as typed. GitHub (and any GitHub-flavoured reader) shows "one" struck through: its strikethrough takes one tilde each side as well as two. markdown-it, which Filo reads with, takes only `~~`. Other apps differ again: Pandoc, for one, reads `~one~` as subscript.
+- **Where:** typed text goes through `src/renderer/lib/editor/minimalEscapes.ts`, which writes `~` bare wherever markdown-it renders the note the same. `renderedSame.ts` counts an escape added in front of `~` as a change (`EXTENSION_SYNTAX`), so a line from another app keeps its `~sub~`.
+- **Fix idea:** escape a pair of single tildes that GitHub would pair (`a \~one\~ b`) only in text typed in Filo, never on a line the file already holds (`minimalEscapes` already writes such lines as the file spells them). Then every app shows the tildes, as Filo does. Decide first whether Filo should keep the GitHub reading instead.
+
+### BL-16: a `~` right before struck text (Impact 1/10, Hard 2/10)
+- **What you see:** type `x ~`, then struck-through `a`, then ` y`. Filo saves `x ~~~a~~ y`. markdown-it takes the last two tildes of the three as the opener, so Filo reads it back as typed. GitHub reads a run of three tildes as text: it shows `x ~~~a~~ y` and strikes nothing. The same holds for a `~` right after struck text (`x ~~a~~~ y`). A `~` inside the struck text is already escaped (`~~\~a~~`) and reads the same everywhere.
+- **Where:** the strikethrough serialiser and `src/renderer/lib/editor/delimiterRuns.ts` (which already rewrites delimiter runs markdown-it wouldn't read back where they stand), with `minimalEscapes.ts`.
+- **Fix idea:** escape a plain-text `~` that touches a `~~` delimiter (`x \~~~a~~ y`), or write such a run as `<s>a</s>`. Add the case to `markdownBodyRoundTrip.test.ts` and move the pinned case in `markdownContentElsewhere.test.ts` into its inputs.
+
+### BL-17: GitHub's linking of a bare address keeps Filo's escape (Impact 1/10, Hard 3/10)
+- **What you see:** a web address that is text rather than a link (pasted as plain text, or a line from another app that you then edit) gets a backslash where markdown-it would otherwise pair a `_` or `*` in it with one nearby. `_a https://en.wikipedia.org/wiki/A_(b)` is saved as `_a https://en.wikipedia.org/wiki/A\_(b)`. Filo and markdown-it read the `\_` as `_`. GitHub turns bare addresses into links before it reads escapes, so its link is `https://en.wikipedia.org/wiki/A%5C_(b)`, which is broken, and the backslash shows. Typing an address and a space makes it a link (`<…>`), which isn't affected.
+- **Where:** `src/renderer/lib/editor/textEscapes.ts` / `minimalEscapes.ts`. `markdownContentElsewhere.test.ts` leaves GitHub's bare-address linking out on purpose (it also moves text for reasons that have nothing to do with Filo), so it can't see this.
+- **Fix idea:** write a bare address that needs an escape inside it as an autolink (`<https://…>`), which every app reads the same, instead of escaping inside it. That changes text into a link in the note, so it needs the same care as `autolinkMarkdown.ts`.
+
+### BL-18: italic, struck-through and coloured text holding `**` (Impact 1/10, Hard 2/10)
+- **What you see:** make `2** -` italic, struck through and coloured. Filo saves `<span style="color: …;">*~~2** -~~*</span>`. markdown-it pairs the `~~` first, so Filo reads it back as typed. GitHub follows CommonMark's order: the `**` closes the italic, so it shows `~~2` in italics, then `* -~~*` as text, and nothing struck. micromark happens to agree with markdown-it here, so `markdownContentElsewhere.test.ts` can't see it.
+- **Only with all three:** without the colour, or without the strikethrough, Filo escapes the stars (`*~~2\*\* -~~*`, `<span …>*2\*\* -*</span>`), which GitHub reads as Filo does; so does bold with strikethrough in a span (`**~~2\*\* -~~**`).
+- **Where:** `src/renderer/lib/editor/minimalEscapes.ts` drops each escape markdown-it doesn't need. Inside the span it finds markdown-it reads the text the same without the `\*\*`, so it drops them; GitHub needs them.
+- **Fix idea:** keep a `\*` or `\_` inside text that emphasis and strikethrough both wrap (markdown-it and CommonMark order that pairing differently), or more generally keep an escape whose removal changes how a strict CommonMark reader pairs delimiters. Check the result against GitHub (`gh api markdown -f mode=gfm -f text=…`), since neither markdown-it nor micromark reads this one as GitHub does.
 
 ---
 

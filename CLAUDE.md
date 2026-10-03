@@ -48,7 +48,7 @@ Package:        npm run package
 
 The `coverage` job (the vitest coverage ratchet, on Linux) runs weekly (Monday 06:00 UTC) and on demand (Actions tab → CI → Run workflow), since it repeats the whole suite instrumented. The local E2E run drives the built app with Playwright, opening real Filo windows: the axe scan and, with `FILO_E2E_SCALE=1`, the 5,000-note scale budgets included (`FILO_E2E_BUDGET_FACTOR` loosens those budgets on a slower machine).
 
-**Comments:** explain *why* (the invariant, the hazard a guard prevents), never history. No audit IDs, phases, dates or "used to…" in code: that belongs in commit messages. Plans and audit reports live in `docs/` (active) and `docs/archive/` (done), not the repo root.
+**Comments:** explain *why* (the invariant, the hazard a guard prevents), never history. No audit IDs, phases, dates or "used to…" in code: that belongs in commit messages. Plans and audit reports live in `docs/` (active) and `docs/archive/` (done), not the repo root. Open findings and deferred work that no plan covers yet live in `docs/BACKLOG.md`: start a new plan there, and add what a phase finds but doesn't fix.
 
 ---
 

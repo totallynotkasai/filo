@@ -20,6 +20,9 @@ Unit tests:     npm run test:unit
 E2E tests:      npm run build && npm run test:e2e   (drives dist/; FILO_E2E_SCALE=1 adds the scale budgets)
 Build:          npm run build
 Package:        npm run package
+Corpus check:   npm run corpus:list -- <list.txt> --vaults <dir> [--extra <dir>]   (by hand; see Testing Strategy)
+                CORPUS_LIST=<list.txt> CORPUS_OUT=<result.json> npm run corpus:run
+                npm run corpus:compare -- <old.json> <new.json> [<diff.json>]
 ```
 
 ### CI gates (`.github/workflows/ci.yml`)
@@ -746,6 +749,8 @@ filo/
 │       ├── unit/                      # Vitest unit tests (flat; contracts/ holds whole-codebase contract checks)
 │       ├── component/                 # Vitest: real components mounted in jsdom
 │       ├── characterisation/          # Vitest: whole App against a real temp vault + real IPC handlers
+│       ├── corpus/
+│       │   └── corpusRun.ts           # The corpus check: every listed note through a real editor (npm run corpus:run; not in ci:verify)
 │       ├── e2e/                       # Playwright on the built app (`*.e2e.ts`; `helpers/app.ts`: launchBuilt, quitLikeUser, openNoteByName, generateVault)
 │       ├── helpers/                   # Shared test helpers (memory vault, window.filo bridge, machine id, fake command, editor loop breaker)
 │       │   └── seedBoard.ts           # Seeds the board cache from runtime tiles, then calls setBoard
@@ -753,6 +758,9 @@ filo/
 │           └── js-yaml.d.ts           # Test-only js-yaml declaration (js-yaml is a test oracle, banned from the app)
 │
 └── scripts/                           # Build / dev scripts (electron-vite launcher)
+    ├── gates/                         # ci:gates: the static checks (see "CI gates")
+    ├── corpus/                        # The corpus check: buildList.mjs (which notes), compare.mjs (two results)
+    └── perf/                          # genVault.mjs (a large deterministic vault) + measure.mjs
 ```
 
 ### Structure Rules
@@ -1028,6 +1036,7 @@ Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, U
 - **Component tests (jsdom + Vitest):** `vitest.config.mts` has three projects: `unit` (`src/tests/unit/`), `component` (`src/tests/component/`, resolved with the `browser` export condition so Svelte 5 client `mount()` works) and `characterisation` (below). Component tests mount the REAL components with [src/tests/component/helpers/mountEditor.ts](src/tests/component/helpers/mountEditor.ts) (`recordingFilo`, `mountTextTile`, `mountDocumentEditor`, `pressUndo`, `settle`, `drainDebounce`). All three projects run in `test:unit:strict`. Heavy interaction coverage still lives in Playwright E2E.
 - **Characterisation suite:** `src/tests/characterisation/` mounts the whole `App.svelte` against a real temp vault, with the real main-process IPC handlers behind `window.filo` (only the Electron shell is faked). The specs pin what the user sees (views, one model across views, frontmatter edits, renames, disk changes, delete + undo through the trash, tag undo, the tag row and raw view, bytes never written by looking) and call only the `harness/` adapter. When an internal API moves, update the harness, not the specs; the `characterisation-suite` gate enforces this. The one skip allowed is `it.skipIf(onLinux)` (`harness/platform.ts`), for the few cases that time out only on the Linux CI runner's file watcher; Filo targets Windows, where they run. `npm run scratch-vault` uses the same harness to build the dogfooding vault.
 - **E2E tests (Playwright):** `src/tests/e2e/*.e2e.ts` drive the **built** app (`dist/main/main.js`, so `npm run build` first) the way the user does, through [src/tests/e2e/helpers/app.ts](src/tests/e2e/helpers/app.ts): `launchBuilt` (fresh user-data dir, the folder picker and native message boxes stubbed in main, window restored and un-throttled), `quitLikeUser` (the window's close, so the quit flow runs), `openNoteByName`, `toasts`, `confirmDialogs`, `freshVault`, `generateVault(n)`, `hashVault`. A spec checks what is on screen or on disk, never a store; gate `e2e-drives-built-app` forbids `import('/src/…')` in the page. One worker (parallel Electron instances fight over `DevToolsActivePort`). The specs: editor fidelity (formatting reopens editable), the Kanban click, Syncthing-style deliveries, quit while minimized, no bytes written by looking (1,000 generated notes), a day's first use across launches, vault switch mid-edit and a BOM edit, crash recovery, keyboard access, the Search panel's close button and drag, an axe scan of each view (injected into the page; colour contrast is `themeContrast.test.ts`'s job), and `scaleBudgets` (only with `FILO_E2E_SCALE=1`). The suite runs locally on Windows, not in GitHub CI. `FILO_E2E_MAIN` points the suite at another build, to see a spec fail where its bug is still present.
+- **Corpus check (by hand):** run it after any change to the editor, TipTap, markdown-it or prosemirror-markdown. `corpus:list` lists the repo's notes, a vaults folder and `node_modules` READMEs (de-duplicated by content; `--extra <dir>` adds any folder, e.g. one made by `scripts/perf/genVault.mjs`). `corpus:run` loads each note into a real editor and records its read-only verdict and what a save would write. Run it on the base commit too, with the same list: `git worktree add --detach <dir> <sha>`, a `node_modules` junction to this checkout's (PowerShell `New-Item -ItemType Junction`; unlink it with `cmd /c rmdir` before `git worktree remove`), and the runner and its config copied in when the base predates them. Then `corpus:compare`: it exits 1 when an output changed or a note became read-only, and counts notes edited between the runs apart.
 - **Test file location:** Unit tests go flat in `src/tests/unit/`, named after the module or behaviour they cover (`noteWriter.test.ts`). `src/tests/unit/contracts/` holds checks that read the whole codebase (IPC envelope, untrusted sinks, command coverage); it is not the characterisation suite. Component tests go in `src/tests/component/`, characterisation specs in `src/tests/characterisation/`, E2E specs in `src/tests/e2e/` as `<behaviour>.e2e.ts`.
 
 ---

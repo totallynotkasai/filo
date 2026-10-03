@@ -8,6 +8,7 @@
     "src/tests/unit/**/*.ts",
     "src/tests/component/**/*.ts",
     "src/tests/characterisation/**/*.ts",
+    "src/tests/corpus/**/*.ts",
     "src/tests/helpers/**/*.ts",
     "src/tests/e2e/**/*.ts",
     "src/tests/setup.ts",

@@ -1,6 +1,6 @@
 # Library updates and new tools: implementation plan
 
-**Status (2026-10-02): plan only; nothing started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
+**Status (2026-10-03): Phase 0 done; Phases 1–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
 
 Source: [TRACK_B_INVESTIGATION_2026-10-02.md](TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
 
@@ -100,6 +100,8 @@ The recipe is in `docs/archive/AUDIT26_IMPLEMENTATION_PLAN_2026-09-30.md` §3.6.
 
 **Pass test:** two runs on `HEAD` give identical results (`compare` reports 0 changed, 0 newly read-only), and the total is close to the Audit-26 run (18,870 notes, 372 read-only), allowing for files added or removed since.
 
+*Changed at the start of Phase 0 (owner, 2026-10-03):* 18,192 of the Audit-26 run's 18,870 notes came from other sessions' temporary folders, almost all of them four generated speed-test vaults of filler text. Decision 7 drops those folders, so the corpus is the repo, the vaults folder and the READMEs: about 700 notes. The second half of the pass test becomes: on the paths both runs hold, the read-only verdicts are compared with the Audit-26 run. A generated set can be added with `--extra` if a later phase needs one (see Phase 8).
+
 ---
 
 ## Phase 1: safe updates (Useful 3/10, Hard 1/10, Risk 1/10)
@@ -121,6 +123,7 @@ The recipe is in `docs/archive/AUDIT26_IMPLEMENTATION_PLAN_2026-09-30.md` §3.6.
 
 - Run `npm install`. If Electron's postinstall leaves no binary on this machine (it has before), run `node node_modules/electron/install.js`.
 - The TipTap patch is not here: it goes in Phase 3, on its own branch.
+- *From Phase 0 (2026-10-03):* eslint 10.12.0 is out since this table was written; `npm outdated` lists it as wanted under `^10.11.0`. Taking it with the floor at `^10.12.0` fits this phase.
 
 ### 1.2 `electron.vite.config.mts`
 
@@ -133,6 +136,7 @@ The recipe is in `docs/archive/AUDIT26_IMPLEMENTATION_PLAN_2026-09-30.md` §3.6.
 - `npm run build`: `dist/main/main.js` and `dist/preload/preload.js` still contain no `require("zod")` (as in 0.1).
 - The E2E suite (an Electron change).
 - `npm audit`: 0.
+  - *From Phase 0 (2026-10-03):* this can't reach 0 yet. Since the plan was written, GHSA-ch52-4w7c-c8xp (`http-cache-semantics`, high) adds 8 findings through electron-builder's download chain. They are build-time only, and no release fixes them; electron-builder 27 does. See BACKLOG BL-11. Read this pass test as "only GHSA-ch52-4w7c-c8xp left, in the electron-builder chain", unless Phase 1 tries BL-11's `overrides` idea and `npm run package:dir` still works.
 
 ---
 
@@ -506,6 +510,7 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
   - Testing Strategy: the browser project and the second parser;
   - the gate count.
 - **TRACK_B_INVESTIGATION §6:** mark what was done. **BACKLOG:** add any new findings.
+- **Optional, if a larger corpus is needed (owner, 2026-10-03):** once every change is in, generate a vault with `node scripts/perf/genVault.mjs <dir>` (deterministic) and add it to the corpus with `corpus:list -- … --extra <dir>`. Its notes are generated, so they add volume rather than variety.
 - Move this plan to `docs/archive/` with its outcomes.
 
 ---
@@ -541,3 +546,137 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
 ## Outcomes
 
 *(Each phase adds its outcome here when it is done.)*
+
+### Phase 0 outcome (2026-10-03)
+
+**Status:** done, verified on Windows.
+- Baseline taken on `78e3980`: the plan and its docs committed on top of `29b96ee`, no code change.
+- The corpus pass test is met: two runs identical, and the verdicts match the Audit-26 run on every shared note.
+- `npm run ci:verify` green with the Phase 0 files: see the last line of "What changed".
+
+#### 0.1 Baseline (what later phases compare against)
+
+| Check | Result on `78e3980` |
+|---|---|
+| `npm run ci:verify` | Green in 251 s (4 min 11 s). 795 test files: 7,525 tests passed, 5 skipped (7,530). `test:unit:strict` took 206.8 s. 89/89 gates in 8.2 s. |
+| E2E, `FILO_E2E_SCALE=1` | 28 passed in 2.7 min, the three scale budgets included (none skipped). |
+| `npm audit` | **9 findings, not the 1 expected:** DOMPurify (low, as planned), plus 8 high from one new advisory in electron-builder's download chain. See "New findings". |
+| `dist/main/main.js` | 420,366 bytes. No `require("zod")`; zod is bundled (`ZodError` appears 5 times). It requires only `electron` and Node built-ins (`buffer`, `crypto`, `dns`, `fs`, `os`, `path`, `stream`, `url`, `util`). |
+| `dist/preload/preload.js` | 193,825 bytes. No `require("zod")`; zod bundled (`ZodError` 5 times). It requires only `electron`. |
+| Corpus check | 684 notes, 347 read-only, 187 saved byte for byte, 0 errors, 27.6 s a run. Details in 0.2. |
+
+**`npm outdated`:**
+- **Patch / minor:** TipTap 3.31.3 → 3.31.4 (all 25 `@tiptap/*` packages); vitest and `@vitest/coverage-v8` 5.0.1 → 5.0.3; dompurify 3.4.15 → 3.4.16; electron 44.4.5 → 44.5.1; globals 17.12.0 → 17.13.0; sharp 0.35.4 → 0.35.5; typescript-eslint 8.70.1 → 8.71.0; **eslint 10.11.0 → 10.12.0** (new since the plan).
+- **Majors (the "wait" and "skip" lists):** `@sveltejs/vite-plugin-svelte` 7.3.1, jsdom 30.1.1 (Phase 2), js-yaml 5.4.2, markdown-it 15.0.2, nanoid 6.0.1, typescript 7.0.2, vite 8.3.2.
+
+**`dist/renderer/assets/` after `npm run build`** (25 files, 5,665,769 bytes; hash suffixes left out):
+
+| File | Bytes |
+|---|---|
+| `index.js` | 2,553,342 |
+| `tiptap.js` | 1,185,250 |
+| `lowlight.js` | 384,955 |
+| `TaskListBoard.js` | 308,701 |
+| `MindMapBoard.js` | 264,204 |
+| `index.css` | 204,665 |
+| `KanbanBoard.js` | 188,640 |
+| `LinkTile.js` | 187,515 |
+| `convertToUtf8.js` | 63,389 |
+| `TaskListBoard.css` | 59,913 |
+| `KanbanBoard.css` | 50,729 |
+| `MindMapBoard.css` | 43,152 |
+| `DocumentEditor.js` | 38,737 |
+| `ariaAnnouncer.svelte.js` | 29,895 |
+| `LinkTile.css` | 28,418 |
+| `TagsBrowser.js` | 19,173 |
+| `markdownTileSeed.js` | 12,810 |
+| `DocumentEditor.css` | 10,634 |
+| `replaceAllCommand.js` | 9,813 |
+| `TagsPopupMenu.js` | 8,198 |
+| `TagsBrowser.css` | 5,323 |
+| `BoardBackground.js` | 3,125 |
+| `ariaAnnouncer.css` | 2,962 |
+| `TagsPopupMenu.css` | 2,105 |
+| `BoardBackground.css` | 121 |
+
+#### 0.2 The corpus check in the repo
+
+**The list** (`corpus:list -- <list.txt> --vaults "C:\Users\andre\My Files\Vaults"`): 684 notes. Building it twice gives the same file.
+
+| Source | Notes | Read-only | Saved byte for byte |
+|---|---|---|---|
+| The repo | 103 | 58 | 40 |
+| The vaults folder | 32 | 0 | 30 |
+| `node_modules` READMEs | 549 | 289 | 117 |
+| **All** | **684** | **347** | **187** |
+
+**Pass test:**
+- **Two runs on `HEAD` are identical:**
+  - `corpus:compare` reports 684 compared, 0 changed, 0 newly read-only, 0 newly failed, and exits 0;
+  - a stricter check found every field of all 684 entries identical across the runs.
+- **Against the Audit-26 run** (its `corpus-new.json`, made on Audit-26 Phase 3's code), on the 676 paths both runs hold:
+  - the same 340 notes are read-only;
+  - 0 unlocked, 0 newly read-only;
+  - all 336 editable notes give the same output bytes.
+
+  So the editor changes made since (Audit-26 Phases 4–7, Audit-27) changed nothing on this corpus.
+- **The 8 notes Audit-26 didn't have:** seven docs written since (all read-only) and one vault note (editable).
+- **Why 347, not the Audit-26 run's 372:** that run's read-only notes were 53 repo docs, 289 READMEs and 30 temp-folder files. The temp folders are no longer walked (decision 7), and the repo has gained docs since.
+
+**`compare` proven to bite**, on doctored copies of a real result:
+
+| Doctored copy | Exit | Reported as |
+|---|---|---|
+| One output hash changed | 1 | Changed |
+| One editable note made read-only | 1 | Newly read-only |
+| One note made to fail | 1 | Newly failed |
+| One read-only note unlocked | 0 | Unlocked (counted, not a failure) |
+| One note's input changed | 0 | Listed under "Not compared" |
+
+#### What changed
+
+- **New files:**
+  - `scripts/corpus/buildList.mjs`;
+  - `scripts/corpus/compare.mjs`;
+  - `src/tests/corpus/corpusRun.ts`;
+  - `vitest.corpus.config.mts`.
+- **npm scripts:** `corpus:list`, `corpus:run`, `corpus:compare`.
+- **`tsconfig.tests.json`:** includes `src/tests/corpus/**`, so the `test-typecheck` gate checks the runner (it holds no errors and needs no baseline entry).
+- **CLAUDE.md:**
+  - Quick Reference: the three commands;
+  - Testing Strategy: when to run the check, and the worktree recipe;
+  - project structure: `src/tests/corpus/`, and `scripts/` with `gates/`, `corpus/` and `perf/`.
+- **Docs:**
+  - BACKLOG: BL-11 (below);
+  - this plan: this outcome, a note under 0.2's pass test, notes in Phase 1 (eslint 10.12.0, the audit pass test), and an optional generated-corpus step in Phase 8.
+- **`npm run ci:verify` with all of the above:** green in 242 s.
+  - 795 test files: 7,525 passed, 5 skipped;
+  - 89/89 gates, `test-typecheck` included, which now lists `src/tests/corpus/corpusRun.ts` among its files;
+  - the rebuilt `dist/` has the baseline's sizes to the byte (no app code changed).
+
+#### Deviations from the plan
+
+1. **The corpus is 684 real notes, not about 18,870 (owner, at the start).**
+   - 18,192 of the Audit-26 run's notes came from other sessions' temporary folders, almost all of them four generated speed-test vaults of filler text (`BigVault`, `finderB/perf`, `S6VaultB`, `PerfVault`).
+   - Decision 7 drops those folders, so the pass test's "close to 18,870" couldn't hold. It became a comparison of verdicts with the Audit-26 run on the paths both hold.
+   - The owner kept the real notes only, and added that a generated set can be made at the end if needed (Phase 8 now says how). A run takes 28 s instead of about 29 min.
+2. **`--extra <dir>` (repeatable) in `buildList.mjs`**, for any other folder, such as one `scripts/perf/genVault.mjs` makes. A folder that doesn't exist is refused, rather than silently walking nothing.
+3. **The results record more than the plan listed:**
+   - a hash of each note's body as read (`bodyHash`), so `compare` counts a note edited between two runs apart ("Not compared") instead of as an output change;
+   - whether the output is the file's own body (`same`), so `compare` needs no frontmatter parsing of its own and doesn't re-read files later;
+   - a `meta` header (the list, the count, the time);
+   - notes over 400,000 characters as `skipped` (the old runner dropped them silently; none in this corpus).
+4. **`compare` exits 1 on a difference, and counts a note that newly fails to load as one.** It also reads the old runner's plain path-map results (`data.notes ?? data`), which is how the Audit-26 comparison was made.
+5. **`vitest.corpus.config.mts` sets `disableConsoleIntercept`.** Otherwise vitest holds back the runner's progress lines ("corpus: N of M notes") for a passing test, and a long `--extra` run would print nothing until it ends.
+6. **The worktree recipe in CLAUDE.md** replaces the plan's bare `git worktree add ../filo-base <sha>`, which has no `node_modules`. It is the one earlier corpus runs used: a `node_modules` junction to this checkout, unlinked with `cmd /c rmdir` before `git worktree remove`, and the runner copied in when the base commit predates it.
+7. **The baseline `ci:verify` ran with the new corpus files moved out of the tree,** so the gates checked `HEAD` exactly. They were moved back once that run finished.
+
+#### New findings
+
+- **`npm audit`: 8 high findings, one advisory (GHSA-ch52-4w7c-c8xp), new since the plan** → BACKLOG BL-11.
+  - The chain: `http-cache-semantics` ≤ 4.2.0 (every version) through `got` 11, `@electron/get` 3.1.0, app-builder-lib, electron-builder 26.15.3.
+  - Build time only: it runs when packaging, to download Electron. Nothing of it ships in Filo.
+  - electron-builder `27.0.0-alpha.9` already moves to `@electron/get` 5, without `got`. 27 is on the "wait" list.
+  - **Phase 1's "`npm audit`: 0" can't be met;** Phase 1 now carries a note.
+- **eslint 10.12.0** is out; Phase 1 now carries a note.
+- **What keeps today's corpus notes read-only** is what Audit-26 found: HTML blocks and comments, reference definitions, and inline code inside bold or a link (KNOWN_LIMITATIONS #17). All 32 vault notes open editable.

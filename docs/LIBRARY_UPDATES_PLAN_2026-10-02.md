@@ -1300,7 +1300,26 @@ The E2E suite was not run: nothing in Electron, the build, the editor's behaviou
 
 **Found along the way** (none of them Filo's code):
 - **Keys sent back to back can beat the editor's caret update.** ProseMirror learns that the browser moved the caret from `selectionchange`, which Chromium fires a moment after the key. Playwright sent `{End}{Enter}` with no gap, so Enter split the line where the caret had been before End. A person's keys are tens of milliseconds apart, so this can't happen while typing; a macro tool sending keys at machine speed could hit it. The spec waits after each caret key; CLAUDE.md says why.
-- **ProseMirror's focus guard.** Within 200 ms of the editor taking focus, ProseMirror treats a caret landing on the document's very start as the browser resetting it, and puts the old caret back (prosemirror-view 1.42.5, `DOMObserver.flush`). In a probe, Home pressed at once after focusing seemed to do nothing on the first line. Plain ProseMirror and a bare TipTap StarterKit editor do the same. A person can't press a key within 200 ms of focusing by keyboard; after a click it doesn't apply. The spec's header notes it.
+- **ProseMirror's focus guard** (prosemirror-view 1.42.5, `DOMObserver.flush`).
+  - **What it is for:** when an editor gets focus by keyboard or code, a browser can drop the caret at the very start of the text. ProseMirror spots that and puts the caret back where it was, so typing doesn't land at the top of the note.
+  - **When it acts:** only when all four hold:
+    1. the note took focus less than 200 ms ago;
+    2. no click or touch in it in the last 300 ms;
+    3. the key only moves a caret: no text changes and nothing is selected;
+    4. the caret would land on the note's very first position.
+    
+    It acts once per focus. Plain ProseMirror and a bare TipTap editor behave the same.
+  - **Checked in Chromium 153:**
+    - Ctrl+Home 74 ms after a focus without a click did nothing; a second press worked.
+    - After 250 ms, or straight after a click in the text, the first press worked. ArrowLeft onto the first character behaved like Ctrl+Home.
+    - Typing, Backspace, Shift+Ctrl+Home, Ctrl+A and Ctrl+End were never affected.
+  - **Where Filo can meet it:** the focus comes without a click in the note when:
+    - switching back to Filo's window;
+    - a popup handing focus back to the note;
+    - Tab onto a Kanban card. Its caret is already at the start, so there is nothing to undo there.
+    
+    A very fast keyboard user could press a key within a fifth of a second of that. The worst case is one ignored press of Ctrl+Home (or Home, Up or Left on the first line); the next press works.
+  - In the first probe, Home pressed at once after focusing seemed to do nothing. The spec's header notes the guard.
 - **Backspace after a tab:** `tabKeys.ts` deletes a tab itself, because the browser's handling "next to a non-editable span is unreliable". With that handler switched off, Chromium 153 deleted the tab correctly in all eight positions tried: mid-line, opening a line, the second of two opening a line, ending a line, before a soft break, in bold, in a heading and in a list item. The handler is harmless and may matter in other engines or cases, so it stays.
 
 #### Pass test
@@ -1331,5 +1350,12 @@ The E2E suite was not run: no app code, Electron or build setting changed, and t
 
 #### New findings
 
-- No Filo defect, so no backlog item. The two ProseMirror behaviours above aren't Filo's code and need machine-speed input; the Backspace handler isn't a defect. If you want any of them tracked, they would be BL-19 onwards.
+- **No Filo defect, and no backlog item** (owner, 2026-10-03, after the focus guard was probed in full). The three findings under "Found along the way":
+  - **Keys sent back to back:** these beat ProseMirror's caret update only at machine speed. A person's keys are always far enough apart.
+  - **ProseMirror's focus guard:** it can't affect typing, deleting or selecting. At worst it ignores one key press that would move the caret to the note's very first character, and then only:
+    - within a fifth of a second of the note taking focus without a click in it (switching back to Filo's window, or a popup handing focus back);
+    - once per focus, so the next press works.
+    
+    It is kept: it stops a browser dropping the caret at the top of a note that regains focus, which would be the worse problem. A Filo-side workaround (handling Ctrl+Home itself) was considered and not taken, since it would cover Ctrl+Home only, not Home, Up or Left on the first line.
+  - **The Backspace handler in `tabKeys.ts`:** not needed in Chromium 153 for the eight positions tried. It is harmless and stays.
 - The jsdom soft-break test's gap was a test weakness, fixed here (deviation 5).

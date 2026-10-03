@@ -1,6 +1,6 @@
 # Library updates and new tools: implementation plan
 
-**Status (2026-10-03): Phase 0 done; Phases 1–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
+**Status (2026-10-03): Phases 0 and 1 done; Phases 2–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
 
 Source: [TRACK_B_INVESTIGATION_2026-10-02.md](TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
 
@@ -680,3 +680,66 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
   - **Phase 1's "`npm audit`: 0" can't be met;** Phase 1 now carries a note.
 - **eslint 10.12.0** is out; Phase 1 now carries a note.
 - **What keeps today's corpus notes read-only** is what Audit-26 found: HTML blocks and comments, reference definitions, and inline code inside bold or a link (KNOWN_LIMITATIONS #17). All 32 vault notes open editable.
+
+### Phase 1 outcome (2026-10-03)
+
+**Status:** done, verified on Windows. Committed on `main`; not pushed (owner, at the start).
+
+#### Decisions at the start (owner, 2026-10-03)
+
+1. **eslint 10.12.0 taken**, with the floor at `^10.12.0` (the plan's table said `^10.11.0`).
+2. **BL-11's `overrides` idea not tried.** It waits for electron-builder 27, so the audit pass test reads as the note under 1.2 says.
+3. **Not pushed.** `main` stays ahead of `origin` until the owner pushes.
+
+#### What changed
+
+**`package.json`** (installed versions in brackets):
+
+| Package | From | To |
+|---|---|---|
+| dompurify | ^3.4.15 | ^3.4.16 (3.4.16) |
+| yaml | ^2.9.0 | ^2.9.1 (2.9.1, unchanged) |
+| electron | ^44.4.5 | ^44.5.1 (44.5.1) |
+| vitest, @vitest/coverage-v8 | ^5.0.1 | ^5.0.3 (5.0.3) |
+| typescript-eslint | ^8.60.1 | ^8.71.0 (8.71.0) |
+| globals | ^17.6.0 | ^17.13.0 (17.13.0) |
+| sharp | ^0.35.4 | ^0.35.5 (0.35.5) |
+| eslint | ^10.4.0 | ^10.12.0 (10.12.0) |
+| @playwright/test | ^1.60.0 | ^1.63.0 (1.63.0, unchanged) |
+| svelte-check | ^4.6.0 | ^4.7.6 (4.7.6, unchanged) |
+
+**`npm install`:** 29 packages changed, 2 removed.
+- Changed alongside the above: the `@typescript-eslint/*` packages (8.71.0), `@vitest/mocker` and `@vitest/spy` (5.0.3), sharp's `@img/*` builds (0.35.5, libvips 1.3.4), chai 6.3.0, std-env 4.3.0, tinybench 6.2.0, tinyexec 1.3.1, `why-is-node-running` 3.2.1.
+- Removed: `siginfo` and `stackback`, which `why-is-node-running` 3 no longer needs.
+- Electron's postinstall left no binary, as the plan expected. `node node_modules/electron/install.js` fetched 44.5.1.
+
+**`electron.vite.config.mts`:**
+- `main` and `preload` use `build.externalizeDeps: { exclude: ['zod'] }`; the deprecated plug-in and its import are gone.
+- The comment explaining why zod is bundled stays on `main`; `preload` gets a one-line pointer to it, since the plug-in line it shared is gone.
+- The CSP-strip plug-in's comment lost its "Sprint B / B23" prefix (deviation 2).
+
+**Gate `no-audit-narration`** (group `codebase`) now also catches a fix-sprint id (`Sprint B`, `Sprint 35`). CLAUDE.md's `codebase` row says so. The gate count stays 89.
+
+#### Pass test
+
+| Check | Result | Phase 0 baseline |
+|---|---|---|
+| `npm run ci:verify` (Windows) | **Green in 242 s**, and again in 238 s on the final tree (after the gate change). 795 files: 7,525 passed, 5 skipped. `test:unit:strict` 199–202 s. 89/89 gates in 8.2 s. eslint 10.12.0 and typescript-eslint 8.71.0: 0 warnings. svelte-check: 860 files, 0 errors, 0 warnings. | 251 s; the same counts |
+| zod still bundled | `dist/main/main.js` 420,366 bytes and `dist/preload/preload.js` 193,825 bytes, the baseline sizes to the byte. No `require("zod")` in either. main requires only `electron` and the same Node built-ins; preload only `electron`. | The same |
+| Renderer assets | 24 of 25 files the same size to the byte. `LinkTile.js` 187,515 → 182,984 bytes (−4,531): the shared chunk DOMPurify sits in (it now carries 3.4.16). Total 5,661,238 bytes. | 5,665,769 bytes |
+| E2E, `FILO_E2E_SCALE=1` | **28 passed in 2.7 min**, on Electron 44.5.1, the three scale budgets included (none skipped). | 28 passed in 2.7 min |
+| `npm audit` | **8 high, all GHSA-ch52-4w7c-c8xp** in electron-builder's download chain (BL-11). The DOMPurify finding is gone. | 9 (DOMPurify + those 8) |
+| `npm outdated` | Left: the 25 `@tiptap/*` packages (Phase 3), jsdom 30 (Phase 2), and the majors on the "wait" and "skip" lists (vite-plugin-svelte 7, js-yaml 5, markdown-it 15, nanoid 6, typescript 7, vite 8). | |
+
+#### Deviations from the plan
+
+1. **eslint 10.12.0** rather than the table's 10.11.0 floor (owner, decision 1). It added no lint warnings.
+2. **An audit id removed from the build config, and the gate extended to catch it.**
+   - `electron.vite.config.mts` held "Sprint B / B23" in a comment. CLAUDE.md bans audit ids in build config, but `no-audit-narration` had no pattern for a sprint id, so it had passed.
+   - It was the last one in the files that gate reads (`src/main`, `src/renderer`, `src/shared` and the three configs). Test files still hold many; the gate doesn't read tests, as before.
+   - Proven to bite: with the old comment put back, the gate fails at `electron.vite.config.mts:65`; restored, it passes.
+3. **`npm audit` is not 0**, as the Phase 0 note under 1.2 foresaw (owner, decision 2).
+
+#### New findings
+
+None. BL-11 stays open as written.

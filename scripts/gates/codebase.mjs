@@ -246,14 +246,22 @@ export const checks = [
   },
   {
     id: 'no-audit-narration',
-    title: 'app source carries no audit ids (Audit-N, Phase N / N.N, P0-N, A25-01, E.11)',
+    title: 'app source carries no audit ids (Audit-N, Sprint B, Phase N / N.N, P0-N, A25-01, E.11)',
     hint: 'Say the invariant or the hazard the code guards against; audit ids and phases go in the commit message.',
     run(ctx) {
       const out = [];
-      // An audit's own name, a numbered fix phase ("Phase 40 / 40.6"), or a
-      // finding id ("P0-12", "A25-01", "F1 regression"). A plain "Phase 1"
-      // naming the steps of an algorithm is not narration and stays allowed.
-      const patterns = [/\bAudit[- ]?\d+/i, /\bPhase \d+\s*\/\s*\d+\.\d+/, /\bP\d-\d+\b/, /\bA\d{2}-\d{2}\b/, /\bF\d+ regression\b/];
+      // An audit's own name, a fix sprint ("Sprint B", "Sprint 35"), a numbered
+      // fix phase ("Phase 40 / 40.6"), or a finding id ("P0-12", "A25-01",
+      // "F1 regression"). A plain "Phase 1" naming the steps of an algorithm is
+      // not narration and stays allowed.
+      const patterns = [
+        /\bAudit[- ]?\d+/i,
+        /\bSprint (?:[A-Z]|\d+)\b/,
+        /\bPhase \d+\s*\/\s*\d+\.\d+/,
+        /\bP\d-\d+\b/,
+        /\bA\d{2}-\d{2}\b/,
+        /\bF\d+ regression\b/,
+      ];
       // In comments only (code may hold such a token for its own reasons): a
       // lettered item id ("E.11", "C5.2").
       const commentPatterns = [/\b[A-Z]\d?\.\d+\b/];

@@ -1,4 +1,4 @@
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { defineConfig } from 'electron-vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
@@ -37,8 +37,8 @@ export default defineConfig({
     // node_modules dependency for it (electron-builder 26's module collector
     // *should* find an externalized zod, but bundling removes that reliance
     // entirely — zod is tiny).
-    plugins: [externalizeDepsPlugin({ exclude: ['zod'] })],
     build: {
+      externalizeDeps: { exclude: ['zod'] },
       outDir: 'dist/main',
       rollupOptions: {
         input: {
@@ -48,8 +48,9 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ exclude: ['zod'] })],
+    // zod bundled in, as for main.
     build: {
+      externalizeDeps: { exclude: ['zod'] },
       outDir: 'dist/preload',
       rollupOptions: {
         input: {
@@ -61,7 +62,7 @@ export default defineConfig({
   renderer: {
     plugins: [
       svelte(),
-      // Sprint B / B23 — strip dev-only `ws://localhost:*` from the
+      // Strip dev-only `ws://localhost:*` from the
       // Content-Security-Policy `connect-src` directive in production
       // builds. The single `index.html` still ships with the dev-friendly
       // CSP so `npm run dev` can talk to Vite's HMR socket; this plugin

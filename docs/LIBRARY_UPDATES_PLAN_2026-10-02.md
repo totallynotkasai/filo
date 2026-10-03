@@ -1,6 +1,6 @@
 # Library updates and new tools: implementation plan
 
-**Status (2026-10-03): Phases 0, 1 and 2 done; Phases 3–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
+**Status (2026-10-03): Phases 0–3 done; Phases 4–8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
 
 Source: [TRACK_B_INVESTIGATION_2026-10-02.md](TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
 
@@ -881,3 +881,146 @@ The two findings above went into the backlog first. The owner then asked for bot
 | `npm run ci:verify` (Windows) | **Green in 241 s.** 797 files: 7,571 passed, 5 skipped. eslint 0 warnings; svelte-check 861 files, 0 errors, 0 warnings; 89/89 gates in 8.2 s. The gates being back at 8.2 s supports the guess that the slow 279 s run above was machine load. |
 | E2E, `FILO_E2E_SCALE=1` | **28 passed in 2.6 min**, the scale budgets included. |
 | Built app | `main.js` and `preload.js` unchanged to the byte (420,366 and 193,825); no `require("zod")`. Renderer `index.js` 2,553,472 → 2,553,929 bytes (+457); the other 24 assets unchanged. |
+
+### Phase 3 outcome (2026-10-03)
+
+**Status:** done, verified on Windows. Built on branch `chore/tiptap-3.31.4` and fast-forwarded into `main`; not pushed (owner, at the start).
+- TipTap 3.31.4 changed what Filo saves in five places. The run stopped there, as decided at the start, and the owner chose for each (the second round of decisions below).
+- One change made notes open read-only: tables Filo had saved as HTML. Filo now writes those tables exactly as before.
+- The other four are behaviour fixes, kept and pinned by tests.
+- The corpus check shows 0 changed bytes and 0 changed read-only verdicts.
+
+#### Decisions at the start (owner, 2026-10-03)
+
+1. **Merge, don't push**, as in Phases 1 and 2.
+2. **The manual check in the built app is scripted** (Playwright on the built Electron app, a scratch vault, the saved bytes read from disk), with screenshots sent to the owner.
+3. **If 3.31.4 changes any saved bytes or read-only verdicts, stop and report**: leave the branch unmerged, record what changed here, and ask.
+
+#### Decisions after the report (owner, 2026-10-03)
+
+4. **HTML tables: keep writing `colspan="1" rowspan="1"`** (the recommended option). The alternatives were to teach the read-only check that those attributes are defaults (such notes would lose them on their next save), or to accept that such notes open read-only.
+5. **Links: accept TipTap's new behaviour** (a space typed or inserted at a link's end stays outside the link). Update the one test, and add typing cases.
+6. **Undo after an auto-format, Enter at a ticked item, `role="textbox"`: accept, each pinned by a test.** The owner also chose to backlog the new empty item above a ticked one coming out ticked; the built-app check then showed that it doesn't happen in the app (deviation 5).
+7. **Then finish and merge if everything is green**, without stopping again.
+
+#### What 3.31.4 changes in Filo's editor
+
+Found by reading the 3.31.3 → 3.31.4 diff of every `@tiptap/*` package's `dist/`, then probing each change in Filo's real editor on both versions. The 3.31.3 side ran in a worktree of `main` whose `node_modules` held the saved 3.31.3 packages (deviation 2).
+
+1. **Tables Filo saved as HTML opened read-only. Fixed in Filo (decision 4).**
+   - TableCell and TableHeader no longer write `colspan="1" rowspan="1"`.
+   - Filo writes a table as HTML when a cell holds more than one paragraph, a list or a heading, when cells are merged, or when the first row isn't a header row (`tableMarkdown.ts`). On 3.31.3 every such cell got those attributes.
+   - Probed on 3.31.4 with seven tables 3.31.3 saved (several paragraphs in a cell, merged cells, a resized column, aligned cells, text around the table): all seven opened read-only. On 3.31.3 all seven open editable and save byte for byte.
+   - Nothing was lost (read-only, not rewritten), and none of the owner's vaults holds such a table (no `colspan="1"` under `C:\Users\andre\My Files\Vaults`), nor does the corpus.
+   - **The fix:** `FiloTableCell` and `FiloTableHeader` in `tableMarkdown.ts` write every attribute, as 3.31.3's cells did. All seven tables open editable again and save byte for byte, the same bytes 3.31.3 wrote.
+2. **A link no longer takes in whitespace at its end.** Link's autolink plugin now removes the link from trailing whitespace that a change inserts. Kept (decision 5).
+
+   | Action | 3.31.3 saved | 3.31.4 saves |
+   |---|---|---|
+   | Typing ` now` right after a link at the end of a line | `Go [here now](https://example.com)` | `Go [here](https://example.com) now` |
+   | The same in the middle of a line | `Go [here there](https://example.com) x` | `Go [here](https://example.com) there x` |
+   | Insert Link with the text `new ` | `[new ](https://new.example)` | `[new](https://new.example) ` |
+
+   - Typing a letter straight after a link still extends it, as before.
+   - Links in existing notes are untouched: a load sets `preventAutolink`, which the plugin checks first, and the corpus shows no change.
+3. **Ctrl+Z straight after an auto-format gives back what was typed.**
+   - An input rule now dispatches the typed character first, then the conversion as its own undo step.
+   - Typing `# Title` then Ctrl+Z: 3.31.3 removed everything typed; 3.31.4 leaves the literal `# `, and a second Ctrl+Z removes it. The same holds for `- `, `1. `, `[ ] `, `> `, `**bold**`, `*italic*`, `~~strike~~`, `==highlight==` and a code fence.
+   - What typing saves is unchanged.
+4. **Enter at the start of a ticked checklist item keeps it ticked.**
+   - With a real key press, 3.31.3 moved the tick onto the new empty item above (`- [x] ` above `- [ ] done`), unticking the item the caret was in.
+   - 3.31.4 saves `- [ ] ` above `- [x] done`. Correct.
+5. **The editor keeps `role="textbox"` after Filo switches it read-only and back.** 3.31.3 dropped the role from every editor `setEditorEditable` touched, so a screen reader stopped announcing it as a text field.
+
+**No effect on Filo:**
+- The changes for TipTap's own Markdown package (`@tiptap/markdown`, which Filo doesn't use): inline-code fences, the ordered-list tokenizer, numeric entities, `:::` blocks, table Markdown.
+- The new guard on style values: text alignment is written only for an allowed alignment, and a colour, font, size or highlight holding `;`, `{` or `}` is skipped. Filo's parse never produces such a value.
+- Probed the same on both versions:
+  - Enter over a selection (paragraph and heading);
+  - Enter in the middle or at the end of a ticked item, and at the start of a bullet;
+  - Backspace after a table;
+  - a typed URL autolinking;
+  - a space typed inside a link;
+  - a Markdown (GFM) table.
+- Not probed (no Filo behaviour depends on them): Backspace and Delete no longer join across a table cell's edge; a right-click inside a multi-cell selection keeps the selection; selection changes inside a node view with no content area are no longer ignored; a drag from an editor destroyed meanwhile is ignored.
+
+#### What changed
+
+- **`package.json`:** the ten re-export packages removed; `@tiptap/extension-list` and `@tiptap/extensions` added; every `@tiptap/*` at `^3.31.4`.
+  - All 31 installed `@tiptap/*` packages are 3.31.4, none left at 3.31.3 (`npm ls --all`).
+  - Eight packages left `node_modules` entirely. `extension-bullet-list` and `extension-ordered-list` stay as StarterKit's own dependencies, as the plan expected.
+  - The lockfile changed only in `@tiptap/*` entries.
+- **Imports**, as 3.2 lists: `createEditor.ts`, `listMarkers.ts`, `taskItems.ts`. Nothing else in `src/`, `scripts/` or the configs named the old packages.
+- **`tableMarkdown.ts`:** `FiloTableCell` and `FiloTableHeader` (finding 1), which `createEditor.ts` registers in place of TipTap's TableCell and TableHeader.
+- **Tests** (22 added, 7,571 → 7,593; one changed):
+  - **`fixtures/markdown-body-roundtrip/html-tables.md` (new golden fixture):** four tables exactly as 3.31.3 wrote them (several paragraphs in a cell, merged header cells, a resized column, aligned cells).
+    - It runs through the golden corpus's 8 checks: the bytes (LF and CRLF), a fixed point, the read-only verdict, its own output never read-only, no update on load, load then undo, and undo not crossing a reload.
+    - The two component suites that open every fixture run it too (+2).
+    - It passes on 3.31.3 as is. On 3.31.4 without `FiloTableCell` / `FiloTableHeader`, 4 of its 8 checks fail (both byte checks and both read-only checks).
+  - **`insertLink.test.ts`:** the one failure. "A new link at a caret right before a link leaves that link alone" now expects `[new](https://new.example) [beta](…)`: the space typed in the link text stays outside the link. The case still checks what its name says.
+  - **`editorTyping.test.ts`:**
+    - typing a space at a link's end, at the end of a line and inside one (2);
+    - undo straight after an auto-format: five block triggers and three marks (8);
+    - Enter at the start of a ticked item, with a real keydown, pinned whole: `- [ ] a`, `- [ ] `, `- [x] done` (1).
+  - **`editorSetEditableDiscipline.test.ts`:** the editor keeps `role="textbox"`, `data-note-editor` and `spellcheck` through `setEditorEditable` (1).
+  - **Each new case pins its change:** run against 3.31.3 (the same test files in the base worktree), all 13 new or changed cases fail, and every other case in those files passes.
+- **Docs:**
+  - the design doc's Editor section lists the packages Filo now imports, including the four StarterKit nodes Filo extends (paragraph, heading, blockquote, hard break), which the old list left out;
+  - CLAUDE.md: the `tableMarkdown.ts` structure line, and the "Filo writes only Markdown it reads back" paragraph;
+  - BACKLOG: BL-14 (see "New findings").
+
+#### Pass test
+
+| Check | Result | Before |
+|---|---|---|
+| `npm run test:unit:strict` | With the update alone: 1 failure of 7,576 (`insertLink`, finding 2); every round-trip suite passed unchanged. Final tree: see `ci:verify`. | Phase 2: 7,571 passed |
+| Corpus check against `main` | **0 changed, 0 newly read-only, 0 newly failed, 0 unlocked** on 679 notes (334 editable, 345 read-only on both), with the update alone and again with the table fix. Both runs read a frozen copy of the list (deviation 1). | |
+| `npm run ci:verify` (Windows) | **Green in 234 s.** 797 files: 7,593 passed, 5 skipped. `test:unit:strict` 196 s. eslint 0 warnings; svelte-check 851 files (861 before: the ten removed packages' type files), 0 errors; 89/89 gates in 8.1 s. | Phase 2: 241 s, 7,571 passed |
+| E2E, `FILO_E2E_SCALE=1` | **28 passed in 2.6 min**, on the final code, the axe scan and the three scale budgets included. `editorFidelity`, `noBytesByLooking` and `vaultSwitchAndBom` all pass. | 28 passed in 2.6 min |
+| Built app | Only the `tiptap` chunk changed size: 1,185,250 → 1,194,432 bytes (+9,182: 3.31.4's own code, plus 24 bytes for the cell override). The other 24 assets are the same size; `main.js` (420,366) and `preload.js` (193,825) are identical to the byte, with no `require("zod")`. | Phase 2 sizes |
+| `npm run dev` | On a cold Vite cache, the dev window opened a Document tab and a Mind Map, a Kanban and a Task List board with no reload and no "new dependencies optimized" line. `@tiptap/extension-list` and `@tiptap/extensions` are pre-bundled from `package.json` with no config edit; Vite discovered nothing late (deviation 4). | |
+| Scripted built-app check | Every step saved what it should (below), every note reopened editable in a second session with `role="textbox"`, no console errors. Screenshots sent to the owner. | |
+| `npm audit` | 8 high, all GHSA-ch52-4w7c-c8xp (BL-11). | The same |
+| `npm outdated` | The `@tiptap/*` packages are gone from the list. Left: only the "wait" / "skip" majors (vite-plugin-svelte 7, js-yaml 5, markdown-it 15, nanoid 6, TypeScript 7, Vite 8). | |
+
+**The built-app check** (two sessions on a scratch vault, the built app on a fresh profile):
+
+| Step | Saved |
+|---|---|
+| Font family (Georgia) | `<span style="font-family: Georgia;">Alpha</span>` |
+| Font size, + twice | `<span style="font-size: 16px;">beta</span>` |
+| Text colour (preset `#3f51b5`) | `<span style="color: rgb(63, 81, 181);">gamma</span>`, Chromium's spelling, as before |
+| Highlight (preset `#0288d1`) | `<mark data-color="#0288d1" style="background-color: rgb(2, 136, 209); color: inherit;">delta</mark>` |
+| Align centre | `<p style="text-align: center;">Second paragraph here</p>` |
+| Increase indent | `<p style="margin-left: 24px;">Third paragraph here</p>` |
+| Line spacing 1.5 | `lineSpacing: 1.5` in the frontmatter |
+| Insert Link (Ctrl+K), text `site `, address `example.com`, then typing `after` | `Fourth paragraph [site](https://example.com) after` |
+| The table 3.31.3 saved as HTML | Opened editable; its first column dragged wider saved `colwidth="453"`, with `colspan="1" rowspan="1"` kept |
+| Typing in a Markdown table cell | `\| one more \| 1 \|` |
+| Ticking a checklist item; Enter at the start of ticked `two` | `- [x] one`, `- [ ] `, `- [x] two`, `- [ ] three` |
+| A new Kanban card's empty note | The editor marks it `data-placeholder="Start typing..."`, but nothing displays it (BL-14) |
+
+#### Deviations from the plan
+
+1. **The corpus runs read a frozen copy of the list.** The list includes the TipTap READMEs and this repo's docs, which this phase changes or removes. Both runs read the same 679 copies in the scratchpad, so every note is compared.
+2. **A 3.31.3 worktree for the probes and the "fails before" runs.**
+   - `git worktree add` of `main` in the scratchpad, with a `node_modules` of junctions to this checkout's packages, except `@tiptap` (the 3.31.3 copy saved before the update) and `tiptap-markdown` (copied, so it finds the 3.31.3 core).
+   - The probes are scratch test files, run once in each tree and never committed. The worktree was removed at the end.
+3. **App code and tests beyond the tidy-up:** the table cell override (finding 1), the 22 new tests, and the one changed expectation (decisions 4–6). The plan expected an import change only.
+4. **How the `npm run dev` check ran.**
+   - `.claude/launch.json` got a temporary configuration, restored afterwards.
+   - The first try passed `--rendererOnly`, which doesn't stop electron-vite 5 from starting Electron. That started a dev window on the owner's real profile (`AppData\Roaming\filo`, which opens the last vault on launch).
+     - It was closed through its own close button's quit flow within a minute.
+     - Checked afterwards: nothing under `C:\Users\andre\My Files\Vaults\Test Vault` changed (no file written in the 15 minutes around it). In the profile, only Chromium's `Preferences` and `DIPS` files and `window-state.json` (window position) were written.
+   - The check then ran with `-- --user-data-dir=<scratch profile>` and `--remoteDebuggingPort`, a scratch vault opened from that profile's recent list, and a script driving the window over the debugging port.
+   - The dev run rebuilt `dist/main` and `dist/preload` in development mode, so `npm run build` ran again before the E2E suite and the built-app check.
+5. **The ticked new item turned out not to be a bug** (decision 6).
+   - The first probes pressed Enter through TipTap's `keyboardShortcut` command, which replays a split's steps differently and leaves the new empty item ticked.
+   - A real keydown, in jsdom and in the built app, leaves it unticked. So the item went into the backlog and came back out.
+   - The test presses a real key and pins the whole result instead of only the ticked item.
+   - The other Enter probes used `keyboardShortcut` too; they gave the same result on both versions, which is all they were for.
+
+#### New findings
+
+- **BL-14: an empty text tile or Kanban card never shows its "Start typing..." placeholder.** The editor marks the empty paragraph, but only the Document editor has CSS that displays it, and that editor sets its placeholder to `''`. It is the same before and after this phase: `@tiptap/extensions` is byte-identical between 3.31.3 and 3.31.4.
+- **The golden corpus had no table saved as HTML**, so finding 1 passed every round-trip suite and the corpus check. It took a diff of the package and a probe to find. The `html-tables` fixture now covers it.

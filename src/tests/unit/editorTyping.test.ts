@@ -119,3 +119,84 @@ describe('typed text that Markdown would read as something else', () => {
     expect(saved).toBe('Tom & Jerry; R&D');
   });
 });
+
+/** The document position where `text` first starts. */
+function posOf(ed: Editor, text: string): number {
+  let found = -1;
+  ed.state.doc.descendants((node, pos) => {
+    if (found >= 0) return false;
+    if (node.isText && node.text?.includes(text)) found = pos + node.text.indexOf(text);
+    return true;
+  });
+  return found;
+}
+
+describe('typing next to a link', () => {
+  it('a space typed at the end of a link ends the link', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'Go [here](https://example.com)');
+    ed.commands.focus('end');
+    type(ed, ' now');
+    expect(editorMarkdown(ed)).toBe('Go [here](https://example.com) now');
+  });
+
+  it('so does one typed at the end of a link inside a line', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, 'Go [here](https://example.com) x');
+    ed.commands.setTextSelection(posOf(ed, 'here') + 'here'.length);
+    type(ed, ' there');
+    expect(editorMarkdown(ed)).toBe('Go [here](https://example.com) there x');
+  });
+});
+
+describe('undo straight after an auto-format', () => {
+  it.each(['# ', '- ', '1. ', '> ', '[ ] '])('typing %j then undo gives back the typed text, and a second undo removes it', (typed) => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, '');
+    ed.commands.focus('end');
+    type(ed, typed);
+    expect(ed.state.doc.firstChild?.type.name).not.toBe('paragraph');
+    ed.commands.undo();
+    expect(ed.state.doc.childCount).toBe(1);
+    expect(ed.state.doc.firstChild?.type.name).toBe('paragraph');
+    expect(ed.state.doc.textContent).toBe(typed);
+    ed.commands.undo();
+    expect(ed.state.doc.textContent).toBe('');
+  });
+
+  it.each([
+    ['x **bold**', 'bold'],
+    ['x *it*', 'italic'],
+    ['x ~~gone~~', 'strike'],
+  ])('typing %j then undo gives back the typed text without the %s mark', (typed, mark) => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, '');
+    ed.commands.focus('end');
+    type(ed, typed);
+    expect(ed.getHTML()).not.toContain(typed);
+    ed.commands.undo();
+    expect(ed.state.doc.textContent).toBe(typed);
+    let marked = false;
+    ed.state.doc.descendants((node) => {
+      if (node.marks.some((m) => m.type.name === mark)) marked = true;
+    });
+    expect(marked).toBe(false);
+  });
+});
+
+describe('Enter in a checklist', () => {
+  // A real keydown, as the key arrives from the page. TipTap's
+  // `keyboardShortcut` command replays a split differently and leaves the new
+  // item ticked, which a user never sees.
+  function pressEnter(ed: Editor): void {
+    ed.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  }
+
+  it('at the start of a ticked item keeps that item ticked, and the new item above starts unticked', () => {
+    const ed = makeEditor();
+    loadMarkdownIntoEditor(ed, '- [ ] a\n- [x] done');
+    ed.commands.setTextSelection(posOf(ed, 'done'));
+    pressEnter(ed);
+    expect(editorMarkdown(ed)).toBe('- [ ] a\n- [ ] \n- [x] done');
+  });
+});

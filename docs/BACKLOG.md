@@ -12,7 +12,7 @@ Everything known to be open that no current plan covers, in one place. Start the
 - **Useful** (improvements): 0/10 = no gain; 5/10 = a clear improvement you'd notice every week or so; 10/10 = essential.
 - **Hard**: 0/10 = minutes; 5/10 = a few days, several files, new tests; 10/10 = weeks, rewriting a major part of Filo.
 
-Last updated 2026-10-03, after the library updates plan's Phase 2 ([LIBRARY_UPDATES_PLAN_2026-10-02.md](LIBRARY_UPDATES_PLAN_2026-10-02.md)), whose outcome records BL-12 and BL-13, found and fixed there; before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
+Last updated 2026-10-03, after the library updates plan's Phase 3 ([LIBRARY_UPDATES_PLAN_2026-10-02.md](LIBRARY_UPDATES_PLAN_2026-10-02.md)), which added BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
 
 ---
 
@@ -33,6 +33,7 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-09 | Two real-file watcher tests can fail when the machine is very busy | Audit-27 Phase 5 | 0/10 | 2/10 |
 | BL-10 | A unit test that makes its own write scheduler leaves state behind for the next test | Audit-27 Phase 1 | 0/10 | 1/10 |
 | BL-11 | `npm audit` reports 8 high findings in electron-builder's download chain (build time only) | Library updates Phase 0 | 0/10 | 2/10 |
+| BL-14 | An empty text tile or Kanban card never shows its "Start typing..." placeholder | Library updates Phase 3 | 1/10 | 1/10 |
 
 ### BL-01: the formatting toolbar cuts off its left end (Impact 2/10, Hard 2/10)
 - **What you see:** at a window about 1,380 px wide or narrower, the text-formatting toolbar overflows. Its left end is cut off, so the font box shows only its arrow, and you can't scroll to it.
@@ -92,6 +93,12 @@ None of these loses data. Scores are estimates made when the item was written do
 - **Where:** `electron-builder 26.15.3 → app-builder-lib → @electron/get 3.1.0 → got 11 → cacheable-request 7 → http-cache-semantics 4.2.0`. It runs only in `npm run package*`, to download Electron and its tools. Nothing in it ships in Filo, and a cache shared between users, which the advisory needs, doesn't exist on a build machine. Electron's own `@electron/get` 5.1.0 doesn't use `got`.
 - **No fix in a release yet:** every `http-cache-semantics` version is affected. electron-builder 26.17.0 (the `v26` tag) still uses `@electron/get` 3. `27.0.0-alpha.9` (2026-09-26, the `next` tag) moves to `@electron/get` 5, which drops `got`, so electron-builder 27 fixes it. 27 is already on the library updates plan's "wait" list (pre-release). `npm audit fix --force` would move electron-builder back to 26.5.0, a step backward.
 - **Fix idea:** take electron-builder 27 once it is released. Or, sooner, an npm `overrides` giving `app-builder-lib` `@electron/get` 5.x (what 27 does), kept only if `npm run package:dir` still downloads and packs. Until then, a "0 findings" pass test reads as "only GHSA-ch52-4w7c-c8xp, in the electron-builder chain".
+
+### BL-14: an empty text tile or Kanban card never shows its placeholder (Impact 1/10, Hard 1/10)
+- **What you see:** a new Kanban card, or a Mind Map text tile whose note is empty, shows a blank body. Nothing tells you to click and type.
+- **Why:** the editor does mark the empty paragraph (`data-placeholder="Start typing..."`, from `createTiptapEditor`'s Placeholder), but only the Document editor has CSS that shows it (`DocumentEditor.svelte`, `.tiptap .is-empty::before`), and the Document editor sets its own placeholder to `''` on purpose. Tiles and cards have no such rule. Found in the library updates plan's Phase 3 built-app check; the same before and after the TipTap 3.31.4 update (`@tiptap/extensions` is byte-identical between them).
+- **Where:** `src/renderer/lib/editor/createEditor.ts` (`Placeholder.configure`), `src/renderer/components/boards/DocumentEditor.svelte` (the only `attr(data-placeholder)` rule), `TextTile.svelte` / `LazyTextTileBody.svelte`.
+- **Decide first:** show it (move the `::before` rule to `style.css` for every note editor, in `--text-tertiary`), or drop the default text so nothing pretends to show one. Showing it fits the design doc's placeholder line ("Placeholder text in empty editors"). Check the axe scan and a Kanban card's static preview (`LazyTextTileBody`) either way.
 
 ---
 

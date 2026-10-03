@@ -1,5 +1,5 @@
 import { Extension } from '@tiptap/core';
-import { TaskList } from '@tiptap/extension-task-list';
+import { TaskList } from '@tiptap/extension-list';
 import { serializeBulletList } from './listMarkers';
 
 /**

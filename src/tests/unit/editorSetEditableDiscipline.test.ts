@@ -42,6 +42,19 @@ describe('setEditorEditable', () => {
     expect(updates).toBe(0);
   });
 
+  it('keeps the editor announced as a text field, with its own attributes', () => {
+    const el = document.createElement('div');
+    document.body.appendChild(el);
+    editor = createTiptapEditor({ element: el, content: '' });
+    const dom = editor.view.dom;
+    for (const editable of [false, true]) {
+      setEditorEditable(editor, editable);
+      expect(dom.getAttribute('role')).toBe('textbox');
+      expect(dom.getAttribute('data-note-editor')).toBe('true');
+      expect(dom.getAttribute('spellcheck')).toBe('true');
+    }
+  });
+
   it('is a no-op on a null or destroyed editor', () => {
     expect(() => setEditorEditable(null, false)).not.toThrow();
     const el = document.createElement('div');

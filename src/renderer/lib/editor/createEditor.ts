@@ -17,17 +17,13 @@ declare module '@tiptap/core' {
     };
   }
 }
-import { TextStyle } from '@tiptap/extension-text-style';
+import { Color, FontFamily, TextStyle } from '@tiptap/extension-text-style';
 import { Underline } from '@tiptap/extension-underline';
-import { Color } from '@tiptap/extension-color';
 import { Highlight } from '@tiptap/extension-highlight';
-import { FontFamily } from '@tiptap/extension-font-family';
 import { Image } from '@tiptap/extension-image';
-import { Placeholder } from '@tiptap/extension-placeholder';
-import { TableCell } from '@tiptap/extension-table-cell';
-import { TableHeader } from '@tiptap/extension-table-header';
-import { TableRow } from '@tiptap/extension-table-row';
-import { TaskItem } from '@tiptap/extension-task-item';
+import { Placeholder } from '@tiptap/extensions';
+import { TableRow } from '@tiptap/extension-table';
+import { TaskItem } from '@tiptap/extension-list';
 import { Markdown } from 'tiptap-markdown';
 import { common, createLowlight } from 'lowlight';
 import { FiloListTight, FiloTaskListTight } from './taskListTight';
@@ -38,7 +34,7 @@ import { KeepSpaces } from './keepSpaces';
 import { LeadSpace, withLeadSpacesOutsideRuns } from './leadSpace';
 import { FiloBulletList, FiloOrderedList } from './listMarkers';
 import { FiloTaskList, FiloListParse } from './taskItems';
-import { FiloTable } from './tableMarkdown';
+import { FiloTable, FiloTableCell, FiloTableHeader } from './tableMarkdown';
 import { FiloCodeBlock } from './codeFence';
 import { FiloHardBreak } from './hardBreak';
 import { SoftBreak, SoftBreakEnter, withBreakMarksTrimmed } from './softBreak';
@@ -342,8 +338,8 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         resizable: true,
       }),
       TableRow,
-      TableHeader,
-      TableCell,
+      FiloTableHeader,
+      FiloTableCell,
       FiloTaskList,
       FiloTaskListTight,
       FiloListParse,

@@ -532,21 +532,16 @@ Filo uses a **command pattern** for undo/redo. Every undoable action is encapsul
     * @tiptap/pm — ProseMirror bindings
     * @tiptap/starter-kit — Basic extensions bundle (bold, italic, lists, etc.)
     * tiptap-markdown — Markdown serialization/deserialization for round-tripping between TipTap's ProseMirror document model and `.md` files. This is essential for the open-format philosophy — without it, TipTap defaults to HTML output. All tile `.md` files are read into TipTap via this extension's parser and written back to disk via its serializer.
+    * @tiptap/extension-paragraph, -heading, -blockquote, -hard-break — StarterKit's own nodes, imported directly because Filo extends each (blank lines, alignment and indent, quotes, line breaks)
     * @tiptap/extension-text-align — Text alignment (left, center, right, justify)
-    * @tiptap/extension-text-style — Inline text styling
+    * @tiptap/extension-text-style — Inline text styling: the TextStyle mark, Color (text colour) and FontFamily (font family selection)
     * @tiptap/extension-underline — Underline formatting
-    * @tiptap/extension-color — Text color
     * @tiptap/extension-highlight — Text background highlighting
-    * @tiptap/extension-font-family — Font family selection
     * @tiptap/extension-link — Hyperlink support
     * @tiptap/extension-image — Image insertion
-    * @tiptap/extension-placeholder — Placeholder text in empty editors
-    * @tiptap/extension-table — Table support
-    * @tiptap/extension-table-cell — Table cells
-    * @tiptap/extension-table-header — Table headers
-    * @tiptap/extension-table-row — Table rows
-    * @tiptap/extension-task-list — Checkbox/task lists
-    * @tiptap/extension-task-item — Individual task items
+    * @tiptap/extensions — Placeholder (placeholder text in empty editors)
+    * @tiptap/extension-table — Tables: Table, TableRow, TableHeader and TableCell
+    * @tiptap/extension-list — Lists: BulletList, OrderedList, TaskList (checkbox lists) and TaskItem
     * @tiptap/extension-code-block-lowlight — Syntax-highlighted code blocks
     * lowlight — Syntax highlighting engine for code blocks
 

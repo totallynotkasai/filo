@@ -1,5 +1,4 @@
-import { BulletList } from '@tiptap/extension-bullet-list';
-import { OrderedList } from '@tiptap/extension-ordered-list';
+import { BulletList, OrderedList } from '@tiptap/extension-list';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 
 /**

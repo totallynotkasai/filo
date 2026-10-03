@@ -111,7 +111,8 @@ describe('applyLink', () => {
     const ed = makeEditor('Alpha [beta](https://example.com) gamma');
     ed.commands.setTextSelection(7);
     expect(applyLink(ed, linkTargetAt(ed), 'new ', 'https://new.example')).toBe(true);
-    expect(editorMarkdown(ed)).toBe('Alpha [new ](https://new.example)[beta](https://example.com) gamma');
+    // The space ending the typed text stays outside the new link (Link drops a link's trailing whitespace).
+    expect(editorMarkdown(ed)).toBe('Alpha [new](https://new.example) [beta](https://example.com) gamma');
   });
 
   it('refuses a code block, changing nothing', () => {

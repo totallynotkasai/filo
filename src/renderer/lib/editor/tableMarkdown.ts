@@ -1,5 +1,5 @@
-import { getHTMLFromFragment } from '@tiptap/core';
-import { Table } from '@tiptap/extension-table';
+import { getHTMLFromFragment, mergeAttributes } from '@tiptap/core';
+import { Table, TableCell, TableHeader } from '@tiptap/extension-table';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { hasBlockLayout } from './blockLayout';
 import { withLeadSpaceNodes, withLeadSpacesOutsideRuns } from './leadSpace';
@@ -142,6 +142,25 @@ function writeHtmlTable(state: TableSerializeState, table: ProseMirrorNode, pare
   state.write(html);
   state.closeBlock(table);
 }
+
+/**
+ * A cell written as HTML spells out every attribute, `colspan="1"` and
+ * `rowspan="1"` included. TipTap's own cells leave those defaults out, but
+ * every HTML table Filo has saved holds them, and a note that would save
+ * differently from its file opens read-only (KNOWN_LIMITATIONS #17). Pinned by
+ * the `html-tables` fixture in `markdownBodyRoundTrip.test.ts`.
+ */
+export const FiloTableCell = TableCell.extend({
+  renderHTML({ HTMLAttributes }) {
+    return ['td', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), 0];
+  },
+});
+
+export const FiloTableHeader = TableHeader.extend({
+  renderHTML({ HTMLAttributes }) {
+    return ['th', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), 0];
+  },
+});
 
 export const FiloTable = Table.extend({
   addStorage() {

@@ -839,7 +839,7 @@ The slower `ci:verify` is most likely load on the machine, not jsdom: the gates 
   | a control character (`\u0001`), a newline inside the value | refuses | accepts |
 
   - The control characters are now refused by Filo first (decision 1), so all three environments agree on them.
-  - The other three aren't pinned by any test, since jsdom's answer isn't the app's.
+  - The other three aren't pinned by any test, since jsdom's answer isn't the app's. → BACKLOG BL-13, which Phase 6's browser project could take.
   - None is an injection risk: `setProperty` takes one value, and `url(`, `;` and the rest are refused before `CSS.supports` is asked.
-- **The fallback branches now run only in tests.** The renderer and jsdom both have `CSS.supports`, and nothing in the main process calls `asSafeThemeValue`. The tests keep both covered, as the plan asked.
-- **`isCssColour` accepts `inherit`, `currentColor` and `var(…)` in the app**, because Chromium's parser counts them as `color` values. So the theme editor takes them as a colour; the swatch can't show them, and `inherit` on `:root` leaves the variable unset. This is older than this phase and has nothing to do with jsdom. It is noted here only, with no backlog item, since a user has to type one of them on purpose.
+- **The fallback branches now run only in tests.** The renderer and jsdom both have `CSS.supports`, and nothing in the main process calls `asSafeThemeValue`. The tests keep both covered, as the plan asked. (Noted under BL-13.)
+- **The theme editor takes `currentColor`, `inherit`, `initial` and `unset` as colours**, because Chromium's parser counts them as `color` values. Checked in Electron: `currentColor` paints with the text colour (an App background set to it hides the text), and the keywords leave the token with no value. This is older than this phase and has nothing to do with jsdom. → BACKLOG BL-12. (`var(…)` passes too; BL-12 leaves keeping it as a decision for the fix.)

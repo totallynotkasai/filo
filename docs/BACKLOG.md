@@ -12,7 +12,7 @@ Everything known to be open that no current plan covers, in one place. Start the
 - **Useful** (improvements): 0/10 = no gain; 5/10 = a clear improvement you'd notice every week or so; 10/10 = essential.
 - **Hard**: 0/10 = minutes; 5/10 = a few days, several files, new tests; 10/10 = weeks, rewriting a major part of Filo.
 
-Last updated 2026-10-03, after the library updates plan's Phase 0 ([LIBRARY_UPDATES_PLAN_2026-10-02.md](LIBRARY_UPDATES_PLAN_2026-10-02.md)); before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
+Last updated 2026-10-03, after the library updates plan's Phase 2 ([LIBRARY_UPDATES_PLAN_2026-10-02.md](LIBRARY_UPDATES_PLAN_2026-10-02.md)); before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
 
 ---
 
@@ -33,6 +33,8 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-09 | Two real-file watcher tests can fail when the machine is very busy | Audit-27 Phase 5 | 0/10 | 2/10 |
 | BL-10 | A unit test that makes its own write scheduler leaves state behind for the next test | Audit-27 Phase 1 | 0/10 | 1/10 |
 | BL-11 | `npm audit` reports 8 high findings in electron-builder's download chain (build time only) | Library updates Phase 0 | 0/10 | 2/10 |
+| BL-12 | The theme editor takes `currentColor`, `inherit`, `initial` and `unset` as colours | Library updates Phase 2 | 1/10 | 1/10 |
+| BL-13 | jsdom and Chromium disagree on a few theme values, so a test could pin what the app doesn't do | Library updates Phase 2 | 0/10 | 1/10 |
 
 ### BL-01: the formatting toolbar cuts off its left end (Impact 2/10, Hard 2/10)
 - **What you see:** at a window about 1,380 px wide or narrower, the text-formatting toolbar overflows. Its left end is cut off, so the font box shows only its arrow, and you can't scroll to it.
@@ -92,6 +94,24 @@ None of these loses data. Scores are estimates made when the item was written do
 - **Where:** `electron-builder 26.15.3 → app-builder-lib → @electron/get 3.1.0 → got 11 → cacheable-request 7 → http-cache-semantics 4.2.0`. It runs only in `npm run package*`, to download Electron and its tools. Nothing in it ships in Filo, and a cache shared between users, which the advisory needs, doesn't exist on a build machine. Electron's own `@electron/get` 5.1.0 doesn't use `got`.
 - **No fix in a release yet:** every `http-cache-semantics` version is affected. electron-builder 26.17.0 (the `v26` tag) still uses `@electron/get` 3. `27.0.0-alpha.9` (2026-09-26, the `next` tag) moves to `@electron/get` 5, which drops `got`, so electron-builder 27 fixes it. 27 is already on the library updates plan's "wait" list (pre-release). `npm audit fix --force` would move electron-builder back to 26.5.0, a step backward.
 - **Fix idea:** take electron-builder 27 once it is released. Or, sooner, an npm `overrides` giving `app-builder-lib` `@electron/get` 5.x (what 27 does), kept only if `npm run package:dir` still downloads and packs. Until then, a "0 findings" pass test reads as "only GHSA-ch52-4w7c-c8xp, in the electron-builder chain".
+
+### BL-12: the theme editor takes `currentColor`, `inherit`, `initial` and `unset` as colours (Impact 1/10, Hard 1/10)
+- **What you see:** in Settings → Themes, edit a theme and type one of these into a colour box. It is accepted, not marked invalid, and saved with the theme. Checked in Electron 44.5.1's Chromium:
+  - `currentColor`: whatever the token paints takes the text colour, so an App background set to it makes the text unreadable;
+  - `inherit`, `initial`, `unset`: the token is left with no value. What it paints falls back to its default (a background goes transparent), and the base theme's value doesn't show either, since the theme's value overrides it.
+- **How to see it:** Settings → Themes → New (or Edit), type `currentColor` into App background.
+- **Where:** `src/renderer/components/settings/ThemeEditor.svelte` (about line 76) accepts a value that passes `asSafeThemeValue` and `isCssColour` (`src/renderer/lib/utils/color.ts`). `isCssColour` asks Chromium's `CSS.supports('color', …)`, which counts the CSS-wide keywords and `currentColor` as valid `color` values. A theme file read from disk passes `asSafeThemeValue` only (`src/renderer/lib/themes/themeFiles.ts`), so a hand-edited file can hold one too.
+- **Not the same case:** `var(--accent-primary)` also passes. It makes one token follow another, which may be worth keeping, though the swatch can't show it. Decide this when fixing.
+- **Fix idea:** refuse the CSS-wide keywords (`inherit`, `initial`, `unset`, `revert`, `revert-layer`) and `currentColor` in the theme editor's check, and when a theme file is read. Cases go in `isCssColour.test.ts` or `themeEditorPreview.test.ts`.
+
+### BL-13: jsdom and Chromium disagree on a few theme values (Impact 0/10, Hard 1/10)
+- **What you see:** nothing in the app. jsdom 30's `CSS.supports('--probe: …')`, which `asSafeThemeValue` asks, gives a different answer from Chromium 152's for:
+  - `[x`: jsdom accepts it, Chromium refuses it (so the app drops it);
+  - `a!important`, `red !important`: jsdom refuses them, Chromium accepts them (and then `setProperty` ignores them, so the base theme's value stays).
+  
+  A test of `asSafeThemeValue` with one of these values would pass in jsdom while pinning the opposite of what the app does. `sharedUntrusted.test.ts` leaves them out for that reason. Control characters disagreed too; `asSafeThemeValue` now refuses them itself, so every environment agrees.
+- **Related:** both checks' fallbacks (no `CSS.supports`) now run only in tests. The renderer and jsdom have `CSS.supports`, and the main process doesn't call `asSafeThemeValue`. The tests keep them covered with `CSS.supports` stubbed out.
+- **Fix idea:** once the library updates plan's Phase 6 adds the Vitest browser project, run the `asSafeThemeValue` and `isCssColour` cases there as well, these values included, so Chromium's answers are pinned where they apply. That phase could take this item.
 
 ---
 

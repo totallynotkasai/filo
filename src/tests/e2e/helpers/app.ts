@@ -1,5 +1,6 @@
 /**
- * Drives the BUILT app (`dist/main/main.js`), as the user runs it. Nothing here
+ * Drives the BUILT app (`dist/main/main.js`), as the user runs it, or the
+ * packaged one when `FILO_E2E_EXE` names its executable. Nothing here
  * imports renderer modules: the page is the packaged renderer, which can't
  * resolve `/src/…`, and a spec that reached into stores would test a path the
  * user never takes. Run `npm run build` first.
@@ -22,6 +23,10 @@ export const REPO = path.resolve(__dirname, '..', '..', '..', '..');
 // FILO_E2E_MAIN runs the suite against another build (say, an older commit's
 // worktree), to see a spec fail where the bug it pins is still present.
 export const MAIN = process.env.FILO_E2E_MAIN ?? path.join(REPO, 'dist', 'main', 'main.js');
+// FILO_E2E_EXE runs it against a packaged app instead (`win-unpacked/Filo.exe`
+// from `npm run package:dir`): what an installed Filo loads, packaged CSP and
+// asar included, with no node_modules beside it.
+const EXE = process.env.FILO_E2E_EXE;
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -84,13 +89,15 @@ export function freshVault(root: string, name: string, files: Record<string, str
  * by default opens `vault` from the Home screen.
  */
 export async function launchBuilt(vault: string, opts: LaunchOptions = {}): Promise<LaunchedApp> {
-  if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run \`npm run build\` first`);
+  const target = EXE ?? MAIN;
+  if (!fs.existsSync(target)) throw new Error(`${target} is missing: run \`npm run ${EXE ? 'package:dir' : 'build'}\` first`);
   const userDataDir = opts.userDataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'filo-e2e-udd-'));
   if (opts.sameMachineAs) {
     fs.copyFileSync(path.join(opts.sameMachineAs, 'machine-id.json'), path.join(userDataDir, 'machine-id.json'));
   }
+  const userData = `--user-data-dir=${userDataDir}`;
   const app = await electron.launch({
-    args: [MAIN, `--user-data-dir=${userDataDir}`],
+    ...(EXE ? { executablePath: EXE, args: [userData] } : { args: [MAIN, userData] }),
     env: { ...process.env, NODE_ENV: 'test' },
   });
   await app.evaluate(({ dialog }, picked) => {

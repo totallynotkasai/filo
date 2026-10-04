@@ -274,6 +274,17 @@ export function markerNear(lines, idx, marker, above = 1) {
   return false;
 }
 
+// ── Imports ───────────────────────────────────────────────────────────────
+
+/** The module named by an import, a dynamic import, a require, or a bare `import '…'` (group 2). */
+export const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s*)(['"])([^'"\n]+)\1/g;
+
+/** The package a bare specifier names (`@scope/pkg/sub` → `@scope/pkg`, `pkg/sub` → `pkg`). */
+export function packageName(specifier) {
+  const parts = specifier.split('/');
+  return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
+
 /** Token-presence helper: one violation per required token missing / forbidden token present. */
 export function tokenChecks(file, code, { required = [], forbidden = [] }, label = '') {
   const out = [];

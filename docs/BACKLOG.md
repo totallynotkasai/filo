@@ -12,7 +12,7 @@ Everything known to be open that no current plan covers, in one place. Start the
 - **Useful** (improvements): 0/10 = no gain; 5/10 = a clear improvement you'd notice every week or so; 10/10 = essential.
 - **Hard**: 0/10 = minutes; 5/10 = a few days, several files, new tests; 10/10 = weeks, rewriting a major part of Filo.
 
-Last updated 2026-10-04, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20 and BL-21. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
+Last updated 2026-10-04, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20 and BL-21. BL-20 (30 MB of unused `node_modules` in the package) was fixed the same day, in that outcome's follow-up. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
 
 ---
 
@@ -37,7 +37,6 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-16 | A `~` typed right before struck text makes GitHub show the tildes and strike nothing | Library updates Phase 5 | 1/10 | 2/10 |
 | BL-17 | A bare web address in text can get a `\` that GitHub's own linking keeps in the link | Library updates Phase 5 | 1/10 | 3/10 |
 | BL-18 | Italic, struck-through and coloured text holding `**` reads differently on GitHub | Library updates Phase 5 | 1/10 | 2/10 |
-| BL-20 | The packaged app carries 30 MB of `node_modules` that nothing loads | Library updates Phase 8 | 1/10 | 2/10 |
 | BL-21 | GitHub's `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19; CI's Chromium install and Linux timings are untried there | Library updates Phase 8 | 0/10 | 1/10 |
 
 ### BL-01: the formatting toolbar cuts off its left end (Impact 2/10, Hard 2/10)
@@ -121,13 +120,6 @@ None of these loses data. Scores are estimates made when the item was written do
 - **Only with all three:** without the colour, or without the strikethrough, Filo escapes the stars (`*~~2\*\* -~~*`, `<span …>*2\*\* -*</span>`), which GitHub reads as Filo does; so does bold with strikethrough in a span (`**~~2\*\* -~~**`).
 - **Where:** `src/renderer/lib/editor/minimalEscapes.ts` drops each escape markdown-it doesn't need. Inside the span it finds markdown-it reads the text the same without the `\*\*`, so it drops them; GitHub needs them.
 - **Fix idea:** keep a `\*` or `\_` inside text that emphasis and strikethrough both wrap (markdown-it and CommonMark order that pairing differently), or more generally keep an escape whose removal changes how a strict CommonMark reader pairs delimiters. Check the result against GitHub (`gh api markdown -f mode=gfm -f text=…`), since neither markdown-it nor micromark reads this one as GitHub does.
-
-### BL-20: the packaged app carries 30 MB of `node_modules` that nothing loads (Impact 1/10, Hard 2/10)
-- **What you see:** nothing in the app. The installer and the installed app are bigger than they need to be. In a package made on 2026-10-04 (electron-builder 26.15.3, `--dir`), `resources/app.asar` is 38.5 MB: 7.0 MB of `dist/` (the app itself) and 30.4 MB of `node_modules` (4,544 entries in all; `highlight.js` alone is 1,566 files, `zod` 745). CodeMirror, added in the library updates plan's Phase 7, is 2.8 MB of that; the rest was already there.
-- **Why nothing loads them:** Vite bundles every runtime dependency into `dist/`. The renderer's chunks hold them, `dist/main/main.js` requires only `electron` and Node built-ins (zod is bundled in), and `dist/preload/preload.js` only `electron`. electron-builder adds the `node_modules` of every package under `dependencies` to the package unless `build.files` excludes them, and it doesn't.
-- **How to see it:** `npx electron-builder --dir --publish never -c.directories.output=<scratch folder>`, then list `win-unpacked/resources/app.asar` with `@electron/asar` (`listPackage`). The output into a scratch folder leaves `release/` alone.
-- **Where:** `package.json` (`build.files` is `dist/**/*` and `package.json`; the `dependencies` list); `electron.vite.config.mts` (`build.externalizeDeps` leaves every `dependencies` package but zod out of the main and preload bundles, so a runtime dependency that main imported one day would need `node_modules` at run time).
-- **Fix idea:** leave `node_modules` out of the package: a `!node_modules/**/*` pattern in `build.files`, or move the packages Vite bundles to `devDependencies`. Then check that the packaged app starts and opens a vault on a scratch profile, and pin "main and preload require only `electron` and Node built-ins" in a gate, so a later import can't depend on the `node_modules` that are no longer shipped.
 
 ### BL-21: CI's runner moves to Ubuntu 26 (Impact 0/10, Hard 1/10)
 - **What you see:** nothing yet. GitHub's notice on CI run 37198999812 (2026-10-04): "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026" ([actions/runner-images#14748](https://github.com/actions/runner-images/issues/14748)).

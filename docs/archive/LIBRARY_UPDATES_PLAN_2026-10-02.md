@@ -1693,6 +1693,7 @@ The investigation estimated CodeMirror at about 79 KB gzipped for view and state
   - `resources/app.asar` is 38.5 MB: 7.0 MB of `dist/`, and the `node_modules` of every runtime dependency, which Vite has already bundled into `dist/`.
   - Older than this plan. CodeMirror (Phase 7) adds 2.8 MB of it.
   - Found by listing the asar after the package check. It doesn't affect the app, only its download and install size.
+  - Fixed the same day: see "Follow-up: BL-20 fixed" below.
 - **The investigation's §8 decision 7** asks to log W9 (card previews drop font sizes and indents) "as BL-11". That number went to the `npm audit` item in Phase 0, and W9 was never logged, since §8 still waits on the owner. The row now says so; nothing else changed.
 - `npm audit fix` leaving 4.2.0 installed (deviation 2) is npm's behaviour, not Filo's, so there is no backlog item.
 - **BL-21: GitHub's `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19.** The CI run carried this notice. The first `verify` after the switch is the one to watch: Playwright's `--with-deps` installs system libraries by distribution, and the Linux-only timing skips were tuned on Ubuntu 24.04.
@@ -1700,3 +1701,36 @@ The investigation estimated CodeMirror at about 79 KB gzipped for view and state
 #### What changes for someone using Filo
 
 Nothing in this phase. Every package it changed is dev-only or used only when packaging, and the built renderer, main and preload files have Phase 7's sizes, file for file.
+
+#### Follow-up: BL-20 fixed (owner, 2026-10-04)
+
+The owner asked for BL-20 to be fixed once this outcome was written. It was removed from `docs/BACKLOG.md` once fixed, as its rules say.
+
+**What changed**
+- **`package.json` `build.files`:** `!node_modules/**/*` added.
+  - electron-builder copies dependencies through a matcher of its own, which takes only the `!` patterns from `build.files` (with `**/*` in front) and tests them against `node_modules/<package>/…` paths, so this pattern leaves every dependency's files out.
+  - `dependencies` is unchanged, so it still names what the app is built from; `one-markdown-parser` and `no-jsyaml` read it that way.
+  - The other way in BL-20, moving the bundled packages to `devDependencies`, would have lost that meaning and emptied those checks.
+- **Gate `packaged-app-needs-no-node-modules`** (group `codebase`; 91 gates). It fails when:
+  - `build.files` loses the exclusion;
+  - a file under `src/main` or `src/shared` imports a runtime `dependency` that electron-vite leaves external, statically, dynamically or by `require` (a type-only import is erased, so it passes);
+  - the config no longer holds an `externalizeDeps.exclude` list for main and for preload.
+
+  A package counts as bundled only if both lists name it (today, zod), since a file in `src/shared` can reach either bundle. The import regex moved into `scripts/gates/lib.mjs` (`IMPORT_SPECIFIER`, with `packageName`), shared with `one-markdown-parser`.
+- **`src/tests/e2e/helpers/app.ts`:** `FILO_E2E_EXE` runs the suite against a packaged executable (Playwright's `executablePath`), not `dist/main/main.js`.
+- **CLAUDE.md:** the gate count (91), the `codebase` row, the Quick Reference E2E line, and `FILO_E2E_EXE` in the E2E entry of Testing Strategy.
+
+**Pass test**
+
+| Check | Result |
+|---|---|
+| The package (`electron-builder --dir` into a scratch folder) | `app.asar` 38,504,378 → **7,022,167 bytes**; 4,544 entries → **36** (the 35 files of `dist/`, and `package.json`). The installer wasn't built, so its saving isn't measured. |
+| E2E against the packaged `Filo.exe` (`FILO_E2E_EXE`, `FILO_E2E_SCALE=1`) | **29 passed in 2.8 min**, the scale budgets, the Raw view (its CodeMirror chunk loaded from the asar) and the axe scan included. The processes under test were checked to be the packaged `Filo.exe`, so this also ran the packaged app's stricter CSP. |
+| The hazard the gate guards against is real | With `import { nanoid } from 'nanoid'` added to `main.ts`, `dist/main/main.js` holds `require("nanoid")`, the gate fails, and the packaged app never opens a window (Playwright's `firstWindow` timed out after 30 s). `main.ts` was restored, and `ci:verify` rebuilt `dist/` from it. |
+| The gate bites | 7 cases applied to the real files, the gate run, each file restored byte for byte. Fails as expected: `build.files` without the exclusion; `nanoid` imported in a `src/main` file; a dynamic `import('yaml/util')` in `src/shared`; a `require('@tiptap/core')` in `src/main`; zod dropped from preload's exclude list only (3 violations: the files importing zod); one exclude list gone. Passes, as it should: an `import type … from 'yaml'` in `src/shared`. |
+| `npm run ci:verify` (Windows) | **Green in 280 s.** 804 files: 7,836 passed, 5 skipped; **91/91 gates**; eslint 0 warnings, knip no findings, svelte-check 862 files 0 errors. `main.js` 420,366 and `preload.js` 193,825 bytes, unchanged. |
+| E2E against `dist/` (`FILO_E2E_SCALE=1`) | **29 passed in 2.7 min**: the helper's default path is unchanged. |
+
+**Deviations from BL-20's fix idea**
+- **The gate checks the source, not `dist/`.** Gates are static scans of the repo (`lib.mjs`), and a gate reading the build would fail on a fresh clone before `npm run build`. Instead it finds what would become a `require`: the `dependencies` that electron-vite's `externalizeDeps` leaves out of the bundle. The hazard run above shows the two agree.
+- **The packaged app was checked by the whole E2E suite**, not only by starting it and opening a vault. `FILO_E2E_EXE` stays in the helper for the next change to packaging.

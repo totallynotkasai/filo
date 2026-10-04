@@ -1,7 +1,9 @@
 // Codebase-wide hygiene ratchets.
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { fail, stripComments, stripCommentsKeepLines, blank, scriptOnly, functionBody, matchBrace, lineAt } from './lib.mjs';
+import {
+  fail, stripComments, stripCommentsKeepLines, blank, scriptOnly, functionBody, matchBrace, lineAt, IMPORT_SPECIFIER, packageName,
+} from './lib.mjs';
 import { countCodeLines } from './codeLines.mjs';
 
 // Per-file type-error counts for the test sources (tsconfig.tests.json) when
@@ -563,6 +565,48 @@ export const checks = [
           out.push(fail(rel, lineAt(src, m.index), `\`${m[0].replace(/\s*\($/, '')}\` in a function that never classifies the dropped file`));
         }
       }
+      return out;
+    },
+  },
+  {
+    // Vite bundles every runtime dependency into dist/, so the package leaves
+    // node_modules out (30 MB nothing loaded). For main and preload,
+    // electron-vite's `externalizeDeps` keeps each `dependencies` package out
+    // of the bundle as a run-time `require`, except those on its `exclude`
+    // list (zod). One of those imported by main or preload would make the
+    // installed app fail at start, while every test, which runs beside the
+    // repo's node_modules, still passed.
+    id: 'packaged-app-needs-no-node-modules',
+    title: 'the package leaves node_modules out, and main / preload import no runtime dependency that would stay a require',
+    hint:
+      'Keep "!node_modules/**/*" in package.json build.files. For a runtime dependency main or preload needs, add it to ' +
+      'externalizeDeps.exclude in electron.vite.config.mts, for main and for preload, so it is bundled in as zod is.',
+    run(ctx) {
+      const out = [];
+      const pkg = JSON.parse(ctx.read('package.json') ?? '{}');
+      if (!(pkg.build?.files ?? []).includes('!node_modules/**/*')) {
+        out.push(fail('package.json', undefined, 'build.files no longer leaves node_modules out ("!node_modules/**/*")'));
+      }
+      const CONFIG = 'electron.vite.config.mts';
+      const lists = [...stripComments(ctx.read(CONFIG) ?? '').matchAll(/externalizeDeps\s*:\s*\{\s*exclude\s*:\s*\[([^\]]*)\]/g)]
+        .map((m) => new Set([...m[1].matchAll(/['"]([^'"]+)['"]/g)].map((s) => s[1])));
+      if (lists.length !== 2) {
+        out.push(fail(CONFIG, undefined, `expected an externalizeDeps exclude list for main and for preload, found ${lists.length}`));
+      }
+      // Bundled only if both bundles take it in: a file under src/shared may reach either.
+      const external = new Set(Object.keys(pkg.dependencies ?? {}).filter((name) => !lists.every((l) => l.has(name))));
+      const files = ctx.files(['src/main', 'src/shared'], { ext: ['.ts', '.mts', '.mjs'] });
+      for (const rel of files) {
+        stripCommentsKeepLines(ctx.read(rel)).split(/\r?\n/).forEach((line, i) => {
+          if (/^\s*(?:import|export)\s+type\b/.test(line)) return; // erased: no require at run time
+          for (const m of line.matchAll(IMPORT_SPECIFIER)) {
+            if (external.has(packageName(m[2]))) {
+              out.push(fail(rel, i + 1, `imports ${m[2]}, which the build leaves a require of a node_modules package the app no longer ships`));
+            }
+          }
+        });
+      }
+      if (files.length < 50) out.push(fail('src/main', undefined, `tripwire: only ${files.length} files scanned (expected >= 50)`));
       return out;
     },
   },

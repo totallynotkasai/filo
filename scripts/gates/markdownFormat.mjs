@@ -1,7 +1,7 @@
 // Byte-fidelity ratchets: BOM, encoding, line endings, the single YAML parser,
 // and the editor load/save discipline that keeps an unedited note byte-identical.
 import {
-  fail, blank, functionBody, lineAt, matchBrace, scriptOnly, stripComments, stripCommentsKeepLines, tokenChecks,
+  fail, blank, functionBody, lineAt, matchBrace, scriptOnly, stripComments, stripCommentsKeepLines, tokenChecks, IMPORT_SPECIFIER,
 } from './lib.mjs';
 
 const BOM_ALLOWED = new Set([
@@ -138,8 +138,6 @@ const PROPERTY_TEST = 'src/tests/unit/editorRoundTripProperty.test.ts';
 // Markdown parsers other than markdown-it, by package name (a subpath included).
 const OTHER_MARKDOWN_PARSER =
   /^(?:marked|micromark(?:-[\w.-]+)?|remark(?:-[\w.-]+)?|unified|mdast-[\w.-]+|commonmark|@tiptap\/markdown)(?:\/.*)?$/;
-// The module named by an import, a dynamic import, a require, or a bare `import '…'`.
-const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s*)(['"])([^'"\n]+)\1/g;
 const ELSEWHERE_TEST = 'src/tests/unit/markdownContentElsewhere.test.ts';
 const ELSEWHERE_TOKENS = [
   { token: /\bmicromark\s*\(/, why: 'renders with the second parser' },

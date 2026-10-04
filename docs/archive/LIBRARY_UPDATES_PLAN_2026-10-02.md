@@ -1730,6 +1730,7 @@ The owner asked for BL-20 to be fixed once this outcome was written. It was remo
 | The gate bites | 7 cases applied to the real files, the gate run, each file restored byte for byte. Fails as expected: `build.files` without the exclusion; `nanoid` imported in a `src/main` file; a dynamic `import('yaml/util')` in `src/shared`; a `require('@tiptap/core')` in `src/main`; zod dropped from preload's exclude list only (3 violations: the files importing zod); one exclude list gone. Passes, as it should: an `import type … from 'yaml'` in `src/shared`. |
 | `npm run ci:verify` (Windows) | **Green in 280 s.** 804 files: 7,836 passed, 5 skipped; **91/91 gates**; eslint 0 warnings, knip no findings, svelte-check 862 files 0 errors. `main.js` 420,366 and `preload.js` 193,825 bytes, unchanged. |
 | E2E against `dist/` (`FILO_E2E_SCALE=1`) | **29 passed in 2.7 min**: the helper's default path is unchanged. |
+| GitHub CI | **Green** ([run 37202553034](https://github.com/totallynotkasai/filo/actions/runs/37202553034), on `6c5f5a3`): `verify` in 35.6 min on Linux, 803 test files passed and 1 skipped, 91/91 gates (`packaged-app-needs-no-node-modules` included). |
 
 **Deviations from BL-20's fix idea**
 - **The gate checks the source, not `dist/`.** Gates are static scans of the repo (`lib.mjs`), and a gate reading the build would fail on a fresh clone before `npm run build`. Instead it finds what would become a `require`: the `dependencies` that electron-vite's `externalizeDeps` leaves out of the bundle. The hazard run above shows the two agree.

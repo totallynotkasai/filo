@@ -1,8 +1,8 @@
 # Library updates and new tools: implementation plan
 
-**Status (2026-10-04): Phases 0–7 done; Phase 8 not started.** Each phase gets an "Outcome" section here when it is done (what changed, deviations, new findings), as in earlier plans.
+**Status (2026-10-04): all phases (0–8) done; archived.** Each phase has an "Outcome" section below (what changed, deviations, new findings), as in earlier plans. Open findings went to [BACKLOG.md](../BACKLOG.md).
 
-Source: [TRACK_B_INVESTIGATION_2026-10-02.md](TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
+Source: [TRACK_B_INVESTIGATION_2026-10-02.md](../TRACK_B_INVESTIGATION_2026-10-02.md) §6, asked for by the owner on 2026-10-02: "do the library updates you said to do and the worth-addings as well".
 
 **In scope**
 - the updates to take now (§6.1);
@@ -515,6 +515,7 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
 
 - A full `npm run ci:verify` on Windows, and the E2E suite with `FILO_E2E_SCALE=1`.
 - `npm audit`: 0.
+  - *At the start of Phase 8 (owner, 2026-10-04):* reachable after all. `http-cache-semantics` 4.3.0, out that day, fixes BL-11's advisory with a lockfile-only change; taken, with a `package:dir` run to prove packaging. jsdom 30.1.2, also out that day, is taken too.
 - `npm outdated`: only what the investigation said to wait for or skip is left:
   - Electron 45, once it is out on 2026-10-20;
   - TypeScript 7;
@@ -535,6 +536,7 @@ The blur save hangs on the DOM `blur` event, not CodeMirror's later focus update
 - **TRACK_B_INVESTIGATION §6:** mark what was done. **BACKLOG:** add any new findings.
   - *From Phase 4:* also correct §6's knip row, which says knip needs Svelte's compiler or it reports components' exports as unused (see the Phase 4 outcome's new findings).
 - **Optional, if a larger corpus is needed (owner, 2026-10-03):** once every change is in, generate a vault with `node scripts/perf/genVault.mjs <dir>` (deterministic) and add it to the corpus with `corpus:list -- … --extra <dir>`. Its notes are generated, so they add volume rather than variety.
+  - *At the start of Phase 8 (owner, 2026-10-04):* not done. Instead, the real corpus is compared with Phase 0's saved result, which covers the whole plan at once.
 - Move this plan to `docs/archive/` with its outcomes.
 
 ---
@@ -1530,3 +1532,170 @@ The screenshots showed one thing the plan didn't cover: `--font-mono` starts wit
   - CodeMirror's base stylesheet gives the caret, gutter, find bar and matches light-theme colours unless a dark theme is declared to it; every one is overridden from the theme tokens, so all five themes are covered without telling CodeMirror which is dark.
   - Chromium's `input.select()` moves the focus into the find bar; jsdom's doesn't (the unit test focuses it itself, the Chromium spec checks the real behaviour).
   - A line near the end of a note can't be scrolled a third of the way down: the box is at its end. The textarea behaved the same.
+
+### Phase 8 outcome (2026-10-04)
+
+**Status:** done, verified on Windows. Committed on `main` and pushed (owner, at the start); the GitHub CI run is recorded under "Pass test".
+- **The whole plan holds together:**
+  - `ci:verify` and the E2E suite (scale budgets included) are green;
+  - `npm audit` is 0;
+  - `npm outdated` lists only what the investigation said to wait for or skip.
+- **Saved notes are unchanged across the whole plan.** On the 671 real notes that both runs hold unchanged, the corpus check against Phase 0's saved result (from before any library changed) finds 0 changed outputs and 0 changed read-only verdicts.
+- **Two things came out on the day and were taken** (decisions 1 and 2):
+  - `http-cache-semantics` 4.3.0 fixes the advisory behind BL-11, so BL-11 is closed;
+  - jsdom 30.1.2.
+- **Docs:**
+  - BL-19 is fixed (the design doc's index, search and testing lines);
+  - TRACK_B §6 is marked done, with its knip row corrected;
+  - one new finding: BL-20.
+
+#### Decisions at the start (owner, 2026-10-04)
+
+Asked after a first `npm audit` and `npm outdated` showed two things new since Phase 7.
+1. **Take `http-cache-semantics` 4.3.0, and prove packaging with `npm run package:dir`** (the recommended option). It came out that morning from its only maintainer, outside the advisory's range (`<= 4.2.0`); `npm audit fix` changes only its lockfile entry. The other options were to take it without a package run, or to leave BL-11 open.
+2. **Take jsdom 30.1.2** (recommended), released the same day: fixes to focus, `:focus` styles and `getComputedStyle`, which the commit-on-blur tests touch. The other option was to leave it for the next update.
+3. **Corpus: the real notes against Phase 0's saved result** (recommended), not the plan's optional generated vault. Phase 0's `corpus-run2.json` was still in its session's scratch folder, so no worktree was needed.
+4. **Commit and push** (recommended), so GitHub's Linux `verify` runs Phases 6 and 7 for the first time (their pass tests name GitHub CI).
+
+#### What changed
+
+- **`package.json`:** jsdom `^30.1.1` → `^30.1.2`.
+- **The lockfile:** 6 entries changed and 1 removed, all dev-only:
+
+  | Package | From | To |
+  |---|---|---|
+  | jsdom | 30.1.1 | 30.1.2 |
+  | whatwg-url | 16.0.1 | 17.2.0 (jsdom's own nested 17.1.2 copy removed) |
+  | tr46 | 6.0.0 | 7.0.0 |
+  | data-urls | 7.0.0 | 8.0.0 |
+  | @csstools/css-syntax-patches-for-csstree | 1.1.14 | 1.1.15 |
+  | http-cache-semantics | 4.2.0 | 4.3.0 |
+
+  - Every new Node range is met: CI's newest Node 22 meets `^22.14.0` and jsdom's `^22.22.2`, and local Node is 24.16.
+  - **`http-cache-semantics` 4.3.0, against 4.2.0:**
+    - it compares a cached response's `Vary` headers per field (own properties only, a `*` anywhere in the list);
+    - the cached response now carries its `status`.
+
+    It sits in `electron-builder → app-builder-lib → @electron/get 3.1.0 → got 11 → cacheable-request 7`. `got` loads it, but `@electron/get` passes `got` no cache, so packaging never runs it (deviation 3).
+- **`Filo_Design_Doc_Rework_V5.md`** (BL-19, and the same stale facts elsewhere, deviation 5):
+  - **The VaultIndex paragraph:**
+    - frontmatter read with the `yaml` package;
+    - title, tags and body kept;
+    - no Markdown parse;
+    - the Search panel matches over the index itself;
+    - its "validated with Zod" claim dropped (nothing in the index uses Zod).
+  - **The store table's `vaultIndex` row:** no headings.
+  - **The technology list:**
+    - "Markdown Processing": markdown-it is the one parser, micromark in the tests only;
+    - "Full-Text Search": the index itself, with MiniSearch only for template titles;
+    - "Metadata Indexing": what Zod validates;
+    - "Testing": jsdom, the Chromium browser mode, the characterisation suite, and Playwright on the built app.
+  - **The Performance line:** no MiniSearch.
+- **`README.md`:** the Tech list names CodeMirror 6 for the Raw view, and search over the in-memory index instead of MiniSearch.
+- **`docs/TRACK_B_INVESTIGATION_2026-10-02.md`:**
+  - **A "Since" line under its header.**
+  - **§6: a "Done" list,** whose `npm audit` line also says why electron-builder 27 is no longer needed for the advisory.
+  - **§6.5's four tool rows marked done**, each with what went differently:
+    - CodeMirror: `@lezer/markdown`;
+    - micromark: three extensions, and BL-15 to BL-18;
+    - Vitest browser mode: the headless shell;
+    - knip: the Svelte reader claim struck through and corrected, as the Phase 4 outcome asked.
+  - **§6.7's design-doc bullet:** what is now fixed, and that only the `tiptap-markdown` line waits for B1a.
+  - **§7:** steps 1 and 9 marked done.
+  - **§8:** decision 7's backlog number noted as taken (see "New findings").
+- **`docs/BACKLOG.md`:**
+  - BL-11 and BL-19 removed (closed);
+  - BL-20 added;
+  - the "Last updated" line now links the archived plan.
+- **CLAUDE.md:** no change (deviation 6).
+- **This plan:** the status line, this outcome, the link to the investigation, and its move to `docs/archive/`.
+
+#### Pass test
+
+| Check | Result | Phase 7 |
+|---|---|---|
+| `npm run ci:verify` (Windows) | **Green in 269 s.** eslint 0 warnings; knip no findings; svelte-check 862 files, 0 errors, 0 warnings; `typecheck:main` clean; 804 files: 7,836 passed, 5 skipped (vitest 215 s); 90/90 gates in 9.2 s. No test changed result on jsdom 30.1.2: the counts are Phase 7's exactly. | 264 s; the same counts |
+| E2E, `FILO_E2E_SCALE=1` | **29 passed in 2.7 min**: the three scale budgets ran (none skipped), and so did `rawView` and the axe scan. | 29 passed in 2.7 min |
+| `npm audit` | **0 vulnerabilities**, production and dev. | 8 high (BL-11) |
+| `npm outdated` | Only the majors on the "wait" and "skip" lists: `@sveltejs/vite-plugin-svelte` 7.3.1, `js-yaml` 5.4.2, `markdown-it` 15.0.2, `nanoid` 6.0.1, `typescript` 7.0.2, `vite` 8.3.2. Electron 45 isn't listed: it isn't out until 2026-10-20. yaml 3 and electron-builder 27 are pre-releases, which `npm outdated` doesn't show. | jsdom 30.1.2 appeared on 2026-10-04 and is now taken |
+| Package check (decision 1) | **Green.** `npm run icons`, `npm run build`, then `electron-builder --dir` into a scratch folder in 55 s (deviation 3). Electron 44.5.1 and its checksum file were downloaded fresh through `@electron/get` and `got`, the download cache bypassed (`ELECTRON_DOWNLOAD_CACHE_MODE=3`); the zip was checked against its checksum and unpacked, the asar built and `Filo.exe` written (unsigned: there is no certificate, as before). `npm run icons` wrote the same three icon files, byte for byte. | |
+| Corpus, against Phase 0 (decision 3) | **0 changed, 0 newly read-only, 0 newly failed, 0 unlocked** on the 671 notes both runs hold with the same text (324 editable and 329 read-only in both). Details below. | |
+| Built app | `main.js` 420,366 and `preload.js` 193,825 bytes, Phase 0's sizes to the byte; no `require("zod")`. main requires only `electron` and Node built-ins (`buffer`, `crypto`, `dns`, `fs`, `os`, `path`, `stream`, `url`, `util`), preload only `electron`. The 27 renderer assets have Phase 7's sizes, file for file (6,397,218 bytes in all); this phase changed only dev and build-time packages, which nothing in the app imports. | Phase 7 build |
+| GitHub CI | Recorded below, after the push. | Not run |
+
+**The corpus check, in detail.** Today's list (`corpus:list`, the same sources as Phase 0) holds 739 notes: 104 in the repo, 32 in the vaults folder, 603 `node_modules` READMEs. 394 open read-only, 204 save byte for byte, 0 fail.
+
+| Notes | Count | Why not compared |
+|---|---|---|
+| In both runs, same text | 671 | (compared: no difference) |
+| In both runs, text edited since Phase 0 | 18 | The six docs this plan edits (CLAUDE.md, the design doc, the README, BACKLOG, the investigation, this plan), and 12 READMEs of packages the plan updated (jsdom, DOMPurify, eslint, sharp's build, and jsdom's and vitest's dependencies) |
+| Only in Phase 0's run | 13 | READMEs of packages gone since: the eight re-export TipTap packages that left `node_modules` in Phase 3, and five that Phases 1 and 2 removed |
+| Only in today's run | 68 | One repo note (a golden fixture since Phase 0) and 67 READMEs of packages added since (CodeMirror and Lezer, micromark, knip and its parts, the browser-mode packages) |
+
+**The whole plan, against the Phase 0 baseline**
+
+| | Phase 0 (`78e3980`) | Phase 8 |
+|---|---|---|
+| `ci:verify` | 251 s; 795 files, 7,525 passed, 5 skipped; 89 gates | 269 s; 804 files, 7,836 passed (+311), 5 skipped; 90 gates; knip and the Chromium project now inside |
+| E2E | 28 passed in 2.7 min | 29 passed in 2.7 min (`rawView.e2e.ts`) |
+| `npm audit` | 9 (1 low, 8 high) | 0 |
+| `npm outdated` | patch or minor updates for 33 packages (25 of them TipTap), and 7 majors (jsdom 30 among them) | the 6 majors on the "wait" / "skip" lists |
+| Corpus | 684 notes, 347 read-only | 739 notes, 394 read-only; the 671 shared unchanged notes save exactly as before |
+| Renderer assets | 25 files, 5,665,769 bytes | 27 files, 6,397,218 bytes (+731,449) |
+| `main.js`, `preload.js` | 420,366 and 193,825 bytes | the same |
+
+Where the 731,449 bytes went:
+
+| File | Change (bytes) | Phase |
+|---|---|---|
+| `codemirror.js` (new; 174,946 gzipped) | +710,567 | 7, fetched only when a Raw view first opens |
+| `rawTextEditor.js` (new) | +9,296 | 7 |
+| `tiptap.js` | +9,225 | 3 (TipTap 3.31.4), 7 (+43) |
+| `DocumentEditor.css` | +4,484 | 7 (the Raw view's styles) |
+| `DocumentEditor.js` | +1,318 | 7 |
+| `index.js` (start-up) | +720 | 2 (+587 in all with its follow-up), 7 (+133) |
+| `convertToUtf8.js` | +370 | 3 (deviation 7) |
+| `LinkTile.js` | −4,531 | 1 (DOMPurify 3.4.16) |
+
+The investigation estimated CodeMirror at about 79 KB gzipped for view and state, and up to 175 KB more with `@codemirror/lang-markdown`. The chunk as built (view, state, commands, language, search and `@lezer/markdown`, without `lang-markdown`) is 175 KB gzipped. Like every chunk, it isn't minified.
+
+#### Deviations from the plan
+
+1. **Two updates the plan didn't list** (decisions 1 and 2): `http-cache-semantics` 4.3.0 and jsdom 30.1.2, both released on 2026-10-04. Without them, `npm audit` would have stayed at 1 high finding and `npm outdated` would have listed jsdom.
+2. **`npm audit fix` left the old version installed.** It wrote 4.3.0 into `package-lock.json` and into npm's own record in `node_modules` (`node_modules/.package-lock.json`), but the files on disk stayed 4.2.0, so `npm install` found nothing to do. Deleting `node_modules/http-cache-semantics` and running `npm install` put 4.3.0 in place. Lesson: after `npm audit fix`, check the installed `package.json`.
+3. **How the package check ran.**
+   - It wrote into a scratch folder (`-c.directories.output=…`), because `release/` holds an installer and an unpacked build from 8 June, which `package:dir` would have overwritten.
+   - Its steps were `package:dir`'s own (`npm run icons`, `npm run build`, `electron-builder --dir --publish never`).
+   - `ELECTRON_DOWNLOAD_CACHE_MODE=3` made it download Electron instead of taking 44.5.1 from the cache, so the chain the fix sits in really ran.
+   - `http-cache-semantics` itself is loaded but never called there: `@electron/get` gives `got` no cache. So the advisory couldn't have touched packaging, as BL-11's Impact 0/10 said.
+   - The scratch output was deleted afterwards.
+4. **The corpus was compared with Phase 0's saved result** (decision 3), not run on a generated vault. The plan's optional item is not done.
+5. **More docs than the plan listed:**
+   - **The design doc**, beyond BL-19's list: the store table's `vaultIndex` row (headings), the VaultIndex's "validated with Zod" (in the paragraph and the technology list) and the Performance line's MiniSearch. These are the same stale facts.
+   - **The README**, whose Tech list named MiniSearch too.
+   - **In the investigation:** §7's steps 1 and 9, and §8's decision 7.
+6. **CLAUDE.md needed nothing.** Phase 8's list for it was already written:
+   - the `corpus:*` lines by Phase 0;
+   - the `knip` line by Phase 4;
+   - the second parser and the gate count (90) by Phase 5;
+   - the browser project and the Chromium install line by Phase 6;
+   - the Raw view lines by Phase 7.
+   
+   Each was checked against the tree.
+7. **Phase 4's open question about `convertToUtf8.js` is answered.**
+   - Despite its name, that chunk holds the editor's own code (`createEditor.ts`, `tableMarkdown.ts` and the rest), not only the UTF-8 conversion.
+   - Phase 3's `FiloTableCell` and `FiloTableHeader` (about 300 bytes) and their imports landed there. Phase 3's size table credited them to `tiptap.js` and listed `convertToUtf8.js` as unchanged.
+   - So the 370 bytes are Phase 3's.
+
+#### New findings
+
+- **BL-20: the packaged app carries 30.4 MB of `node_modules` that nothing loads.**
+  - `resources/app.asar` is 38.5 MB: 7.0 MB of `dist/`, and the `node_modules` of every runtime dependency, which Vite has already bundled into `dist/`.
+  - Older than this plan. CodeMirror (Phase 7) adds 2.8 MB of it.
+  - Found by listing the asar after the package check. It doesn't affect the app, only its download and install size.
+- **The investigation's §8 decision 7** asks to log W9 (card previews drop font sizes and indents) "as BL-11". That number went to the `npm audit` item in Phase 0, and W9 was never logged, since §8 still waits on the owner. The row now says so; nothing else changed.
+- `npm audit fix` leaving 4.2.0 installed (deviation 2) is npm's behaviour, not Filo's, so there is no backlog item.
+
+#### What changes for someone using Filo
+
+Nothing in this phase. Every package it changed is dev-only or used only when packaging, and the built renderer, main and preload files have Phase 7's sizes, file for file.

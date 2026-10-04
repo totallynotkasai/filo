@@ -85,8 +85,9 @@ Defaults:
 
 - **Electron** + **Svelte 5** (runes) + **TypeScript** + **Vite**
 - **TipTap** + **tiptap-markdown** for rich text ↔ Markdown round-trip
+- **CodeMirror 6** for a note's Raw view
 - **rbush** for spatial indexing on the canvas
-- **MiniSearch** for full-text search
+- Search over an in-memory index of the vault's notes (no search engine)
 - Custom pointer-event canvas engine (pan, zoom, drag, edge-pan, snap)
 - Vanilla CSS — no Tailwind, no preprocessors
 

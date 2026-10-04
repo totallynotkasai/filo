@@ -348,7 +348,7 @@ Tags are global to the vault (their colour definitions live in `.filo/tags.json:
 ### Data Layer
 
 * **File System** — The vault folder is the single source of truth. Text tiles and document boards are `.md` files, non-text tiles are stored as their native file type (`.png`, `.mp3`, `.svg`, etc.) or have no vault file at all (Link, Iframe, Timer tiles store data in the board JSON). Boards are `.board.json` files. Configuration lives in `.filo/`.
-* **VaultIndex** — An in-memory index that parses and caches metadata from all vault files: headings, tags, and frontmatter properties. Markdown files are parsed using the unified/remark pipeline (remark-parse + remark-frontmatter) for metadata extraction. Full-text search is powered by a MiniSearch instance that is updated alongside the metadata index. The index rebuilds incrementally on file changes via file system watchers (Node.js `fs.watch`). File change events are debounced (300ms) to batch rapid saves. When a change is detected, only the affected file is re-parsed and its MiniSearch entry updated — a full rebuild is only performed on vault open. External edits to vault files (e.g., from another text editor) are detected by the same watcher and trigger re-parsing; open notes follow the rules in **External Edit Conflict Resolution** (see Data Model). The index is read-only: nothing is ever written from it. A note's title in the index is its frontmatter `title:`, or its filename stem when there is none. Validated with Zod schemas.
+* **VaultIndex** — An in-memory index of every note in the vault: its frontmatter properties, title, tags and body text. The frontmatter is read with the `yaml` package, the one frontmatter parser the note writer also uses. The index does not parse Markdown: nothing reads a note's headings or links, so opening a vault doesn't pay for a parse per note, and markdown-it stays the one Markdown parser in the app. The Search panel matches titles, tags and note bodies over the index itself; there is no separate search engine. The index rebuilds incrementally on file changes via file system watchers (Node.js `fs.watch`). File change events are debounced (300ms) to batch rapid saves. When a change is detected, only the affected file is read again — a full rebuild is only performed on vault open. External edits to vault files (e.g., from another text editor) are detected by the same watcher and trigger a re-read; open notes follow the rules in **External Edit Conflict Resolution** (see Data Model). The index is read-only: nothing is ever written from it. A note's title in the index is its frontmatter `title:`, or its filename stem when there is none.
 * **Vault API** — Programmatic interface for file CRUD operations. When a tile or file is renamed, the Vault API updates all board JSON references to the old file path. Broken file references (pointing to deleted or non-existent files) are detected during board loading and flagged. This is the single system responsible for all file reference resolution and renaming propagation.
 
 ### File Sync Model
@@ -496,7 +496,7 @@ The frontend uses Svelte 5 Runes (`$state`, `$derived`, `SvelteSet`) for all rea
 | **spatial** | RBush spatial index for viewport culling — only tiles within the visible viewport are rendered |
 | **guides** | Smart guide state: active guide lines, snap distance, alignment calculations |
 | **search** | Vault-wide Search query, parsed operator filters, match results, current-match cursor, Find/Replace mode toggle |
-| **vaultIndex** | In-memory index of parsed vault metadata (headings, tags, frontmatter). Powers search and tag queries |
+| **vaultIndex** | In-memory index of each note's frontmatter, title, tags and body text. Powers search and tag queries |
 
 **Data flow:** User action → store mutation → reactive UI update. For file-backed data, store mutations schedule a debounced write (300ms idle) to the vault via the Vault API (IPC to main process). External file changes detected by the file watcher flow in reverse: watcher event → IPC to renderer → store update → reactive UI update.
 
@@ -1200,20 +1200,20 @@ Right-clicking on a **tab**:
 * **Storage:** File system (vault folder on user's disk) — Node.js fs
 * **Data Formats:** Markdown (.md) for tiles/documents, JSON (.board.json) for boards, JSON for configuration
 * **Canvas:** Custom infinite canvas with rbush spatial indexing. Pan, zoom, drag, resize, and edge-pan are implemented as raw pointer-event handlers in `src/renderer/lib/canvas/`.
-* **Markdown Processing:** unified + remark ecosystem (remark-parse, remark-frontmatter) for Markdown parsing in the VaultIndex pipeline; the `yaml` package is the one frontmatter parser, and writes patch the frontmatter source key by key through its CST, so untouched keys, comments and quoting survive byte-for-byte. Not used by the TipTap editor, which uses tiptap-markdown for round-tripping. dompurify for HTML sanitisation.
-* **Full-Text Search:** MiniSearch — lightweight in-memory full-text search engine. Integrated with the VaultIndex and updated incrementally on file change events. Powers plain-text and regex vault-wide search queries with sub-millisecond response times.
+* **Markdown Processing:** markdown-it is the one Markdown parser in the app: the editor reads and writes notes through it (via tiptap-markdown, see Editor section), and Kanban card previews and plain-text paste use it too. The VaultIndex doesn't parse Markdown. The `yaml` package is the one frontmatter parser, and writes patch the frontmatter source key by key through its CST, so untouched keys, comments and quoting survive byte-for-byte. dompurify for HTML sanitisation. The tests also read saved notes with micromark, as a second parser, to check the content reads the same outside Filo; it is never part of the app.
+* **Full-Text Search:** The Search panel matches titles, tags and note bodies over the VaultIndex itself (plain text or regular expressions, with Match case and Whole word); there is no separate search engine. MiniSearch only filters template titles in the Template Browser.
 * **Drag-and-Drop:** svelte-dnd-action — Svelte-native sortable list library for Kanban column reordering, tile ordering within columns, task list reordering, and cross-container dragging. Canvas-level tile dragging uses the custom canvas implementation (not svelte-dnd-action).
-* **Metadata Indexing:** Custom VaultIndex with Zod schema validation
+* **Metadata Indexing:** Custom VaultIndex (frontmatter read with the `yaml` package). Zod validates board files, `.filo/` configuration and IPC payloads.
 * **Utilities:** nanoid (ID generation), focus-trap (modal focus management)
 * **Editor Extensions:** Custom Tiptap extension for `#tags`
 * **Module System:** TypeScript interfaces with registry pattern for tiles, boards, and commands
-* **Testing:** Vitest (unit, jsdom env), Playwright (E2E + a11y axe-core scan)
+* **Testing:** Vitest: unit and component tests in jsdom; the editor and Raw view specs also in headless Chromium (Vitest's browser mode); a characterisation suite that mounts the whole app against a real temporary vault with the real main-process handlers. Playwright drives the built Electron app (E2E, with an axe-core accessibility scan).
 
 ## Technical Considerations
 
 **Platform:** Desktop (Windows, macOS, Linux). Mobile is out of scope for v1 — see Architecture > Application Shell.
 **Responsive:** Yes, desktop-first
-**Performance:** Page load < 3 seconds. VaultIndex + MiniSearch enables fast structured and full-text search across large vaults. Spatial indexing (rbush) ensures canvas performance with hundreds of tiles.
+**Performance:** Page load < 3 seconds. The in-memory VaultIndex enables fast structured and full-text search across large vaults. Spatial indexing (rbush) ensures canvas performance with hundreds of tiles.
 **Accessibility:** WCAG 2.1 AA minimum. Dynamic Contrast Text (enabled by default) ensures text-on-background colour combinations meet WCAG AA contrast ratios automatically. All animations respect `prefers-reduced-motion`. See Accessibility Requirements under Context Menu and Animations sections for further detail.
 **Security/Privacy:** Local-first by default. No telemetry. No account required. Optional cloud sync via user's own storage provider.
 **Offline:** Fully functional offline. All features work without internet.

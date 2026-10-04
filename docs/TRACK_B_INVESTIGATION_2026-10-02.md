@@ -2,6 +2,8 @@
 
 **Date:** 2026-10-02 · **Code:** `main` at `29b96ee` · **Status:** investigation only. Nothing in the app changed.
 
+**Since (2026-10-04):** §6's "take now" updates, the TipTap tidy-up and the four "worth having" tools are done, by [archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md); §6 says what changed from what is written here. Track B itself (B1a–B1d), the Markdown profile and the decisions in §8 are still open.
+
 **What was asked**
 1. Are Track B1 and B2 ([BACKLOG.md](BACKLOG.md) §3) better for Filo in the long run?
 2. How can their shortfalls, rich formatting first, be overcome in a logical, standard way? Notes don't have to open 1:1 in Obsidian, but their *content* must stay the same there even where the formatting doesn't. In Filo, formatting must be exact.
@@ -402,6 +404,13 @@ Some **bold** text with a [link](https://example.com) and a #tag
 
 Checked against the npm registry and release notes on 2026-10-02. The last full pass was 2026-09-23 ([archive/DEPENDENCY_UPGRADE_REPORT_2026-09-23.md](archive/DEPENDENCY_UPGRADE_REPORT_2026-09-23.md)). Since then the stack is close to current, so this is mostly patches, a few majors to time, and some tools worth adding. `npm audit`: 1 low advisory (DOMPurify, fixed in 3.4.16), nothing moderate or higher, production or dev.
 
+**Done (2026-10-03 to 2026-10-04),** by the library updates plan ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md)); each phase's outcome there has the details:
+- **§6.1, all of it** (Phases 1 and 2), with eslint 10.12.0 as well. jsdom ended at 30.1.2 (Phase 8).
+- **§6.2** (Phase 3), with TipTap 3.31.4. The patch changed what Filo saves in five places; the one that mattered (tables saved as HTML opened read-only) is fixed in Filo, the other four were kept and pinned by tests.
+- **§6.5's four "worth having" tools:** knip (Phase 4, run in `ci:verify`), micromark in the tests (Phase 5), Vitest's browser mode (Phase 6), CodeMirror 6 for the Raw view (Phase 7). Where it went differently from the table below, each row says so.
+- **`npm audit`** found a new advisory in electron-builder's download chain on 2026-10-03 (GHSA-ch52-4w7c-c8xp, build time only). `http-cache-semantics` 4.3.0 fixed it on 2026-10-04, a lockfile-only change, so §6.3's electron-builder 27 is no longer needed for it. `npm audit`: 0.
+- **Still waiting:** §6.3 and §6.4 as written.
+
 ### 6.1 Take now
 
 | Package | Now | Take | Why | Useful | Hard | Risk |
@@ -447,11 +456,11 @@ Import from the four packages and drop the ten. Fewer packages to move in step a
 
 | Library | What for | Status | Recommendation | Useful | Hard | Risk |
 |---|---|---|---|---|---|---|
-| CodeMirror 6 (`@codemirror/view`, `@codemirror/state`, `@codemirror/lang-markdown`) | The Raw view (§4.7) | Active (view 6.43.13). About 79 KB gzipped for view + state; `lang-markdown` up to 175 KB more, as it pulls in HTML highlighting. | Own branch; load it as a lazy chunk, only when the Raw view opens. The Raw view has spell check off already, so the Electron issue about spell check in CodeMirror (§4.3) doesn't affect it. | 4/10 | 3/10 | 1/10 |
-| micromark + micromark-extension-gfm (tests only) | The second parser of §5.8: checks the content reads the same outside Filo | micromark 4.0.3, active, "passes all tests from CommonMark" | Take with the profile work (step 4). | 4/10 | 2/10 | 0/10 |
+| CodeMirror 6 (`@codemirror/view`, `@codemirror/state`, `@codemirror/lang-markdown`) | The Raw view (§4.7) | Active (view 6.43.13). About 79 KB gzipped for view + state; `lang-markdown` up to 175 KB more, as it pulls in HTML highlighting. | Own branch; load it as a lazy chunk, only when the Raw view opens. The Raw view has spell check off already, so the Electron issue about spell check in CodeMirror (§4.3) doesn't affect it. **Done (Phase 7)**, re-scored Hard 4/10. It uses `@lezer/markdown` instead of `@codemirror/lang-markdown`, which pulls in HTML, CSS and JavaScript support and changes the text itself (list continuation on Enter, a link made from a pasted address). The chunk is fetched only when a Raw view first opens. | 4/10 | 3/10 | 1/10 |
+| micromark + micromark-extension-gfm (tests only) | The second parser of §5.8: checks the content reads the same outside Filo | micromark 4.0.3, active, "passes all tests from CommonMark" | Take with the profile work (step 4). **Done earlier (Phase 5)**, with the strikethrough, table and task-list extensions rather than the whole of `micromark-extension-gfm`. Gate `one-markdown-parser` keeps it out of the app. It found four ways a note Filo saves reads differently on GitHub (BL-15 to BL-18). | 4/10 | 2/10 | 0/10 |
 | commonmark.js (tests only) | The CommonMark reference implementation, as a second oracle (no GFM) | 0.31.2, matching the current spec 0.31.2 | Optional, next to micromark. | 2/10 | 1/10 | 0/10 |
-| Vitest browser mode (`@vitest/browser` with Playwright) | Editor tests in real Chromium: selection, layout and `contenteditable` as in the app, which jsdom only imitates | Stable since Vitest 4 | Own branch, as a fourth test project for editor tests, before B1b + B1c. (It runs Chromium, not Electron, so the E2E suite stays.) | 4/10 | 3/10 | 0/10 |
-| knip (dev only) | Finds unused files, exports and dependencies | 6.39.0, active | A report-only run on its own branch; it needs Svelte's own compiler plugged in, or it reports components' exports as unused. | 3/10 | 2/10 | 0/10 |
+| Vitest browser mode (`@vitest/browser` with Playwright) | Editor tests in real Chromium: selection, layout and `contenteditable` as in the app, which jsdom only imitates | Stable since Vitest 4 | Own branch, as a fourth test project for editor tests, before B1b + B1c. (It runs Chromium, not Electron, so the E2E suite stays.) **Done (Phase 6)**, on `main`, with Playwright's headless shell only; it runs in `ci:verify`. | 4/10 | 3/10 | 0/10 |
+| knip (dev only) | Finds unused files, exports and dependencies | 6.39.0, active | A report-only run on its own branch. ~~It needs Svelte's own compiler plugged in, or it reports components' exports as unused.~~ **Corrected by Phase 4:** no Filo component exports anything, and the compiler alone caused false positives, since it drops type-only imports (one file and several types read as unused). knip's built-in reader read a string as an import. Filo's `knip.ts` reads components with the compiler and adds the type-only imports back. **Done (Phase 4)**, on `main`; it runs in `ci:verify`, and 38 unused exports were removed. | 3/10 | 2/10 | 0/10 |
 | virtua | Virtual lists (a large sidebar folder, KNOWN_LIMITATIONS #40; long search results) | 0.52.10, Svelte 5 support, still 0.x | Only if the scale budgets show a need; how it works with svelte-dnd-action is untested. | 2/10 | 3/10 | 1/10 |
 | node-diff3 | A "Merge" choice in the note conflict prompt, when your edit and the outside change touch different lines | 3.2.1, no dependencies | Only if you want merging as a feature; a wrong automatic merge is worse than a prompt. | 2/10 | 4/10 | 4/10 |
 
@@ -480,7 +489,7 @@ Import from the four packages and drop the ten. Fewer packages to move in step a
   - Plate writes formatting as MDX, which is not CommonMark (no HTML comments; `<` and `{` must be escaped);
   - Novel is inactive and runs on `tiptap-markdown`.
 - **ProseMirror has moved off GitHub.** Since 2026-04-01 its repositories, prosemirror-markdown included, live at code.haverbeke.berlin. Releases continue on npm (prosemirror-markdown 1.13.8 on 2026-09-21); read changelogs and file issues there.
-- **The design doc is out of date here:** its "Markdown Processing" line still lists `unified`, `remark-parse` and `remark-frontmatter` for the vault index. None of them is installed, and CLAUDE.md says the index doesn't parse Markdown. The Editor section still lists the separate TipTap packages and `tiptap-markdown`. Update both lines when B1a lands.
+- **The design doc is out of date here:** its "Markdown Processing" line still lists `unified`, `remark-parse` and `remark-frontmatter` for the vault index. None of them is installed, and CLAUDE.md says the index doesn't parse Markdown. The Editor section still lists the separate TipTap packages and `tiptap-markdown`. Update both lines when B1a lands. *Done earlier, by the library updates plan:* Phase 3 rewrote the Editor section's package list, and Phase 8 (BL-19) the VaultIndex paragraph and the Markdown, search and testing lines. Only the `tiptap-markdown` line waits for B1a.
 
 ---
 
@@ -488,7 +497,7 @@ Import from the four packages and drop the ten. Fewer packages to move in step a
 
 | # | Step | Useful | Hard | Risk | Pass test |
 |---|---|---|---|---|---|
-| 1 | Safe updates (§6.1) and the TipTap package tidy-up (§6.2) | 3/10 | 1/10 | 1/10 | `ci:verify` on Windows; for TipTap, every round-trip suite on its own branch (KNOWN_LIMITATIONS #32) |
+| 1 | Safe updates (§6.1) and the TipTap package tidy-up (§6.2). **Done** (library updates plan, Phases 1–3) | 3/10 | 1/10 | 1/10 | `ci:verify` on Windows; for TipTap, every round-trip suite on its own branch (KNOWN_LIMITATIONS #32) |
 | 2 | Owner decisions on the profile (§8) | 5/10 | 1/10 | 0/10 | — |
 | 3 | B1a: own the glue, byte-identical (§3.2) | 6/10 | 4/10 | 2/10 | corpus 0 changed bytes and verdicts; property sweep; all suites; E2E editor fidelity |
 | 4 | Profile part 1: one vocabulary module, deterministic writers (hex colours, fixed order), generous reading, the preview sanitiser fix (W1, W2, W3, W6, W9) | 5/10 | 3/10 | 2/10 | conformance fixtures; corpus diff reviewed line by line (only colour and highlight spellings may change); notes that become editable listed |
@@ -496,7 +505,7 @@ Import from the four packages and drop the ten. Fewer packages to move in step a
 | 6 | B1b + B1c: save only what you changed (§3.2) | 7/10 | 5/10 | 3/10 | corpus: open, edit one block, save: only that block differs; verify-before-write counted in tests; all suites |
 | 7 | B1d: raw blocks (#17) | 7/10 | 6/10 | 3/10 | the 372 read-only corpus notes open editable, and untouched they save byte for byte |
 | 8 | Profile part 2: alignment wrapper, `==` highlight (decisions 4 and 5) | 4/10 | 3/10 | 2/10 | conformance fixtures; second-parser text check |
-| 9 | CodeMirror 6 for the Raw view (§4.7) | 4/10 | 3/10 | 1/10 | the raw view's existing component tests; E2E |
+| 9 | CodeMirror 6 for the Raw view (§4.7). **Done** (library updates plan, Phase 7) | 4/10 | 3/10 | 1/10 | the raw view's existing component tests; E2E |
 | 10 | Search on the visible text (W8): match the words, map back to the file | 4/10 | 4/10 | 1/10 | search and Replace suites; Replace still never touches tags |
 | — | B2 | 3/10 | 9/10 | 7/10 | not planned |
 
@@ -514,7 +523,7 @@ Steps 3 to 8 are Track B. Each step leaves a working app, runs `npm run ci:verif
 | 4 | Alignment and indent as an HTML wrapper around ordinary Markdown (option B), old form read forever | Yes, in step 8 |
 | 5 | `==text==` read as a highlight, and written for a new "Theme highlight" swatch (no colour of its own) | Yes, in step 8 |
 | 6 | Theme-following palette colours (`var(--filo-red, #d32f2f)`) | Not now; decide after some weeks of daily use |
-| 7 | Add W9 (card previews drop font sizes and indents) to the backlog as BL-11 | Yes |
+| 7 | Add W9 (card previews drop font sizes and indents) to the backlog as BL-11 (that number has since gone to another item; W9 would take the next free one) | Yes |
 
 ---
 

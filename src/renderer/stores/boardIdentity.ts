@@ -19,7 +19,7 @@ import {
   parentFolder,
   renamedFolder,
 } from '../lib/boards/boardNaming';
-import { isVaultFileKnown } from '../lib/boards/newBoardPlace';
+import { boardNameTakenWithFolders, isVaultFileKnown } from '../lib/boards/newBoardPlace';
 import { registerPathRenamable, rebasePath } from '../lib/vault/renamePathKeys';
 import { directoryExistsInTree } from '../lib/vault/vaultTreeSort';
 import { samePath } from '../lib/utils/path';
@@ -42,7 +42,8 @@ function absPath(rel: string): string {
 /**
  * Why the board can't be renamed to `name`, or `null` when it can. Shown
  * inline while the user types: the name must be a usable file name, and no
- * other board file in the same folder may already have it.
+ * other board file in the same folder may already have it. With board folders
+ * on, no other board anywhere in the vault may have it.
  */
 export function boardRenameProblem(boardId: string, name: string): string | null {
   const next = name.trim();
@@ -54,8 +55,8 @@ export function boardRenameProblem(boardId: string, name: string): string | null
   const target = boardPathIn(folder, next);
   // Its own file under another case is not a clash.
   if (samePath(target, path)) return null;
-  if (!isVaultFileKnown(target)) return null;
-  return `A board named "${next}" already exists${folder ? ` in "${folder}"` : ''}.`;
+  if (isVaultFileKnown(target)) return `A board named "${next}" already exists${folder ? ` in "${folder}"` : ''}.`;
+  return boardNameTakenWithFolders(next, boardId);
 }
 
 /**

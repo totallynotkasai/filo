@@ -34,8 +34,11 @@ function unsavedMissingPrompt(): boolean {
 }
 
 describe('a .board.json renamed by another program', () => {
+  // The first two cases are a board at the top of the vault, as an existing
+  // vault with board-specific folders off keeps it.
   it('the board takes the new name, and its next save writes that name into the new file only', async () => {
     const app = await startApp({ 'Keep.md': 'K\n' });
+    await setBoardFolders(app, false);
     await createBoard(app, 'kanban');
     await addKanbanColumn(app);
     await quiesce();
@@ -53,6 +56,7 @@ describe('a .board.json renamed by another program', () => {
 
   it('straight after a save: still followed, with no duplicate-id warning and nothing at the old path', async () => {
     const app = await startApp({ 'Keep.md': 'K\n' });
+    await setBoardFolders(app, false);
     await createBoard(app, 'kanban');
     await addKanbanColumn(app);
     await addKanbanCard(app);

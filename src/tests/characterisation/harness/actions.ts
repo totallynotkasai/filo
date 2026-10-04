@@ -727,8 +727,10 @@ export async function answerConfirm(app: CharApp, opts: { tickExtra?: boolean; c
 export async function deleteBoardInBrowser(app: CharApp, name: string): Promise<void> {
   const { uiStore } = await import('@renderer/stores/ui.svelte');
   uiStore.openModal('board-browser');
-  await waitFor(() => document.querySelector(`button[aria-label="Delete ${name}"]`) !== null, `Delete ${name} in the Board Browser`);
-  click($(document, `button[aria-label="Delete ${name}"]`));
+  // Inside the browser: a board's own folder in the sidebar has a "Delete <name>" button too.
+  const button = `.board-browser-panel button[aria-label="Delete ${name}"]`;
+  await waitFor(() => document.querySelector(button) !== null, `Delete ${name} in the Board Browser`);
+  click($(document, button));
   await answerConfirm(app, { confirm: true });
   if (document.querySelector('.modal')) uiStore.closeModal();
   await quiesce(800);

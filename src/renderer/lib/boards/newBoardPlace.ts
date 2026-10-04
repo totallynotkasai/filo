@@ -8,7 +8,14 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { directoryExistsInTree, flattenTreePaths } from '../vault/vaultTreeSort';
 import { normalizeVaultRelative } from '../utils/path';
-import { boardNameFromPath, boardNameProblem, freeBoardName, plannedBoardPlace, type BoardPlace } from './boardNaming';
+import {
+  boardNameFromPath,
+  boardNameProblem,
+  freeBoardName,
+  parentFolder,
+  plannedBoardPlace,
+  type BoardPlace,
+} from './boardNaming';
 
 /** The open vault's place for a new board named `name`. */
 export function newBoardPlace(name: string): BoardPlace {
@@ -47,6 +54,29 @@ function folderAlreadyThere(place: BoardPlace): boolean {
   return directoryExistsInTree(vaultStore.rawTree ?? [], `${root.replace(/[\\/]+$/, '')}/${place.folder}`);
 }
 
+/** The file of another board anywhere in the vault named `name` (any letter case), or null. */
+function otherBoardNamed(name: string, exceptBoardId?: string): string | null {
+  const key = normalizeVaultRelative(name.trim());
+  for (const [boardId, path] of Object.entries(boardCacheStore.paths)) {
+    if (boardId !== exceptBoardId && normalizeVaultRelative(boardNameFromPath(path)) === key) return path;
+  }
+  return null;
+}
+
+/**
+ * With board-specific folders on, a board's name must be free in the whole
+ * vault, not only in its folder: each board is alone in a folder of its own,
+ * so a same-folder check would never stop two boards sharing a name (two tabs
+ * that can't be told apart). Why `name` is taken, or null.
+ */
+export function boardNameTakenWithFolders(name: string, exceptBoardId?: string): string | null {
+  if (vaultStore.project?.settings?.general?.boardFolders !== true) return null;
+  const other = otherBoardNamed(name, exceptBoardId);
+  if (!other) return null;
+  const folder = parentFolder(other);
+  return `A board named "${name.trim()}" already exists${folder ? ` in "${folder}"` : ''}.`;
+}
+
 /** Why a new board can't be named `name`, or `null` when it can. */
 export function newBoardNameProblem(name: string): string | null {
   const problem = boardNameProblem(name);
@@ -55,7 +85,7 @@ export function newBoardNameProblem(name: string): string | null {
   const where = place.folder ? ` in "${place.folder}"` : '';
   if (isVaultFileKnown(place.path)) return `A board named "${name.trim()}" already exists${where}.`;
   if (folderAlreadyThere(place)) return `A folder named "${place.folder}" already exists. Pick another name for the board.`;
-  return null;
+  return boardNameTakenWithFolders(name);
 }
 
 /**
@@ -66,8 +96,7 @@ export function newBoardNameProblem(name: string): string | null {
 export function isNewBoardNameTaken(name: string): boolean {
   const place = newBoardPlace(name);
   if (isVaultFileKnown(place.path) || folderAlreadyThere(place)) return true;
-  const key = normalizeVaultRelative(name.trim());
-  return Object.values(boardCacheStore.paths).some((p) => normalizeVaultRelative(boardNameFromPath(p)) === key);
+  return otherBoardNamed(name) !== null;
 }
 
 /** `base`, or `base 2`, `base 3`, … whichever is free first. */

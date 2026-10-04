@@ -5,7 +5,7 @@ import { createExclusiveFile } from './exclusiveCreate';
 import { assertSafeFilename } from '../utils/pathSecurity';
 import { moveToTrash } from './trashOps';
 import { PAYLOAD_LIMITS } from '../utils/payloadLimits';
-import { generalSettingsDefaults } from '../../shared/generalSettingsDefaults';
+import { newVaultGeneralSettings } from '../../shared/generalSettingsDefaults';
 
 /**
  * Vault configuration file operations.
@@ -96,8 +96,9 @@ export async function initVaultConfig(vaultRoot: string): Promise<void> {
   //
   // `app.json` is seeded from the same defaults `GeneralSettingsSchema` uses
   // (`shared/generalSettingsDefaults.ts`), so a fresh vault has every key a
-  // later save writes, with the same values.
-  const general = generalSettingsDefaults();
+  // later save writes, with the same values, except that a new vault turns
+  // board-specific folders on.
+  const general = newVaultGeneralSettings();
   const defaults: Record<ConfigFile, unknown> = {
     'app.json': general,
     // appearance.json is fully Filo-owned: activeTheme + font only. Must

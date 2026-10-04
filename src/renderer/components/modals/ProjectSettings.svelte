@@ -15,6 +15,7 @@
   import { settleThemeEditor } from '../../lib/themes/themeEditorGuard';
   import { handleListKeyNav } from '../../lib/utils/listKeyNav';
   import { reportError } from '../../lib/utils/errorBus';
+  import { APP_VERSION } from '../../constants/appVersion';
 
   type SettingsTab = 'general' | 'defaults' | 'current-board' | 'themes' | 'trash';
   let activeTab = $state<SettingsTab>('general');
@@ -243,46 +244,52 @@
 </script>
 
 <div class="settings-container">
-  <div
-    bind:this={tabListEl}
-    class="settings-tabs"
-    role="tablist"
-    aria-label="Settings tabs"
-    aria-orientation="vertical"
-    tabindex={-1}
-    onkeydown={handleSettingsTabKeydown}
-  >
-    {#each tabs as tab (tab.id)}
-      {@const disabled = tab.id === 'current-board' && !hasActiveBoard}
-      <button
-        id={`settings-tab-${tab.id}`}
-        class="settings-tab"
-        class:active={activeTab === tab.id}
-        class:disabled
-        {disabled}
-        role="tab"
-        tabindex={activeTab === tab.id ? 0 : -1}
-        aria-selected={activeTab === tab.id}
-        aria-controls="settings-tabpanel"
-        onclick={() => selectTab(tab.id)}
-        onfocus={() => { if (!disabled) void selectTab(tab.id); }}
-        title={disabled ? 'Open a board to edit its per-board settings' : SAVE_MODE_HINT[tab.saveMode]}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d={tab.icon}/>
-        </svg>
-        <span class="settings-tab-label">{tab.label}</span>
-        <!-- Hidden from assistive tech so the tab is announced by its name
-             alone; the tab's title carries what the chip means. -->
-        {#if tab.saveMode !== 'themes'}
-          <span
-            class="settings-tab-save-mode"
-            class:apply={tab.saveMode === 'apply'}
-            aria-hidden="true"
-          >{tab.saveMode === 'auto' ? 'Auto' : 'Apply'}</span>
-        {/if}
-      </button>
-    {/each}
+  <!-- The rail holds the tabs and, under them, which build is running (so
+       builds can be told apart). The version sits outside the tablist, whose
+       children must all be tabs. -->
+  <div class="settings-rail">
+    <div
+      bind:this={tabListEl}
+      class="settings-tabs"
+      role="tablist"
+      aria-label="Settings tabs"
+      aria-orientation="vertical"
+      tabindex={-1}
+      onkeydown={handleSettingsTabKeydown}
+    >
+      {#each tabs as tab (tab.id)}
+        {@const disabled = tab.id === 'current-board' && !hasActiveBoard}
+        <button
+          id={`settings-tab-${tab.id}`}
+          class="settings-tab"
+          class:active={activeTab === tab.id}
+          class:disabled
+          {disabled}
+          role="tab"
+          tabindex={activeTab === tab.id ? 0 : -1}
+          aria-selected={activeTab === tab.id}
+          aria-controls="settings-tabpanel"
+          onclick={() => selectTab(tab.id)}
+          onfocus={() => { if (!disabled) void selectTab(tab.id); }}
+          title={disabled ? 'Open a board to edit its per-board settings' : SAVE_MODE_HINT[tab.saveMode]}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d={tab.icon}/>
+          </svg>
+          <span class="settings-tab-label">{tab.label}</span>
+          <!-- Hidden from assistive tech so the tab is announced by its name
+               alone; the tab's title carries what the chip means. -->
+          {#if tab.saveMode !== 'themes'}
+            <span
+              class="settings-tab-save-mode"
+              class:apply={tab.saveMode === 'apply'}
+              aria-hidden="true"
+            >{tab.saveMode === 'auto' ? 'Auto' : 'Apply'}</span>
+          {/if}
+        </button>
+      {/each}
+    </div>
+    <p class="settings-version">Filo {APP_VERSION}</p>
   </div>
 
   <div
@@ -349,17 +356,33 @@
     min-height: 0;
   }
 
-  .settings-tabs {
+  .settings-rail {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 4px;
     border-right: 1px solid var(--ui-border);
     /* A set width: the active tab's heavier label must not nudge the page. */
     width: 210px;
     box-sizing: border-box;
     flex-shrink: 0;
+    min-height: 0;
+  }
+
+  .settings-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+  }
+
+  .settings-version {
+    margin: 0;
+    padding: 8px 18px 10px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    user-select: text;
   }
 
   .settings-tab {

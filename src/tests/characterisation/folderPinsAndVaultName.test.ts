@@ -5,6 +5,9 @@
  * when another program renames it (Explorer reports that as one rename per
  * file inside it), instead of being reset to the vault root. A pinned folder
  * deleted in the sidebar clears its pins, and undo puts them back.
+ *
+ * The Root Directory is where new notes go while board-specific folders are
+ * off (a new vault has them on), so its cases switch them off first.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, waitFor, quiesce, reopenVault } from './harness/app';
@@ -18,6 +21,7 @@ import {
   boardFolder,
   setBoardFolders,
   filoReadsTreeNow,
+  vaultMenuOpen,
 } from './harness/vaultFolders';
 
 afterEach(async () => {
@@ -29,6 +33,8 @@ describe('the vault name', () => {
     const app = await startApp({ 'Note.md': 'Hello\n' });
     await renameVault(app, 'My Library');
     expect(vaultName(app)).toBe('My Library');
+    // Enter saved the name and closed the menu, as its other items do.
+    expect(vaultMenuOpen()).toBe(false);
 
     await reopenVault(app);
     expect(vaultName(app)).toBe('My Library');
@@ -38,6 +44,7 @@ describe('the vault name', () => {
 describe('a pinned folder renamed by another program', () => {
   it('the Root Directory follows the folder, and still does after a reopen', async () => {
     const app = await startApp({ 'Old/a.md': 'A\n', 'Old/b.md': 'B\n' });
+    await setBoardFolders(app, false);
     await toggleRootDirectory(app, 'Old');
     expect(rootDirectoryFolder(app)).toBe('Old');
 
@@ -71,6 +78,7 @@ describe('a pinned folder renamed by another program', () => {
 
   it('a pin whose folder is deleted by another program is still cleared', async () => {
     const app = await startApp({ 'Old/a.md': 'A\n', 'Keep.md': 'K\n' });
+    await setBoardFolders(app, false);
     await toggleRootDirectory(app, 'Old');
     expect(rootDirectoryFolder(app)).toBe('Old');
 
@@ -84,6 +92,7 @@ describe('a pinned folder renamed by another program', () => {
 describe('a pinned folder deleted in the sidebar', () => {
   it('the Root Directory is cleared, and undo puts it back', async () => {
     const app = await startApp({ 'Old/a.md': 'A\n', 'Keep.md': 'K\n' });
+    await setBoardFolders(app, false);
     await createBoard(app, 'kanban');
     await addKanbanColumn(app);
     await toggleRootDirectory(app, 'Old');
@@ -126,6 +135,7 @@ describe('a pinned folder deleted in the sidebar', () => {
 describe('a pinned folder renamed by another program just as Filo reads the tree', () => {
   it('the Root Directory still follows the folder', async () => {
     const app = await startApp({ 'Old/a.md': 'A\n', 'Old/b.md': 'B\n' });
+    await setBoardFolders(app, false);
     await toggleRootDirectory(app, 'Old');
     await quiesce(800);
 
@@ -140,6 +150,7 @@ describe('a pinned folder renamed by another program just as Filo reads the tree
 describe('a pinned folder renamed in Filo', () => {
   it('the moved Root Directory is saved before the rename is marked done', async () => {
     const app = await startApp({ 'Old/a.md': 'A\n' });
+    await setBoardFolders(app, false);
     await toggleRootDirectory(app, 'Old');
     await quiesce(800);
     app.bridge.resetLog();

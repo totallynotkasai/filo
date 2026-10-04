@@ -66,7 +66,8 @@ describe('a board tab whose board fails to load', () => {
   it('stays open, saying so, and Retry brings the board back once the file is fixed', async () => {
     const app = await startApp();
     await createBoard(app, 'mindmap');
-    const rel = 'Mind Map 1.board.json';
+    // A new vault gives each board a folder of its own.
+    const rel = 'Mind Map 1/Mind Map 1.board.json';
     await waitFor(() => app.exists(rel) && app.read('.filo/workspace.json').includes(rel), 'workspace.json names the board file');
     const good = app.read(rel);
     const tabsBefore = openTabs(app);

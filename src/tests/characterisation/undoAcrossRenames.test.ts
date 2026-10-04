@@ -67,10 +67,12 @@ describe('undo after a sidebar rename', () => {
     expect(frontmatter(app, note).completed).toBe(true);
 
     await renameInSidebar(app, note, 'Groceries');
-    await waitFor(() => app.exists('Groceries.md'), 'the renamed file');
+    // The task's note is in its board's folder; the rename keeps it there.
+    const renamed = note.replace(/[^/]+$/, 'Groceries.md');
+    await waitFor(() => app.exists(renamed), 'the renamed file');
 
     await undo(app);
-    await waitFor(() => frontmatter(app, 'Groceries.md').completed === false, 'the task unticked on disk');
+    await waitFor(() => frontmatter(app, renamed).completed === false, 'the task unticked on disk');
     await quiesce();
     expect(app.exists(note)).toBe(false);
     expect(errorToasts()).toEqual([]);

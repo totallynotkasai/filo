@@ -12,6 +12,22 @@ function vaultMenuTrigger(app: CharApp): HTMLElement {
     ?? $(app.el, 'button.dropdown-trigger');
 }
 
+function vaultMenuItem(label: string): HTMLElement | undefined {
+  return $$(document, 'button.dropdown-item').find((b) => (b.textContent ?? '').trim() === label);
+}
+
+/** Whether the vault menu's list is showing. */
+export function vaultMenuOpen(): boolean {
+  return vaultMenuItem('Settings') !== undefined;
+}
+
+/** Opens the vault menu, unless it is open already (a click on its button would close it). */
+async function openVaultMenu(app: CharApp): Promise<void> {
+  if (vaultMenuOpen()) return;
+  click(vaultMenuTrigger(app));
+  await settle();
+}
+
 /** The vault name the global toolbar shows. */
 export function vaultName(app: CharApp): string {
   return (vaultMenuTrigger(app).querySelector('.dropdown-label')?.textContent ?? '').trim();
@@ -19,9 +35,8 @@ export function vaultName(app: CharApp): string {
 
 /** Vault menu → Rename Vault, type `name`, press Enter. */
 export async function renameVault(app: CharApp, name: string): Promise<void> {
-  click(vaultMenuTrigger(app));
-  await settle();
-  const item = $$(document, 'button.dropdown-item').find((b) => (b.textContent ?? '').trim() === 'Rename Vault');
+  await openVaultMenu(app);
+  const item = vaultMenuItem('Rename Vault');
   if (!item) throw new Error('no Rename Vault item');
   click(item);
   await waitFor(() => document.querySelector('input#rename-project') !== null, 'vault name input');
@@ -56,9 +71,8 @@ export async function toggleBoardFolder(app: CharApp, folderRel: string): Promis
 
 /** Vault menu → Settings → General → Board-specific folders, set to `on`; then close Settings. */
 export async function setBoardFolders(app: CharApp, on: boolean): Promise<void> {
-  click(vaultMenuTrigger(app));
-  await settle();
-  const item = $$(document, 'button.dropdown-item').find((b) => (b.textContent ?? '').trim() === 'Settings');
+  await openVaultMenu(app);
+  const item = vaultMenuItem('Settings');
   if (!item) throw new Error('no Settings item');
   click(item);
   await waitFor(() => document.querySelector('#board-folders-toggle') !== null, 'board folders switch');

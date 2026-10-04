@@ -61,6 +61,14 @@
     showRenameInput = false;
   }
 
+  // Enter saves the name and closes the menu, as every other item in it does.
+  // A blur only saves: a click outside closes the menu by itself, and a click
+  // on another item runs that item.
+  function commitRenameAndClose() {
+    commitRename();
+    projectDropdownOpen = false;
+  }
+
   function cancelRename() {
     showRenameInput = false;
   }
@@ -75,7 +83,7 @@
         class="rename-input"
         type="text"
         bind:value={renameValue}
-        onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitRename(); } else if (e.key === 'Escape') cancelRename(); }}
+        onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitRenameAndClose(); } else if (e.key === 'Escape') cancelRename(); }}
         onblur={commitRename}
         placeholder="Untitled vault"
       />

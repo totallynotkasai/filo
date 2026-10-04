@@ -133,7 +133,7 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
       const boardPath = ctx.getPaths()[boardId];
       if (!boardPath) return null;
 
-      const view: BoardView = { viewport: getViewportFromCache(boardId), toolbar: workspaceStore.boardToolbar(boardId) };
+      const view = this.boardView(boardId);
       // The trashed copy is what Undo and Settings → Trash bring back, so the
       // last edits (up to 300 ms old) are written first. If they can't be,
       // the board as it is in memory is kept in .filo/recovery/ before the
@@ -183,6 +183,11 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
         reportError('boardCache.delete', err, `Couldn't move the board file ${boardPath} to Filo's trash; it was not deleted.`);
         return null;
       }
+    },
+
+    /** How the board is shown now, for a delete's Undo to put back. */
+    boardView(boardId: string): BoardView {
+      return { viewport: getViewportFromCache(boardId), toolbar: workspaceStore.boardToolbar(boardId) };
     },
 
     /**

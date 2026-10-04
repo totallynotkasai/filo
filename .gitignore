@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+# Earlier builds moved out of release/ (one folder per version)
+release-archive/
 coverage/
 playwright-report/
 test-results/

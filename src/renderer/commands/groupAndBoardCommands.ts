@@ -4,6 +4,7 @@ import { boardCacheStore } from '../stores/boardCache.svelte';
 import { vaultStore } from '../stores/vault.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import type { CascadeStyleClears } from '../stores/boardCacheFrontmatter';
+import type { BoardView } from '../stores/boardCacheDelete';
 import type { Tile, Connection, TileGroup } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
 import { reportError } from '../lib/utils/errorBus';
@@ -232,6 +233,8 @@ export interface CascadeDeleteOptions {
   fileTags?: Record<string, string[]>;
   /** Folder pins (Root Directory, board folders) the delete cleared. */
   clearedPins?: ClearedPin[];
+  /** How each board whose file went with the item was shown (camera, side toolbar), by board id. */
+  boardViews?: Record<string, BoardView>;
 }
 
 /**
@@ -274,6 +277,12 @@ export class CascadeDeleteCommand extends Command {
   private fileTags: Record<string, string[]>; // allow-string-path-key: tags.json fileTags keys, put back verbatim
   /** Pins on the deleted folder or inside it: undo puts them back, redo clears them again. */
   private clearedPins: ClearedPin[];
+  /**
+   * The camera and side toolbar of each board inside the item, which the
+   * delete drops with the board: undo puts them back once the file is back,
+   * as the Board Browser's delete does. Keyed by board id (the file keeps it).
+   */
+  private boardViews: Record<string, BoardView>;
   /** The frames and groups the removed tiles were in, per board. */
   private memberships: TileMemberships[] = [];
   private hasRun = false;
@@ -321,6 +330,7 @@ export class CascadeDeleteCommand extends Command {
     this.itemRel = opts.trashed?.rel ?? null;
     this.fileTags = this.snapshot(opts.fileTags ?? {});
     this.clearedPins = this.snapshot(opts.clearedPins ?? []);
+    this.boardViews = this.snapshot(opts.boardViews ?? {});
     const totalTiles = Object.values(byBoard).reduce((sum, t) => sum + t.length, 0);
     this.description = this.itemRel
       ? `Delete "${this.itemRel}"`
@@ -385,6 +395,10 @@ export class CascadeDeleteCommand extends Command {
     // the step stays a redo: counted as done, the next undo would skip the
     // restore and put back placements the boards still hold.
     if (redo && this.itemRel && !this.trashed) {
+      // The boards go with the item again: the next undo puts back how they look now.
+      for (const boardId of Object.keys(this.boardViews)) {
+        this.boardViews[boardId] = this.snapshot(boardCacheStore.boardView(boardId));
+      }
       const refused: string[] = [];
       const trashed = await trashFiles(this.vaultRoot, [this.itemRel], 'cascadeDelete.redo', undefined, refused);
       // Another vault opened during the move: its boards aren't this one's.
@@ -436,9 +450,12 @@ export class CascadeDeleteCommand extends Command {
         // the pins and a later redo all follow the restored copy.
         this.followRestoredCopy(restored.rel, restored.restoredPath);
       }
-      // The folder is back, so its pins are too.
+      // The folder is back, so its pins and its boards' cameras are too.
       if (restored) {
         restoreClearedPins(this.clearedPins, vaultStore.project?.settings.general, () => vaultStore.markMetaDirty());
+        for (const [boardId, view] of Object.entries(this.boardViews)) {
+          boardCacheStore.putBackBoardView(boardId, this.snapshot(view));
+        }
       }
     }
     for (const [path, tags] of Object.entries(this.fileTags)) {

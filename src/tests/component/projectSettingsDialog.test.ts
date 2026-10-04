@@ -3,9 +3,11 @@
  * Revert bar sits above the scrolling page and is enabled only when its tab
  * has changes, the bulk actions are at the end of the page, and a typed
  * number outside the schema's range is clamped in the field before it
- * reaches the copy.
+ * reaches the copy. The rail names the build's version under the tabs.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { mount, unmount } from 'svelte';
 import ProjectSettings from '@renderer/components/modals/ProjectSettings.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -16,6 +18,9 @@ import { ProjectSettingsSchema } from '@renderer/schema/settings';
 import type { Project } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { settle } from './helpers/mountEditor';
+
+// Read from disk, not imported, so the check doesn't share the dialog's own import.
+const packageVersion = (JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as { version: string }).version;
 
 function makeProject(): Project {
   return {
@@ -74,6 +79,14 @@ describe('Settings dialog', () => {
     expect(tab?.querySelector('.settings-tab-save-mode')?.getAttribute('aria-hidden')).toBe('true');
     const panel = document.getElementById('settings-tabpanel');
     expect(panel?.getAttribute('aria-labelledby')).toBe('settings-tab-general');
+  });
+
+  it("shows this build's version under the tabs, outside the tablist", () => {
+    const version = document.querySelector('.settings-version');
+    expect(version?.textContent).toBe(`Filo ${packageVersion}`);
+    expect(packageVersion).toMatch(/^\d+\.\d+\.\d+/);
+    expect(version?.closest('[role="tablist"]')).toBeNull();
+    expect(version?.previousElementSibling?.getAttribute('role')).toBe('tablist');
   });
 
   it('enables Apply / Revert only while Global Defaults has changes', async () => {

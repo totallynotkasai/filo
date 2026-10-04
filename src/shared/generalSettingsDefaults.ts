@@ -60,3 +60,16 @@ export const GENERAL_SETTINGS_DEFAULTS = {
 export function generalSettingsDefaults(): typeof GENERAL_SETTINGS_DEFAULTS {
   return JSON.parse(JSON.stringify(GENERAL_SETTINGS_DEFAULTS)) as typeof GENERAL_SETTINGS_DEFAULTS;
 }
+
+type NewVaultGeneralSettings = Omit<typeof GENERAL_SETTINGS_DEFAULTS, 'boardFolders'> & { boardFolders: boolean };
+
+/**
+ * A brand-new vault's `app.json`: the defaults with board-specific folders
+ * on, so each board's notes go in a folder of its own instead of beside the
+ * user's own notes at the top of the vault. The schema default stays off: an
+ * existing vault whose `app.json` has no `boardFolders` key reads as off, so
+ * its new notes keep going where they always went.
+ */
+export function newVaultGeneralSettings(): NewVaultGeneralSettings {
+  return { ...generalSettingsDefaults(), boardFolders: true };
+}

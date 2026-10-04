@@ -17,6 +17,7 @@ import { noticeUnloadedBoards } from './unloadedBoards';
 import { historyStore } from './history.svelte';
 import { registerDeleteUndo, reindexUnder, toastMovedToTrash } from './trash.svelte';
 import type { CascadeDeleteCommand } from '../commands/groupAndBoardCommands';
+import type { BoardView } from './boardCacheDelete';
 import { markRecentSelfWrite } from '../lib/boards/writeStateTracking';
 import { samePath, toVaultRelative } from '../lib/utils/path';
 import { isAtOrUnder } from '@shared/vaultPath';
@@ -198,9 +199,12 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
         || !boardCacheStore.cache[activeId]
         || isAtOrUnder(activePath, rel);
       const cleanupPromises: Array<Promise<unknown>> = [];
+      // The cleanup drops each board's camera and side toolbar; the undo puts them back.
+      const boardViews: Record<string, BoardView> = {};
       for (const [boardId, bp] of Object.entries(boardStore.paths)) {
         if (!bp) continue;
         if (isAtOrUnder(bp, rel)) {
+          boardViews[boardId] = boardCacheStore.boardView(boardId);
           cleanupPromises.push(boardStore.cleanupMissingBoardAsync(boardId));
         }
       }
@@ -212,7 +216,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
 
       const fileTags = fileTagsUnder(rel);
       const { command } = boardStore.cascadeDeleteByVaultPath(rel, {
-        vaultRoot, trashed, fileTags, clearedPins, offStack: noBoardUndo,
+        vaultRoot, trashed, fileTags, clearedPins, boardViews, offStack: noBoardUndo,
       });
       // Drop tag associations for the item (exact match for a file, prefix
       // for a folder; both are safe either way). Undo puts them back.

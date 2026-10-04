@@ -159,7 +159,8 @@ describe('titles', () => {
     const app = await startApp();
     await createBoard(app, 'tasklist');
     const rel = await quickAddTask(app, 'What? / Why');
-    expect(rel).toBe('What- - Why.md');
+    // In its board's folder, as a new vault keeps each board's notes.
+    expect(rel).toBe('Task List 1/What- - Why.md');
     expect(frontmatter(app, rel).title).toBe('What? / Why');
     expect(taskRows(app).map((r) => r.title)).toEqual(['What? / Why']);
   });

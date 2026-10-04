@@ -4,6 +4,9 @@
  * folder of its own. The folder follows a board rename only while it is still
  * named after the board; renaming the `.board.json` renames the board; a name
  * the file system can't take, or another board's name, is refused.
+ *
+ * A new vault has board-specific folders on; an existing vault keeps what its
+ * `app.json` says (off when it doesn't say).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, quiesce, waitFor, type CharApp } from './harness/app';
@@ -38,6 +41,34 @@ async function kanbanWithFolders(files: Record<string, string> = {}): Promise<Ch
   await addKanbanColumn(app);
   return app;
 }
+
+describe('a new vault', () => {
+  it("has board-specific folders on: its first board makes its own folder, and its cards land there", async () => {
+    const app = await startApp({ 'Chapter 1.md': 'It begins.\n' });
+    expect((JSON.parse(app.read('.filo/app.json')) as { boardFolders?: unknown }).boardFolders).toBe(true);
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    const card = await addKanbanCard(app);
+
+    expect(app.exists('Kanban 1/Kanban 1.board.json')).toBe(true);
+    expect(boardFolder(app)).toBe('Kanban 1');
+    expect(card.startsWith('Kanban 1/')).toBe(true);
+    expect(app.exists(card)).toBe(true);
+    expect(app.userFiles().filter((f) => !f.includes('/'))).toEqual(['Chapter 1.md']);
+    expect(errorToasts()).toEqual([]);
+  });
+
+  it("an existing vault whose app.json doesn't name them keeps them off", async () => {
+    const app = await startApp({ '.filo/app.json': '{}\n', 'Chapter 1.md': 'It begins.\n' });
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    const card = await addKanbanCard(app);
+
+    expect(app.exists('Kanban 1.board.json')).toBe(true);
+    expect(card.includes('/')).toBe(false);
+    expect(errorToasts()).toEqual([]);
+  });
+});
 
 describe('with board-specific folders on', () => {
   it('a new board gets a folder named after it, holding its file, and is its folder pin', async () => {
@@ -110,6 +141,7 @@ describe('with board-specific folders on', () => {
 
   it('a board made before they were switched on keeps using the Root Directory', async () => {
     const app = await startApp({ 'Notes/n.md': 'N\n' });
+    await setBoardFolders(app, false);
     await createBoard(app, 'kanban');
     await addKanbanColumn(app);
     await toggleRootDirectory(app, 'Notes');
@@ -129,8 +161,22 @@ describe('with board-specific folders on', () => {
     expect(app.exists('Kanban 1/Kanban 1.board.json')).toBe(false);
   });
 
+  it("renaming a board to another board's name is refused, though each is alone in its folder", async () => {
+    const app = await kanbanWithFolders();
+    await createBoard(app, 'kanban');
+    expect(activeTabName(app)).toBe('Kanban 2');
+    const message = await activeBoardRenameMessage(app, 'Kanban 1');
+    expect(message).toBe('A board named "Kanban 1" already exists in "Kanban 1".');
+    await quiesce(500);
+    expect(activeTabName(app)).toBe('Kanban 2');
+    expect(app.exists('Kanban 2/Kanban 2.board.json')).toBe(true);
+    expect(app.exists('Kanban 2/Kanban 1.board.json')).toBe(false);
+    expect(errorToasts()).toEqual([]);
+  });
+
   it("a new board doesn't take the name of a board elsewhere in the vault", async () => {
     const app = await startApp({ 'Keep.md': 'K\n' });
+    await setBoardFolders(app, false);
     await createBoard(app, 'kanban');
     await setBoardFolders(app, true);
     await createBoard(app, 'kanban');
@@ -139,9 +185,11 @@ describe('with board-specific folders on', () => {
   });
 });
 
+// Boards at the top of the vault, as board-specific folders off keeps them.
 describe("a board's name is its file name", () => {
   it('a name the file system refuses is shown inline and not applied', async () => {
     const app = await startApp({ 'Keep.md': 'K\n' });
+    await setBoardFolders(app, false);
     await createBoard(app, 'kanban');
     const message = await activeBoardRenameMessage(app, 'Q3: plan');
     expect(message).toContain(':');
@@ -151,6 +199,7 @@ describe("a board's name is its file name", () => {
 
   it("another board's name in the same folder is refused, and neither file changes", async () => {
     const app = await startApp({ 'Keep.md': 'K\n' });
+    await setBoardFolders(app, false);
     await createBoard(app, 'kanban');
     await createBoard(app, 'kanban');
     expect(activeTabName(app)).toBe('Kanban 2');

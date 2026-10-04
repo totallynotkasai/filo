@@ -20,6 +20,7 @@
   import { getContextMenuKeyPosition } from '../../lib/utils/contextMenuKey';
   import { portal } from '../../lib/utils/portal';
   import { navigationState } from '../../lib/utils/navigation.svelte';
+  import { isContentEditableAware } from '../../lib/utils/editableTarget';
   import type { Snippet } from 'svelte';
 
   // Per-pane scope; aliases preserve the existing call sites. See
@@ -191,7 +192,7 @@
     // and the multi-tile delete confirmation never opens.
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       const ae = document.activeElement as HTMLElement | null;
-      if (ae?.isContentEditable) ae.blur();
+      if (ae && isContentEditableAware(ae)) ae.blur();
     }
     // Flow-layout boards (Kanban / Task List / Document) own selection at
     // the parent wrapper's click handler (e.g. KanbanMultiSelect). Running

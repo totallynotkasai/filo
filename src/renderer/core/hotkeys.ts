@@ -19,6 +19,7 @@ import { isConfigDriftHeld, refuseHeldConfigWrite, registerConfigDriftTarget } f
 import { discardMiscWrite, retryMiscWrite } from '../lib/boards/miscWriteScheduler';
 import { seedConfigBaselines, statConfigsBeforeRead } from '../lib/vault/configBaselineSeed';
 import { isModalDialogOpen } from '../lib/utils/modalOpen';
+import { isContentEditableAware } from '../lib/utils/editableTarget';
 
 /** Shape of `.filo/hotkeys.json` — a flat command-id → shortcut-string map. */
 type HotkeysConfig = Record<string, string>;
@@ -43,9 +44,15 @@ export interface Shortcut extends ShortcutBinding {
    * commands like Insert Link, since the global handler otherwise skips
    * shortcuts to keep editor typing unaffected. Note: INPUT and TEXTAREA
    * elements, and anything inside `[data-plain-text-field]` (the Raw view),
-   * always block — `allowInEditor` only relaxes the contenteditable filter.
+   * block it — `allowInEditor` only relaxes the contenteditable filter.
    */
   allowInEditor?: boolean;
+  /**
+   * Lets the shortcut fire while focus is in a form field (an input, a
+   * textarea, the Raw view), unless the field took the key itself. Only for
+   * a command that never changes the text being typed (Save).
+   */
+  allowInField?: boolean;
   /**
    * Optional gate deciding whether this shortcut is currently eligible to
    * fire. When it returns `false` the global handler SKIPS this shortcut and
@@ -101,25 +108,28 @@ function bindingMatches(binding: ShortcutBinding, e: KeyboardEvent): boolean {
 
 function handleKeyDown(e: KeyboardEvent) {
   // Don't intercept if user is typing in an input/textarea/contenteditable —
-  // form INPUT/TEXTAREA always block (only Escape passes through). Inside a
-  // contenteditable (e.g. a Tiptap editor) shortcuts may opt in via
-  // `allowInEditor` so editor-targeted commands like Insert Link can fire
-  // without the user having to defocus the editor first.
+  // a form INPUT/TEXTAREA keeps its keys (Escape and `allowInField` shortcuts
+  // aside). Inside a contenteditable (e.g. a Tiptap editor) shortcuts may opt
+  // in via `allowInEditor` so editor-targeted commands like Insert Link can
+  // fire without the user having to defocus the editor first.
   const target = e.target as HTMLElement;
   // The Raw view's text (`data-plain-text-field`) is a contenteditable that
   // behaves as a textarea: an editor shortcut there would act on the hidden
-  // rich editor, and its own Ctrl+S already saves.
+  // rich editor, and its own Ctrl+S already saves (and takes the key).
   const inFormInput =
     target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('[data-plain-text-field]') !== null;
-  const inContentEditable = target.isContentEditable;
+  const inContentEditable = isContentEditableAware(target);
+  const fieldKeepsKey = inFormInput && e.key !== 'Escape';
 
-  if (inFormInput && e.key !== 'Escape') return;
+  // A field that handled the key itself has the last word.
+  if (fieldKeepsKey && e.defaultPrevented) return;
   // Escape stays: it closes the topmost layer, the dialog included.
   const behindDialog = e.key !== 'Escape' && isModalDialogOpen();
 
   for (const shortcut of shortcuts) {
     if (bindingMatches(shortcut, e)) {
-      if (inContentEditable && e.key !== 'Escape' && !shortcut.allowInEditor) continue;
+      if (fieldKeepsKey && !shortcut.allowInField) continue;
+      if (inContentEditable && !inFormInput && e.key !== 'Escape' && !shortcut.allowInEditor) continue;
       if (behindDialog && !shortcut.allowInDialog) continue;
       // Skip (don't fire, don't preventDefault) so a same-binding shortcut
       // registered by the active pane can still match — see `enabled` above.

@@ -97,3 +97,36 @@ test('Edit in Raw view lands on the named line, and typed text reaches the disk'
   expect(read(vault, 'Plain.md')).toBe(`${PLAIN}Typed just before quitting.`);
   expect(launched.errors).toEqual([]);
 });
+
+test('Ctrl+Z after the note changed elsewhere saves no mix of the two versions', async () => {
+  const vault = freshVault(root, 'Undo Vault', { 'Scene.md': '---\ntitle: Scene\n---\nThe first draft.\n' });
+  const launched = await launchBuilt(vault);
+  const { win } = launched;
+  const field = win.locator('.document-board:visible .raw-text[aria-busy="false"] .cm-content');
+  const typed = '---\ntitle: Scene\n---\nThe first draft.\nA new scene typed here.\n';
+  const theirs = '---\ntitle: Scene\n---\nThe first draft.\nA new scene, edited in the card.\n';
+  try {
+    await openNoteByName(win, 'Scene');
+    await win.locator('.document-board:visible .raw-toggle').click();
+    await field.click();
+    await win.keyboard.press('Control+End');
+    await win.keyboard.type('A new scene typed here.\n');
+    await win.keyboard.press('Tab');
+    await expect.poll(() => read(vault, 'Scene.md')).toBe(typed);
+
+    // Another view (or the phone) rewrites the paragraph; the Raw view follows.
+    fs.writeFileSync(path.join(vault, 'Scene.md'), theirs);
+    await expect(field).toContainText('edited in the card', { timeout: 10_000 });
+
+    await field.click();
+    await win.keyboard.press('Control+z');
+    await win.keyboard.press('Tab');
+    await win.waitForTimeout(2_000);
+    expect(read(vault, 'Scene.md')).toBe(theirs);
+    await expect(field).toContainText('edited in the card');
+  } finally {
+    expect((await quitLikeUser(launched)).outcome).toBe('exited');
+  }
+  expect(read(vault, 'Scene.md')).toBe(theirs);
+  expect(launched.errors).toEqual([]);
+});

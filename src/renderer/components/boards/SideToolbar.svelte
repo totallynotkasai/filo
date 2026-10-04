@@ -21,6 +21,7 @@
   import { alignTiles, layoutTree, layoutRadial, type AlignMode } from '../../lib/canvas/layout';
   import { historyStore } from '../../stores/history.svelte';
   import { ToggleFadeCommand } from '../../commands/index';
+  import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
 
   let showNewTileMenu = $state(false);
   let showManageMenu = $state(false);
@@ -64,6 +65,8 @@
       title: boardStore.getNextTileName(),
     });
     boardStore.addTileWithHistory(tile);
+    // Typing next names the tile, instead of reaching the board's keys.
+    editTitleWhenShown(tile.id);
   }
 
   function createFrame() {

@@ -90,7 +90,7 @@ describe('a body save keeps the frontmatter block as written', () => {
 
 describe('the note store', () => {
   let vault: MemoryVault;
-  const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), writeTargetMissing: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() };
+  const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), writeTargetMissing: vi.fn(), reloadShrank: vi.fn(), reloadedOverTyping: vi.fn(), confirmReloadWithoutCopy: vi.fn(async () => false), dismiss: vi.fn() };
 
   beforeEach(() => {
     __resetDirtyTrackingForTests();

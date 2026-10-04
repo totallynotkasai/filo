@@ -46,7 +46,7 @@ const MAX_LISTED = 6;
 const CAUSE_TEXT: Record<UnsavedCause, string> = {
   pending: 'still being written',
   conflict: 'waiting for your answer: another program changed it while you were editing',
-  'raw-conflict': 'changed while you were editing it as text: Show the new version or Keep mine',
+  'raw-conflict': 'changed while you were editing it as text: Use the new version or Keep mine',
   'board-drift': 'changed outside Filo, waiting for Reload or Keep local',
   'config-drift': 'these settings were changed outside Filo, waiting for Reload or Keep local',
   missing: 'the file no longer exists',

@@ -29,7 +29,7 @@ beforeEach(() => {
     'Notes/C3.md': '---\ntitle: C3\n---\npre-reload body\n',
   });
   noteStore.__resetForTests();
-  setNotePromptHandlers({ conflict: noop, deletedWithUnsavedBody: noop, writeTargetMissing: noop, reloadShrank: noop, dismiss: noop });
+  setNotePromptHandlers({ conflict: noop, deletedWithUnsavedBody: noop, writeTargetMissing: noop, reloadShrank: noop, reloadedOverTyping: noop, confirmReloadWithoutCopy: async () => false, dismiss: noop });
 });
 
 afterEach(() => {

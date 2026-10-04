@@ -5,6 +5,7 @@
   import FiloLogo from '../shared/FiloLogo.svelte';
   import { safeVaultColor } from '../../../shared/vaultColor';
   import type { OpenVaultReport } from '../../lib/vault/vaultOpenFailure';
+  import { isContentEditableAware } from '../../lib/utils/editableTarget';
   interface Props {
     onReturnToVault?: () => void;
   }
@@ -17,7 +18,7 @@
   $effect(() => {
     function onKeydown(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || isContentEditableAware(target))) return;
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
       if (e.key.toLowerCase() === 'n') {
         e.preventDefault();

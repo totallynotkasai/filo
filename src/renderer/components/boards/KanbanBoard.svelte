@@ -57,8 +57,7 @@
   import { KanbanMultiSelect } from '../../lib/kanban/kanbanMultiSelect.svelte';
   import { KanbanDragController } from '../../lib/kanban/kanbanDragController.svelte';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
-  import { registerCommandWithShortcut } from '../../core/commandRegistry';
-  import type { ShortcutBinding } from '../../core/hotkeys';
+  import { registerKanbanShortcuts } from '../../lib/kanban/kanbanShortcuts';
   import KanbanFindBar from './KanbanFindBar.svelte';
   import KanbanTemplatePicker from './KanbanTemplatePicker.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
@@ -748,19 +747,10 @@
     return () => el.removeEventListener('tile-style-popup', handleStylePopup);
   });
 
-  // ── Kanban-scoped keyboard shortcuts ──
-  //
-  // Registered on mount and unregistered on destroy so the shortcuts only
-  // fire while a Kanban board is the active surface. Each has a commandId, so
-  // it shows up in the Keyboard Shortcuts settings panel and can be rebound.
-  // Ctrl+N is the Mind Map's New Tile; that command stands aside off the
-  // Mind Map, so here it adds a card like `n` does.
-  let unregisterShortcuts: Array<() => void> = [];
-
-  // Active-pane guard for the board-scoped shortcuts below: a split view can
-  // mount two boards sharing a bare key (`n` is also Task List's), so gating on
-  // the focused pane lets the key handler skip inactive panes. See hotkeys.ts.
-  const isActivePane = (): boolean => isActiveScope(scope);
+  // ── Kanban-scoped keyboard shortcuts (`kanbanShortcuts.ts`) ──
+  // Registered on mount and removed on destroy, so they fire only while a
+  // Kanban board is mounted, and only for the focused pane.
+  let unregisterShortcuts: () => void = () => {};
 
   function shortcutAddTile() {
     if (!board) return;
@@ -772,19 +762,17 @@
 
   onMount(() => {
     window.addEventListener('keydown', handleBoardKeydown);
-    const shortcuts: Array<[string, string, ShortcutBinding, () => void]> = [
-      ['kanban:add-tile', 'Kanban: Add tile', { key: 'n' }, shortcutAddTile],
-      ['kanban:new-card', 'Kanban: New card', { key: 'n', ctrl: true }, shortcutAddTile],
-      ['kanban:add-column', 'Kanban: Add column', { key: 'n', shift: true }, () => addColumn()],
-    ];
-    unregisterShortcuts = shortcuts.map(([name, label, binding, execute]) =>
-      registerCommandWithShortcut({ name, label, description: label, binding, enabled: isActivePane, execute }));
+    unregisterShortcuts = registerKanbanShortcuts({
+      isActivePane: () => isActiveScope(scope),
+      boardRoot: () => boardRootEl,
+      addCard: shortcutAddTile,
+      addColumn: () => addColumn(),
+    });
   });
 
   onDestroy(() => {
     window.removeEventListener('keydown', handleBoardKeydown);
-    for (const unregister of unregisterShortcuts) unregister();
-    unregisterShortcuts = [];
+    unregisterShortcuts();
     dragController.dispose();
     announcer.dispose();
     // Drain any queued frontmatter writes so a board close during the

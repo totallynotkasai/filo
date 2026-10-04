@@ -19,7 +19,10 @@ async function allSnapshots(vaultRoot: string): Promise<string[]> {
   return out.sort();
 }
 
-describe('recovery snapshots: kept copies and repeated load failures', () => {
+// Every case writes and prunes snapshots on the real disk: alone each takes a
+// fraction of a second, but a full parallel run (or a virus scan of the temp
+// folder) once stretched the first past Vitest's 5 s default.
+describe('recovery snapshots: kept copies and repeated load failures', { timeout: 20_000 }, () => {
   let vaultRoot: string;
 
   beforeEach(async () => {

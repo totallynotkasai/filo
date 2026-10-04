@@ -1081,6 +1081,17 @@ select:focus:not(:focus-visible) {
 .tiptap p + p {
   margin-top: 0.4em;
 }
+/* A tile or card whose note is empty says where to type: the editor's
+   Placeholder marks the one empty paragraph (`is-editor-empty`), and a card's
+   static preview marks its stand-in the same way. A blank line in a note that
+   has text stays blank. (A Document tab sets no placeholder.) */
+.text-tile .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-tertiary);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
 .tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6 {
   margin-top: 0;
   margin-bottom: 0.25em;

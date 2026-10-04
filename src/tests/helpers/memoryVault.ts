@@ -10,6 +10,7 @@
  * It also keeps a Filo trash: `vault:trash-move` takes a file (or every file
  * under a folder path) out of `files`, `vault:trash-restore` puts it back
  * (beside the original, as `… (restored).ext`, when that path is taken).
+ * `recovery:keep-unsaved` copies land in `recovered`.
  */
 import { vi } from 'vitest';
 
@@ -43,6 +44,10 @@ export interface MemoryVault {
   trash: Map<string, { originalPath: string; files: Map<string, string> }>;
   /** Fail the next trash move of `rel` with `code` (e.g. a locked file). */
   failNextTrashMove(rel: string, code: string): void;
+  /** Copies kept in `.filo/recovery/` (`recovery:keep-unsaved`), in order. */
+  recovered: Array<{ dir: string; relPath: string; text: string }>;
+  /** Fail every `recovery:keep-unsaved` call with this code while set. */
+  failRecovery: string | null;
 }
 
 const key = (rel: string): string => rel.replace(/\\/g, '/').toLowerCase();
@@ -83,7 +88,10 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
     failNextWrite: (rel, code) => failures.set(key(rel), code),
     trash: new Map(),
     failNextTrashMove: (rel, code) => trashFailures.set(key(rel), code),
+    recovered: [],
+    failRecovery: null,
   };
+  let recoverySeq = 0;
 
   const under = (k: string): string[] => [...files.keys()].filter((f) => f === k || f.startsWith(`${k}/`));
   const restoredName = (rel: string): string => {
@@ -207,6 +215,13 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
         const ids = Array.isArray(args[1]) ? (args[1] as string[]) : [...vault.trash.keys()];
         for (const id of ids) vault.trash.delete(id);
         return channel === 'vault:trash-purge' ? { success: true, purged: ids } : { success: true, deleted: ids };
+      }
+      case 'recovery:keep-unsaved': {
+        if (vault.failRecovery) return { ok: false, code: vault.failRecovery, error: vault.failRecovery };
+        const items = args[1] as Array<{ relPath: string; text: string }>;
+        const dir = `.filo/recovery/2026-09-25T00-00-00.${(++recoverySeq).toString().padStart(3, '0')}${args[2] === 'keep' ? '-keep' : '-unsaved'}`;
+        for (const item of items) vault.recovered.push({ dir, relPath: item.relPath, text: item.text });
+        return { ok: true, dir, kept: items.map((i) => i.relPath), failed: [] };
       }
       default:
         return undefined;

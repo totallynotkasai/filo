@@ -38,7 +38,9 @@
   import { createId } from '../../lib/utils/ids';
   import { historyStore } from '../../stores/history.svelte';
   import { DeleteTilesCommand, MoveTilesCommand, UpdateFrameCommand } from '../../commands/index';
-  import { wantsNativeTextMenu } from '../../lib/utils/editableTarget';
+  import { isContentEditableAware, wantsNativeTextMenu } from '../../lib/utils/editableTarget';
+  import { focusIsInBoard } from '../../lib/utils/boardFocus';
+  import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
   import { templatesStore } from '../../stores/templates.svelte';
   import { hitTestFrame } from '../../lib/mindmap/frameHitTest';
   import {
@@ -160,15 +162,21 @@
       y: canvasStore.viewportHeight / 2,
     };
     const canvasPos = screenToCanvas(viewportCenter.x, viewportCenter.y, canvasStore.transform);
-    boardStore.addTileWithHistory(newTextTile({
+    addNewTextTile({
       x: canvasPos.x - TILE_DEFAULTS.width / 2,
       y: canvasPos.y - TILE_DEFAULTS.height / 2,
-    }));
+    });
   }
 
-  /** A new text tile on this pane's board, named from this pane's board. */
-  function newTextTile(position: { x: number; y: number }): Tile {
-    return createTile('text', position, boardStore.current?.id ?? '', { title: boardStore.getNextTileName() });
+  /**
+   * Adds a new text tile on this pane's board, named from this pane's board,
+   * and opens its title for typing.
+   */
+  function addNewTextTile(position: { x: number; y: number }): Tile {
+    const tile = createTile('text', position, boardStore.current?.id ?? '', { title: boardStore.getNextTileName() });
+    boardStore.addTileWithHistory(tile);
+    editTitleWhenShown(tile.id);
+    return tile;
   }
 
   // Connection mode
@@ -288,7 +296,7 @@
         : undefined,
       brokenCount,
       onNewTile: () => {
-        boardStore.addTileWithHistory(newTextTile({ x: canvasPos.x, y: canvasPos.y }));
+        addNewTextTile({ x: canvasPos.x, y: canvasPos.y });
       },
       onNewFrame: () => {
         boardStore.addFrameWithHistory(createFrame({ x: canvasPos.x, y: canvasPos.y }, boardStore.current?.id ?? ''));
@@ -373,7 +381,7 @@
       // Move focus off any tile's TipTap editor so the global Delete shortcut
       // isn't swallowed by ProseMirror after a click-empty-canvas-then-Delete.
       const ae = document.activeElement as HTMLElement | null;
-      if (ae?.isContentEditable) ae.blur();
+      if (ae && isContentEditableAware(ae)) ae.blur();
       if (!e.shiftKey) {
         selectionStore.clear();
       }
@@ -389,7 +397,8 @@
   //   neighbour. Ctrl+Shift+Arrow: extend the selection. Ctrl+Arrow: move the
   //   selection 10 px. N: new tile beside the selection (or mid-viewport).
   //   Enter: rename the selected tile. Backspace: delete the selection
-  //   (Delete is the global tile:delete). C: start a connection.
+  //   (Delete is the global tile:delete). C: start a connection. N, Enter,
+  //   Backspace and C only while focus is in the canvas.
   function handleKeydown(e: KeyboardEvent) {
     // Pane-scope gate. `<svelte:window onkeydown>` fires for
     // EVERY mounted Mind Map pane, so without this an inactive split pane would
@@ -494,6 +503,11 @@
       return;
     }
 
+    // Backspace, N, Enter and C below act only while focus is in this canvas
+    // (`focusIsInBoard`): pressed in the sidebar, a toolbar or on the page,
+    // they would make or delete tiles the user wasn't looking at.
+    if (!focusIsInBoard(canvasContainer)) return;
+
     // Delete is owned by the GLOBAL gated `tile:delete` command (AppShell),
     // which also removes selected connections + offers the delete-backing-file
     // option; handling `Delete` here too would double-dispatch (two confirm
@@ -535,11 +549,10 @@
         createTileAtViewportCenter();
         return;
       }
-      const tile = newTextTile({
+      const tile = addNewTextTile({
         x: anchor.position.x + anchor.size.width + 40,
         y: anchor.position.y,
       });
-      boardStore.addTileWithHistory(tile);
       selectionStore.select(tile.id);
       return;
     }

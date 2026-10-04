@@ -440,4 +440,55 @@ describe('hotkeys', () => {
       }
     });
   });
+
+  // Save reaches the app from a text field (a task title, a notes box), so its
+  // component flush can hand the typed text over; nothing else does.
+  describe('allowInField', () => {
+    beforeEach(() => {
+      initKeyboardShortcuts();
+    });
+
+    function press(target: HTMLElement, init: KeyboardEventInit): KeyboardEvent {
+      const event = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event;
+    }
+
+    it('fires an allowInField shortcut from an input or a textarea, and no other', () => {
+      const fired: string[] = [];
+      registerShortcut({ key: 's', ctrl: true, allowInField: true, description: 'Save', action: () => fired.push('save') });
+      registerShortcut({ key: 'z', ctrl: true, allowInEditor: true, description: 'Undo', action: () => fired.push('undo') });
+      registerShortcut({ key: 'n', description: 'Add card', action: () => fired.push('add') });
+      const input = document.createElement('input');
+      const textarea = document.createElement('textarea');
+      document.body.append(input, textarea);
+      try {
+        for (const field of [input, textarea]) {
+          expect(press(field, { key: 'z', ctrlKey: true }).defaultPrevented).toBe(false);
+          expect(press(field, { key: 'n' }).defaultPrevented).toBe(false);
+          expect(press(field, { key: 's', ctrlKey: true }).defaultPrevented).toBe(true);
+        }
+        expect(fired).toEqual(['save', 'save']);
+      } finally {
+        input.remove();
+        textarea.remove();
+      }
+    });
+
+    it("leaves a key the field already took (the Raw view's own Ctrl+S) alone", () => {
+      let fired = 0;
+      registerShortcut({ key: 's', ctrl: true, allowInField: true, description: 'Save', action: () => { fired += 1; } });
+      const field = document.createElement('div');
+      field.setAttribute('contenteditable', 'true');
+      field.setAttribute('data-plain-text-field', '');
+      field.addEventListener('keydown', (e) => e.preventDefault());
+      document.body.appendChild(field);
+      try {
+        press(field, { key: 's', ctrlKey: true });
+        expect(fired).toBe(0);
+      } finally {
+        field.remove();
+      }
+    });
+  });
 });

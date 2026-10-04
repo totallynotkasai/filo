@@ -17,6 +17,7 @@ import {
   type TemplateRef,
 } from '../templates/templateService';
 import { getActiveContentFolder } from '../vault/conventionPaths';
+import { editTitleWhenShown } from '../boards/newTileTitle';
 
 export type KanbanNewTileType = 'text' | 'audio' | 'link' | 'template';
 
@@ -133,6 +134,8 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       new AddCardCommand(board.id, targetColumnId, def, placements.length),
     );
     tickAndPersist();
+    // Typing next names the card, instead of pressing Add Card again.
+    editTitleWhenShown(tileId);
     const columnTitle = columns.find((c) => c.id === targetColumnId)?.title ?? 'column';
     announce(`Card added to ${columnTitle}`);
   }

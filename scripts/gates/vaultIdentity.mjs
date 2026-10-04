@@ -107,6 +107,7 @@ const LIFECYCLE_EXEMPT = new Map([
   ['src/renderer/lib/tasklist/taskDragController.svelte.ts', 'per-board controller'],
   ['src/renderer/lib/tasklist/datePickerViewState.svelte.ts', 'per-popover state'],
   ['src/renderer/lib/tasklist/notesBox.svelte.ts', 'per-row notes box, dies with the row'],
+  ['src/renderer/lib/tasklist/taskTitleEdit.svelte.ts', 'per-row title edit, dies with the row'],
   ['src/renderer/lib/utils/ariaAnnouncer.svelte.ts', 'per-instance announcer, disposed on unmount'],
   ['src/renderer/lib/utils/keyedReactivity.svelte.ts', 'classes only; each instance belongs to the store that makes it'],
   ['src/renderer/lib/utils/progressiveCount.svelte.ts', 'per-folder row count, dies with the folder row'],

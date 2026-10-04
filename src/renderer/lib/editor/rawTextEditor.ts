@@ -63,12 +63,16 @@ export interface RawTextEditor {
   /** The whole text. */
   text(): string;
   /**
-   * Shows `value`, read from disk, as one step that undo skips, so Ctrl+Z
-   * can't bring back the version it replaced. Only the stretch that differs
-   * is replaced, so the caret and the scroll stay put. Returns false, and
-   * changes nothing, while an IME composition is open.
+   * Shows `value`, read from disk, and clears the undo history. An undo step
+   * typed before it would be mapped through the new text and, undone, land
+   * on text that is no longer there: the field (and the next save) would then
+   * hold a mix of both versions. Only the stretch that differs is replaced,
+   * so the caret and the scroll stay put. Returns false, and changes nothing,
+   * while an IME composition is open.
    */
   setText(value: string): boolean;
+  /** True while an IME composition is open. */
+  composing(): boolean;
   allowEditing(on: boolean): void;
   setLabel(label: string): void;
   /**
@@ -269,6 +273,8 @@ function changedStretch(prev: string, next: string): { from: number; to: number;
 export function createRawTextEditor(host: HTMLElement, options: RawTextEditorOptions): RawTextEditor {
   const editable = new Compartment();
   const label = new Compartment();
+  /** Undo history; taken out and put back to start it empty (`setText`). */
+  const undoHistory = new Compartment();
 
   const view = new EditorView({
     parent: host,
@@ -277,7 +283,7 @@ export function createRawTextEditor(host: HTMLElement, options: RawTextEditorOpt
       extensions: [
         lineNumbers(),
         highlightSpecialChars(),
-        history(),
+        undoHistory.of(history()),
         EditorView.lineWrapping,
         EditorState.tabSize.of(4),
         EditorState.phrases.of(PHRASES),
@@ -346,12 +352,17 @@ export function createRawTextEditor(host: HTMLElement, options: RawTextEditorOpt
       if (view.compositionStarted) return false;
       const current = view.state.doc.toString();
       if (current === value) return true;
+      // A field kept in both configurations keeps its value, so the history
+      // goes in one transaction and comes back, empty, in the next.
       view.dispatch({
         changes: changedStretch(current, value),
         annotations: [Transaction.addToHistory.of(false), fromDisk.of(true)],
+        effects: undoHistory.reconfigure([]),
       });
+      view.dispatch({ effects: undoHistory.reconfigure(history()) });
       return true;
     },
+    composing: () => view.compositionStarted,
     allowEditing(on) {
       view.dispatch({ effects: editable.reconfigure(editability(on)) });
     },

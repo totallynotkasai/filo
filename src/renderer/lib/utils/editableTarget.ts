@@ -30,7 +30,8 @@ export function isEditableTextTarget(target: EventTarget | null): boolean {
 
 // `Element.isContentEditable` is correct in real browsers but unreliable in
 // jsdom, so fall back to a manual ancestor walk that inspects the attribute.
-function isContentEditableAware(el: HTMLElement): boolean {
+// The key routers use it too, so the test suites see keys as Chromium routes them.
+export function isContentEditableAware(el: HTMLElement): boolean {
   if (el.isContentEditable) return true;
   let cur: HTMLElement | null = el;
   while (cur) {

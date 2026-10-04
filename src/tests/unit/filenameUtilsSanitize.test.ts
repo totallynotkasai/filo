@@ -22,8 +22,8 @@ describe('sanitizeFilename — trailing dots / spaces (5.5)', () => {
     expect(sanitizeFilename('Notes.tar.gz')).toBe('Notes.tar.gz');
   });
 
-  it('preserves a leading dot (hidden file)', () => {
-    expect(sanitizeFilename('.gitignore')).toBe('.gitignore');
+  it('drops a leading dot, since Filo never shows a dot-name', () => {
+    expect(sanitizeFilename('.gitignore')).toBe('gitignore');
   });
 
   it('still falls back to "Untitled" when sanitisation empties the name', () => {

@@ -2,9 +2,9 @@
  * rawViews — every mounted raw view of a note, so text typed there counts as
  * unsaved work.
  *
- * A raw view holds its text in component state until it saves (on blur,
- * Ctrl+S, switching back, closing). Nothing else in the app can see that
- * text, so without this registry quit (which never unmounts the view) and
+ * A raw view holds its text in component state until it saves (once typing
+ * pauses, on blur, Ctrl+S, switching back, closing). Nothing else in the app
+ * can see that text, so without this registry quit (which never unmounts the view) and
  * close / open-another-vault (which unmount it after checking for unsaved
  * work) would let it go silently. Registered views are:
  *  - reported to `unsavedWork()`, so the leave and quit dialogs name them;
@@ -95,7 +95,7 @@ export function noteRawConflict(handle: RawViewHandle, inConflict: boolean): voi
   holdDecision({
     key,
     relPath: () => handle.path(),
-    text: 'Changed while you were editing it as text: Show the new version or Keep mine',
+    text: 'Changed while you were editing it as text: Use the new version or Keep mine',
     stillHeld: () => views.has(handle) && handle.inConflict(),
     reopen: () => handle.focus(),
   });
@@ -177,11 +177,11 @@ export function rollbackRawRescues(): void {
  * A raw view closed with text it couldn't write: keep a copy in
  * `.filo/recovery/` and say where, so nothing typed disappears without a
  * trace. Returns false when even the copy couldn't be written (the toast says
- * so).
+ * so). `because` words a more specific reason than `why` gives.
  */
-export async function keepRawRescueCopy(path: string, text: string, why: RawSaveResult): Promise<boolean> {
+export async function keepRawRescueCopy(path: string, text: string, why: RawSaveResult, because?: string): Promise<boolean> {
   const vaultRoot = getActiveVaultPath();
-  const reason = why === 'conflict' ? 'because the note changed elsewhere' : "because they couldn't be saved";
+  const reason = because ?? (why === 'conflict' ? 'because the note changed elsewhere' : "because they couldn't be saved");
   if (vaultRoot) {
     try {
       const kept = await invokeOk('recovery:keep-unsaved', vaultRoot, [{ relPath: path, text }]);

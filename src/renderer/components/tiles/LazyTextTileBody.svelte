@@ -27,6 +27,7 @@
   import TextTileBody from './TextTile.svelte';
   import { noteBody, resolveLineSpacing } from '../../stores/noteMeta';
   import { renderNotePreviewHtml } from '../../lib/editor/staticPreview';
+  import { EMPTY_NOTE_PLACEHOLDER } from '../../lib/editor/createEditor';
   import { queueEditorMount } from '../../lib/editor/editorMountQueue';
   import { uiStore } from '../../stores/ui.svelte';
   import { keepFocusOnSecondaryPress } from '../../lib/utils/editableTarget';
@@ -49,7 +50,9 @@
   let caretTarget: { x: number; y: number } | 'start' | null = null;
 
   const notePath = $derived(tile.filePath ?? '');
-  const previewHtml = $derived(mounted ? '' : renderNotePreviewHtml(noteBody(notePath)) || '<p><br></p>');
+  // An empty note's stand-in carries the editor's placeholder, as the editor's own empty paragraph does.
+  const emptyPreview = `<p class="is-editor-empty" data-placeholder="${EMPTY_NOTE_PLACEHOLDER}"><br></p>`;
+  const previewHtml = $derived(mounted ? '' : renderNotePreviewHtml(noteBody(notePath)) || emptyPreview);
   const previewStyle = $derived.by(() => {
     const fs = resolved?.fontSizeBody;
     return `${fs != null ? `font-size: ${fs}px;` : ''}line-height: ${resolveLineSpacing(notePath)};`;

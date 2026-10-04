@@ -13,6 +13,7 @@
   import VaultFileItem from './VaultFileItem.svelte';
   import VaultSidebarToolbar from './VaultSidebarToolbar.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
+  import { isContentEditableAware } from '../../lib/utils/editableTarget';
 
   /**
    * svelte-dnd-action item wrapper. The library requires an `id` field on
@@ -181,7 +182,7 @@
       if (e.key !== 'Escape') return;
       if (uiStore.activeModal) return;
       const ae = document.activeElement as HTMLElement | null;
-      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || isContentEditableAware(ae))) return;
       if (vaultStore.selectedPaths.size === 0) return;
       vaultStore.clearSelection();
     }

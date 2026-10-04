@@ -424,7 +424,7 @@ describe('Audit-17 2.5 — a conflict Reload re-reads FIRST (no destructive pref
     vaultStore.setPath('/vault');
     noteStore.__resetForTests();
     const noop = (): void => undefined;
-    setNotePromptHandlers({ conflict: noop, deletedWithUnsavedBody: noop, writeTargetMissing: noop, reloadShrank: noop, dismiss: noop });
+    setNotePromptHandlers({ conflict: noop, deletedWithUnsavedBody: noop, writeTargetMissing: noop, reloadShrank: noop, reloadedOverTyping: noop, confirmReloadWithoutCopy: async () => false, dismiss: noop });
     vault = installMemoryVault({ 'Card.md': '---\ncompleted: false\n---\nBody\n' });
   });
 

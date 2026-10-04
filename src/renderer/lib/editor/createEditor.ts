@@ -45,9 +45,13 @@ import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
 import { FiloTextAlign, ListItemLayout, isListItem } from './listItemLayout';
 import { installNoteSerializer } from './delimiterRuns';
 import { FiloLink } from './autolinkMarkdown';
+import { carriesKeptTextStyle } from './textStyleSpans';
 import { NOTE_EDITOR_ATTRIBUTE } from '../utils/editableTarget';
 
 const lowlight = createLowlight(common);
+
+/** What an empty tile or card shows where its text goes. */
+export const EMPTY_NOTE_PLACEHOLDER = 'Start typing...';
 
 /**
  * Custom FontSize extension — uses inline style `font-size` via TextStyle mark.
@@ -58,6 +62,12 @@ const lowlight = createLowlight(common);
  * parity; pinned by the `inline-html-*` fixtures in markdownBodyRoundTrip.test.ts.
  */
 const FontSize = TextStyle.configure({ mergeNestedSpanStyles: false }).extend({
+  // A span is a text-style mark only when it sets a style Filo keeps
+  // (`textStyleSpans.ts`); any other styled span is plain text.
+  parseHTML() {
+    return [{ tag: 'span', consuming: false, getAttrs: (el) => (carriesKeptTextStyle(el) ? {} : false) }];
+  },
+
   addAttributes() {
     return {
       ...this.parent?.(),
@@ -332,7 +342,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       Placeholder.configure({
         // `??` not `||` so an explicit empty string disables the placeholder
         // (the Document board passes '' — see DocumentEditor.svelte).
-        placeholder: options.placeholder ?? 'Start typing...',
+        placeholder: options.placeholder ?? EMPTY_NOTE_PLACEHOLDER,
       }),
       FiloTable.configure({
         resizable: true,

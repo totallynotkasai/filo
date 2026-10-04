@@ -27,7 +27,7 @@ beforeEach(() => {
   });
   vaultIndexStore.clear();
   noteStore.__resetForTests();
-  setNotePromptHandlers({ conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), writeTargetMissing: vi.fn(), reloadShrank: vi.fn(), dismiss: vi.fn() });
+  setNotePromptHandlers({ conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), writeTargetMissing: vi.fn(), reloadShrank: vi.fn(), reloadedOverTyping: vi.fn(), confirmReloadWithoutCopy: vi.fn(async () => false), dismiss: vi.fn() });
 });
 
 afterEach(() => {
@@ -89,5 +89,19 @@ describe('noteStore.readRaw / writeRaw', () => {
     const writes = vault.writes.length;
     expect(await noteStore.writeRaw('Note.md', raw, hash)).toEqual({ status: 'unchanged', hash });
     expect(vault.writes.length).toBe(writes);
+  });
+
+  // The writer leaves such a note alone without comparing it: that must not
+  // read as "unchanged", or the view would take its text as saved.
+  it.each([
+    ['is no longer UTF-8', (v: MemoryVault) => v.nonUtf8.add('note.md')],
+    ['has become a link', (v: MemoryVault) => v.links.add('note.md')],
+  ])('a note that %s is skipped, not saved', async (_why, change) => {
+    const { hash } = (await noteStore.readRaw('Note.md'))!;
+    change(vault);
+    const writes = vault.writes.length;
+    expect(await noteStore.writeRaw('Note.md', '---\ntitle: Note\n---\nTyped raw\n', hash)).toEqual({ status: 'skipped' });
+    expect(vault.writes.length).toBe(writes);
+    expect(vault.read('Note.md')).toBe('---\ntitle: Note\n---\nBody\n');
   });
 });

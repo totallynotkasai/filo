@@ -1,5 +1,6 @@
 import type { Tile } from '../../schema/index';
 import { isModalDialogOpen } from '../utils/modalOpen';
+import { isContentEditableAware } from '../utils/editableTarget';
 
 interface NeighborSelectionInput {
   key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight';
@@ -47,11 +48,10 @@ export function findNeighborTile(input: NeighborSelectionInput): Tile | null {
   return best;
 }
 
-/** True when the focused element should keep arrow keys for its own use. */
+/** True when the focused element should keep arrow keys (and letters) for its own use. */
 export function isArrowConsumingTarget(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  if (!el) return false;
-  return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
+  if (!(target instanceof HTMLElement)) return false;
+  return isContentEditableAware(target) || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
 }
 
 const OVERLAY_SELECTOR = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [aria-modal="true"], dialog';

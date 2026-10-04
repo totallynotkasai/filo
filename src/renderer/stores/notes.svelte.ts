@@ -58,6 +58,7 @@ import { askUnlessMoved, dropGraceChecks, settleGraceChecksNow } from '../lib/no
 import { unsavedNoteTexts } from '../lib/notes/unsavedNoteTexts';
 import { createDiskChangeHandler } from './noteDiskChanges';
 import { backupThenRead } from '../lib/vault/keepLocalBackup';
+import { keepNoteVersion } from '../lib/notes/keepVersion';
 import type { RoundTripChange } from '../lib/editor/markdownSync';
 import {
   NoteModel,
@@ -96,6 +97,8 @@ let prompts: NotePromptHandlers = {
   deletedWithUnsavedBody: () => undefined,
   writeTargetMissing: () => undefined,
   reloadShrank: () => undefined,
+  reloadedOverTyping: () => undefined,
+  confirmReloadWithoutCopy: async () => false,
   dismiss: () => undefined,
 };
 export function setNotePromptHandlers(handlers: NotePromptHandlers): void {
@@ -316,6 +319,50 @@ function serializeViews(path?: VaultPath): void {
       }
     }
   }
+}
+
+/** The typed body a Reload drops, and the folder of its copy (null: the user went on without one). */
+interface KeptTyping {
+  body: string;
+  dir: string | null;
+}
+
+/** How many times a copy is taken again because typing went on while it was written. */
+const KEEP_TYPING_ATTEMPTS = 3;
+
+/**
+ * Reload throws away what was typed, so a copy of the note as typed goes to
+ * `.filo/recovery/<ts>-keep/` first. The copy is of the body as it stands
+ * once the copy is written: text typed while it was being written gets a
+ * new copy. Resolves:
+ *  - null: nothing typed to keep;
+ *  - the body kept, and where;
+ *  - `declined`: no copy could be written and the user chose not to reload;
+ *  - `stop`: the note or the vault went away meanwhile.
+ */
+async function keepTypingBeforeReload(
+  m: NoteModel,
+  vaultRoot: string,
+  identity: ReturnType<typeof captureVaultIdentity>,
+): Promise<KeptTyping | null | 'declined' | 'stop'> {
+  const current = (): boolean => models.get(m.path) === m && isStillSameVault(identity);
+  let dir: string | null = null;
+  let copied: string | null = null;
+  for (let attempt = 0; attempt < KEEP_TYPING_ATTEMPTS; attempt++) {
+    serializeViews(m.path);
+    if (!m.hasUnsavedBody) return null;
+    if (copied === m.body) break;
+    copied = m.body;
+    dir = await keepNoteVersion(vaultRoot, m.relPath, localNoteText(m.base, m.frontmatter, copied));
+    if (!current()) return 'stop';
+  }
+  serializeViews(m.path);
+  if (copied !== m.body) dir = null;
+  if (dir) return { body: m.body, dir };
+  if (!(await prompts.confirmReloadWithoutCopy(m))) return current() ? 'declined' : 'stop';
+  if (!current()) return 'stop';
+  serializeViews(m.path);
+  return m.hasUnsavedBody ? { body: m.body, dir: null } : null;
 }
 
 export const noteStore = {
@@ -580,8 +627,10 @@ export const noteStore = {
   /**
    * The user's answer to a conflict. `keep-mine` backs up the version on disk
    * and writes the local body over exactly the bytes it backed up (a later
-   * body change on disk is a new conflict, see the writer); `reload` drops
-   * the unsaved body and shows the disk version.
+   * body change on disk is a new conflict, see the writer); `reload` keeps a
+   * copy of the typed body in `.filo/recovery/<ts>-keep/` (asking before it
+   * goes on without one), drops it and shows the disk version, and the
+   * prompt then offers to undo the reload.
    */
   async resolveConflict(relPath: string, choice: 'keep-mine' | 'reload'): Promise<void> {
     const key = vaultPath(relPath);
@@ -589,6 +638,24 @@ export const noteStore = {
     const vaultRoot = getActiveVaultPath();
     if (!m || !vaultRoot) return;
     const identity = captureVaultIdentity();
+    /**
+     * Keeps the typed body before Reload drops it. The drop follows with no
+     * await in between, so the copy holds exactly what is dropped. False
+     * when the reload must not go on.
+     */
+    const keepTyping = async (): Promise<KeptTyping | null | false> => {
+      const kept = await keepTypingBeforeReload(m, vaultRoot, identity);
+      if (kept === 'stop') return false;
+      if (kept === 'declined') {
+        // The conflict stays open, to be answered again.
+        prompts.conflict(m);
+        return false;
+      }
+      return kept;
+    };
+    const announce = (typed: KeptTyping | null): void => {
+      if (typed) prompts.reloadedOverTyping(m, typed.body, typed.dir);
+    };
     let fresh: FreshRead;
     try {
       if (choice === 'reload') {
@@ -607,14 +674,19 @@ export const noteStore = {
       if (!isStillSameVault(identity)) return;
       if (!isMissingFileError(err)) throw err;
       if (models.get(key) !== m) return;
-      m.conflictDisk = null;
-      m.fileGone = true;
       if (choice === 'reload') {
+        const typed = await keepTyping();
+        if (typed === false) return;
+        m.conflictDisk = null;
+        m.fileGone = true;
         writer.dropBody(key);
         m.hasUnsavedBody = false;
         m.status = 'missing';
+        announce(typed);
         return;
       }
+      m.conflictDisk = null;
+      m.fileGone = true;
       // Keep mine found the file gone: nothing to overwrite, and the body is
       // still only here. The conflict is over; the missing-file prompt offers
       // Save as new file (exclusive create) or Discard change.
@@ -624,9 +696,12 @@ export const noteStore = {
     }
     if (models.get(key) !== m || !isStillSameVault(identity)) return;
     if (choice === 'reload') {
+      const typed = await keepTyping();
+      if (typed === false) return;
       writer.dropBody(key);
       m.editorOwner = null;
       adoptDisk(m, fresh);
+      announce(typed);
       return;
     }
     // Keep mine: the local body is now built on what's on disk.
@@ -674,15 +749,19 @@ export const noteStore = {
 
   /**
    * Puts `body` back as an unsaved edit that every view shows (undoing a
-   * reload the user didn't want).
+   * reload the user didn't want). A note no view holds any more is loaded
+   * for it. Anything but `queued` means the body wasn't taken.
    */
-  restoreBody(relPath: string, body: string): void {
+  async restoreBody(relPath: string, body: string): Promise<SetBodyStatus> {
     const m = models.get(vaultPath(relPath));
-    if (!m || m.readOnly) return;
+    if (!m) return noteStore.writeBody(relPath, body);
+    if (m.readOnly) return 'read-only';
+    if (m.status === 'loading' || m.status === 'unreadable') return m.status;
     setModelBody(m, body, 'disk');
     m.localBodyVersion++;
     m.hasUnsavedBody = true;
     writer.queueBody(m.relPath, body, m.localBodyVersion);
+    return 'queued';
   },
 
   /**
@@ -804,26 +883,33 @@ export const noteStore = {
    * On success `hash` is of the bytes the file now holds from this write, so
    * the raw view's next save is checked against them, never against a later
    * read that a change queued meanwhile has already landed on.
+   *
+   * `skipped`: the writer left the file alone without comparing it (it is
+   * no longer UTF-8, it is a link, or another vault opened), so the text is
+   * not on disk.
    */
   async writeRaw(relPath: string, text: string, basedOnHash: string): Promise<RawWriteResult> {
-    let conflict = false;
+    // Set inside the callbacks, so its type is widened here for the checks after them.
+    let compared = 'no' as 'no' | 'conflict' | 'same' | 'changed';
     const written = await noteStore.transform(relPath, (fresh) => {
       if (noteTextHash(fresh.raw) !== basedOnHash) {
-        conflict = true;
+        compared = 'conflict';
         return null;
       }
-      return rawTextForDisk(text, fresh);
+      const next = rawTextForDisk(text, fresh);
+      compared = next === fresh.raw ? 'same' : 'changed';
+      return next;
     }, undefined, { userAuthored: true }).catch((err: unknown) => {
       // An edit elsewhere in the note isn't saved yet: the raw text waits too.
       if (!(err instanceof NoteBusyError)) throw err;
-      conflict = true;
+      compared = 'conflict';
       return null;
     });
-    if (conflict) return { status: 'conflict' };
+    if (compared === 'conflict') return { status: 'conflict' };
+    if (written !== null) return { status: 'written', hash: noteTextHash(written) };
     // Unchanged: the file already holds the bytes the hash names.
-    return written === null
-      ? { status: 'unchanged', hash: basedOnHash }
-      : { status: 'written', hash: noteTextHash(written) };
+    if (compared === 'same') return { status: 'unchanged', hash: basedOnHash };
+    return { status: 'skipped' };
   },
 
   /** Runs a rename or delete of `paths` (notes or folders) with every note queue under them held idle. */

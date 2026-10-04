@@ -3,16 +3,19 @@
    * NoteRawView — the note's whole file, frontmatter included, as plain text.
    *
    * It shows the bytes on disk (after every queued change has landed) and
-   * follows the note while nothing is typed here. Edits save on blur, on
-   * Ctrl+S, when the view closes and when the user switches back to the rich
-   * editor. A save replaces the file only if it still holds the bytes this
-   * view started from; if the note changed elsewhere meanwhile, nothing is
-   * written and the user chooses between the new version and theirs (theirs
-   * backs the other version up to `.filo/recovery/` first).
+   * follows the note while nothing is typed here. Edits save once typing
+   * pauses, on blur, on Ctrl+S, when the view closes and when the user
+   * switches back to the rich editor. A save replaces the file only if it
+   * still holds the bytes this view started from; if the note changed
+   * elsewhere meanwhile, nothing is written and the user chooses between the
+   * new version and theirs. Theirs backs the other version up to
+   * `.filo/recovery/` first; the new version keeps a copy of theirs there.
    *
    * While mounted the view is in the raw-view registry, so text typed here is
    * unsaved work to close, open-another-vault and quit. Text it closes with
-   * and can't write (a conflict, a failure) is copied to `.filo/recovery/`.
+   * and can't write (a conflict, a failure) is copied to `.filo/recovery/`,
+   * and so is text the writer won't take (the note stopped being UTF-8, or
+   * became a link).
    *
    * The text field is CodeMirror (`lib/editor/rawTextEditor.ts`), loaded when
    * the view first opens so it stays out of the app's start-up bundle.
@@ -24,9 +27,12 @@
   import { backupThenRead } from '../../lib/vault/keepLocalBackup';
   import { reportError } from '../../lib/utils/errorBus';
   import { keepRawRescueCopy, noteRawConflict, registerRawView, type RawSaveResult, type RawViewHandle } from '../../lib/notes/rawViews';
+  import { keepNoteVersion } from '../../lib/notes/keepVersion';
   import { closeDrainGate } from '../../lib/editor/closeDrainGate.svelte';
   import { dropPendingPath, noteAdditionalPendingPath } from '../../lib/boards/writeStateTracking';
   import { getActiveVaultPath } from '../../lib/vault/activeVaultPath';
+  import { isLinkedNote, isNonUtf8 } from '../../lib/vault/nonUtf8Paths.svelte';
+  import { uiStore } from '../../stores/ui.svelte';
   import { vaultPath } from '@shared/vaultPath';
   import type { RawTextEditor } from '../../lib/editor/rawTextEditor';
 
@@ -44,6 +50,11 @@
 
   /** Idle time before following a change made elsewhere. */
   const FOLLOW_MS = 150;
+  /**
+   * Idle time after typing before the text saves by itself, so a crash or a
+   * power cut loses at most that much, not everything since the last blur.
+   */
+  const IDLE_SAVE_MS = 1500;
 
   let text = $state('');
   let baseText = $state('');
@@ -53,6 +64,7 @@
   let conflict = $state(false);
   let saving = $state(false);
   let followTimer: ReturnType<typeof setTimeout> | null = null;
+  let idleSaveTimer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
   /** Where the text field goes. */
   let host = $state<HTMLDivElement | null>(null);
@@ -68,6 +80,8 @@
    * after it (a leave called off, then more typing) saves as usual.
    */
   let rescuedText: string | null = null;
+  /** The text last copied to `.filo/recovery/` because the writer wouldn't take it. */
+  let skippedCopy: string | null = null;
 
   let dirty = $derived(baseHash !== null && text !== baseText);
   let model = $derived(noteStore.get(path));
@@ -193,6 +207,11 @@
         conflict = true;
         return 'conflict';
       }
+      if (result.status === 'skipped') {
+        // The note can't be written any more; the field keeps the text.
+        await keepSkippedText(sent);
+        return 'failed';
+      }
       // The view now stands on the bytes it wrote. A later read can't be the
       // base: it may already hold a change another view queued meanwhile (a
       // Task List tick, a tag), which the next save would then wipe unseen.
@@ -231,8 +250,69 @@
     }
   }
 
-  function showTheirs(): void {
-    void load();
+  /**
+   * The writer left the file alone (it stopped being UTF-8 or became a link,
+   * so the view turns read-only and its text no longer counts as unsaved):
+   * the text goes to `.filo/recovery/`, once per text.
+   */
+  async function keepSkippedText(sent: string): Promise<void> {
+    if (skippedCopy === sent) return;
+    skippedCopy = sent;
+    const why = isNonUtf8(path)
+      ? "because the file isn't UTF-8 text any more"
+      : isLinkedNote(path)
+        ? 'because the note is now a link'
+        : undefined;
+    await keepRawRescueCopy(path, sent, 'failed', why);
+  }
+
+  /** Saves once typing has paused (after an IME composition, if one is open). */
+  function scheduleIdleSave(): void {
+    if (idleSaveTimer) clearTimeout(idleSaveTimer);
+    idleSaveTimer = setTimeout(() => {
+      idleSaveTimer = null;
+      // A leave saves for itself; text a leave already kept a copy of stays out of the vault.
+      if (destroyed || closeDrainGate.draining || isRescued(text)) return;
+      if (editor?.composing()) {
+        scheduleIdleSave();
+        return;
+      }
+      void save();
+    }, IDLE_SAVE_MS);
+  }
+
+  /**
+   * "Use the new version": what was typed here is copied to `.filo/recovery/`
+   * first (or, when no copy can be written, only on the user's say-so), then
+   * the field shows the file.
+   */
+  async function useTheirs(): Promise<void> {
+    const vaultRoot = getActiveVaultPath();
+    const typed = text;
+    if (vaultRoot && hasUnsavedText()) {
+      const keptIn = await keepNoteVersion(vaultRoot, path, typed);
+      if (destroyed) return;
+      if (keptIn) {
+        uiStore.pushToast({
+          text: `What you typed in the raw view of "${path}" is saved in .filo/recovery/.`,
+          type: 'info',
+          duration: 10000,
+          actions: [{ label: 'Show in folder', handler: () => void window.filo.invoke('shell:show-item-in-folder', keptIn) }],
+        });
+      } else {
+        const discard = await uiStore.confirmAsync({
+          title: 'Use the new version without a copy?',
+          body: `Filo couldn't keep a copy of what you typed in the raw view of "${path}". Using the new version will lose it.`,
+          confirmLabel: 'Use the new version',
+          cancelLabel: 'Cancel',
+          danger: true,
+        });
+        if (!discard || destroyed) return;
+      }
+      // Typed while the copy was written: not in the copy, so not dropped.
+      if (text !== typed) return;
+    }
+    await load();
   }
 
   async function keepMine(): Promise<void> {
@@ -279,6 +359,7 @@
         editable: fieldEditable(),
         onChange: (value) => {
           text = value;
+          scheduleIdleSave();
         },
         onBlur: () => void save(),
         onSave: () => void save(),
@@ -352,6 +433,8 @@
     setPending(false);
     if (followTimer) clearTimeout(followTimer);
     followTimer = null;
+    if (idleSaveTimer) clearTimeout(idleSaveTimer);
+    idleSaveTimer = null;
     if (isRescued(text) || (!hasUnsavedText() && !inFlight)) return;
     // Closing the view saves what was typed; the write outlives the view.
     // Text that can't land (the note changed elsewhere, the write failed,
@@ -384,7 +467,7 @@
   {#if conflict}
     <div class="raw-banner" role="alert">
       <span class="raw-banner-text">This note changed somewhere else since you started editing it here. Your text isn't saved yet.</span>
-      <button type="button" class="raw-banner-action" onclick={showTheirs}>Show the new version</button>
+      <button type="button" class="raw-banner-action" onclick={() => void useTheirs()}>Use the new version (discard mine)</button>
       <button type="button" class="raw-banner-action" onclick={() => void keepMine()}>Keep mine</button>
     </div>
   {/if}
@@ -396,11 +479,11 @@
     <div class="raw-text" bind:this={host} aria-busy={loading || !editor}></div>
     <div class="raw-status" aria-live="polite">
       {#if readOnly}
-        Read-only: this file isn't UTF-8.
+        {isLinkedNote(path) ? 'Read-only: this note is a link; edit the original.' : "Read-only: this file isn't UTF-8."}
       {:else if saving}
         Saving…
       {:else if dirty}
-        Unsaved changes. Saves when you leave the field or press Ctrl+S.
+        Unsaved changes. Saves when you pause, leave the field or press Ctrl+S.
       {/if}
     </div>
   {/if}

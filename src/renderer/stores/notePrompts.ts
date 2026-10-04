@@ -2,8 +2,9 @@
  * notePrompts — the questions the note store asks the user.
  *
  * - Conflict: an unsaved body edit met a body change made by another program.
- *   "Reload" shows the file's version; "Keep mine" backs the file's version
- *   up to `.filo/recovery/` and then writes the local one.
+ *   "Reload" keeps a copy of what was typed in `.filo/recovery/<ts>-keep/`,
+ *   shows the file's version and offers "Undo reload"; "Keep mine" backs the
+ *   file's version up to `.filo/recovery/` and then writes the local one.
  * - Deleted: a note with an unsaved edit was deleted by another program.
  *   "Keep mine" writes it back (only if nothing is at the path again);
  *   "Discard" lets it go.
@@ -29,13 +30,14 @@ import { getActiveVaultPath } from '../lib/vault/activeVaultPath';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { backupExternalVersion } from '../lib/vault/keepLocalBackup';
 import { localNoteText } from '../lib/notes/noteFile';
+import { keepNoteVersion } from '../lib/notes/keepVersion';
 import { reportError } from '../lib/utils/errorBus';
-import { invokeOk } from '../lib/utils/invokeOk';
 import { holdDecision, releaseDecision } from './heldDecisions';
 
 const conflictKey = (rel: string): string => `ext-mod:${rel}`;
 const deletedKey = (rel: string): string => `ext-deleted:${rel}`;
 const shrankKey = (rel: string): string => `reload-shrank:${rel}`;
+const reloadedKey = (rel: string): string => `reloaded-over-typing:${rel}`;
 
 /** The text to write back for a note deleted on disk: its last frontmatter over the local body. */
 function recreatedText(m: NoteModel): string {
@@ -245,17 +247,18 @@ function promptWriteTargetMissing(rel: string, m: NoteModel | undefined): void {
 }
 
 /**
- * Keeps `text` (the note as it was before a shrinking reload) in
- * `.filo/recovery/<ts>-keep/`, which no prune removes. Resolves with the
- * copy's absolute folder, or null when it couldn't be written.
+ * "Undo reload": the version the reload replaced comes back as an unsaved
+ * edit, after the version on disk is backed up (it is about to be written over).
  */
-async function keepPriorVersion(vaultRoot: string, relPath: string, text: string): Promise<string | null> {
-  try {
-    const kept = await invokeOk('recovery:keep-unsaved', vaultRoot, [{ relPath, text }], 'keep');
-    return kept.kept.length > 0 ? `${vaultRoot.replace(/[\\/]+$/, '')}/${kept.dir}` : null;
-  } catch (err) {
-    console.error('[notePrompts] keeping the version before a reload failed:', err);
-    return null;
+async function undoReload(m: NoteModel, priorBody: string, keptIn: string | null): Promise<void> {
+  const root = getActiveVaultPath();
+  const current = captureVaultIdentity();
+  if (!root || !(await backupExternalVersion(root, m.relPath))) return;
+  if (!isStillSameVault(current)) return;
+  const status = await noteStore.restoreBody(m.relPath, priorBody);
+  if (status !== 'queued' && isStillSameVault(current)) {
+    const where = keptIn ? ' Its copy is in .filo/recovery/.' : '';
+    uiStore.toast(`Couldn't put back the earlier version of "${noteTitle(m.relPath)}".${where}`, 'error', 10000);
   }
 }
 
@@ -268,7 +271,7 @@ async function promptReloadShrank(m: NoteModel, priorBody: string, priorText: st
   const vaultRoot = getActiveVaultPath();
   const identity = captureVaultIdentity();
   if (!vaultRoot) return;
-  const dir = await keepPriorVersion(vaultRoot, m.relPath, priorText);
+  const dir = await keepNoteVersion(vaultRoot, m.relPath, priorText);
   if (!isStillSameVault(identity)) return;
   const title = noteTitle(m.relPath);
   uiStore.pushToast({
@@ -280,19 +283,42 @@ async function promptReloadShrank(m: NoteModel, priorBody: string, priorText: st
     sticky: true,
     dedupeKey: shrankKey(m.relPath),
     actions: [
-      {
-        label: 'Undo reload',
-        handler: async () => {
-          const root = getActiveVaultPath();
-          const current = captureVaultIdentity();
-          if (!root || !(await backupExternalVersion(root, m.relPath))) return;
-          if (!isStillSameVault(current)) return;
-          noteStore.restoreBody(m.relPath, priorBody);
-        },
-      },
+      { label: 'Undo reload', handler: () => undoReload(m, priorBody, dir) },
       ...(dir ? [{ label: 'Show in folder', handler: () => void window.filo.invoke('shell:show-item-in-folder', dir) }] : []),
       { label: 'Keep reloaded', handler: () => undefined },
     ],
+  });
+}
+
+/**
+ * A conflict answered with Reload dropped what was typed. A copy of it is in
+ * `.filo/recovery/` (unless the user went on without one), and Undo reload
+ * puts it back.
+ */
+function promptReloadedOverTyping(m: NoteModel, typedBody: string, keptIn: string | null): void {
+  const title = noteTitle(m.relPath);
+  uiStore.pushToast({
+    text: keptIn
+      ? `"${title}" now shows the other version. What you typed is saved in .filo/recovery/.`
+      : `"${title}" now shows the other version. What you typed wasn't kept.`,
+    type: 'info',
+    duration: 0,
+    sticky: true,
+    dedupeKey: reloadedKey(m.relPath),
+    actions: [
+      { label: 'Undo reload', handler: () => undoReload(m, typedBody, keptIn) },
+      ...(keptIn ? [{ label: 'Show in folder', handler: () => void window.filo.invoke('shell:show-item-in-folder', keptIn) }] : []),
+    ],
+  });
+}
+
+function confirmReloadWithoutCopy(m: NoteModel): Promise<boolean> {
+  return uiStore.confirmAsync({
+    title: 'Reload without a copy?',
+    body: `Filo couldn't keep a copy of what you typed in "${noteTitle(m.relPath)}". Reloading shows the other version, and what you typed will be lost.`,
+    confirmLabel: 'Reload anyway',
+    cancelLabel: 'Cancel',
+    danger: true,
   });
 }
 
@@ -303,6 +329,8 @@ export function registerNotePrompts(): void {
     deletedWithUnsavedBody: promptDeleted,
     writeTargetMissing: promptWriteTargetMissing,
     reloadShrank: (m, priorBody, priorText) => void promptReloadShrank(m, priorBody, priorText),
+    reloadedOverTyping: promptReloadedOverTyping,
+    confirmReloadWithoutCopy,
     dismiss: (rel) => {
       uiStore.dismissToastsByKey(conflictKey(rel), { silent: true });
       uiStore.dismissToastsByKey(deletedKey(rel), { silent: true });

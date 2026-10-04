@@ -281,7 +281,7 @@ export function rawConflictShown(app: CharApp): boolean {
 }
 
 /** A button on the raw view's conflict banner. */
-export async function chooseRawConflict(app: CharApp, label: 'Show the new version' | 'Keep mine'): Promise<void> {
+export async function chooseRawConflict(app: CharApp, label: 'Use the new version (discard mine)' | 'Keep mine'): Promise<void> {
   const btn = $$(app.el, '.document-board .raw-banner-action').find((b) => (b.textContent ?? '').trim() === label);
   if (!btn) throw new Error(`no raw conflict action "${label}"`);
   click(btn);
@@ -384,7 +384,7 @@ function newNotes(app: CharApp, before: string[]): string[] {
 }
 
 /** Mind map side toolbar → New Tile → Text. Returns the new note's path. */
-export async function addMindMapTextTile(app: CharApp): Promise<string> {
+export async function addMindMapTextTile(app: CharApp, opts: NewTitle = {}): Promise<string> {
   const before = app.userFiles();
   const btn = $$(app.el, 'button.side-btn').find((b) => (b.getAttribute('title') ?? '').startsWith('New Tile'));
   if (!btn) throw new Error('no New Tile button');
@@ -394,8 +394,41 @@ export async function addMindMapTextTile(app: CharApp): Promise<string> {
   if (!text) throw new Error('New Tile menu has no Text');
   click(text);
   await waitFor(() => newNotes(app, before).length === 1, 'new tile note on disk');
+  await finishNewTitle(app, opts);
   await quiesce(400);
   return newNotes(app, before)[0];
+}
+
+/**
+ * What to do with the title a new tile or card opens for typing:
+ * `title` types it and presses Enter; `keepOpen` leaves the edit open;
+ * neither leaves the title as Filo named it (Escape), as most specs aren't
+ * about the title.
+ */
+export interface NewTitle {
+  title?: string;
+  keepOpen?: boolean;
+}
+
+/** The title editor open on a just-made tile or card, if any. */
+export function openTitleEditor(app: CharApp): Editor | null {
+  const pm = app.el.querySelector('.tile-title-editor .ProseMirror') as (HTMLElement & { editor?: Editor }) | null;
+  return pm?.editor ?? null;
+}
+
+async function finishNewTitle(app: CharApp, opts: NewTitle): Promise<void> {
+  await waitFor(() => openTitleEditor(app) !== null, 'the new title open for typing');
+  if (opts.keepOpen) return;
+  await settle();
+  const ed = openTitleEditor(app);
+  if (!ed) return;
+  if (opts.title !== undefined) {
+    // The whole title is selected: typing replaces it.
+    ed.commands.insertContent(opts.title);
+    await settle();
+  }
+  key(ed.view.dom, opts.title !== undefined ? 'Enter' : 'Escape');
+  await waitFor(() => openTitleEditor(app) === null, 'the new title edit to end');
 }
 
 /** Kanban "Add Column". */
@@ -407,7 +440,7 @@ export async function addKanbanColumn(app: CharApp): Promise<void> {
 }
 
 /** Kanban column "Add Card" → Text. Returns the new card note's path. */
-export async function addKanbanCard(app: CharApp, columnIndex = 0): Promise<string> {
+export async function addKanbanCard(app: CharApp, columnIndex = 0, opts: NewTitle = {}): Promise<string> {
   const before = app.userFiles();
   click($$(app.el, '.kanban-column button.add-tile-btn')[columnIndex]);
   await settle();
@@ -415,6 +448,7 @@ export async function addKanbanCard(app: CharApp, columnIndex = 0): Promise<stri
   if (!option) throw new Error('new-card picker has no Text option');
   click(option);
   await waitFor(() => newNotes(app, before).length === 1, 'new card note on disk');
+  await finishNewTitle(app, opts);
   await quiesce(400);
   return newNotes(app, before)[0];
 }
@@ -659,6 +693,28 @@ export async function typeTaskNotes(row: HTMLElement, text: string): Promise<voi
 export async function leaveTaskNotes(row: HTMLElement): Promise<void> {
   taskNotesBox(row).blur();
   await quiesce(800);
+}
+
+/** Press Escape in a task's open notes box. */
+export async function escapeTaskNotes(row: HTMLElement): Promise<void> {
+  key(taskNotesBox(row), 'Escape');
+  await settle();
+}
+
+/** Whether a task's notes box is open. */
+export function taskNotesOpen(row: HTMLElement): boolean {
+  const wrap = row.closest('.tasklist-row-wrap') ?? row;
+  return wrap.querySelector('textarea.task-notes-textarea') !== null;
+}
+
+/** Double-click a task's title, which opens it for typing (the box takes focus, as `autofocus` gives it). */
+export async function startTaskTitleEdit(row: HTMLElement): Promise<void> {
+  dblclick($(row, '.task-title'));
+  await waitFor(() => row.querySelector('input.task-title-input') !== null, 'the task title box');
+  const input = row.querySelector('input.task-title-input') as HTMLInputElement;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  await settle();
 }
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────

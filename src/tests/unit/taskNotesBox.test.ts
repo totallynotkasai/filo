@@ -2,7 +2,7 @@
  * The Task List notes box: when its draft may be written, what the note store
  * says when it can't take a body, and the draft staying put when it can't.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { noteStore, type SetBodyStatus } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { uiStore } from '@renderer/stores/ui.svelte';
@@ -169,5 +169,44 @@ describe('NotesBox: a draft the note does not have is unsaved work', () => {
     await flushAllComponents();
     expect(writes).toEqual(['typed, not blurred']);
     untrack();
+  });
+});
+
+describe('NotesBox saves by itself once typing pauses', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    __resetComponentFlushesForTests();
+  });
+
+  it('writes the draft 1.5 s after the last key, once, and keeps the box open', async () => {
+    vi.useFakeTimers();
+    const writes: string[] = [];
+    const box = new NotesBox({ path: () => 'Task.md', body: () => 'opened\n', write: async (b) => { writes.push(b); return 'queued'; } });
+    const untrack = box.track();
+    box.open();
+    box.draft = 'typed';
+    box.typed();
+    await vi.advanceTimersByTimeAsync(1000);
+    box.draft = 'typed more';
+    box.typed();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(writes).toEqual([]);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(writes).toEqual(['typed more']);
+    expect(box.expanded).toBe(true);
+    untrack();
+  });
+
+  it('a box gone before the pause ends saves on its teardown, not again from the timer', async () => {
+    vi.useFakeTimers();
+    const writes: string[] = [];
+    const box = new NotesBox({ path: () => 'Task.md', body: () => 'opened\n', write: async (b) => { writes.push(b); return 'queued'; } });
+    const untrack = box.track();
+    box.open();
+    box.draft = 'typed';
+    box.typed();
+    untrack();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(writes).toEqual(['typed']);
   });
 });

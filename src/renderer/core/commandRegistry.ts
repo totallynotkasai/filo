@@ -41,6 +41,8 @@ export interface CommandWithShortcutOptions {
   allowInEditor?: boolean;
   /** Forwards to {@link Shortcut.allowInDialog}. */
   allowInDialog?: boolean;
+  /** Forwards to {@link Shortcut.allowInField}. */
+  allowInField?: boolean;
 }
 
 export function registerCommandWithShortcut(opts: CommandWithShortcutOptions): () => void {
@@ -53,6 +55,7 @@ export function registerCommandWithShortcut(opts: CommandWithShortcutOptions): (
     description: opts.description,
     allowInEditor: opts.allowInEditor,
     allowInDialog: opts.allowInDialog,
+    allowInField: opts.allowInField,
     // Routed to the key handler (not gated in the action) so a disabled
     // command is skipped and the loop keeps scanning for another match.
     enabled: opts.enabled,

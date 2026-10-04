@@ -88,6 +88,8 @@ describe('external note edits flow into later saves', () => {
       deletedWithUnsavedBody: () => undefined,
       writeTargetMissing: () => undefined,
       reloadShrank: () => undefined,
+      reloadedOverTyping: () => undefined,
+      confirmReloadWithoutCopy: async () => false,
       dismiss: () => undefined,
     });
     slice = makeExternalChangesSlice(makeCtx());

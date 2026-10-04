@@ -6,7 +6,7 @@
   import type { Tile, TextTile } from '../../schema/index';
   import type { ResolvedTileStyle } from '../../lib/styles/effectiveStyle';
   import type { Editor } from '@tiptap/core';
-  import { getContext } from 'svelte';
+  import { getContext, untrack } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
@@ -20,6 +20,7 @@
   import { resolveTitleCommitValues, visibleTitleHtml, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
   import { historyStore } from '../../stores/history.svelte';
   import { registerComponentFlush } from '../../lib/boards/componentFlush';
+  import { takeTitleEdit } from '../../lib/boards/newTileTitle';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { recreateMissingNote } from '../../lib/notes/recreateNote';
   import { reportError } from '../../lib/utils/errorBus';
@@ -82,10 +83,25 @@
     || tile.type === 'audio' || tile.type === 'file'
   );
 
+  /**
+   * The edit opened by itself on a tile just made: its title is only a
+   * placeholder, so there is nothing for Escape to go back to, and Escape
+   * keeps what was typed instead of dropping it.
+   */
+  let editingNewTile = false;
+
   function startEditing() {
     isEditing = true;
     // Editor mount happens in the $effect below once the host div binds.
   }
+
+  // A tile the user just made opens with its title selected, so typing names it.
+  $effect(() => {
+    if (untrack(() => takeTitleEdit(tile.id))) {
+      editingNewTile = true;
+      startEditing();
+    }
+  });
 
   function destroyTitleEditor() {
     if (titleEditor) {
@@ -119,6 +135,7 @@
     const snap = snapshotEditorTitle();
     destroyTitleEditor();
     isEditing = false;
+    editingNewTile = false;
     if (!snap) return;
     await applyTitleCommit(snap, false);
   }
@@ -159,15 +176,26 @@
   function cancelTitleEdit() {
     destroyTitleEditor();
     isEditing = false;
+    editingNewTile = false;
+  }
+
+  /**
+   * An edit ended from the keyboard hands focus to the tile, so the board's
+   * keys (a new tile, the arrows) work on from there instead of from the page.
+   */
+  function focusTileAfter(end: () => unknown): void {
+    const container = titleEditorElement?.closest<HTMLElement>('.tile-container') ?? null;
+    void end();
+    container?.focus({ preventScroll: true });
   }
 
   function handleTitleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      commitTitleEdit();
+      focusTileAfter(commitTitleEdit);
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      cancelTitleEdit();
+      focusTileAfter(editingNewTile ? commitTitleEdit : cancelTitleEdit);
     }
   }
 

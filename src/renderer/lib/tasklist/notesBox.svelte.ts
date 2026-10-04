@@ -14,7 +14,9 @@
  * The body passed in is the note's body, never a whole file: the note store
  * and the vault index both hold it without the frontmatter.
  *
- * The draft lives only in the box (the row saves it on blur), so a mounted box
+ * The draft lives only in the box until it saves: once typing pauses
+ * (`IDLE_SAVE_MS`), on blur, and on Escape or Ctrl+Enter, which also close
+ * the box. So a mounted box
  * holding typed text that isn't in the note (a conflict waiting for its
  * answer, a refused write) counts as unsaved work: close, open-another-vault
  * and quit name it and keep a rescue copy of it, and their save hands it to
@@ -69,6 +71,12 @@ const REFUSED: Record<Exclude<SetBodyStatus, 'queued'>, string> = {
   'vault-changed': 'belongs to the vault you left, so your note wasn\'t saved.',
 };
 
+/**
+ * Idle time after typing before the draft saves by itself, so a crash or a
+ * power cut loses at most that much, not everything since the last blur.
+ */
+const IDLE_SAVE_MS = 1500;
+
 export interface NotesBoxDeps {
   /** The task note's path ('' for a row without a note). */
   path(): string;
@@ -113,6 +121,7 @@ export class NotesBox {
   private openedBody = '';
   private conflictOpen = false;
   private mounted = false;
+  private idleSave: ReturnType<typeof setTimeout> | null = null;
   // The row's props can't be read once it has unmounted (its task gone), and
   // a box with a conflict still open outlives it: the last values read stand in.
   private lastPath = '';
@@ -173,6 +182,7 @@ export class NotesBox {
     const offFlush = registerComponentFlush('task notes', () => this.save(false));
     return () => {
       offFlush();
+      this.cancelIdleSave();
       this.mounted = false;
       if (!this.touched) {
         this.forgetIfDone();
@@ -206,9 +216,21 @@ export class NotesBox {
     this.expanded = true;
   }
 
-  /** The user typed in the box. */
+  /** The user typed in the box: it saves once typing pauses. */
   typed(): void {
     this.touched = true;
+    this.cancelIdleSave();
+    this.idleSave = setTimeout(() => {
+      this.idleSave = null;
+      // A conflict question already holds the draft; the answer writes it.
+      if (!this.mounted || this.conflictOpen) return;
+      void this.save(false).catch((err: unknown) => console.warn('[notesBox] saving the draft after a pause failed:', err));
+    }, IDLE_SAVE_MS);
+  }
+
+  private cancelIdleSave(): void {
+    if (this.idleSave) clearTimeout(this.idleSave);
+    this.idleSave = null;
   }
 
   /** The box got focus: a note that couldn't be read is tried again. */
@@ -217,15 +239,9 @@ export class NotesBox {
     if (path && noteStore.get(path)?.status === 'unreadable') void noteStore.reload(path);
   }
 
-  /** Esc: drop the draft. */
-  cancel(): void {
-    this.expanded = false;
-    this.draft = bodyToBoxText(this.body());
-    this.touched = false;
-  }
-
   /** Writes what the user typed, if anything; `close` also folds the box. */
   async save(close: boolean): Promise<void> {
+    this.cancelIdleSave();
     if (close) this.expanded = false;
     const write = this.deps.write;
     if (!write) return;

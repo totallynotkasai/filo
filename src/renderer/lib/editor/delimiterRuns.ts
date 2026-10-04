@@ -2,6 +2,7 @@ import MarkdownIt from 'markdown-it';
 import { MarkdownSerializer, type MarkdownSerializerState } from 'prosemirror-markdown';
 import type { Editor } from '@tiptap/core';
 import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { withEmptyTextStyleUnwritten } from './textStyleSpans';
 
 /**
  * Bold, italic and strikethrough are written as Markdown only where Markdown
@@ -197,7 +198,8 @@ export function installNoteSerializer(editor: Editor): void {
   if (!serializer) return;
   serializer.serialize = (content: ProseMirrorNode): string => {
     const runs = new DelimiterRuns();
-    const markdown = new MarkdownSerializer(serializer.nodes, runs.markSpecs(serializer.marks), {
+    const marks = withEmptyTextStyleUnwritten(serializer.marks);
+    const markdown = new MarkdownSerializer(serializer.nodes, runs.markSpecs(marks), {
       hardBreakNodeName: 'hardBreak',
     }).serialize(content);
     return runs.finish(markdown);

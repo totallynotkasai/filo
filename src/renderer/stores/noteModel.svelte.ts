@@ -106,10 +106,11 @@ export type SetBodyStatus = 'queued' | 'read-only' | 'unreadable' | 'loading' | 
 
 /**
  * A raw-view save. `conflict`: the file no longer held the bytes the save was
- * based on, so nothing was written. Otherwise `hash` names the bytes the file
- * holds from this save.
+ * based on, so nothing was written. `skipped`: the note can't be written (not
+ * UTF-8, a link, another vault), so nothing was written. Otherwise `hash`
+ * names the bytes the file holds from this save.
  */
-export type RawWriteResult = { status: 'conflict' } | { status: 'written' | 'unchanged'; hash: string };
+export type RawWriteResult = { status: 'conflict' } | { status: 'skipped' } | { status: 'written' | 'unchanged'; hash: string };
 
 /** Conflict and deletion prompts, installed by `notePrompts.ts`. */
 export interface NotePromptHandlers {
@@ -126,5 +127,16 @@ export interface NotePromptHandlers {
    * copy kept in `.filo/recovery/`.
    */
   reloadShrank(model: NoteModel, priorBody: string, priorText: string): void;
+  /**
+   * A conflict was answered with Reload, which dropped `typedBody`. `keptIn`
+   * is the folder of its copy in `.filo/recovery/`, or null when the user
+   * chose to reload without one.
+   */
+  reloadedOverTyping(model: NoteModel, typedBody: string, keptIn: string | null): void;
+  /**
+   * Reload would drop typed text, and no copy of it could be kept. Resolves
+   * true when the user still wants the other version.
+   */
+  confirmReloadWithoutCopy(model: NoteModel): Promise<boolean>;
   dismiss(relPath: string): void;
 }

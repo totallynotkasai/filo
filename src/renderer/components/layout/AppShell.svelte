@@ -33,6 +33,7 @@
   import { initKeyboardShortcuts, loadHotkeyOverrides } from '../../core/hotkeys';
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { createTile } from '../../stores/tiles.svelte';
+  import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
   import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
   import { requestDeleteSelected, selectableTileIds, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
   import { framesStore } from '../../stores/frames.svelte';
@@ -267,6 +268,9 @@
         allowInEditor: true,
         // Saving acts on nothing the dialog hides.
         allowInDialog: true,
+        // A task title or notes box being typed in is saved too (its
+        // component flush hands the text over); the Raw view takes the key itself.
+        allowInField: true,
         execute: () => {
           void (async () => {
             const ok = await vaultStore.save();
@@ -325,6 +329,7 @@
           }, boardStore.current.id);
           boardStore.addTileWithHistory(tile);
           selectionStore.select(tile.id);
+          editTitleWhenShown(tile.id);
         },
       }),
 

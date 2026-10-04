@@ -1031,13 +1031,17 @@ content rather than a Filo format.
 ## 30. The raw view saves the whole file
 
 **What:** The Document tab's **Raw** toggle shows the note's full text,
-frontmatter included, and saves it as one whole-file replacement (on blur,
-Ctrl+S, switching back, closing the tab, and the save that close, open another
-vault and quit run first: text typed there is unsaved work to all of them). A save lands only if the file still holds
+frontmatter included, and saves it as one whole-file replacement (1.5 s after
+typing stops, on blur, Ctrl+S, switching back, closing the tab, and the save
+that close, open another vault and quit run first: text typed there is unsaved
+work to all of them). A save lands only if the file still holds
 exactly the bytes the raw view started from. If another program (or another
 Filo view) changed the file meanwhile, nothing is written and a banner offers
-**Show the new version** or **Keep mine**. Keep mine first backs the other
-version up to `.filo/recovery/`, then replaces it with the raw text.
+**Use the new version (discard mine)** or **Keep mine**. Keep mine first backs
+the other version up to `.filo/recovery/`, then replaces it with the raw text;
+Use the new version first keeps a copy of the raw text there (asking before it
+goes on without one). Text loaded from disk clears the field's undo history, so
+Ctrl+Z never reaches back into a version that was replaced.
 
 **Where:** `readRaw` / `writeRaw` in
 [src/renderer/stores/notes.svelte.ts](src/renderer/stores/notes.svelte.ts),
@@ -1054,11 +1058,14 @@ passes through the rich editor, the raw view is also allowed on lossy notes
 Switching back to the formatted view waits for the save's answer and stays in
 Raw, with the banner, unless the text is on disk. Closing a tab (or leaving
 the vault anyway) with raw text that can't be written keeps it as a copy in
-`.filo/recovery/<timestamp>-unsaved/` and says so. Frontmatter typed here is
-the user's own, so it is written even if it no longer parses.
+`.filo/recovery/<timestamp>-unsaved/` and says so, and so does a save the
+writer won't take (the note stopped being UTF-8, or became a link). Frontmatter
+typed here is the user's own, so it is written even if it no longer parses.
 
 **Impact:** Choosing Keep mine replaces the other version in the note itself;
-it survives only as the backup in `.filo/recovery/`.
+it survives only as the backup in `.filo/recovery/`. A crash or power cut loses
+at most the text typed in the last 1.5 s (the Task List notes box saves on the
+same pause).
 
 ---
 

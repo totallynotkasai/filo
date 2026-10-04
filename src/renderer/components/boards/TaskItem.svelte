@@ -8,7 +8,6 @@
    * callbacks. The parent (TaskListBoard) is responsible for writing
    * frontmatter changes through the markdown sync layer.
    */
-  import { untrack } from 'svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { noteBody } from '../../stores/noteMeta';
   import { vaultStore } from '../../stores/vault.svelte';
@@ -18,6 +17,7 @@
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { getBodyPreview } from '../../lib/tasks/taskBodyText';
   import { NotesBox } from '../../lib/tasklist/notesBox.svelte';
+  import { TaskTitleEdit } from '../../lib/tasklist/taskTitleEdit.svelte';
   import type { SetBodyStatus } from '../../stores/notes.svelte';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { buildTaskContextMenu } from '../../lib/tasklist/taskContextMenus';
@@ -198,12 +198,12 @@
     }
   }
 
-  // Blur saves the draft without collapsing the panel; only the note button,
-  // Ctrl+Enter and Escape close it.
+  // Blur and a pause in typing save the draft without collapsing the panel;
+  // only the note button, Ctrl+Enter and Escape close it, and they save too.
   function onNotesKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault(); e.stopPropagation(); // keep Escape off the global app:cancel
-      notes.cancel();
+      void notes.save(true);
     } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       void notes.save(true);
@@ -245,51 +245,13 @@
   let titleFontSize = $derived(taskStyle?.fontSizeTitle);
   let bodyFontSize = $derived(taskStyle?.fontSizeBody);
 
-  let isEditing = $state(false);
-  let editTitle = $state(untrack(() => tile.title));
-  let titleAtEditStart = ''; // title when editing began (detect an external mid-edit rename)
+  const titleEdit = new TaskTitleEdit({ title: () => tile.title, rename: (title) => onRename(title) });
+  $effect(() => titleEdit.track());
+  let isEditing = $derived(titleEdit.editing);
 
   function startEdit(e?: Event) {
     e?.stopPropagation();
-    editTitle = tile.title;
-    titleAtEditStart = tile.title;
-    isEditing = true;
-  }
-
-  function commitEdit() {
-    // One-shot: first commit flips isEditing=false, so the unmount-blur re-commit no-ops.
-    if (!isEditing) return;
-    isEditing = false;
-    // Backing title changed externally mid-edit; keep it (the field
-    // re-renders to the new name), drop the stale draft.
-    if (tile.title !== titleAtEditStart) return;
-    if (editTitle.trim() && editTitle !== tile.title) {
-      onRename(editTitle.trim());
-    }
-  }
-
-  // `cancellingEdit` suppresses the input's onblur re-commit on Cancel-click.
-  let cancellingEdit = false;
-
-  function cancelEdit(e?: Event) {
-    e?.preventDefault();
-    e?.stopPropagation();
-    cancellingEdit = true;
-    isEditing = false;
-    editTitle = tile.title;
-    queueMicrotask(() => { cancellingEdit = false; });
-  }
-
-  function handleTitleBlur() {
-    if (cancellingEdit) return;
-    commitEdit();
-  }
-
-  function onTitleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
-    else if (e.key === 'Escape') {
-      cancelEdit();
-    }
+    titleEdit.start();
   }
 
   // formatTimeChip / formatDueDateAbsolute / isOverdue come from
@@ -587,9 +549,9 @@
           class="task-title-input"
           style={titleFontSize != null ? `font-size: ${titleFontSize}px;` : ''}
           type="text"
-          bind:value={editTitle}
-          onblur={handleTitleBlur}
-          onkeydown={onTitleKeydown}
+          bind:value={titleEdit.draft}
+          onblur={() => titleEdit.blurred()}
+          onkeydown={(e) => titleEdit.keydown(e)}
           onclick={(e) => e.stopPropagation()}
           autofocus
         />
@@ -599,7 +561,7 @@
           title="Save (Enter)"
           aria-label="Save rename"
           onmousedown={(e) => e.preventDefault()}
-          onclick={(e) => { e.stopPropagation(); commitEdit(); }}
+          onclick={(e) => { e.stopPropagation(); titleEdit.commit(); }}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polyline points="20 6 9 17 4 12" />
@@ -611,7 +573,7 @@
           title="Cancel (Esc)"
           aria-label="Cancel rename"
           onmousedown={(e) => e.preventDefault()}
-          onclick={(e) => { e.stopPropagation(); cancelEdit(e); }}
+          onclick={(e) => { e.stopPropagation(); titleEdit.cancel(); }}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -839,7 +801,7 @@
           onfocus={() => notes.focused()}
           class="task-notes-textarea"
           style={bodyFontSize != null ? `font-size: ${bodyFontSize}px;` : ''}
-          placeholder="Add a task note — Ctrl+Enter to save, Esc to cancel"
+          placeholder="Add a task note. It saves as you type; Esc closes."
           rows="3"
           onkeydown={onNotesKeydown}
           onblur={() => void notes.save(false)}

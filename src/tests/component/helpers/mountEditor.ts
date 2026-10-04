@@ -64,6 +64,8 @@ export interface RecordingFilo {
   failWrites(rel: string, code: string | null): void;
   /** Paths that are symbolic links: reads carry `link: true`, writes fail NOTE_IS_LINK. */
   links: Set<string>;
+  /** Copies kept in `.filo/recovery/` (`recovery:keep-unsaved`), in order. */
+  recovered: Array<{ dir: string; relPath: string; text: string }>;
 }
 
 const WRITE_CHANNELS = new Set([
@@ -76,7 +78,8 @@ const WRITE_CHANNELS = new Set([
  * In-memory `window.filo` built on the `installFiloMock` catch-all. Handles
  * `vault:read-file-text`, `vault:stat`, `vault:file-exists` and the markdown
  * write channels (which update the in-memory file and are recorded). `.filo/`
- * sentinel traffic is ignored by `writes`.
+ * sentinel traffic is ignored by `writes`; `recovery:keep-unsaved` copies go
+ * to `recovered`.
  */
 export function recordingFilo(initial: Record<string, string>): RecordingFilo {
   const files = new Map<string, string>(Object.entries(initial));
@@ -88,6 +91,7 @@ export function recordingFilo(initial: Record<string, string>): RecordingFilo {
   const writes: RecordedWrite[] = [];
   const calls: string[] = [];
   const links = new Set<string>();
+  const recovered: RecordingFilo['recovered'] = [];
 
   const size =(s: string): number => new TextEncoder().encode(s).length;
   const fail = (code: string) => ({ ok: false, success: false, code, error: code });
@@ -118,6 +122,12 @@ export function recordingFilo(initial: Record<string, string>): RecordingFilo {
     if (ch === 'vault:file-exists') return files.has(rel);
     // A missing note's banner looks in Filo's trash: it is empty here.
     if (ch === 'vault:trash-list') return { ok: true, success: true, entries: [], machineId: 'test' };
+    if (ch === 'recovery:keep-unsaved') {
+      const items = args[1] as Array<{ relPath: string; text: string }>;
+      const dir = `.filo/recovery/2026-09-25T00-00-00.${String(recovered.length).padStart(3, '0')}${args[2] === 'keep' ? '-keep' : '-unsaved'}`;
+      for (const item of items) recovered.push({ dir, relPath: item.relPath, text: item.text });
+      return { ok: true, dir, kept: items.map((i) => i.relPath), failed: [] };
+    }
     if (WRITE_CHANNELS.has(ch)) {
       if (rel.startsWith('.filo/')) return { ok: true, success: true };
       const code = writeFailures.get(rel);
@@ -153,6 +163,7 @@ export function recordingFilo(initial: Record<string, string>): RecordingFilo {
       else writeFailures.delete(r);
     },
     links,
+    recovered,
   };
 }
 

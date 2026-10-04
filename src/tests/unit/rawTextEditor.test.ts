@@ -1,7 +1,7 @@
 /**
  * The Raw view's text field (CodeMirror) on its own: it reports typing,
- * leaving and Ctrl+S, shows text read from disk without an undo step, and
- * never changes the text by itself.
+ * leaving and Ctrl+S, shows text read from disk with its undo history
+ * cleared, and never changes the text by itself.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
@@ -78,14 +78,13 @@ describe('rawTextEditor', () => {
     expect(f.view.state.selection.main.head).toBe('Alpha (edited elsewhere)\nBeta\nGa'.length);
   });
 
-  it('setText leaves no undo step: Ctrl+Z after it never brings the replaced version back', () => {
+  it('setText clears the undo history: Ctrl+Z after it does nothing', () => {
     const f = field('Mine\n');
     type(f.view, 4, ' typed');
     expect(f.editor.text()).toBe('Mine typed\n');
     f.editor.setText('Theirs\n');
-    // The typing was on the old text; undo can't put the old version back.
-    undo(f.view);
-    expect(f.editor.text()).not.toContain('Mine');
+    expect(undo(f.view)).toBe(false);
+    expect(f.editor.text()).toBe('Theirs\n');
     // With nothing typed, there is nothing to undo at all.
     const g = field('First\n');
     g.editor.setText('Second\n');
@@ -93,10 +92,51 @@ describe('rawTextEditor', () => {
     expect(g.editor.text()).toBe('Second\n');
   });
 
+  it('setText keeps no undo step that overlaps the text it replaced (no mix of two versions)', () => {
+    // The user's typed paragraph is saved; another view then rewrites it.
+    const saved = 'The first draft.\nA new scene typed here.\n';
+    const f = field('The first draft.\n');
+    type(f.view, f.view.state.doc.length, 'A new scene typed here.\n');
+    expect(f.editor.text()).toBe(saved);
+    const theirs = 'The first draft.\nA new scene, edited in the card.\n';
+    f.editor.setText(theirs);
+    expect(undo(f.view)).toBe(false);
+    expect(f.editor.text()).toBe(theirs);
+  });
+
+  it('typing after setText starts a new history that undo walks back to the loaded text', () => {
+    const f = field('One\n');
+    type(f.view, 3, ' typed');
+    f.editor.setText('Two\n');
+    type(f.view, 3, '!');
+    expect(f.editor.text()).toBe('Two!\n');
+    expect(undo(f.view)).toBe(true);
+    expect(f.editor.text()).toBe('Two\n');
+    expect(undo(f.view)).toBe(false);
+  });
+
+  it('setText keeps the selection where its text is', () => {
+    const f = field('Alpha\nBeta\n');
+    type(f.view, 5, '!');
+    f.view.dispatch({ selection: { anchor: 'Alpha!\nB'.length, head: 'Alpha!\nBet'.length } });
+    f.editor.setText('Alpha!\nBeta\nGamma\n');
+    const { from, to } = f.view.state.selection.main;
+    expect(f.view.state.sliceDoc(from, to)).toBe('et');
+  });
+
+  it('setText with the text already shown leaves the undo history alone', () => {
+    const f = field('One\n');
+    type(f.view, 3, ' typed');
+    expect(f.editor.setText('One typed\n')).toBe(true);
+    expect(undo(f.view)).toBe(true);
+    expect(f.editor.text()).toBe('One\n');
+  });
+
   it('setText changes nothing while an IME composition is open', () => {
     const f = field('Plan\n');
     f.view.contentDOM.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
     expect(f.view.compositionStarted).toBe(true);
+    expect(f.editor.composing()).toBe(true);
     expect(f.editor.setText('Changed\n')).toBe(false);
     expect(f.editor.text()).toBe('Plan\n');
     f.view.contentDOM.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));

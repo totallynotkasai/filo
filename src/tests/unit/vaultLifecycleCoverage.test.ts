@@ -57,6 +57,7 @@ const EXEMPT_MODULES = new Set([
   'src/renderer/lib/tasklist/taskDragController.svelte.ts',
   'src/renderer/lib/tasklist/datePickerViewState.svelte.ts',
   'src/renderer/lib/tasklist/notesBox.svelte.ts',
+  'src/renderer/lib/tasklist/taskTitleEdit.svelte.ts',
   // Classes only: each KeyedVersions / KeyedSvelteMap belongs to the store that
   // makes it (and is reset by that store's own swap handler).
   'src/renderer/lib/utils/keyedReactivity.svelte.ts',

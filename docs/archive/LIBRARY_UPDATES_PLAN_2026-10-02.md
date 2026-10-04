@@ -1535,7 +1535,7 @@ The screenshots showed one thing the plan didn't cover: `--font-mono` starts wit
 
 ### Phase 8 outcome (2026-10-04)
 
-**Status:** done, verified on Windows. Committed on `main` and pushed (owner, at the start); the GitHub CI run is recorded under "Pass test".
+**Status:** done, verified on Windows and in GitHub CI (Linux). Committed on `main` and pushed (owner, at the start); the CI run is under "Pass test".
 - **The whole plan holds together:**
   - `ci:verify` and the E2E suite (scale budgets included) are green;
   - `npm audit` is 0;
@@ -1605,7 +1605,7 @@ Asked after a first `npm audit` and `npm outdated` showed two things new since P
   - **§8:** decision 7's backlog number noted as taken (see "New findings").
 - **`docs/BACKLOG.md`:**
   - BL-11 and BL-19 removed (closed);
-  - BL-20 added;
+  - BL-20 added, and BL-21 once the CI run was in;
   - the "Last updated" line now links the archived plan.
 - **CLAUDE.md:** no change (deviation 6).
 - **This plan:** the status line, this outcome, the link to the investigation, and its move to `docs/archive/`.
@@ -1621,7 +1621,7 @@ Asked after a first `npm audit` and `npm outdated` showed two things new since P
 | Package check (decision 1) | **Green.** `npm run icons`, `npm run build`, then `electron-builder --dir` into a scratch folder in 55 s (deviation 3). Electron 44.5.1 and its checksum file were downloaded fresh through `@electron/get` and `got`, the download cache bypassed (`ELECTRON_DOWNLOAD_CACHE_MODE=3`); the zip was checked against its checksum and unpacked, the asar built and `Filo.exe` written (unsigned: there is no certificate, as before). `npm run icons` wrote the same three icon files, byte for byte. | |
 | Corpus, against Phase 0 (decision 3) | **0 changed, 0 newly read-only, 0 newly failed, 0 unlocked** on the 671 notes both runs hold with the same text (324 editable and 329 read-only in both). Details below. | |
 | Built app | `main.js` 420,366 and `preload.js` 193,825 bytes, Phase 0's sizes to the byte; no `require("zod")`. main requires only `electron` and Node built-ins (`buffer`, `crypto`, `dns`, `fs`, `os`, `path`, `stream`, `url`, `util`), preload only `electron`. The 27 renderer assets have Phase 7's sizes, file for file (6,397,218 bytes in all); this phase changed only dev and build-time packages, which nothing in the app imports. | Phase 7 build |
-| GitHub CI | Recorded below, after the push. | Not run |
+| GitHub CI | **Green** ([run 37198999812](https://github.com/totallynotkasai/filo/actions/runs/37198999812), on `a93d0ce`, the first push of Phases 0–8). `verify` took 36 min: `npm ci` 8 s, `npx playwright install --with-deps --only-shell chromium` 21 s (Chrome Headless Shell 153.0.8010.12 and its system libraries), `ci:verify` 35.5 min. Linux ran 803 test files with 1 skipped: 7,820 tests passed and 19 skipped (the Windows-only cases and the `skipIf(onLinux)` ones). The `browser` project ran all four spec files in Chromium (97 tests). 90/90 gates. This completes the GitHub CI half of Phases 6 and 7's pass tests. | Not run |
 
 **The corpus check, in detail.** Today's list (`corpus:list`, the same sources as Phase 0) holds 739 notes: 104 in the repo, 32 in the vaults folder, 603 `node_modules` READMEs. 394 open read-only, 204 save byte for byte, 0 fail.
 
@@ -1695,6 +1695,7 @@ The investigation estimated CodeMirror at about 79 KB gzipped for view and state
   - Found by listing the asar after the package check. It doesn't affect the app, only its download and install size.
 - **The investigation's §8 decision 7** asks to log W9 (card previews drop font sizes and indents) "as BL-11". That number went to the `npm audit` item in Phase 0, and W9 was never logged, since §8 still waits on the owner. The row now says so; nothing else changed.
 - `npm audit fix` leaving 4.2.0 installed (deviation 2) is npm's behaviour, not Filo's, so there is no backlog item.
+- **BL-21: GitHub's `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19.** The CI run carried this notice. The first `verify` after the switch is the one to watch: Playwright's `--with-deps` installs system libraries by distribution, and the Linux-only timing skips were tuned on Ubuntu 24.04.
 
 #### What changes for someone using Filo
 

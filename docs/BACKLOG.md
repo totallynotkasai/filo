@@ -12,7 +12,7 @@ Everything known to be open that no current plan covers, in one place. Start the
 - **Useful** (improvements): 0/10 = no gain; 5/10 = a clear improvement you'd notice every week or so; 10/10 = essential.
 - **Hard**: 0/10 = minutes; 5/10 = a few days, several files, new tests; 10/10 = weeks, rewriting a major part of Filo.
 
-Last updated 2026-10-04, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
+Last updated 2026-10-04, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20 and BL-21. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
 
 ---
 
@@ -38,6 +38,7 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-17 | A bare web address in text can get a `\` that GitHub's own linking keeps in the link | Library updates Phase 5 | 1/10 | 3/10 |
 | BL-18 | Italic, struck-through and coloured text holding `**` reads differently on GitHub | Library updates Phase 5 | 1/10 | 2/10 |
 | BL-20 | The packaged app carries 30 MB of `node_modules` that nothing loads | Library updates Phase 8 | 1/10 | 2/10 |
+| BL-21 | GitHub's `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19; CI's Chromium install and Linux timings are untried there | Library updates Phase 8 | 0/10 | 1/10 |
 
 ### BL-01: the formatting toolbar cuts off its left end (Impact 2/10, Hard 2/10)
 - **What you see:** at a window about 1,380 px wide or narrower, the text-formatting toolbar overflows. Its left end is cut off, so the font box shows only its arrow, and you can't scroll to it.
@@ -127,6 +128,12 @@ None of these loses data. Scores are estimates made when the item was written do
 - **How to see it:** `npx electron-builder --dir --publish never -c.directories.output=<scratch folder>`, then list `win-unpacked/resources/app.asar` with `@electron/asar` (`listPackage`). The output into a scratch folder leaves `release/` alone.
 - **Where:** `package.json` (`build.files` is `dist/**/*` and `package.json`; the `dependencies` list); `electron.vite.config.mts` (`build.externalizeDeps` leaves every `dependencies` package but zod out of the main and preload bundles, so a runtime dependency that main imported one day would need `node_modules` at run time).
 - **Fix idea:** leave `node_modules` out of the package: a `!node_modules/**/*` pattern in `build.files`, or move the packages Vite bundles to `devDependencies`. Then check that the packaged app starts and opens a vault on a scratch profile, and pin "main and preload require only `electron` and Node built-ins" in a gate, so a later import can't depend on the `node_modules` that are no longer shipped.
+
+### BL-21: CI's runner moves to Ubuntu 26 (Impact 0/10, Hard 1/10)
+- **What you see:** nothing yet. GitHub's notice on CI run 37198999812 (2026-10-04): "The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026" ([actions/runner-images#14748](https://github.com/actions/runner-images/issues/14748)).
+- **What could break:** only CI, never the app. `npx playwright install --with-deps --only-shell chromium` installs system libraries by distribution, and Playwright 1.63 may not know Ubuntu 26's yet. The characterisation cases skipped on Linux (`it.skipIf(onLinux)`) were found timing out on Ubuntu 24.04, and the new image may time differently.
+- **Where:** `.github/workflows/ci.yml` (`runs-on: ubuntu-latest` in `verify` and `coverage`).
+- **Fix idea:** look at the first `verify` run after 2026-10-19. If it fails in the Chromium install, pin `runs-on: ubuntu-24.04` until Playwright supports the new image, then move back.
 
 ---
 

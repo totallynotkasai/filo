@@ -16,7 +16,9 @@ import { LEAD_SPACE_ENTITY, startsLine } from './leadSpace';
  *    (`leadSpace.ts`);
  *  - text that opens a line and would read as a list marker, heading or
  *    heading underline is escaped (`escapeBlockStart`, `escapeAfterBreak`);
- *  - in a Markdown table a `|` is written `\|`, since a bare one ends the cell.
+ *  - in a Markdown table a `|` is written `\|`, since a bare one ends the cell;
+ *  - whitespace other than a space (a no-break space) where Markdown would
+ *    lose it is written as a character reference (`&#160;`).
  */
 
 interface TextSerializeState {
@@ -29,6 +31,11 @@ interface TextSerializeState {
 
 /** `&` followed by what markdown-it would read as a named or numeric character reference. */
 const CHARACTER_REFERENCE = /&(?=(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});)/g;
+
+/** `text`'s first character as a numeric character reference (`&#160;`), which reads back as that character. */
+function characterReference(text: string): string {
+  return `&#${text.charCodeAt(0)};`;
+}
 
 /** Text as it is written to the file, before prosemirror-markdown's own escaping. */
 export function escapeNoteText(text: string, inAutolink = false): string {
@@ -132,7 +139,21 @@ export const NoteText = Node.create({
           }
           let blockStart = index === 0 && state.atBlockStart;
           let afterBreak = index > 0 && startsLine(parent, index) && !state.inTable && parent.type.name !== 'heading';
-          if (text.startsWith(' ') && startsLine(parent, index)) {
+          // Whitespace other than a space (a no-break space) is lost opening a
+          // table cell, whose text Markdown trims of any whitespace, and after
+          // the `<br data-filo-soft-break>` a paragraph opens with, where alone
+          // on the line it made an HTML block that read the lines below as
+          // HTML (a list item's sub-list became its text). There its first
+          // character is written as a reference.
+          const plain = node.marks.length === 0;
+          const cellEdges = plain && state.inTable === true;
+          const openingBreak = plain && afterBreak && index === 1 && parent.child(0).type.name === 'softBreak';
+          if (((cellEdges && index === 0) || openingBreak) && /^[^\S ]/.test(text)) {
+            state.text(characterReference(text), false);
+            afterBreak = false;
+            text = text.slice(1);
+            if (!text) return;
+          } else if (text.startsWith(' ') && startsLine(parent, index)) {
             state.text(LEAD_SPACE_ENTITY, false);
             // The line no longer starts here, so nothing after the entity
             // needs a line-start escape.
@@ -164,6 +185,8 @@ export const NoteText = Node.create({
           const linkMark = next?.marks.find((m) => m.type.name === 'link');
           if (out.endsWith('!') && linkMark && !linkMark.isInSet(node.marks)) out = `${out.slice(0, -1)}\\!`;
           if (state.inTable) out = out.replace(/\|/g, '\\|');
+          // Closing a table cell too (a space there is dropped before writing).
+          if (cellEdges && !next && /[^\S ]$/.test(out)) out = out.slice(0, -1) + characterReference(out.slice(-1));
           state.text(out, false);
         },
         parse: {},

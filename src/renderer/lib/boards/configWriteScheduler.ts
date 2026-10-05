@@ -214,6 +214,8 @@ function buildConfigPayloads(
       paneTree: layout?.paneTree ?? null,
       activePaneId: layout?.activePaneId ?? null,
       boardToolbars: layout?.boardToolbars ?? {},
+      // Written only when off, so a vault that never turned it off keeps its file as it was.
+      ...(layout?.spellcheck === false ? { spellcheck: false } : {}),
     }, null, 2),
     'defaults.json': JSON.stringify({
       mindmap: settings.mindmap ?? {},

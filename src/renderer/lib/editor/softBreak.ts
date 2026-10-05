@@ -35,6 +35,8 @@ export function isLineBreak(node: ProseMirrorNode | null | undefined): boolean {
 export interface BreakSerializeState {
   inTable?: boolean;
   write(content?: string): void;
+  /** Notes that a line of text ends here (a note editor's state, `lineEndSpaces.ts`). */
+  markLineEnd?(): void;
 }
 
 /**
@@ -60,6 +62,11 @@ export function writeLineBreak(state: BreakSerializeState, parent: ProseMirrorNo
   if (oneLine) {
     state.write('<br>');
     return;
+  }
+  if (soft) {
+    // Spaces typed before a bare newline wouldn't read back (`lineEndSpaces.ts`).
+    state.write();
+    state.markLineEnd?.();
   }
   state.write(soft ? '\n' : '\\\n');
   // Start the next line now (a quote's `> `, a list's indent). Left to the

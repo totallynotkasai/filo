@@ -4,6 +4,8 @@ import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { hasBlockLayout } from './blockLayout';
 import { withLeadSpaceNodes, withLeadSpacesOutsideRuns } from './leadSpace';
 import { withBreakMarksTrimmed } from './softBreak';
+import { withSpaceRunsUnwrapped, type MarkFlagSpecs } from './spaceRuns';
+import { withBlockEndSpacesTrimmed, withLineEndSpacesDropped } from './lineEndSpaces';
 
 /**
  * How a table is written to the file.
@@ -18,6 +20,9 @@ import { withBreakMarksTrimmed } from './softBreak';
  * Markdown table a `|` in the text is written `\|` (`textEscapes.ts`), and in
  * inline code too, since the cell split reads `\|` before the code span does.
  * Column alignment is kept in the delimiter row (`:---`, `:---:`, `---:`).
+ * A Markdown table has no column widths, so a table with a column dragged to
+ * a width is written as HTML, which keeps it (it was saved as Markdown and
+ * the width was gone on reopen, with nothing to say so).
  */
 
 type Align = 'left' | 'center' | 'right' | null;
@@ -30,6 +35,10 @@ interface TableSerializeState {
   ensureNewLine(): void;
   closeBlock(node: ProseMirrorNode): void;
   renderInline(node: ProseMirrorNode, fromBlockStart?: boolean): void;
+  /** The writer's mark specs, whose flags `spaceRuns.ts` follows. */
+  marks?: MarkFlagSpecs;
+  /** Notes that a line of text ends here (a cell's end, `lineEndSpaces.ts`). */
+  markLineEnd?(): void;
 }
 
 function alignOf(cell: ProseMirrorNode): Align {
@@ -49,9 +58,15 @@ function hasPipeInAddress(paragraph: ProseMirrorNode): boolean {
   return found;
 }
 
+/** True when the cell's column was dragged to a width. */
+function hasColumnWidth(cell: ProseMirrorNode): boolean {
+  const widths: unknown = cell.attrs.colwidth;
+  return Array.isArray(widths) && widths.some((w) => typeof w === 'number' && w > 0);
+}
+
 /** The cell's one paragraph, when a Markdown cell can hold it. */
 function markdownCellParagraph(cell: ProseMirrorNode): ProseMirrorNode | null {
-  if (Number(cell.attrs.colspan) > 1 || Number(cell.attrs.rowspan) > 1) return null;
+  if (Number(cell.attrs.colspan) > 1 || Number(cell.attrs.rowspan) > 1 || hasColumnWidth(cell)) return null;
   const p = cell.childCount === 1 ? cell.firstChild : null;
   if (!p || p.type.name !== 'paragraph' || hasBlockLayout(p) || hasPipeInAddress(p)) return null;
   return p;
@@ -93,11 +108,14 @@ function withCodePipesEscaped(paragraph: ProseMirrorNode): ProseMirrorNode {
   return changed ? paragraph.copy(Fragment.fromArray(children)) : paragraph;
 }
 
-/** Whether a cell's paragraph writes anything (tiptap-markdown skipped blank cells). */
+/**
+ * Whether a cell's paragraph writes anything (tiptap-markdown skipped blank
+ * cells). Blank is Markdown's: only spaces and tabs (a no-break space is text).
+ */
 function writesSomething(paragraph: ProseMirrorNode): boolean {
   let some = false;
   paragraph.forEach((child) => {
-    if (!child.isText || (child.text ?? '').trim()) some = true;
+    if (!child.isText || /[^ \t]/.test(child.text ?? '')) some = true;
   });
   return some;
 }
@@ -108,8 +126,12 @@ function writeMarkdownTable(state: TableSerializeState, table: ProseMirrorNode):
     state.write('| ');
     row.forEach((cell, _o, c) => {
       if (c) state.write(' | ');
-      const p = cell.firstChild;
-      if (p && writesSomething(p)) state.renderInline(withBreakMarksTrimmed(withLeadSpacesOutsideRuns(withCodePipesEscaped(p))));
+      // A cell holds one line: spaces ending it wouldn't read back (`lineEndSpaces.ts`).
+      const p = cell.firstChild ? withLineEndSpacesDropped(cell.firstChild, false) : null;
+      if (p && writesSomething(p)) {
+        state.renderInline(withSpaceRunsUnwrapped(withBreakMarksTrimmed(withLeadSpacesOutsideRuns(withCodePipesEscaped(p))), state.marks));
+        state.markLineEnd?.();
+      }
     });
     state.write(' |');
     state.ensureNewLine();
@@ -130,7 +152,7 @@ function writeMarkdownTable(state: TableSerializeState, table: ProseMirrorNode):
  */
 function writeHtmlTable(state: TableSerializeState, table: ProseMirrorNode, parent: ProseMirrorNode | Fragment): void {
   const schema = table.type.schema;
-  let html = getHTMLFromFragment(Fragment.from(withLeadSpaceNodes(table)), schema);
+  let html = getHTMLFromFragment(Fragment.from(withLeadSpaceNodes(withBlockEndSpacesTrimmed(table))), schema);
   if (parent instanceof Fragment || parent.type.name === schema.topNodeType.name) {
     const body = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html').body;
     const el = body.firstElementChild;

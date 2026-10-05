@@ -1,6 +1,8 @@
 import MarkdownIt from 'markdown-it';
 import { sanitizeNoteHtml } from '../utils/sanitizeHtml';
 import { renderSoftBreaksAsNodes } from './softBreak';
+import { noteImageUrl } from './noteImages';
+import { toPosix } from '../utils/path';
 
 /**
  * A note body as static HTML, for a Kanban card whose editor isn't mounted
@@ -14,14 +16,16 @@ import { renderSoftBreaksAsNodes } from './softBreak';
  * the user's file, but it goes into `innerHTML`.
  *
  * Read-only by construction: nothing here writes, and the checkboxes are
- * disabled. The first click mounts the real editor.
+ * disabled. The first click mounts the real editor. Images show as the
+ * editor shows them, from the vault (`noteImages.ts`); the sanitiser keeps an
+ * image only with a `filo://media/` address, so a preview loads nothing else.
  */
 
 const md = new MarkdownIt({ html: true, linkify: false, breaks: false });
 // A single newline inside a paragraph shows as a line break, as in the editor.
 renderSoftBreaksAsNodes(md);
 
-/** Rendered previews by body text; a board re-renders the same bodies on every open. */
+/** Rendered previews by note folder and body text; a board re-renders the same bodies on every open. */
 const CACHE_LIMIT = 1000;
 // allow-module-state: a bounded render cache of pure output, keyed by the input text
 const cache = new Map<string, string>();
@@ -110,14 +114,33 @@ function toTaskLists(root: HTMLElement): void {
   }
 }
 
-/** The note body (no frontmatter) as sanitised HTML in the editor's layout. */
-export function renderNotePreviewHtml(body: string): string {
-  const hit = cache.get(body);
+/** `html` with each image's address made the one the editor shows it from. */
+function withVaultImages(html: string, notePath: string): string {
+  if (!html.includes('<img')) return html;
+  // A template's content is inert: nothing in it loads.
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  for (const img of Array.from(template.content.querySelectorAll('img'))) {
+    const url = noteImageUrl(img.getAttribute('src'), notePath);
+    if (url) img.setAttribute('src', url);
+    else img.remove();
+  }
+  return template.innerHTML;
+}
+
+/**
+ * The note body (no frontmatter) as sanitised HTML in the editor's layout.
+ * `notePath` is the note's vault path, which its images' addresses resolve from.
+ */
+export function renderNotePreviewHtml(body: string, notePath = ''): string {
+  const folder = toPosix(notePath).split('/').slice(0, -1).join('/');
+  const key = `${folder}\u0000${body}`;
+  const hit = cache.get(key);
   if (hit !== undefined) return hit;
   let html: string;
   try {
     const template = document.createElement('template');
-    template.innerHTML = sanitizeNoteHtml(md.render(body));
+    template.innerHTML = sanitizeNoteHtml(withVaultImages(md.render(body), notePath));
     const wrap = document.createElement('div');
     wrap.appendChild(template.content);
     normaliseWhitespace(wrap);
@@ -134,6 +157,6 @@ export function renderNotePreviewHtml(body: string): string {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
   }
-  cache.set(body, html);
+  cache.set(key, html);
   return html;
 }

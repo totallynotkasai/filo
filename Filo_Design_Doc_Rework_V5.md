@@ -655,9 +655,9 @@ The Global Toolbar consists of the following buttons:
 
 * **Text Formatting** — Allows the user to format their text. Here is the list of text formatting that needs to be added and what order it needs to be in:
 
-* **Font Selection** — Changes the typeface of selected text (dropdown menu showing the current font). All text defaults to the global font set in Settings > General > Global Font. The font dropdown in the toolbar allows users to override the font for a specific text selection only — unselected text remains in the global font. Per-selection font overrides are stored as inline TipTap marks in the document.
+* **Font Selection** — Changes the typeface of selected text (dropdown menu showing the current font). All text defaults to the global font set in Settings > General > Global Font. The font dropdown in the toolbar allows users to override the font for a specific text selection only — unselected text remains in the global font. Per-selection font overrides are stored as inline TipTap marks in the document. A font whose name CSS can't read unquoted (an imported font named after its file, such as "28 Days Later") is written quoted.
 
-* **Font size** — Decreases or increases the text size (a minus sign, a number, and a plus sign).
+* **Font size** — Decreases or increases the text size (a minus sign, a number, and a plus sign). The number is the size the selected text is shown at (a Document's 16 px body, a heading's size, a size pasted in points), and the buttons step from it.
 
 * **Bold** — Makes text thicker (a bold B).
 
@@ -671,7 +671,7 @@ The Global Toolbar consists of the following buttons:
 
 * **Styles** — Applies pre-set formatting like Title, Subtitle, and Headings (dropdown menu usually showing "Normal text").
 
-* **Spelling and grammar check** — Uses Electron's built-in spellchecker (backed by the OS-level spellcheck service) to underline misspelled words and offer corrections. No third-party library required — Electron exposes this via the `webFrame.setSpellCheckProvider` API and context menu suggestions (an 'A' with a checkmark).
+* **Spelling and grammar check** — Uses Electron's built-in spellchecker (backed by the OS-level spellcheck service) to underline misspelled words and offer corrections. No third-party library required — Electron exposes this via the `webFrame.setSpellCheckProvider` API and context menu suggestions (an 'A' with a checkmark). Turning it off applies to every editor, those opened later included, and the vault remembers it (`.filo/workspace.json`).
 
 * **Insert link** — Turns text into a clickable hyperlink (a chain link icon).
 
@@ -679,7 +679,7 @@ The Global Toolbar consists of the following buttons:
 
 * **Line & paragraph spacing** — Adjusts the vertical space between lines of text and paragraphs (horizontal lines with a vertical double-arrow).
 
-* **Bulleted list** — Creates an unordered list using bullet points (dots next to horizontal lines).
+* **Bulleted list** — Creates an unordered list using bullet points (dots next to horizontal lines). The list buttons (and Ctrl+Shift+8 / 7 / 9) change every list the selection reaches to their kind in place, each item at its level; a nested list changes only where the selection reaches its lines. Plain paragraphs selected with a list join it. Where no list can go (a title, a connection label) the buttons are off.
 
 * **Numbered list** — Creates an ordered list using numbers (numbers next to horizontal lines).
 
@@ -688,6 +688,8 @@ The Global Toolbar consists of the following buttons:
 * **Increase indent** — Moves the paragraph further from the left margin (horizontal lines with a right-pointing arrow).
 
 * **Clear formatting** — Removes all bold, italic, font, and size adjustments, returning the text to the default style (a 'T' with a diagonal slash through it).
+
+Typing in a note: `# `, `- `, `* `, `1. `, `> ` and `[ ] ` start a heading, list, quote or checkbox once the space after them is typed, never on Enter, and a number of three digits or more (a year opening a sentence) starts no list. A scene break typed on a line of its own (a lone `#`, `* * *`, `- - -`, `_ _ _`, `***`) becomes a horizontal rule on Enter; Ctrl+Z puts the typed line back. Rich text pasted from Word, Google Docs or a web page keeps its bold, italic, underline, colours, fonts, pixel sizes and highlights; the source's own text colour (black or white), main font and point sizes are dropped, so the paste takes the note's look, and Word's bullets become a real list. Ctrl+Shift+V pastes plain text. An image a note embeds (`![map](images/map.png)`) shows from the vault, its address read from the note's folder, in the editor and in a Kanban card's preview. A tile, card, frame or connection title is one line: Enter saves it.
 
 ### Side Toolbar — Mind Map
 

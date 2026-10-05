@@ -27,12 +27,27 @@
  */
 import type { Editor } from '@tiptap/core';
 import { editorMarkdown, loadMarkdownIntoEditor } from './markdownSync';
+import { setImageNote } from './noteImages';
 import { vaultPath } from '@shared/vaultPath';
 import { noteStore, type NoteModel, type SetBodyStatus } from '../../stores/notes.svelte';
 import { reportError } from '../utils/errorBus';
 
 /** Idle time before an editor's keystrokes are serialised into the note model. */
 export const SERIALIZE_IDLE_MS = 150;
+
+/**
+ * The idle time for a long note: about 20,000 words or more (the document's
+ * size counts about one per character). Each save serialises and writes the
+ * whole note, so a long one is saved on longer pauses. Blur, closing, Ctrl+S
+ * and quitting still save at once.
+ */
+export const LONG_NOTE_SERIALIZE_IDLE_MS = 1000;
+export const LONG_NOTE_SIZE = 120_000;
+
+/** The idle time before `editor`'s keystrokes are serialised. */
+export function serializeIdleMs(editor: Editor | null): number {
+  return editor && editor.state.doc.content.size > LONG_NOTE_SIZE ? LONG_NOTE_SERIALIZE_IDLE_MS : SERIALIZE_IDLE_MS;
+}
 
 /** Why the note model didn't take an editor's text, in the user's words. */
 const REFUSAL_TEXT: Partial<Record<SetBodyStatus, string>> = {
@@ -106,7 +121,7 @@ export class NoteEditorView {
     if (this.loading) return false;
     this.unserialised = true;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.serialize(), SERIALIZE_IDLE_MS);
+    this.timer = setTimeout(() => this.serialize(), serializeIdleMs(this.getEditor()));
     return true;
   }
 
@@ -198,6 +213,8 @@ export class NoteEditorView {
     if (this.unserialised || opts.composing) return;
     const firstLoad = this.shownRevision === -1;
     this.loading = true;
+    // The note's images resolve from its folder.
+    setImageNote(editor, m.relPath);
     try {
       const result = loadMarkdownIntoEditor(editor, m.body, { preserveSelection: !firstLoad });
       // Only a body that came from disk says anything about the file. A body

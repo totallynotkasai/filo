@@ -1,6 +1,7 @@
 /**
  * Workspace store — persisted layout state that belongs to "the window",
- * not the project. Split-pane tree, sidebar width, active pane id.
+ * not the project. Split-pane tree, sidebar width, active pane id, the
+ * boards' side toolbars, and whether spell check is on.
  * Persisted to `.filo/workspace.json` alongside open-tab state.
  *
  * A pane leaf references a tab id (the tab's board determines what's
@@ -47,12 +48,15 @@ export interface WorkspaceLayout {
   activePaneId: string | null;
   /** Each board's side toolbar, by board id. A board left docked and unpinned has no entry. */
   boardToolbars: Record<string, BoardToolbarState>;
+  /** Spell check in every text editor (the toolbar's Spelling button), on unless turned off. */
+  spellcheck: boolean;
 }
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
   paneTree: null,
   activePaneId: null,
   boardToolbars: {},
+  spellcheck: true,
 };
 
 const DOCKED_TOOLBAR: BoardToolbarState = { position: null, pinned: false };
@@ -185,6 +189,7 @@ export const workspaceStore = {
   get activePaneId() { return layout.activePaneId; },
   get paneTree() { return layout.paneTree; },
   get boardToolbars() { return layout.boardToolbars; },
+  get spellcheck() { return layout.spellcheck; },
   get leafCount() { return countLeaves(layout.paneTree); },
   get leaves() { return collectLeaves(layout.paneTree); },
 
@@ -215,6 +220,13 @@ export const workspaceStore = {
     const next = asToolbarPosition(position);
     if (next?.x === current.position?.x && next?.y === current.position?.y) return;
     layout = { ...layout, boardToolbars: withBoardToolbar(boardId, { ...current, position: next }) };
+    notify();
+  },
+
+  /** Turns spell check on or off in every editor, and saves the choice with the vault's layout. */
+  setSpellcheck(on: boolean) {
+    if (layout.spellcheck === on) return;
+    layout = { ...layout, spellcheck: on };
     notify();
   },
 
@@ -444,6 +456,7 @@ export const workspaceStore = {
       paneTree,
       activePaneId,
       boardToolbars: asBoardToolbars(persisted.boardToolbars),
+      spellcheck: persisted.spellcheck !== false,
     };
   },
 

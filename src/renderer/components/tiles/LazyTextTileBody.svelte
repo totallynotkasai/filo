@@ -52,7 +52,7 @@
   const notePath = $derived(tile.filePath ?? '');
   // An empty note's stand-in carries the editor's placeholder, as the editor's own empty paragraph does.
   const emptyPreview = `<p class="is-editor-empty" data-placeholder="${EMPTY_NOTE_PLACEHOLDER}"><br></p>`;
-  const previewHtml = $derived(mounted ? '' : renderNotePreviewHtml(noteBody(notePath)) || emptyPreview);
+  const previewHtml = $derived(mounted ? '' : renderNotePreviewHtml(noteBody(notePath), notePath) || emptyPreview);
   const previewStyle = $derived.by(() => {
     const fs = resolved?.fontSizeBody;
     return `${fs != null ? `font-size: ${fs}px;` : ''}line-height: ${resolveLineSpacing(notePath)};`;

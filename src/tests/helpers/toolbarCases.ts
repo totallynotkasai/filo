@@ -189,6 +189,29 @@ export const TOOLBAR_CASES: ToolbarCase[] = [
   { name: 'bullet list', run: (e) => e.chain().toggleBulletList().run(), saved: '- ' },
   { name: 'numbered list', run: (e) => e.chain().toggleOrderedList().run(), saved: '1. ' },
   { name: 'task list', run: (e) => e.chain().toggleTaskList().run(), saved: '[ ]' },
+  // The toolbar's list buttons (and Ctrl+Shift+7 / 8 / 9) run Filo's switch (`listSwitch.ts`).
+  { name: 'the Checklist button on a line', run: (e) => e.chain().switchList('taskList').run(), saved: '- [ ] ' },
+  {
+    name: 'the Checklist button on a nested bullet list',
+    start: '- one\n- two\n  - nested',
+    run: (e) => e.chain().selectAll().switchList('taskList').run(),
+    saved: '- [ ] one\n- [ ] two\n  - [ ] nested',
+  },
+  {
+    name: 'the Numbered button on a checklist with a sub-task',
+    start: '- [ ] one\n  - [ ] sub',
+    run: (e) => e.chain().selectAll().switchList('orderedList').run(),
+    saved: '1. one\n   1. sub',
+  },
+  {
+    name: 'the Bulleted button with the caret in an item that has a sub-item',
+    start: '1. one\n   1. sub',
+    run: (e) => {
+      e.commands.setTextSelection(3);
+      return e.chain().switchList('bulletList').run();
+    },
+    saved: '- one\n  1. sub',
+  },
   {
     name: 'nested list item',
     start: '- one\n- two',

@@ -68,6 +68,7 @@ const CHARACTERISATION_SPECS = {
   'boardFormatUpdate.test.ts': 2,
   'newCardsAndTiles.test.ts': 6,
   'typedTextReachesDisk.test.ts': 5,
+  'spellCheckSetting.test.ts': 2,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

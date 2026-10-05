@@ -1,6 +1,7 @@
 import { Extension } from '@tiptap/core';
-import { TaskList } from '@tiptap/extension-list';
+import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { serializeBulletList } from './listMarkers';
+import { typedOnly } from './sceneBreaks';
 
 /**
  * How checklists are read from and written to the file.
@@ -152,6 +153,13 @@ export const FiloListParse = Extension.create({
  * tiptap-markdown's own (the plugin and `data-type`), which this storage
  * leaves in place by not naming `parse`.
  */
+/** Task item whose `[ ] ` makes a checkbox as typed, not on Enter (`sceneBreaks.ts`). */
+export const FiloTaskItem = TaskItem.extend({
+  addInputRules() {
+    return typedOnly(this.parent?.() ?? []);
+  },
+});
+
 export const FiloTaskList = TaskList.extend({
   addStorage() {
     return {

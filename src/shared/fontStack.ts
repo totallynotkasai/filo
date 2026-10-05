@@ -32,6 +32,27 @@ function unquote(family: string): string {
   return trimmed;
 }
 
+/** A word CSS reads as part of an unquoted family name (an identifier). */
+const IDENTIFIER = /^-?[A-Za-z_\u0080-￿][\w\-\u0080-￿]*$/;
+
+/** Words an unquoted family name can't use: CSS reads them as keywords. */
+const CSS_WIDE_KEYWORDS = new Set(['inherit', 'initial', 'unset', 'default', 'revert', 'revert-layer']);
+
+/**
+ * A font picked by name as one `font-family` value: bare where CSS reads it
+ * bare (`Georgia`, `Arial Rounded MT`), so notes keep the spelling they
+ * already have, and quoted otherwise. An imported font is named after its
+ * file, and a name that starts with a digit or holds a comma or brackets
+ * ("28 Days Later", "Lora[wght]") was dropped by the style parser unquoted:
+ * the text kept its font, and the note reopened read-only.
+ */
+export function fontFamilyValue(font: string): string {
+  const name = font.trim();
+  const words = name.split(/\s+/);
+  const bare = words.every((w) => IDENTIFIER.test(w) && !CSS_WIDE_KEYWORDS.has(w.toLowerCase()));
+  return bare ? name : cssFamily(name);
+}
+
 /** The stack for a font picked by name: the font, then the shared fallbacks. */
 export function fontStack(font: string): string {
   const name = font.trim();

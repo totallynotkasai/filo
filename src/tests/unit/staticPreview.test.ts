@@ -51,12 +51,43 @@ describe('renderNotePreviewHtml', () => {
     expect(d.querySelector('td p')?.textContent).toBe('1');
   });
 
-  it('sanitises: no scripts, handlers, images or javascript: links', () => {
+  it('sanitises: no scripts, handlers or javascript: links', () => {
     const html = renderNotePreviewHtml(
       'text <script>alert(1)</script>\n\n<img src=x onerror="alert(2)">\n\n[x](javascript:alert(3)) <b onclick="alert(4)">b</b>\n',
     );
-    expect(html).not.toMatch(/<script|onerror|onclick|<img|href="javascript:/i);
+    expect(html).not.toMatch(/<script|onerror|onclick|href="javascript:/i);
     expect(dom(html).querySelector('b')?.textContent).toBe('b');
+  });
+
+  it('shows an image from the vault, its address resolved from the note\'s folder', () => {
+    const d = dom(renderNotePreviewHtml('The realm:\n\n![map](images/World%20Map.png)\n', 'Notes/Chapter.md'));
+    const img = d.querySelector('img');
+    expect(img?.getAttribute('src')).toBe('filo://media/Notes/images/World%20Map.png');
+    expect(img?.getAttribute('alt')).toBe('map');
+  });
+
+  it('loads no image from outside the vault: a web, data or script address leaves no image', () => {
+    const html = renderNotePreviewHtml(
+      '![a](https://example.com/a.png) ![b](data:image/png;base64,AAAA) <img src="javascript:alert(1)"> ![c](../../../x.png)\n',
+      'Notes/A.md',
+    );
+    expect(dom(html).querySelectorAll('img[src]').length).toBe(0);
+    expect(html).not.toMatch(/example\.com|data:|javascript:/);
+  });
+
+  it('caches by the note\'s folder too: the same body in another folder shows its own image', () => {
+    const body = '![m](map.png)\n';
+    expect(dom(renderNotePreviewHtml(body, 'A/n.md')).querySelector('img')?.getAttribute('src')).toBe('filo://media/A/map.png');
+    expect(dom(renderNotePreviewHtml(body, 'B/n.md')).querySelector('img')?.getAttribute('src')).toBe('filo://media/B/map.png');
+  });
+
+  it('keeps a font size and an indented line, as the editor shows them', () => {
+    const d = dom(renderNotePreviewHtml(
+      'A <span style="font-size: 20px">big</span> word.\n\n<p style="margin-left: 48px">Indented twice.</p>\n',
+    ));
+    expect(d.querySelector('span')?.getAttribute('style')).toBe('font-size: 20px');
+    const indented = [...d.querySelectorAll('p')].find((p) => p.textContent === 'Indented twice.');
+    expect(indented?.getAttribute('style')).toBe('margin-left: 48px');
   });
 
   it('returns the same HTML for the same body', () => {

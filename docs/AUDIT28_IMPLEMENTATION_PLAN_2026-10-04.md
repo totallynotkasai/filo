@@ -1,7 +1,7 @@
 # Audit-28 implementation plan (draft, 2026-10-04)
 
 - **Source:** [AUDIT28_PRE_DAILY_USE_2026-10-04.md](AUDIT28_PRE_DAILY_USE_2026-10-04.md). Finding IDs (A-01, H-01 …) refer to it.
-- **Status:** Phases 0 and 1 done on 2026-10-04 (see section 4); Phases 2 to 8 not started. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs.
+- **Status:** Phases 0 and 1 done on 2026-10-04, Phase 2 on 2026-10-05 (see section 4); Phases 3 to 8 not started. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs, Phase 2 D6 and D7 at theirs.
 - **Scores:** out of 10, as in the report. **Hard:** 0/10 = minutes, 5/10 = a few days with tests, 10/10 = weeks.
 
 ## 1. How this plan works
@@ -21,7 +21,7 @@
   - the E2E suite (with `FILO_E2E_SCALE=1`) when the phase touches the shell, startup, quit, file watching or the editor;
   - the corpus check (`corpus:run` + `corpus:compare` against today's baseline) for any phase that touches the editor or Markdown writing;
   - an outcome section in this file: what changed, deviations, new findings.
-- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them).
+- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them, Phase 1 BL-25 and BL-26; Phase 2 added BL-27, fixed there, and BL-28).
 - **Comments explain why, never history.** Audit IDs go in commit messages.
 
 "Sum of Hard scores" adds up the Hard scores of the phase's tasks. It's a rough guide to size, not a score.
@@ -77,18 +77,18 @@ Phases 2 to 7 can be reordered or split to suit you; each stands on its own. Pha
 
 | # | Task | Finding | Hard |
 |---|---|---|---|
-| 2.1 | A whitespace-only run keeps bold, italic or strike only when both neighbours have it. This pre-pass sits beside `withBreakMarksTrimmed`, as the finder's `A28D_FIX` sketch does. The round-trip property test's generator gains whitespace runs, font and size, and drops its "a formatted space shows nothing" exclusion. | D-01 | 2/10 |
-| 2.2 | A paste clean-up (`transformPastedHTML`) that: drops near-default colour (black or white), the source's base font and point sizes; turns a span's `background-color` into a highlight; and turns Word's `mso-list` bullets into real lists (D6). BL-06: a literal paste drops the spaces before each line break. | D-06, BL-06 | 3/10 |
-| 2.3 | The size box and + / − start from the size shown at the caret (computed style), converting `pt` to px. | D-03 | 1/10 |
-| 2.4 | Enter inside a tile, card, frame or connection-label title commits it (handled in the label editor's keymap), and IME composition is ignored. | D-04 | 1/10 |
-| 2.5 | Filo's own list-type switch: changes list and item types in place and keeps the depth. Disable the button where it can't. | D-05 | 3/10 |
-| 2.6 | Scene breaks: `* * *` and a lone `#` + Enter become a horizontal rule. No heading or list input rule fires on Enter, and `1984. ` doesn't start a list (D7). | D-09 | 2/10 |
-| 2.7 | Quote imported font family names. | D-08 | 1/10 |
-| 2.8 | Allow `font-size` (and indent, for W-9) in the title and preview sanitiser. | D-10 | 1/10 |
-| 2.9 | The spell-check toggle applies to editors opened later and is remembered (`.filo/workspace.json`). | D-11 | 1/10 |
-| 2.10 | A table with a set column width is written as HTML, or column resizing is turned off. | D-12 | 2/10 |
-| 2.11 | Images in a note load through `filo://` (vault-relative sources rewritten in the image extension's render). The card preview shows them. | D-13 | 3/10 |
-| 2.12 | Long-note saves: take `DelimiterRuns`' filter out of the loop, and track the last character instead of re-scanning in the serializer state. Above about 20,000 words, save on pause less often. | D-07 | 4/10 |
+| 2.1 | A whitespace-only run keeps bold, italic or strike only when both neighbours have it. This pre-pass sits beside `withBreakMarksTrimmed`, as the finder's `A28D_FIX` sketch does. The round-trip property test's generator gains whitespace runs, font and size, and drops its "a formatted space shows nothing" exclusion. *Done; the rule also needs the marks nested outside to match (section 4, deviations 1 and 2).* | D-01 | 2/10 |
+| 2.2 | A paste clean-up (`transformPastedHTML`) that: drops near-default colour (black or white), the source's base font and point sizes; turns a span's `background-color` into a highlight; and turns Word's `mso-list` bullets into real lists (D6). BL-06: a literal paste drops the spaces before each line break. *Done, D6 at its default (section 4, deviation 3).* | D-06, BL-06 | 3/10 |
+| 2.3 | The size box and + / − start from the size shown at the caret (computed style), converting `pt` to px. *Done as planned (section 4).* | D-03 | 1/10 |
+| 2.4 | Enter inside a tile, card, frame or connection-label title commits it (handled in the label editor's keymap), and IME composition is ignored. *Done (section 4, deviation 4).* | D-04 | 1/10 |
+| 2.5 | Filo's own list-type switch: changes list and item types in place and keeps the depth. Disable the button where it can't. *Done; Ctrl+Shift+9 now changes the whole list (section 4, deviation 5).* | D-05 | 3/10 |
+| 2.6 | Scene breaks: `* * *` and a lone `#` + Enter become a horizontal rule. No heading or list input rule fires on Enter, and `1984. ` doesn't start a list (D7). *Done, D7 at its default (section 4, deviation 6).* | D-09 | 2/10 |
+| 2.7 | Quote imported font family names. *Done (section 4).* | D-08 | 1/10 |
+| 2.8 | Allow `font-size` (and indent, for W-9) in the title and preview sanitiser. *Done, with caps (section 4, deviations 7 and 8).* | D-10 | 1/10 |
+| 2.9 | The spell-check toggle applies to editors opened later and is remembered (`.filo/workspace.json`). *Done (section 4).* | D-11 | 1/10 |
+| 2.10 | A table with a set column width is written as HTML, or column resizing is turned off. *Done: written as HTML (section 4).* | D-12 | 2/10 |
+| 2.11 | Images in a note load through `filo://` (vault-relative sources rewritten in the image extension's render). The card preview shows them. *Done, in a node view so the file keeps its address (section 4, deviations 8 and 10).* | D-13 | 3/10 |
+| 2.12 | Long-note saves: take `DelimiterRuns`' filter out of the loop, and track the last character instead of re-scanning in the serializer state. Above about 20,000 words, save on pause less often. *Done (section 4, deviation 9).* | D-07 | 4/10 |
 
 **Pass:**
 - Browser-project specs for each item.
@@ -420,3 +420,125 @@ These were written into `docs/BACKLOG.md` first. The owner then asked for them t
 
 **Left for you**
 1. `release/Filo Setup 0.2.0.exe` is the Phase 0 build and has none of these fixes, so the report's workarounds still apply to it. A build with Phase 1 would be `0.2.1` (D10), made with `npm run package:win`.
+
+### Phase 2 outcome (2026-10-05)
+
+**Status:** done and committed. All twelve tasks are in, BL-06 with them. D6 and D7 were taken at their defaults. Ten deviations are listed below; the one you may notice is that the list buttons and Ctrl+Shift+9 now change the whole list the caret is in (deviation 5). Two findings came up while checking the phase: BL-27 (spaces typed at the end of a line) was fixed here at the owner's request, along with three older no-break-space bugs its tests turned up (end of this section); BL-28 is in `docs/BACKLOG.md`.
+
+**What changed**
+- **2.1, spaces inside a formatted phrase (D-01).** New `lib/editor/spaceRuns.ts`, a pre-pass after `withBreakMarksTrimmed`, run by the paragraph, heading and Markdown table-cell writers.
+  - It first runs prosemirror-markdown's own bookkeeping over the block (`misplacedSpace`, which follows `renderInline`: the marks open, the reordering of bold, italic and links, the whitespace moved out of a run) to find a space the writer would put inside other marks than its own. A block with none is left exactly as it was.
+  - Such a space keeps bold, italic or strikethrough only where both its neighbours carry the mark with the same marks outside it, and keeps its other marks (an underline, a highlight, a colour). A misplaced space at the edge of a word is split off first, so Ctrl+B on "two " inside an underlined phrase leaves no gap in the underline. The block is checked again after each change. Spaces ending a line are left out of the file (BL-27, end of this section).
+  - The writer's mark flags come from its own specs (`state.marks`), with prosemirror-markdown's defaults as a fallback.
+  - **The property test** (`editorRoundTripProperty.test.ts`): its generator gains whitespace runs with marks of their own, spaces inside a run at its start or end, a second colour, a font, two sizes, a second highlight and table column widths. The "a formatted space shows nothing" exclusion is gone; "shows the same" now sets aside only bold, italic and strikethrough on whitespace (an underline or highlight there must survive). Its commands-in-context part gains the list buttons and a typed scene break.
+- **2.2, rich paste (D-06, D6) and BL-06.**
+  - New `lib/editor/pasteHtml.ts`, an extension-level `transformPastedHTML` in note editors and titles:
+    - near-black and near-white text loses its colour (any channel above 0x40 keeps it; `windowtext` goes);
+    - the font most of the paste is set in (by characters) loses its name, and so does a bare generic family;
+    - every point size goes (Word's and Docs' body and heading sizes); pixel sizes stay;
+    - a span's background colour, or Word's `mso-highlight`, becomes a highlight;
+    - Word's list paragraphs (`mso-list … levelN`) become nested `<ul>` / `<ol>`, the bullet or number taken out of the text.
+    - HTML copied from a Filo note (ProseMirror's `data-pm-slice`) is left as it is.
+  - BL-06: Ctrl+Shift+V drops spaces and tabs before each newline (`pastePlainText.ts` `literalTextSlice`); spaces ending the whole paste stay. KL #41 says so.
+  - KL #49 records what a rich paste drops, and why.
+- **2.3, the font size box (D-03).** `toolbarConfig.ts` `shownFontSize`: the text's own size mark (a `pt` size converted to px), else the computed size at the caret (a selection: its first character). The box and + / − use it.
+- **2.4, Enter in a title (D-04).** The title and label editor (`createLabelEditor`) gains `OneLineEnter`: Enter, Shift+Enter and Ctrl+Enter do nothing in the editor, so the host's existing keydown handler commits the title whole. `TileHeader`, `Frame` and `ConnectionLabel` ignore a key event while an IME composes.
+- **2.5, the list buttons (D-05).** New `lib/editor/listSwitch.ts`, a `switchList(kind)` command. The toolbar's three list buttons and Ctrl+Shift+7 / 8 / 9 run it.
+  - Every list one of whose own lines the selection reaches is rebuilt as the new kind, item by item (listItem ↔ taskItem), each item at its level; a nested list changes only where the selection reaches its lines.
+  - Paragraphs selected with a list are wrapped into the new kind and joined to it; a heading is left as it is.
+  - With no list in the selection, or every list it reaches already of that kind (the button turns the list off), TipTap's own toggle runs, as before.
+  - The buttons are off where the editor holds no lists (titles, connection labels): `toolbarStore.listsAvailable`.
+- **2.6, scene breaks (D-09, D7).** New `lib/editor/sceneBreaks.ts`.
+  - `typedOnly` rebuilds the heading, bullet, numbered, quote and checkbox input rules so their patterns refuse the newline TipTap runs them with on Enter: they fire on the typed space only.
+  - The numbered list's rule also refuses a number of three digits or more, so "1984. It was…" stays text (a `// DECISION:` comment).
+  - `SceneBreakEnter`: Enter at the end of a paragraph holding only `#`, or a spaced thematic break (`* * *`, `- - -`, `_ _ _`, and `***`), or of a one-item bullet list holding `* *` / `- -` (the first `* ` already made the list), replaces it with a horizontal rule and an empty paragraph. It is its own undo step: Ctrl+Z puts the typed line back.
+- **2.7, font names (D-08).** `fontFamilyValue` (`shared/fontStack.ts`) leaves a name CSS reads bare as it is (`Georgia`, `Arial Rounded MT`: notes keep their spelling) and quotes any other (`'28 Days Later'`, `'Lora[wght]'`). The toolbar's font picker uses it.
+- **2.8, title and preview sizes (D-10, W-9).** The display sanitiser (`sanitizeHtml.ts`) keeps `font-size` up to 72 px (px, pt, em, rem or %) and `margin-left` up to 192 px (eight indent steps). Anything larger, negative or not a plain length is still dropped.
+- **2.9, spell check (D-11).** The workspace store holds `spellcheck` (on unless turned off), saved in `.filo/workspace.json` only when off. Every editor reads it through a function attribute, so one opened later follows it; the Spelling button updates the open ones at once.
+- **2.10, table column widths (D-12).** A table with a column dragged to a width is written as HTML (`tableMarkdown.ts`), which keeps the width. Column resizing stays on.
+- **2.11, images in a note (D-13).** New `lib/editor/noteImages.ts`.
+  - The editor's image node view shows a vault-relative address through `filo://media/`, resolved from the note's folder (an address starting with `/` from the vault's top; `%20` decoded; `?` and `#` dropped; one climbing above the vault's top shows nothing). The node, and so the file, keeps the address as written.
+  - The note view tells its editor which note it shows before each load (`setImageNote`).
+  - Card previews (`staticPreview.ts`) resolve image addresses the same way, cached per note folder. The preview sanitiser keeps `<img>` only with a `filo://media/` address, with `alt`, `width` and `height`.
+- **2.12, long-note saves (D-07).**
+  - New `lib/editor/noteSerializerState.ts`: a subclass of prosemirror-markdown's state whose writes go through `append`, which keeps the output's last two characters at hand, and whose `atBlank`, `ensureNewLine`, `write`, `flushClose` and `text` read those instead of the output. A direct write to `out` is noticed by the output's length.
+  - `DelimiterRuns.finish` no longer filters every run's list per run: `flanks` checks `!o.html` inside its rare branch.
+  - A note over about 20,000 words (120,000 document positions) is serialised after a 1 s pause instead of 150 ms (`serializeIdleMs`); blur, Ctrl+S, close and quit still save at once.
+
+**Deviations from the plan**
+1. **The space rule needed a second condition, and a guard (2.1).**
+   - "Keeps bold, italic or strike only when both neighbours have it" doesn't fix the audit's own example: in a bold "Aria Kasai" with "Aria" red and "Kasai" blue, both neighbours of the space are bold, but the file writes the colour outside the `**`, so the bold closes at each colour change and the space was still written inside the red span. The rule also requires every mark nested outside it to be the same on the space and both neighbours.
+   - Applied to every space, that rule made 5 of the corpus's notes newly read-only: in `*Thanks to [Titus Wormer](…) for …*` the link sits outside the italic in the schema, yet the writer keeps the italic open around it, so the old output was right and the rule broke the phrase in three. The pass now changes only a space the writer would misplace (the emulation above); the corpus then showed 0 changed and 0 newly read-only. Two such phrases are now named cases in `markdownBodyRoundTrip.test.ts`.
+   - The finder's sketch passed its probe because its whitespace test had lost its backslash (`/S/`), so it stripped marks from most runs.
+2. **A space between two differently formatted struck words loses its strikethrough (2.1).** Markdown can't hold it there (the same reason as above). It shows as a short gap in the line; KL #50 says so. A struck or bold space at the edge of a run was already written outside it.
+3. **What D6's "pt sizes" covers (2.2).** Every size in points is dropped, including a heading's in Word or Docs (the heading keeps its level). A bare generic font (`sans-serif`) is dropped too, though it isn't the paste's main font. "Near-default colour" is defined as no channel above 0x40 (near-black) or every channel at 0xE0 or more (near-white). The clean-up also runs on titles and labels.
+4. **Enter in a title (2.4)** is swallowed in the label editor's keymap and committed by the host's existing handler, rather than committed from the keymap. Its test is a component test (it mounts the three components), not a browser-project spec.
+5. **The list buttons change the list the caret is in (2.5).** With the caret in one bullet, Ctrl+Shift+9 used to make only that line a checkbox, splitting the list in three; it now makes the whole list a checklist, as Numbered already changed the whole list (the audit counted that as working). The characterisation case "Ctrl+Shift+9 on the middle bullet of a list" was changed to expect the whole list, and the round-trip fixture for the old shape was renamed ("a checklist item between two bullet lists"); the shape still reads back. If you'd rather keep the one-line checkbox, it's a small change: say so.
+6. **More markers than the plan named stop firing on Enter (2.6):** the quote (`>`) and checkbox (`[ ]`) rules too, and `- - -` and `_ _ _` are scene breaks like `* * *`. ```` ``` ```` and Enter still make a code block. Numbers of one or two digits start a list; three or more don't.
+7. **Caps in the sanitiser (2.8).** The plan said "allow font-size"; it was allowed up to the toolbar's largest size (72 px) and indents up to eight steps, since the existing test kept out sizes that could cover the app (`font-size: 400px`).
+8. **No mutation run for the sanitiser (2.8, 2.11).** As for other security checks, the new sanitiser tests weren't run with the check switched off; they fail against the previous commit's sanitiser instead (bite check).
+9. **Where the long-note time went (2.12).** The finder's measured `atBlank` patch alone (a regular expression swapped for `endsWith`) took 100,000 words from 1,017 ms to 852 ms: any read of the output's content made the browser copy the whole output, since each write left it a fresh joined string. Reading only the tracked last characters took it to 11 ms. The 1 s idle for long notes is in as planned, though with the fix a save is cheap at any length.
+10. **Images are shown through a node view, not the image's render (2.11).** The same render writes the HTML of an aligned paragraph or an HTML table into the file, so an address rewritten there would have saved `filo://media/…` into the note. The node view changes only the `<img>` on screen. Addresses resolve from the note's folder, as Markdown and other apps read them; the plan didn't say from where.
+
+**Also changed, outside the plan's wording**
+- `fontStack.ts` gains `fontFamilyValue` (shared, unit-tested).
+- `toolbarCases.ts` gains four list-switch cases (the `toolbar-formatting-saved` gate asks for one per toolbar command); the toolbar suite, its Chromium twin and the micromark check run them.
+- The characterisation harness gains `toggleSpellCheck`, `spellCheckButtonOn` and `spellCheckedIn`; the new spec `spellCheckSetting.test.ts` is in the `characterisation-suite` gate's list.
+- Test fixtures with a hand-built workspace layout gained `spellcheck`, and two fake editors a document size (the note view now reads it).
+
+**Tests** (each new case was run against the previous commit; see Checks)
+- **Unit:** new `pasteHtml.test.ts` (13), `noteImages.test.ts` (8), `noteSerializerState.test.ts` (14: the state writes what prosemirror-markdown's own writes on eleven note shapes and a long note; the idle time); new cases in `pastePlainText.test.ts` (BL-06), `fontStack.test.ts`, `sanitizeHtml.test.ts` (sizes, indents, caps, preview images), `staticPreview.test.ts` (sizes, indents, images, the per-folder cache), `workspace.test.ts` (spell check).
+- **Component:** new `titleEnterCommits.test.ts` (5: tile, Shift+Enter, frame, connection label, an IME's Enter) and `titleFontSizeShown.test.ts` (2).
+- **Browser (Chromium):** new `spaceRunsInChromium` (6), `richPasteInChromium` (6), `fontSizeBoxInChromium` (6), `fontNamesInChromium` (8), `sceneBreaksInChromium` (19), `listSwitchInChromium` (14), `tableColumnWidthInChromium` (3), `noteImagesInChromium` (5), `longNoteSaveInChromium` (1: five times the words takes under twelve times the time, and under 500 ms at 100,000 words).
+- **Characterisation:** new `spellCheckSetting.test.ts` (2); `editorFidelity.test.ts` changed as in deviation 5.
+- **E2E:** new `noteImages.e2e.ts`: in the built app, an image a note embeds loads from the vault through `filo://media/`, with no security-policy error, and the note's file is left as it was.
+- **Round-trip fixtures:** `markdownBodyRoundTrip.test.ts` gains an italic phrase holding links and a bold phrase holding a link (deviation 1).
+- **Property sweep:** the final generator on the final code, seeds 1 and 20261005, 2,000 runs each: clean (192 s and 196 s). The suite's own 500 runs now take about 40 s on this machine (more shapes per document).
+  - After BL-27 (the generator now keeps spaces at line ends), seeds 1 and 4242, 2,000 runs each on the final code: clean (186 s and 210 s). Before the no-break-space fixes, the suite's own 500 runs found the case after an opening break, seed 777 the last-line and cell-edge cases, and seed 4242 the blank cell.
+
+**Checks**
+- `npm run ci:verify` on Windows: passed in 310 s on the final code, BL-27 included. 831 test files, 8,123 passed and 5 skipped (as before), 91/91 gates.
+  - Before BL-27 it had passed in 312 s (829 files, 8,094 passed). The first run after BL-27 failed one gate, `test-typecheck`: the new `lineEndSpaces.test.ts` handed the editor factory a document where it takes text (all its tests passed). The rerun passed.
+  - The first run failed on 6 cases: the characterisation case changed in deviation 5, and two fake editors without a document size. The second passed (315 s); the space-rule rework and an untracked read of the spell-check setting (an editor updating inside a component's effect mustn't make that effect depend on it) came after it, so the final run was the third.
+- E2E with `FILO_E2E_SCALE=1` on the build: 34 passed (the 33 from before and the new image case), 2.9 min, and again on the final build with BL-27 (34 passed, 2.9 min).
+  - The first run had two failures: the new spec's locator (ProseMirror adds a hidden separator `<img>` after an inline image), fixed; and the Kanban 300 switch-back budget (562 ms against 500). Five runs each against a build of the previous commit and of this phase gave the same medians (switch back 256 ms and 261 ms, open 424 ms and 416 ms), with a spike on each build, so it is noise; it is BL-28.
+- **Corpus check** against the previous commit, built in a detached worktree with `node_modules` junctioned:
+  - 741 notes: the repo's 106, 32 from a copy of your vaults folder, and 603 READMEs.
+  - 0 changed, 0 newly read-only, 0 newly failing to load (345 editable and 396 read-only on both).
+  - All 32 of your vault notes open editable, 30 of them saving byte for byte, as before.
+  - The first corpus run, with the space rule applied to every space, showed 5 READMEs newly read-only; that is deviation 1.
+  - After BL-27, again against the previous commit with the same list: 0 changed, 0 newly read-only, 0 newly failing (345 editable, 393 read-only). The 3 not compared are repo documents edited between the runs (`CLAUDE.md`, the backlog, this plan).
+- **Bite checks** (the new tests on the previous commit's code, in that worktree):
+  - Chromium: all 9 new specs fail (44 cases). The 19 that pass are controls for what already worked: a plain font name, markers typed with a space, a table without widths, `***`, Numbered on a nested item, a copy from a Filo note.
+  - Component: 7 of 7 fail. Characterisation: 2 of 2 fail. Unit: every new case in `pastePlainText`, `sanitizeHtml`, `staticPreview` and `workspace` fails.
+  - The extended property test fails within 5 runs on the previous serialiser.
+  - `pasteHtml`, `noteImages` and `noteSerializerState` are new modules, so their own unit tests have nothing to run against there.
+- **Long-note save time** (Chromium, one save of prose with italics, bold and quotes): 10,000 words 4 → 2 ms; 20,000 words 12 → 3 ms; 40,000 words 73 → 5 ms; 100,000 words 881 → 11 ms (18 ms for the whole save, Markdown escapes included).
+
+**Pass test**
+- Browser-project specs for each item: **met**, except 2.4 (a component test, deviation 4) and 2.9 (a characterisation spec and unit tests: the setting lives in the app's stores and `.filo/`), which got the test that reaches them.
+- The extended property sweep (new generator, two seeds × 2,000 runs) is clean: **met.**
+- The corpus check shows 0 changed and 0 newly read-only: **met** (no change was intended).
+- `markdownContentElsewhere.test.ts` is still green: **met** (it also runs the four new list-switch toolbar cases).
+
+**Found in this phase and fixed at the owner's request (BL-27)**
+- **What you saw** (Impact 1/10, Hard 1/10). Typed before Enter, two spaces were saved and dropped on reopening; typed before a single line break, they reopened as a hard break, saved later as `\`. Nothing was lost and the note stayed editable; only the bytes moved on a later save. Found by the audit's typing repro while checking this phase.
+- **What changed.** New `lib/editor/lineEndSpaces.ts`; spaces typed at the end of a line are left out of the file.
+  - Before a paragraph, heading or Markdown table cell is written, the spaces ending each of its lines are dropped from its text (`withLineEndSpacesDropped`): at the block's end, and in a paragraph before a soft break (a heading's or cell's soft break is `<br>`, before which spaces stay). A tab typed before them then ends the line and is written `&#9;`. A line of only spaces keeps its first, written `&#32;`.
+  - Spaces a closing tag follows (`<u>a  </u>`, a link's text) are kept, since Markdown keeps them; on a bold, italic or struck run they go, since its delimiters push them out of every tag. Spaces before a Shift+Enter line break stay (`a  \`), and `spaceRuns.ts` no longer counts them as dropped.
+  - A block written as HTML (an aligned paragraph, a table Markdown can't hold) loses the plain spaces ending each of its paragraphs (`withBlockEndSpacesTrimmed`): the load drops them there.
+  - As a last check, the writer notes where each line of text ends (`NoteSerializerState.markLineEnd`: before a soft break's newline, at the end of a paragraph, heading or cell), and `withoutLineEndSpaces` cuts any space still standing before one; `DelimiterRuns.cut` moves the bold and italic runs recorded after a cut, so a run Markdown can't read still becomes `<strong>` where it stands.
+  - The property test drops its "whitespace at the end of a line" exclusion: the generator keeps such spaces, and "shows the same" sets aside only spaces ending a line and line breaks ending a block, which show nothing.
+- **Three older no-break-space bugs**, which the property sweep turned up once its generator kept spaces at line ends, were fixed with it. Each made a note reopen different from what was saved:
+  - A paragraph opening with a line break (written `<br data-filo-soft-break>`) and then only a no-break space on that line was read as an HTML block, which took the lines below it as HTML: a list item's sub-list became its text. That no-break space is now written `&#160;` (`textEscapes.ts`).
+  - A paragraph whose last line held only a no-break space lost that line on reopening: the blank-line encoder (`emptyParagraphs.ts`) took it for blank with JavaScript's `\S`. Blank is now Markdown's: spaces and tabs only.
+  - A Markdown table cell opening or closing with a no-break space lost it (markdown-it trims cells of all whitespace), and a cell holding only one was written empty (`tableMarkdown.ts` `writesSomething` used `trim()`). A no-break space at a cell's edge is written `&#160;`, and a cell holding one writes it.
+- **Tests.**
+  - Unit: new `lineEndSpaces.test.ts` (20: the three helpers; notes saved and reopened with spaces before Enter and a soft break, a tab before them, a bold run after a cut, a no-break space alone on a line).
+  - Chromium: new `lineEndSpacesInChromium.test.ts` (4, with real keys: spaces before Enter, before a soft break and at the end of a list item are left out; before Shift+Enter they stay).
+  - Round-trip fixtures: five no-break-space shapes are named cases in `markdownBodyRoundTrip.test.ts`.
+  - Bite checks: each change was switched off in turn and a new test failed every time. That covers the node-level drop, the last check, the run shift, each of the three `&#160;` writes, the blank-line rule and the blank-cell rule.
+- **Checks:** in the Checks above (the final `ci:verify`, E2E, corpus and sweep runs include it).
+
+**Found in this phase, not fixed (BL-28)**
+- **BL-28: the Kanban 300 switch-back scale budget fails now and then** (Impact 0/10, Hard 2/10). A run spikes past 500 ms (562 and 722 ms in two of nine); the medians match the previous commit's (see Checks). The app is no slower.

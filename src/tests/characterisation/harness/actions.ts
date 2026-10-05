@@ -1195,6 +1195,22 @@ export async function typeAtEnd(ed: Editor, text: string): Promise<void> {
   await settle();
 }
 
+/** Clicks the formatting toolbar's Spelling button. */
+export async function toggleSpellCheck(app: CharApp): Promise<void> {
+  click($(app.el, 'button[aria-label="Spelling & Grammar"]'));
+  await settle();
+}
+
+/** Whether the toolbar's Spelling button shows spell check on. */
+export function spellCheckButtonOn(app: CharApp): boolean {
+  return $(app.el, 'button[aria-label="Spelling & Grammar"]').getAttribute('aria-pressed') === 'true';
+}
+
+/** Whether the browser checks spelling in `ed`'s text. */
+export function spellCheckedIn(ed: Editor): boolean {
+  return ed.view.dom.getAttribute('spellcheck') === 'true';
+}
+
 /** Put the cursor in the editor's first block, then pick an alignment in the toolbar's Text Align menu. */
 export async function alignFirstBlock(app: CharApp, ed: Editor, align: 'left' | 'center' | 'right' | 'justify'): Promise<void> {
   ed.commands.focus('start');

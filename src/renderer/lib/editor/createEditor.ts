@@ -20,10 +20,8 @@ declare module '@tiptap/core' {
 import { Color, FontFamily, TextStyle } from '@tiptap/extension-text-style';
 import { Underline } from '@tiptap/extension-underline';
 import { Highlight } from '@tiptap/extension-highlight';
-import { Image } from '@tiptap/extension-image';
 import { Placeholder } from '@tiptap/extensions';
 import { TableRow } from '@tiptap/extension-table';
-import { TaskItem } from '@tiptap/extension-list';
 import { Markdown } from 'tiptap-markdown';
 import { common, createLowlight } from 'lowlight';
 import { FiloListTight, FiloTaskListTight } from './taskListTight';
@@ -33,11 +31,17 @@ import { TabChar, withEdgeTabsOutsideRuns } from './tabNode';
 import { KeepSpaces } from './keepSpaces';
 import { LeadSpace, withLeadSpacesOutsideRuns } from './leadSpace';
 import { FiloBulletList, FiloOrderedList } from './listMarkers';
-import { FiloTaskList, FiloListParse } from './taskItems';
+import { FiloTaskItem, FiloTaskList, FiloListParse } from './taskItems';
 import { FiloTable, FiloTableCell, FiloTableHeader } from './tableMarkdown';
 import { FiloCodeBlock } from './codeFence';
 import { FiloHardBreak } from './hardBreak';
 import { SoftBreak, SoftBreakEnter, withBreakMarksTrimmed } from './softBreak';
+import { withSpaceRunsUnwrapped, type MarkFlagSpecs } from './spaceRuns';
+import { withBlockEndSpacesTrimmed, withLineEndSpacesDropped } from './lineEndSpaces';
+import { SceneBreakEnter, typedOnly } from './sceneBreaks';
+import { ListSwitch } from './listSwitch';
+import { NoteImage } from './noteImages';
+import { PasteHtmlCleanup } from './pasteHtml';
 import { PastePlainText } from './pastePlainText';
 import { FiloBlockquote } from './blockquote';
 import { isFiloLink } from '../../schema/link';
@@ -47,6 +51,16 @@ import { installNoteSerializer } from './delimiterRuns';
 import { FiloLink } from './autolinkMarkdown';
 import { carriesKeptTextStyle } from './textStyleSpans';
 import { NOTE_EDITOR_ATTRIBUTE } from '../utils/editableTarget';
+import { untrack } from 'svelte';
+import { toolbarStore } from '../../stores/toolbar.svelte';
+
+/**
+ * Spell check on or off, for an editor's root. Read untracked: an editor
+ * updates inside other components' effects, which mustn't come to depend on it.
+ */
+function spellcheckAttribute(): string {
+  return String(untrack(() => toolbarStore.spellcheck));
+}
 
 const lowlight = createLowlight(common);
 
@@ -147,6 +161,12 @@ interface MarkdownSerializeState {
   /** Block delimiter prefix — empty at the top level, `> `/indent when nested. */
   delim: string;
   out: string;
+  /** Adds text to `out` (a note editor's state keeps its line ends at hand this way, `noteSerializerState.ts`). */
+  append?(text: string): void;
+  /** The writer's mark specs, whose flags `spaceRuns.ts` follows. */
+  marks?: MarkFlagSpecs;
+  /** Notes that a line of text ends here (a note editor's state, `lineEndSpaces.ts`). */
+  markLineEnd?(): void;
   write(content?: string): void;
   flushClose(size?: number): void;
   renderInline(node: ProseMirrorNode, fromBlockStart?: boolean): void;
@@ -180,22 +200,26 @@ const ParagraphWithBlankLines = Paragraph.extend({
     return {
       markdown: {
         serialize(state: MarkdownSerializeState, node: ProseMirrorNode, parent: ProseMirrorNode): void {
-          if (node.content.size === 0 && !state.delim) {
+          // Spaces ending a line wouldn't read back (`lineEndSpaces.ts`).
+          const laidOut = hasBlockLayout(node) && !isListItem(parent);
+          const block = laidOut ? withBlockEndSpacesTrimmed(node) : withLineEndSpacesDropped(node);
+          if (block.content.size === 0 && !state.delim) {
             state.flushClose(2);
-            state.out += '\n';
+            if (state.append) state.append('\n');
+            else state.out += '\n';
             return;
           }
           // Never in a list item, where the HTML line would swallow the
           // item's sub-list (`listItemLayout.ts` keeps the layout out).
-          if (hasBlockLayout(node) && !isListItem(parent)) {
-            state.write(blockLayoutHtml(node));
+          if (laidOut && block.content.size > 0) {
+            state.write(blockLayoutHtml(block));
             state.closeBlock(node);
             return;
           }
           // prosemirror-markdown escapes a leading `1.` but not `1)`, which
           // Markdown also reads as a numbered list item: "1) Buy milk" typed
           // as text would reopen as a list. Write the delimiter as `1\)`.
-          const first = node.firstChild;
+          const first = block.firstChild;
           const listLike = first?.isText && first.marks.length === 0
             ? ORDERED_PAREN_START.exec(first.text ?? '')
             : null;
@@ -204,19 +228,21 @@ const ParagraphWithBlankLines = Paragraph.extend({
           // run opening the paragraph records its start before them, and
           // tiptap-markdown's delimiter tidy then cut into the `>`. An empty
           // paragraph in a quote or list writes nothing, as before.
-          if (node.content.size > 0) state.write();
+          if (block.content.size > 0) state.write();
           if (listLike) {
             state.write(`${listLike[1]}\\)`);
-            let rest = node.cut(listLike[0].length);
+            let rest = block.cut(listLike[0].length);
             // The space after `1)` is mid-line, so it is written as a space.
             if (rest.firstChild?.text?.startsWith(' ')) {
               state.write(' ');
               rest = rest.cut(1);
             }
-            state.renderInline(withBreakMarksTrimmed(withEdgeTabsOutsideRuns(rest)), false);
+            state.renderInline(withSpaceRunsUnwrapped(withBreakMarksTrimmed(withEdgeTabsOutsideRuns(rest)), state.marks), false);
           } else {
-            state.renderInline(withBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node))));
+            state.renderInline(withSpaceRunsUnwrapped(withBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(block))), state.marks));
           }
+          // Spaces typed at its end wouldn't read back (`lineEndSpaces.ts`).
+          if (block.content.size > 0) state.markLineEnd?.();
           state.closeBlock(node);
         },
         parse: {},
@@ -228,8 +254,13 @@ const ParagraphWithBlankLines = Paragraph.extend({
 /**
  * Heading whose alignment and indent are saved: an aligned or indented heading
  * is written as an HTML line (see `blockLayout.ts`), any other as `## text`.
+ * `# ` makes a heading as typed; `#` and Enter is a scene break (`sceneBreaks.ts`).
  */
 const HeadingWithLayout = Heading.extend({
+  addInputRules() {
+    return typedOnly(this.parent?.() ?? []);
+  },
+
   addStorage() {
     return {
       markdown: {
@@ -238,7 +269,9 @@ const HeadingWithLayout = Heading.extend({
             state.write(blockLayoutHtml(node));
           } else {
             state.write(`${'#'.repeat(Number(node.attrs.level) || 1)} `);
-            state.renderInline(withBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(node))), false);
+            const block = withLineEndSpacesDropped(node, false);
+            state.renderInline(withSpaceRunsUnwrapped(withBreakMarksTrimmed(withLeadSpacesOutsideRuns(withEdgeTabsOutsideRuns(block))), state.marks), false);
+            state.markLineEnd?.();
           }
           state.closeBlock(node);
         },
@@ -270,12 +303,14 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
     editable: options.editable ?? true,
 
     editorProps: {
-      attributes: {
-        spellcheck: 'true',
+      // Read on every update, so an editor opened after spell check was
+      // turned off has it off too.
+      attributes: () => ({
+        spellcheck: spellcheckAttribute(),
         // Tells a note editor from a title or label editor (the shutdown
         // report counts a title being typed, and leaves a note to its store).
         [NOTE_EDITOR_ATTRIBUTE]: 'true',
-      },
+      }),
     },
 
     extensions: [
@@ -305,6 +340,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       FiloHardBreak,
       SoftBreak,
       SoftBreakEnter,
+      SceneBreakEnter,
       FiloBlockquote,
       HeadingWithLayout,
       NoteText,
@@ -336,7 +372,8 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         // are still refused by the default validator.
         isAllowedUri: (url, ctx) => isFiloLink(url) || ctx.defaultValidate(url),
       }),
-      Image.configure({
+      // Shown from the vault (`filo://media/`), saved as the file has it.
+      NoteImage.configure({
         inline: true,
       }),
       Placeholder.configure({
@@ -353,7 +390,8 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
       FiloTaskList,
       FiloTaskListTight,
       FiloListParse,
-      TaskItem.configure({
+      ListSwitch,
+      FiloTaskItem.configure({
         nested: true,
       }),
       FiloCodeBlock.configure({
@@ -387,6 +425,7 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
         transformCopiedText: false,
       }),
       PastePlainText,
+      PasteHtmlCleanup,
       // After Markdown: replaces its list `tight` parse rule (see taskListTight.ts).
       FiloListTight,
       KeepSpaces,
@@ -424,6 +463,23 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
 }
 
 /**
+ * A title or label is one line. Enter (with Shift or Ctrl too) does nothing
+ * in the editor, so the host's keydown handler commits the text as it is;
+ * the editor's own Enter ran first and split the title in two ("Chap" and
+ * "ter One"). ProseMirror runs no keymap while an IME is composing, so the
+ * Enter that confirms a composition stays the IME's.
+ */
+const OneLineEnter = Extension.create({
+  name: 'filoOneLineEnter',
+  priority: 1000,
+
+  addKeyboardShortcuts() {
+    const nothing = (): boolean => true;
+    return { Enter: nothing, 'Shift-Enter': nothing, 'Mod-Enter': nothing };
+  },
+});
+
+/**
  * Creates a minimal Tiptap editor for connection labels.
  * Supports only inline formatting (bold, italic, underline, color, highlight, font).
  * No block-level formatting (headings, lists, code blocks etc.) to keep labels compact.
@@ -438,7 +494,7 @@ export function createLabelEditor(
     element: options.element,
     content: options.content || '<p></p>',
     editorProps: {
-      attributes: { spellcheck: 'true', class: 'label-tiptap' },
+      attributes: () => ({ spellcheck: spellcheckAttribute(), class: 'label-tiptap' }),
     },
     extensions: [
       StarterKit.configure({
@@ -465,6 +521,8 @@ export function createLabelEditor(
       Color,
       Highlight.configure({ multicolor: true }),
       FontFamily,
+      OneLineEnter,
+      PasteHtmlCleanup,
     ],
     onUpdate: ({ editor: e }) => options.onUpdate?.(e.getHTML()),
     onFocus: () => options.onFocus?.(),

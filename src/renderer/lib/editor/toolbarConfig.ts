@@ -3,6 +3,7 @@ import { toolbarStore } from '../../stores/toolbar.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { setNoteLineSpacing } from '../../stores/noteLayout';
 import { clearBlockTextStyle } from './blockTextStyle';
+import { fontFamilyValue } from '../../../shared/fontStack';
 
 /** Shown when TipTap's Link URI allowlist refuses a link. */
 export const LINK_REFUSED_MESSAGE = "That link couldn't be added. Use https://, mailto: or a filo:// link.";
@@ -50,6 +51,44 @@ function chainIfEditable(): ReturnType<Editor['chain']> | null {
   return activeEditor.chain();
 }
 
+/** The size box's value when the editor shows nothing it can measure. */
+const FALLBACK_FONT_SIZE = 14;
+
+/** CSS pixels in a point (text pasted from Word or Google Docs is sized in points). */
+const PX_PER_PT = 4 / 3;
+
+/** A font size mark's value in whole pixels, or null for a unit only the page can resolve. */
+function fontSizeInPx(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(px|pt)?\s*$/i.exec(value);
+  if (!m) return null;
+  const n = parseFloat(m[1] ?? '');
+  const px = m[2]?.toLowerCase() === 'pt' ? n * PX_PER_PT : n;
+  return px > 0 ? Math.round(px) : null;
+}
+
+/**
+ * The size the selected text is shown at, in whole pixels: its own size
+ * mark, else the size the page draws it at (a Document's 16 px body, a
+ * heading's 2em). The size box shows it and + / − step from it, so + never
+ * shrinks text the page shows larger than the box's fallback.
+ */
+function shownFontSize(editor: Editor): number {
+  const own = fontSizeInPx(editor.getAttributes('textStyle').fontSize);
+  if (own !== null) return own;
+  try {
+    const { selection } = editor.state;
+    // The caret takes the style of the text before it; a selection, of its first character.
+    const { node } = editor.view.domAtPos(selection.from, selection.empty ? -1 : 1);
+    const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node instanceof Element ? node : null;
+    const px = el ? parseFloat(getComputedStyle(el).fontSize) : NaN;
+    if (px > 0) return Math.round(px);
+  } catch {
+    // A view not yet mounted has no DOM to measure.
+  }
+  return FALLBACK_FONT_SIZE;
+}
+
 /**
  * Reads the current formatting state from this editor and pushes it to toolbarStore.
  *
@@ -83,6 +122,8 @@ function syncStateToToolbar(editor: Editor) {
   const next = {
     alignAvailable,
     alignInList: !alignAvailable && listItemAround(editor) !== null,
+    // Titles and connection labels hold no lists.
+    listsAvailable: 'switchList' in can,
     lineSpacingNote: note ? note.path : null,
     bold: editor.isActive('bold'),
     italic: editor.isActive('italic'),
@@ -91,7 +132,7 @@ function syncStateToToolbar(editor: Editor) {
     textColor: editor.getAttributes('textStyle').color || '#ffffff',
     highlightColor: editor.getAttributes('highlight').color || 'transparent',
     fontFamily: editor.getAttributes('textStyle').fontFamily || '',
-    fontSize: parseInt(editor.getAttributes('textStyle').fontSize) || 14,
+    fontSize: shownFontSize(editor),
     textAlign,
     heading,
     editorHistory: {
@@ -236,7 +277,7 @@ export const tiptapToolbar = {
 
   setFontFamily(font: string) {
     this.keepActiveEditor();
-    chainIfEditable()?.focus().setFontFamily(font).run();
+    chainIfEditable()?.focus().setFontFamily(fontFamilyValue(font)).run();
   },
 
   setFontSize(size: number) {
@@ -245,13 +286,13 @@ export const tiptapToolbar = {
   },
 
   increaseFontSize() {
-    const current = parseInt(activeEditor?.getAttributes('textStyle').fontSize) || 14;
-    this.setFontSize(Math.min(current + 1, 72));
+    if (!activeEditor) return;
+    this.setFontSize(Math.min(shownFontSize(activeEditor) + 1, 72));
   },
 
   decreaseFontSize() {
-    const current = parseInt(activeEditor?.getAttributes('textStyle').fontSize) || 14;
-    this.setFontSize(Math.max(current - 1, 8));
+    if (!activeEditor) return;
+    this.setFontSize(Math.max(shownFontSize(activeEditor) - 1, 8));
   },
 
   setTextAlign(align: 'left' | 'center' | 'right' | 'justify') {
@@ -277,19 +318,20 @@ export const tiptapToolbar = {
     return level === 0 ? chain.setParagraph().run() : chain.setHeading({ level }).run();
   },
 
+  // The lists the selection reaches change kind in place (`listSwitch.ts`).
   toggleBulletList() {
     this.keepActiveEditor();
-    chainIfEditable()?.focus().toggleBulletList().run();
+    chainIfEditable()?.focus().switchList('bulletList').run();
   },
 
   toggleOrderedList() {
     this.keepActiveEditor();
-    chainIfEditable()?.focus().toggleOrderedList().run();
+    chainIfEditable()?.focus().switchList('orderedList').run();
   },
 
   toggleTaskList() {
     this.keepActiveEditor();
-    chainIfEditable()?.focus().toggleTaskList().run();
+    chainIfEditable()?.focus().switchList('taskList').run();
   },
 
   /** In a list, Indent nests the item (a list level in the file), as Tab does; elsewhere it indents the text. */

@@ -140,6 +140,7 @@ describe('workspaceStore', () => {
       paneTree: split,
       activePaneId: 'leaf_1',
       boardToolbars: { board_1: { position: { x: 40, y: 80 }, pinned: true } },
+      spellcheck: false,
     };
 
     workspaceStore.hydrate(before);
@@ -161,6 +162,39 @@ describe('workspaceStore', () => {
     workspaceStore.hydrate({ boardToolbars: { b: { position: null, pinned: true } } });
     expect(workspaceStore.boardToolbar('b').pinned).toBe(true);
     expect(workspaceStore.activePaneId).toBeNull();
+    expect(workspaceStore.spellcheck).toBe(true);
+  });
+});
+
+describe('workspaceStore spell check', () => {
+  beforeEach(() => {
+    workspaceStore.reset();
+    workspaceStore.setChangeListener(null);
+  });
+
+  it('is on until turned off, and a change is saved once', () => {
+    expect(workspaceStore.spellcheck).toBe(true);
+    let notified = 0;
+    workspaceStore.setChangeListener(() => notified++);
+    workspaceStore.setSpellcheck(false);
+    workspaceStore.setSpellcheck(false);
+    expect(workspaceStore.spellcheck).toBe(false);
+    expect(notified).toBe(1);
+  });
+
+  it('reads only an explicit false as off: anything else in the file is on', () => {
+    workspaceStore.hydrate({ spellcheck: false });
+    expect(workspaceStore.spellcheck).toBe(false);
+    workspaceStore.hydrate({ spellcheck: 'no' as unknown as boolean });
+    expect(workspaceStore.spellcheck).toBe(true);
+    workspaceStore.hydrate({});
+    expect(workspaceStore.spellcheck).toBe(true);
+  });
+
+  it('goes back on when the vault is let go', () => {
+    workspaceStore.setSpellcheck(false);
+    workspaceStore.reset();
+    expect(workspaceStore.spellcheck).toBe(true);
   });
 });
 

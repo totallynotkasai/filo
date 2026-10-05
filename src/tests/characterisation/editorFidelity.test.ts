@@ -3,7 +3,7 @@
  *
  * A note Filo writes must read back to the same note: otherwise it reopens
  * read-only (Filo won't write over what it can't keep). An empty checkbox
- * left after the last task, one bullet turned into a checklist item, and a
+ * left after the last task, a bullet list turned into a checklist, and a
  * paragraph typed with leading spaces all used to reopen read-only.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -50,19 +50,20 @@ describe('what is typed reopens as typed', () => {
     expect(items.map((i) => i.type)).toEqual(['taskItem', 'taskItem']);
   });
 
-  it('Ctrl+Shift+9 on the middle bullet of a list', async () => {
+  it('Ctrl+Shift+9 on the middle bullet of a list makes the list a checklist', async () => {
     const app = await startApp({ 'Bullets.md': '---\ntitle: Bullets\n---\n- a\n- b\n- c\n' });
     await openNoteFromSidebar(app, 'Bullets.md');
     const ed = noteEditor(app);
     await caretAfter(ed, 'b');
     await pressInEditor(ed, '9', { ctrlKey: true, shiftKey: true, keyCode: 57 } as KeyboardEventInit);
-    expect(ed.getJSON().content?.map((n) => n.type)).toEqual(['bulletList', 'taskList', 'bulletList']);
+    expect(ed.getJSON().content?.map((n) => n.type)).toEqual(['taskList']);
     await leaveEditor(ed);
     await quiesce();
+    expect(body(app, 'Bullets.md')).toBe('- [ ] a\n- [ ] b\n- [ ] c\n');
 
     const again = await reopenNote(app, 'Bullets.md');
     expect(documentBanners(app)).toEqual([]);
-    expect(again.getJSON().content?.map((n) => n.type)).toEqual(['bulletList', 'taskList', 'bulletList']);
+    expect(again.getJSON().content?.map((n) => n.type)).toEqual(['taskList']);
     expect(again.getText()).toContain('b');
   });
 

@@ -131,6 +131,20 @@ describe('a newline closing the paste', () => {
     expect(savedAfterTyping('\nabc', { into: 'existing', literal: true })).toBe('existingabctyped after');
   });
 
+  it('Ctrl+Shift+V drops the spaces before each line break, which would read back as a hard break', () => {
+    const ed = makeEditor();
+    pastePlain(ed, 'abc  \ndef\t\nghi  \n\njkl', true);
+    const saved = editorMarkdown(ed);
+    expect(saved).toBe('abc\ndef\nghi\n\njkl');
+    const reopened = makeEditor(saved);
+    expect(reopened.state.doc.child(0).content.content.map((n) => n.type.name)).toEqual(['text', 'softBreak', 'text', 'softBreak', 'text']);
+    expect(editorMarkdown(reopened)).toBe(saved);
+  });
+
+  it('Ctrl+Shift+V keeps spaces ending the paste, before what is typed next', () => {
+    expect(savedAfterTyping('abc  ', { literal: true })).toBe('abc  typed after');
+  });
+
   it('Ctrl+Shift+V is unchanged', () => {
     expect(savedAfterTyping('line one\nline two\n', { literal: true })).toBe('line one\nline two\ntyped after');
     expect(savedAfterTyping('abc\n\n', { literal: true })).toBe('abc\n\ntyped after');

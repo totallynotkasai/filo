@@ -1,5 +1,6 @@
 import { Blockquote } from '@tiptap/extension-blockquote';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { typedOnly } from './sceneBreaks';
 
 /**
  * A quote as it is written to the file.
@@ -21,6 +22,11 @@ function isEmptyParagraph(node: ProseMirrorNode): boolean {
 }
 
 export const FiloBlockquote = Blockquote.extend({
+  // `> ` starts a quote as typed, not `>` and Enter (`sceneBreaks.ts`).
+  addInputRules() {
+    return typedOnly(this.parent?.() ?? []);
+  },
+
   addStorage() {
     return {
       ...this.parent?.(),

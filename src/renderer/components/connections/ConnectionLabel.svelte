@@ -199,6 +199,8 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // An IME's Enter or Escape confirms or cancels its composition.
+    if (e.isComposing) return;
     if (e.key === 'Enter') {
       e.preventDefault();
       commitEdit();

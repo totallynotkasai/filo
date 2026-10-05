@@ -248,7 +248,7 @@ const FILO_WRITES: ReadonlyArray<[string, string]> = [
   ['Enter after the last task', '- [ ] a\n- [ ] '],
   ['an empty task after a paragraph', 'x\n\n- [ ] '],
   ['an empty checked task holding sub-tasks', '- [x] \n  - [ ] \n  - [ ] z'],
-  ['Ctrl+Shift+9 on the middle bullet', '- a\n\n* [ ] b\n\n- c'],
+  ['a checklist item between two bullet lists', '- a\n\n* [ ] b\n\n- c'],
   ['two bullet lists with an empty line between', '- a\n\n\n* b'],
   ['Enter twice in a numbered list', '1. a\n2. b\n\n\n1) c'],
   ['a numbered list typed from 0', '0. zero\n1. one'],
@@ -292,6 +292,16 @@ const FILO_WRITES: ReadonlyArray<[string, string]> = [
   ['two bullet lists side by side', '- a\n\n* b'],
   ['an autolink holding "*" and "~"', '<https://x.com/a*b_c~d>'],
   ['a link whose text is its percent-encoded address', '[https://example.com/My%20File.pdf](https://example.com/My%20File.pdf)'],
+  // The spaces around a link inside an italic or bold phrase stay inside the
+  // phrase (the writer keeps the emphasis open around the link).
+  ['an italic phrase holding links', '*Thanks to [Titus Wormer](https://github.com/wooorm) for [encouraging me](https://example.com/1) to do this.*'],
+  ['a bold phrase holding a link', '**See [the map](https://example.com/map) first.**'],
+  // A no-break space where Markdown trims whitespace other than spaces.
+  ['a no-break space opening a table cell', '| &#160;a |\n| --- |\n| b |\n'],
+  ['a no-break space closing a table cell', '| a&#160; |\n| --- |\n| b |\n'],
+  ['a table cell holding only a no-break space', '| &#160; |\n| --- |\n| b |\n'],
+  ['a no-break space after the break a list item opens with', '- <br data-filo-soft-break>&#160;\n  - a'],
+  ['a no-break space alone on a paragraph\'s last line', 'a\n \n\nz'],
 ];
 
 describe('shapes Filo writes read back as written', () => {

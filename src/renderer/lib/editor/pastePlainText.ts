@@ -47,12 +47,18 @@ function pasteParserFor(editor: Editor): MarkdownParserLike | null {
   return Parser ? new Parser(editor, { html: false, linkify: false, breaks: false }) : null;
 }
 
-/** `text` as paragraphs (split on blank lines) holding its lines, joined by soft breaks. */
+/**
+ * `text` as paragraphs (split on blank lines) holding its lines, joined by
+ * soft breaks. Spaces and tabs before a newline are dropped: they show
+ * nothing, and two spaces before a soft break read back as a hard break
+ * (saved later as `\`). Spaces ending the whole paste stay, as typing goes on
+ * after them.
+ */
 export function literalTextSlice(schema: Schema, text: string): Slice {
   const lineBreak = schema.nodes.softBreak ?? schema.nodes.hardBreak;
   const paragraph = schema.nodes.paragraph;
   if (!paragraph) return Slice.empty;
-  const blocks = text.replace(/\r\n?/g, '\n').split(/\n{2,}/);
+  const blocks = text.replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').split(/\n{2,}/);
   const nodes = blocks.map((block) => {
     const inline: PMNode[] = [];
     block.split('\n').forEach((line, i) => {

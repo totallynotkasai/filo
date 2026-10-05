@@ -1395,7 +1395,8 @@ file: shown as a line break and saved as a bare newline. A newline closing
 the paste is one too, so typing goes on on the next line (two or more close
 the paragraph), and newlines opening it are dropped. **Ctrl+Shift+V** pastes
 it literally instead (a paragraph per blank-line-separated block, a soft break
-per newline), with the same ends.
+per newline, the spaces before each newline dropped, since two of them would
+read back as a hard break), with the same ends.
 
 **Where:** [src/renderer/lib/editor/pastePlainText.ts](src/renderer/lib/editor/pastePlainText.ts).
 
@@ -1551,3 +1552,43 @@ shape without saying so.
 
 **Impact:** To change a list marker, a link address or HTML across notes,
 edit those notes directly (or in the Raw view).
+
+## 49. A rich paste takes the note's text colour, font and size
+
+**What:** Text pasted from Word, Google Docs or a web page drops the
+formatting that only restates the source's defaults: near-black or
+near-white text (and Word's `windowtext`) loses its colour, the font most of
+the paste is set in (and a bare `sans-serif` or `serif`) loses its name, and
+every size in points (Word's and Docs' body and heading sizes) goes. Other
+colours and fonts, pixel sizes, bold, italic, underline and highlights stay,
+and Word's bullets become a list. HTML copied from a Filo note keeps all of
+its formatting, black included.
+
+**Where:** [src/renderer/lib/editor/pasteHtml.ts](src/renderer/lib/editor/pasteHtml.ts).
+
+**Why accepted:** Docs writes black Arial 11 pt on every run and Word its
+theme font and size, so a paste kept as it was showed as black text in a dark
+theme and smaller than the note around it (the owner's decision D6 in
+Audit-28). A deliberate black word in the source can't be told from the
+source's plain text.
+
+**Impact:** A word meant to be black, or a size meant to differ from the
+note's, needs setting again after a paste from Word or Docs.
+
+## 50. A space between two differently formatted words of a struck-through phrase isn't struck
+
+**What:** In a struck-through phrase whose words have different colours,
+fonts or sizes (each word coloured separately), the space between two such
+words is saved without the strikethrough, so the line through the phrase has
+a gap there after reopening. The same holds for bold and italic, where a
+space shows no difference.
+
+**Where:** [src/renderer/lib/editor/spaceRuns.ts](src/renderer/lib/editor/spaceRuns.ts).
+
+**Why accepted:** In the file a colour, font or size is written outside the
+`~~`, `**` or `*` of a run, so the run closes and opens again at each such
+change, and Markdown can't close or open a run at a space. Kept, the space
+was written inside the first word's colour and the note reopened read-only.
+
+**Impact:** A short gap in the strikethrough line between two differently
+coloured words; nothing else changes.

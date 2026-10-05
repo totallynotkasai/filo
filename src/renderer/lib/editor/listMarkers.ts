@@ -1,5 +1,6 @@
 import { BulletList, OrderedList } from '@tiptap/extension-list';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { typedOnly, typedOrderedListRules } from './sceneBreaks';
 
 /**
  * How lists are marked in the file, so each list reads back as the list it is.
@@ -7,8 +8,8 @@ import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
  * Markdown joins list items separated only by blank lines into one list, and
  * reads a bullet list and a checklist written with the same bullet as one
  * mixed list (which the editor can't hold: it reloaded with a filler
- * checkbox, and the note opened read-only). Converting one bullet of a list
- * to a checklist item (Ctrl+Shift+9) leaves exactly that shape, and pressing
+ * checkbox, and the note opened read-only). A checklist written right after a
+ * bullet list (made in the editor, or pasted) is exactly that shape, and pressing
  * Enter twice in a numbered list leaves two numbered lists with a blank line
  * between. CommonMark starts a new list when the bullet character or the
  * number's delimiter changes, so a list written right after another list of
@@ -157,8 +158,12 @@ export function serializeOrderedList(
   });
 }
 
-/** Bullet list written with `serializeBulletList`. */
+/** Bullet list written with `serializeBulletList`; `- ` and `* ` start one as typed, not on Enter (`sceneBreaks.ts`). */
 export const FiloBulletList = BulletList.extend({
+  addInputRules() {
+    return typedOnly(this.parent?.() ?? []);
+  },
+
   addStorage() {
     return {
       ...this.parent?.(),
@@ -170,8 +175,12 @@ export const FiloBulletList = BulletList.extend({
   },
 });
 
-/** Numbered list written with `serializeOrderedList`. */
+/** Numbered list written with `serializeOrderedList`; `1. ` starts one as typed, a year doesn't (`sceneBreaks.ts`). */
 export const FiloOrderedList = OrderedList.extend({
+  addInputRules() {
+    return typedOrderedListRules(this.parent?.() ?? []);
+  },
+
   addStorage() {
     return {
       ...this.parent?.(),

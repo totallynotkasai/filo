@@ -72,13 +72,14 @@ export function encodeEmptyParagraphs(body: string, tokenizer: BlockTokenizer): 
 
   const lines = body.split('\n');
   // A list's line map runs on over the blank lines after it, so a block ends
-  // at its last line with text; the blank lines after it are the gap.
+  // at its last line with text; the blank lines after it are the gap. Blank
+  // is Markdown's: only spaces and tabs (a no-break space is text).
   const blocks = tokens
     .filter((t) => t.level === 0 && t.map)
     .map((t): [number, number] => {
       const [start, end] = t.map as [number, number];
       let last = end;
-      while (last > start + 1 && !/\S/.test(lines[last - 1] ?? '')) last--;
+      while (last > start + 1 && !/[^ \t\r]/.test(lines[last - 1] ?? '')) last--;
       return [start, last];
     });
   if (blocks.length < 2) return body;

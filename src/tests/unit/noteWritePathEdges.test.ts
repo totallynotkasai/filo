@@ -190,6 +190,7 @@ describe('the note store', () => {
   it('keystrokes an editor fails to hand over stay unsaved and are reported', async () => {
     const failing = {
       isDestroyed: false,
+      state: { doc: { content: { size: 0 } } },
       storage: { markdown: { getMarkdown: () => { throw new Error('serialiser broke'); } } },
     } as unknown as Editor;
     const view = new NoteEditorView('editor', () => failing);

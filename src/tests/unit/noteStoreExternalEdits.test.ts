@@ -40,11 +40,13 @@ const prompts = { conflict: vi.fn(), deletedWithUnsavedBody: vi.fn(), writeTarge
 interface FakeEditor {
   text: string;
   isDestroyed: boolean;
+  /** The document's size, which sets how soon the view hands its keys over. */
+  state: { doc: { content: { size: number } } };
 }
 
 /** A view on a fake editor whose text is its Markdown. */
 async function openView(rel: string, id = 'doc'): Promise<{ view: NoteEditorView; editor: FakeEditor }> {
-  const editor: FakeEditor = { text: '', isDestroyed: false };
+  const editor: FakeEditor = { text: '', isDestroyed: false, state: { doc: { content: { size: 0 } } } };
   const view = new NoteEditorView(id, () => editor as unknown as Editor);
   view.show(rel);
   await noteStore.get(rel)?.loaded;

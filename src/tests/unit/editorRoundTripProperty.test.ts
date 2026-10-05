@@ -20,7 +20,9 @@ import { isLineBreak } from '../../renderer/lib/editor/softBreak';
  * from the editor's own schema (paragraphs and headings, aligned and
  * indented; the three list kinds, numbered ones starting anywhere; tables,
  * code, quotes, rules; up to three marks on a run, bold, italic and
- * strikethrough over punctuation too; marks on line breaks; soft and hard
+ * strikethrough over punctuation too; colours, fonts, sizes and highlights
+ * side by side; spaces with marks of their own, between words and at the
+ * edges of a run; marks on line breaks; soft and hard
  * breaks; links and autolinks with awkward addresses; lines that look like
  * list items or headings; literal `*` / `_` runs, awkward characters) and
  * checks, for each:
@@ -30,19 +32,22 @@ import { isLineBreak } from '../../renderer/lib/editor/softBreak';
  *
  * "Shows the same" (`shownDocument`) sets aside only what the file can't
  * say and the editor doesn't show: a mark on a line break, the editor-only
- * link attributes, spellings of the same colour or default attribute, and a
+ * link attributes, spellings of the same colour or default attribute, a
  * list's tight / loose spacing (a list Markdown can't hold tight is written
- * loose on purpose, `listMarkers.ts`).
+ * loose on purpose, `listMarkers.ts`), bold, italic or strikethrough on
+ * whitespace (a space keeps them only where Markdown can hold them there,
+ * `spaceRuns.ts`; its other marks, an underline or a highlight, must survive),
+ * and spaces ending a line, before a soft break or at the end of a
+ * paragraph or heading (Markdown drops them, and the writer leaves them out,
+ * `lineEndSpaces.ts`).
  *
  * A second part runs the editor's list, table and line-break commands inside
  * a paragraph, a list item, a table cell and a heading, then checks the same.
  *
- * Out of the generator on purpose: whitespace at the end of a line (Markdown
- * drops it, it shows nothing, and the lossy check ignores it); a line break
- * as the last thing in a block (it shows nothing either, and isn't written);
- * whitespace at the edge of a bold, italic or strikethrough run (written
- * outside it: a formatted space shows nothing); alignment or indent in a list
- * item (the editor clears it there, `listItemLayout.ts`).
+ * Out of the generator on purpose: a line break as the last thing in a
+ * block (it shows nothing, and isn't written);
+ * alignment or indent in a list item (the editor clears it there,
+ * `listItemLayout.ts`).
  * Every counter-example found while
  * fixing is kept as a named case in `markdownBodyRoundTrip.test.ts` or
  * `editorEditsReadBack.test.ts`.
@@ -129,11 +134,56 @@ function shownAttrs(attrs: Record<string, unknown> | undefined, blank = false): 
 
 type MarkJson = NonNullable<JSONContent['marks']>[number];
 
+/** Marks written as Markdown delimiter runs (`**`, `*`, `~~`). */
+const DELIMITER_MARK_TYPES: ReadonlySet<string> = new Set(['bold', 'italic', 'strike']);
+
+/**
+ * `node`'s text in pieces, whitespace apart from the rest, with the
+ * whitespace pieces shown without bold, italic or strikethrough.
+ */
+function withSpacesShown(node: JSONContent): JSONContent[] {
+  if (!node.marks?.some((m) => DELIMITER_MARK_TYPES.has(m.type))) return [node];
+  if (node.type === 'leadSpace') return [{ ...node, marks: node.marks.filter((m) => !DELIMITER_MARK_TYPES.has(m.type)) }];
+  if (node.type !== 'text') return [node];
+  return (node.text ?? '').split(/(\s+)/).filter(Boolean).map((piece) =>
+    /\S/.test(piece)
+      ? { ...node, text: piece }
+      : { ...node, text: piece, marks: node.marks?.filter((m) => !DELIMITER_MARK_TYPES.has(m.type)) },
+  );
+}
+
+/**
+ * A textblock's children without the spaces ending a line (before a
+ * soft break, or at the block's end), and without line breaks left at its end:
+ * neither shows.
+ */
+function withLineEndsShown(kids: readonly JSONContent[]): JSONContent[] {
+  const out = [...kids];
+  for (let changed = true; changed; ) {
+    changed = false;
+    while (out.length && (out[out.length - 1]?.type === 'softBreak' || out[out.length - 1]?.type === 'hardBreak')) {
+      out.pop();
+      changed = true;
+    }
+    for (let i = 0; i < out.length && !changed; i++) {
+      const kid = out[i];
+      const next = out[i + 1];
+      if (kid?.type !== 'text' || (next && next.type !== 'softBreak')) continue;
+      const text = (kid.text ?? '').replace(/ +$/, '');
+      if (text === kid.text) continue;
+      if (text) out[i] = { ...kid, text };
+      else out.splice(i, 1);
+      changed = true;
+    }
+  }
+  return out;
+}
+
 /**
  * `node` (a document's JSON) as the note shows it: marks on line breaks
- * dropped, a lead space as the space it is, adjacent text with the same
- * marks joined, a paragraph of one space as empty, and attributes in one
- * spelling (see `UNSHOWN_ATTRS`).
+ * dropped, a lead space as the space it is, bold, italic and strikethrough
+ * off whitespace, adjacent text with the same marks joined, a paragraph of
+ * one space as empty, and attributes in one spelling (see `UNSHOWN_ATTRS`).
  */
 function shownDocument(node: JSONContent): JSONContent {
   const out: JSONContent = { type: node.type === 'leadSpace' ? 'text' : node.type };
@@ -154,7 +204,7 @@ function shownDocument(node: JSONContent): JSONContent {
   }
   if (node.content) {
     const kids: JSONContent[] = [];
-    for (const child of node.content.map(shownDocument)) {
+    for (const child of node.content.flatMap(withSpacesShown).map(shownDocument)) {
       const prev = kids[kids.length - 1];
       if (prev?.type === 'text' && child.type === 'text' && JSON.stringify(prev.marks ?? []) === JSON.stringify(child.marks ?? [])) {
         prev.text = (prev.text ?? '') + (child.text ?? '');
@@ -162,6 +212,7 @@ function shownDocument(node: JSONContent): JSONContent {
         kids.push(child);
       }
     }
+    if (out.type === 'paragraph' || out.type === 'heading') kids.splice(0, kids.length, ...withLineEndsShown(kids));
     // An empty list item that starts a list under a line of text is written
     // with one space (`- &#32;`, `listMarkers.ts`), which reads back as a space.
     const onlySpace = out.type === 'paragraph' && kids.length === 1 && kids[0]?.type === 'text' && kids[0].text === ' ' && !kids[0].marks;
@@ -208,12 +259,25 @@ const textArb = fc.oneof(
   { weight: 1, arbitrary: fc.constantFrom(...LINE_START_TEXT) },
 );
 
-type MarkName = 'bold' | 'italic' | 'strike' | 'code' | 'link' | 'underline' | 'color' | 'highlight';
-const MARK_NAMES: MarkName[] = ['bold', 'italic', 'strike', 'code', 'link', 'underline', 'color', 'highlight'];
+type MarkName =
+  | 'bold' | 'italic' | 'strike' | 'code' | 'link' | 'underline'
+  | 'color' | 'blue' | 'font' | 'size' | 'colorSize' | 'highlight' | 'green';
+const MARK_NAMES: MarkName[] = [
+  'bold', 'italic', 'strike', 'code', 'link', 'underline',
+  'color', 'blue', 'font', 'size', 'colorSize', 'highlight', 'green',
+];
 const markNameArb = fc.subarray<MarkName>(MARK_NAMES, { maxLength: 3 });
 
+/**
+ * How a bold, italic or strikethrough run meets its neighbours: straight
+ * against them, as a whole word with plain spaces around it, or with a space
+ * inside the run at its start or end (a word selected with its space).
+ */
+type RunShape = 'tight' | 'word' | 'leadSpace' | 'trailSpace';
+
 type InlineItem =
-  | { kind: 'text'; text: string; marks: MarkName[]; href: number; wordy: boolean }
+  | { kind: 'text'; text: string; marks: MarkName[]; href: number; shape: RunShape }
+  | { kind: 'space'; text: string; marks: MarkName[] }
   | { kind: 'break'; marks: MarkName[] }
   | { kind: 'soft'; marks: MarkName[] }
   | { kind: 'tab' }
@@ -223,7 +287,17 @@ type InlineItem =
 const hrefArb = fc.nat(HREFS.length - 1);
 
 const inlineItemArb: fc.Arbitrary<InlineItem> = fc.oneof(
-  { weight: 8, arbitrary: fc.record({ kind: fc.constant('text' as const), text: textArb, marks: markNameArb, href: hrefArb, wordy: fc.boolean() }) },
+  {
+    weight: 8,
+    arbitrary: fc.record({
+      kind: fc.constant('text' as const),
+      text: textArb,
+      marks: markNameArb,
+      href: hrefArb,
+      shape: fc.constantFrom<RunShape>('tight', 'word', 'leadSpace', 'trailSpace'),
+    }),
+  },
+  { weight: 2, arbitrary: fc.record({ kind: fc.constant('space' as const), text: fc.constantFrom(' ', '  ', ' '), marks: markNameArb }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant('break' as const), marks: markNameArb }) },
   { weight: 2, arbitrary: fc.record({ kind: fc.constant('soft' as const), marks: markNameArb }) },
   { weight: 1, arbitrary: fc.constant({ kind: 'tab' as const }) },
@@ -237,7 +311,12 @@ function markFor(name: MarkName, href: number): Mark {
   switch (name) {
     case 'link': return schema.marks.link.create({ href: HREFS[href] });
     case 'color': return schema.marks.textStyle.create({ color: '#ff0000' });
+    case 'blue': return schema.marks.textStyle.create({ color: '#3f51b5' });
+    case 'font': return schema.marks.textStyle.create({ fontFamily: 'Georgia' });
+    case 'size': return schema.marks.textStyle.create({ fontSize: '20px' });
+    case 'colorSize': return schema.marks.textStyle.create({ color: '#ff0000', fontSize: '18px' });
     case 'highlight': return schema.marks.highlight.create({ color: '#ffcc00' });
+    case 'green': return schema.marks.highlight.create({ color: '#a5d6a7' });
     default: return schema.marks[name].create();
   }
 }
@@ -267,15 +346,23 @@ function buildInline(items: InlineItem[]): ProseMirrorNode[] {
     else if (item.kind === 'tab') out.push(schema.nodes.tab.create());
     else if (item.kind === 'autolink') out.push(schema.text(HREFS[item.href] ?? 'https://example.com', [markFor('link', item.href)]));
     else if (item.kind === 'bareUrl') out.push(schema.text(`see ${HREFS[item.href] ?? 'https://example.com'} now`));
-    else if (item.marks.some((m) => DELIMITER_MARKS.has(m)) && !item.marks.includes('code')) {
-      if (item.wordy) {
+    else if (item.kind === 'space') {
+      // Whitespace with marks of its own; inline code can't be only spaces.
+      if (!item.marks.includes('code')) out.push(schema.text(item.text, markSet(item.marks)));
+    } else if (item.marks.some((m) => DELIMITER_MARKS.has(m)) && !item.marks.includes('code')) {
+      const marks = markSet(item.marks, item.href);
+      if (item.shape === 'word') {
         // A whole word with a space on each side.
         if (out.length && !isLineBreak(out[out.length - 1])) out.push(schema.text(' '));
-        out.push(schema.text(wordsOnly(item.text), markSet(item.marks, item.href)));
+        out.push(schema.text(wordsOnly(item.text), marks));
         out.push(schema.text(' '));
+      } else if (item.shape === 'leadSpace') {
+        out.push(schema.text(` ${wordsOnly(item.text)}`, marks));
+      } else if (item.shape === 'trailSpace') {
+        out.push(schema.text(`${wordsOnly(item.text)} `, marks));
       } else {
         // Straight against its neighbours, punctuation and all.
-        out.push(schema.text(item.text.trim() || 'w', markSet(item.marks, item.href)));
+        out.push(schema.text(item.text.trim() || 'w', marks));
       }
     } else if (item.marks.includes('code')) {
       // Inline code without a space at either end: Markdown strips one from
@@ -285,24 +372,8 @@ function buildInline(items: InlineItem[]): ProseMirrorNode[] {
       out.push(schema.text(item.text, markSet(item.marks, item.href)));
     }
   }
-  // No line break as the last thing in the block, and no whitespace at the
-  // end of a line. Trimming a run can bare another, so repeat until stable.
-  for (let changed = true; changed; ) {
-    changed = false;
-    while (out.length && isLineBreak(out[out.length - 1])) {
-      out.pop();
-      changed = true;
-    }
-    for (let i = 0; i < out.length && !changed; i++) {
-      const node = out[i];
-      const lineEnds = i === out.length - 1 || isLineBreak(out[i + 1]);
-      if (!node.isText || !lineEnds || !/\s$/.test(node.text ?? '')) continue;
-      const trimmed = (node.text ?? '').replace(/\s+$/, '');
-      if (trimmed) out[i] = node.cut(0, trimmed.length);
-      else out.splice(i, 1);
-      changed = true;
-    }
-  }
+  // No line break as the last thing in the block.
+  while (out.length && isLineBreak(out[out.length - 1])) out.pop();
   return out;
 }
 
@@ -387,15 +458,18 @@ const tableArb = fc
     cols: fc.integer({ min: 1, max: 3 }),
     rows: fc.integer({ min: 1, max: 3 }),
     align: fc.constantFrom<('left' | 'center' | 'right' | null)>(null, null, 'left', 'center', 'right'),
+    // The first column dragged to a width, as the column-resize drag sets it.
+    width: fc.constantFrom<number | null>(null, null, null, 180),
     cells: fc.array(cellContentArb, { minLength: 9, maxLength: 9 }),
   })
-  .map(({ cols, rows, align, cells }) => {
+  .map(({ cols, rows, align, width, cells }) => {
     const out: ProseMirrorNode[] = [];
     for (let r = 0; r < rows; r++) {
       const row: ProseMirrorNode[] = [];
       for (let c = 0; c < cols; c++) {
         const type = r === 0 ? schema.nodes.tableHeader : schema.nodes.tableCell;
-        row.push(type.create({ align: c === 0 ? align : null }, cells[r * 3 + c]));
+        const colwidth = c === 0 && width ? [width] : null;
+        row.push(type.create({ align: c === 0 ? align : null, colwidth }, cells[r * 3 + c]));
       }
       out.push(schema.nodes.tableRow.create(null, row));
     }
@@ -514,6 +588,11 @@ const COMMANDS: Command[] = [
   { name: 'toggle checklist (Ctrl+Shift+9)', run: (e) => void e.chain().toggleTaskList().run() },
   { name: 'toggle bullet list', run: (e) => void e.chain().toggleBulletList().run() },
   { name: 'toggle numbered list', run: (e) => void e.chain().toggleOrderedList().run() },
+  { name: 'the Checklist button (switchList)', run: (e) => void e.chain().switchList('taskList').run() },
+  { name: 'the Bulleted button (switchList)', run: (e) => void e.chain().switchList('bulletList').run() },
+  { name: 'the Numbered button (switchList)', run: (e) => void e.chain().switchList('orderedList').run() },
+  { name: 'select all, then the Checklist button', run: (e) => void e.chain().selectAll().switchList('taskList').run() },
+  { name: 'type "#" and Enter (a scene break)', run: (e) => { pressKey(e, 'Enter'); typeText(e, '#'); pressKey(e, 'Enter'); typeText(e, 'next'); } },
   { name: 'indent the list item', run: (e) => void (e.chain().sinkListItem('listItem').run() || e.chain().sinkListItem('taskItem').run()) },
   { name: 'Enter, then click away', run: (e) => pressKey(e, 'Enter') },
   { name: 'Enter twice', run: (e) => { pressKey(e, 'Enter'); pressKey(e, 'Enter'); } },

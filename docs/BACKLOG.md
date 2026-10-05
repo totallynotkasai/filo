@@ -12,7 +12,7 @@ Everything known to be open that no current plan covers, in one place. Start the
 - **Useful** (improvements): 0/10 = no gain; 5/10 = a clear improvement you'd notice every week or so; 10/10 = essential.
 - **Hard**: 0/10 = minutes; 5/10 = a few days, several files, new tests; 10/10 = weeks, rewriting a major part of Filo.
 
-Last updated 2026-10-04, after Audit-28 Phase 1 ([AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md](AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md)), which took and fixed BL-14. Its outcome also records BL-25 and BL-26, found and fixed there, so the next new item is BL-27. Phase 0's outcome records BL-22 to BL-24, found and fixed there. Before that, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20 and BL-21. BL-20 (30 MB of unused `node_modules` in the package) was fixed the same day, in that outcome's follow-up. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
+Last updated 2026-10-05, after Audit-28 Phase 2 ([AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md](AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md)), which took and fixed BL-06 and added BL-27 and BL-28; BL-27 (spaces typed at the end of a line) was then fixed in the same phase at the owner's request. The next new item is BL-29. Phase 1 took and fixed BL-14, and its outcome records BL-25 and BL-26, found and fixed there. Phase 0's outcome records BL-22 to BL-24, found and fixed there. Before that, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20 and BL-21. BL-20 (30 MB of unused `node_modules` in the package) was fixed the same day, in that outcome's follow-up. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
 
 ---
 
@@ -27,7 +27,6 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-03 | Escape closes the Search panel only while focus is inside it | Audit-27 Phase 6 | 1/10 | 2/10 |
 | BL-04 | With a filter in the search, `C:\foo` loses its backslash | Audit-27 Phase 2 | 1/10 | 2/10 |
 | BL-05 | A Replace skipped because the note changed still moves on to the next match | Audit-27 Phase 2 | 1/10 | 1/10 |
-| BL-06 | Ctrl+Shift+V of a line ending in two spaces reopens as a hard line break | Audit-27 Phase 4 | 1/10 | 1/10 |
 | BL-07 | The Task List's speed budget has the least room of the scale checks | Audit-27 Phase 6 | 1/10 | 4/10 |
 | BL-08 | About 0.4 MB of memory kept each time a note is loaded into the same editor (seen in tests) | Audit-26 Phase 2 | 1/10 | 3/10 |
 | BL-09 | Two real-file watcher tests can fail when the machine is very busy | Audit-27 Phase 5 | 0/10 | 2/10 |
@@ -37,6 +36,7 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-17 | A bare web address in text can get a `\` that GitHub's own linking keeps in the link | Library updates Phase 5 | 1/10 | 3/10 |
 | BL-18 | Italic, struck-through and coloured text holding `**` reads differently on GitHub | Library updates Phase 5 | 1/10 | 2/10 |
 | BL-21 | GitHub's `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19; CI's Chromium install and Linux timings are untried there | Library updates Phase 8 | 0/10 | 1/10 |
+| BL-28 | The Kanban 300 "tab comes back in under 0.5 s" scale budget fails now and then on a spike | Audit-28 Phase 2 | 0/10 | 2/10 |
 
 ### BL-01: the formatting toolbar cuts off its left end (Impact 2/10, Hard 2/10)
 - **What you see:** at a window about 1,380 px wide or narrower, the text-formatting toolbar overflows. Its left end is cut off, so the font box shows only its arrow, and you can't scroll to it.
@@ -65,11 +65,6 @@ None of these loses data. Scores are estimates made when the item was written do
 - **What you see:** if a note changes between Replace reading it and writing it, the write is skipped with a "Replace skipped" warning, but the panel moves on past that match as if it had been replaced. The behaviour predates Audit-27.
 - **Where:** `src/renderer/components/search/SearchPanel.svelte` `handleReplaceCurrent` / `runReplaceCurrent`, and `searchStore.showMatchAfterReplace` in `src/renderer/stores/search.svelte.ts`.
 - **Fix idea:** on a skipped write, refresh the results and stay on the same match, so the next Replace tries it again on the new text. Add a case to `src/tests/component/searchReplaceShowsNextMatch.test.ts`.
-
-### BL-06: Ctrl+Shift+V of a line ending in two spaces becomes a hard break (Impact 1/10, Hard 1/10)
-- **What you see:** paste literally (Ctrl+Shift+V) some text where a line ends in two spaces and another line follows. The file holds `abc··` and a newline, which Markdown, Filo included on reopening, reads as a hard line break. Nothing is lost, but a later save may write it as `abc\`.
-- **Where:** `src/renderer/lib/editor/pastePlainText.ts`, `literalTextSlice`. Ctrl+V already drops such spaces, but only at the very end of the paste (`pasteEdges`).
-- **Fix idea:** drop the spaces before each line break in a literal paste too. They are invisible, and kept they change the meaning. Add cases to `pastePlainText.test.ts`, with a save and reopen.
 
 ### BL-07: the Task List speed budget has the least room (Impact 1/10, Hard 4/10)
 - **What you see:** nothing yet. In `scaleBudgets.e2e.ts` ("Task List fields are right within 1 s of its rows appearing at vault open"), two timed runs on a quiet machine took 897 ms and 655 ms against the 1,000 ms budget. On a slower or busier machine it may fail.
@@ -119,6 +114,12 @@ None of these loses data. Scores are estimates made when the item was written do
 - **What could break:** only CI, never the app. `npx playwright install --with-deps --only-shell chromium` installs system libraries by distribution, and Playwright 1.63 may not know Ubuntu 26's yet. The characterisation cases skipped on Linux (`it.skipIf(onLinux)`) were found timing out on Ubuntu 24.04, and the new image may time differently.
 - **Where:** `.github/workflows/ci.yml` (`runs-on: ubuntu-latest` in `verify` and `coverage`).
 - **Fix idea:** look at the first `verify` run after 2026-10-19. If it fails in the Chromium install, pin `runs-on: ubuntu-24.04` until Playwright supports the new image, then move back.
+
+### BL-28: the Kanban 300 switch-back budget fails now and then (Impact 0/10, Hard 2/10)
+- **What you see:** nothing in the app. In `scaleBudgets.e2e.ts` ("Kanban 300 opens in under 1 s and its tab comes back in under 0.5 s"), switching back to the 300-card board usually takes about 250 ms, but now and then a run spikes past the 500 ms budget: 562 ms and 722 ms in two of nine runs on 2026-10-05, while Phase 2 was checked.
+- **Not a regression:** five runs each against the previous commit's build and Phase 2's gave the same medians (switch back 256 ms and 261 ms, open 424 ms and 416 ms), and the previous build spiked too (an open of 739 ms). A spike is one slow run, not a slower app.
+- **Where:** `src/tests/e2e/scaleBudgets.e2e.ts:74`.
+- **Fix idea:** find what the slow runs spend the time on (a trace of a run over budget: garbage collection, a timer catching up, the preview cache), and fix that; or take the best of two switches, as the unit timing checks take the best of three. Don't loosen the budget.
 
 ---
 

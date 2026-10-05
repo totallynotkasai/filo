@@ -7,7 +7,7 @@
  * relies on surviving (the inline marks, colour / highlight styles).
  */
 import { describe, it, expect } from 'vitest';
-import { sanitizeInlineHtml } from '@renderer/lib/utils/sanitizeHtml';
+import { sanitizeInlineHtml, sanitizeNoteHtml } from '@renderer/lib/utils/sanitizeHtml';
 
 /** Parses sanitised output so assertions don't depend on attribute order or quoting. */
 function parse(html: string): HTMLElement {
@@ -179,8 +179,31 @@ describe('sanitizeInlineHtml: style filter', () => {
     expect(styleOf('<span style="position: fixed; color: red; top: 0; z-index: 9999">x</span>')).toBe('color: red');
   });
 
-  it('drops properties that could cover or restyle the app (display, width, font-size)', () => {
+  it('drops properties that could cover or restyle the app (display, width, an oversized font-size)', () => {
     expect(styleOf('<span style="display: block; width: 100vw; font-size: 400px">x</span>')).toBe('');
+  });
+
+  it('keeps a font size up to the toolbar\'s largest, in px, pt, em or %', () => {
+    expect(styleOf('<span style="font-size: 20px">x</span>')).toBe('font-size: 20px');
+    expect(styleOf('<span style="font-size: 72px">x</span>')).toBe('font-size: 72px');
+    expect(styleOf('<span style="font-size: 11pt">x</span>')).toBe('font-size: 11pt');
+    expect(styleOf('<span style="font-size: 1.5em">x</span>')).toBe('font-size: 1.5em');
+    expect(styleOf('<span style="font-size: 120%">x</span>')).toBe('font-size: 120%');
+  });
+
+  it('drops a font size over 72 px, or one that isn\'t a plain length', () => {
+    expect(styleOf('<span style="font-size: 73px">x</span>')).toBe('');
+    expect(styleOf('<span style="font-size: 60pt">x</span>')).toBe('');
+    expect(styleOf('<span style="font-size: 10vw">x</span>')).toBe('');
+    expect(styleOf('<span style="font-size: calc(100px + 1em)">x</span>')).toBe('');
+    expect(styleOf('<span style="font-size: -5px; color: red">x</span>')).toBe('color: red');
+  });
+
+  it('keeps an indent of up to eight steps, and drops a larger or negative one', () => {
+    expect(styleOf('<span style="margin-left: 48px">x</span>')).toBe('margin-left: 48px');
+    expect(styleOf('<span style="margin-left: 192px">x</span>')).toBe('margin-left: 192px');
+    expect(styleOf('<span style="margin-left: 193px">x</span>')).toBe('');
+    expect(styleOf('<span style="margin-left: -400px">x</span>')).toBe('');
   });
 
   it('drops a value that fetches through url(), in any case and spacing', () => {
@@ -205,5 +228,32 @@ describe('sanitizeInlineHtml: style filter', () => {
     const second = styleOf('<span style="color: red; top: 0">x</span>');
     expect(first).toBe('color: red');
     expect(second).toBe(first);
+  });
+});
+
+describe('sanitizeNoteHtml: images', () => {
+  const imgs = (html: string): HTMLImageElement[] => {
+    const d = document.createElement('div');
+    d.innerHTML = sanitizeNoteHtml(html);
+    return [...d.querySelectorAll('img')];
+  };
+
+  it('keeps an image that loads a vault file, with its alt text and size', () => {
+    const [img] = imgs('<img src="filo://media/Notes/map.png" alt="map" width="300" height="200">');
+    expect(img?.getAttribute('src')).toBe('filo://media/Notes/map.png');
+    expect(img?.getAttribute('alt')).toBe('map');
+    expect(img?.getAttribute('width')).toBe('300');
+  });
+
+  it('takes the address from any other image, and its handlers', () => {
+    for (const src of ['https://example.com/a.png', 'data:image/png;base64,AAAA', 'javascript:alert(1)', 'Notes/map.png', 'filo://other/x']) {
+      const [img] = imgs(`<img src="${src}" onerror="alert(1)">`);
+      expect(img?.hasAttribute('src')).toBe(false);
+      expect(img?.hasAttribute('onerror')).toBe(false);
+    }
+  });
+
+  it('keeps no image in inline HTML (titles and labels)', () => {
+    expect(sanitizeInlineHtml('<img src="filo://media/a.png">x')).toBe('x');
   });
 });

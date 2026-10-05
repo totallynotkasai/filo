@@ -1,8 +1,10 @@
 import MarkdownIt from 'markdown-it';
-import { MarkdownSerializer, type MarkdownSerializerState } from 'prosemirror-markdown';
+import type { MarkdownSerializer, MarkdownSerializerState } from 'prosemirror-markdown';
 import type { Editor } from '@tiptap/core';
 import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { withEmptyTextStyleUnwritten } from './textStyleSpans';
+import { serializeNote } from './noteSerializerState';
+import { withoutLineEndSpaces } from './lineEndSpaces';
 
 /**
  * Bold, italic and strikethrough are written as Markdown only where Markdown
@@ -92,15 +94,15 @@ function eitherWay(scanned: Scanned): boolean {
  *   character is open around it;
  * - a pair whose run lengths add up to a multiple of three doesn't pair
  *   (unless both are multiples of three).
- * `enclosing` are the runs still written as Markdown.
+ * `runs` are every run recorded; those not yet rewritten as HTML count as enclosing.
  */
-function flanks(text: string, run: Run, enclosing: readonly Run[]): boolean {
+function flanks(text: string, run: Run, runs: readonly Run[]): boolean {
   const opening = scan(text, run.open);
   const closing = scan(text, run.close);
   if (!opening.can_open || !closing.can_close) return false;
   if ((opening.length > run.delim.length && eitherWay(opening)) || (closing.length > run.delim.length && eitherWay(closing))) return false;
   const marker = run.delim[0];
-  if (opening.can_close && enclosing.some((o) => o !== run && o.delim[0] === marker && o.open < run.open && run.open < o.close)) {
+  if (opening.can_close && runs.some((o) => o !== run && !o.html && o.delim[0] === marker && o.open < run.open && run.open < o.close)) {
     return false;
   }
   if (opening.can_close || closing.can_open) {
@@ -159,7 +161,7 @@ class DelimiterRuns {
     for (let changed = true; changed; ) {
       changed = false;
       for (const run of this.done) {
-        if (run.html || flanks(text, run, this.done.filter((o) => !o.html))) continue;
+        if (run.html || flanks(text, run, this.done)) continue;
         text = this.replaceDelimiter(text, run, run.close, `</${run.tag}>`);
         text = this.replaceDelimiter(text, run, run.open, `<${run.tag}>`);
         run.html = true;
@@ -167,6 +169,14 @@ class DelimiterRuns {
       }
     }
     return text;
+  }
+
+  /** Moves the recorded positions after `count` characters cut from the output at `at`. */
+  cut(at: number, count: number): void {
+    for (const run of this.done) {
+      if (run.open >= at + count) run.open -= count;
+      if (run.close >= at + count) run.close -= count;
+    }
   }
 
   /** `text` with `run`'s delimiter at `at` replaced by `html`, and every recorded position after it moved. */
@@ -190,8 +200,8 @@ interface TiptapMarkdownSerializer {
 /**
  * Makes `editor`'s Markdown serialiser write delimiter runs as above. The
  * node and mark writers stay tiptap-markdown's (with Filo's extensions);
- * only the serializer state is prosemirror-markdown's own, without
- * tiptap-markdown's tidy.
+ * the serializer state is prosemirror-markdown's own, without
+ * tiptap-markdown's tidy, made linear for long notes (`noteSerializerState.ts`).
  */
 export function installNoteSerializer(editor: Editor): void {
   const serializer = (editor as { storage?: { markdown?: { serializer?: TiptapMarkdownSerializer } } }).storage?.markdown?.serializer;
@@ -199,9 +209,7 @@ export function installNoteSerializer(editor: Editor): void {
   serializer.serialize = (content: ProseMirrorNode): string => {
     const runs = new DelimiterRuns();
     const marks = withEmptyTextStyleUnwritten(serializer.marks);
-    const markdown = new MarkdownSerializer(serializer.nodes, runs.markSpecs(marks), {
-      hardBreakNodeName: 'hardBreak',
-    }).serialize(content);
-    return runs.finish(markdown);
+    const { text, lineEnds } = serializeNote(content, serializer.nodes, runs.markSpecs(marks), { hardBreakNodeName: 'hardBreak' });
+    return runs.finish(withoutLineEndSpaces(text, lineEnds, (at, count) => runs.cut(at, count)));
   };
 }

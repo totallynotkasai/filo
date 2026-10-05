@@ -3,6 +3,8 @@
  * and undo/redo availability for the GlobalToolbar.
  */
 
+import { workspaceStore } from './workspace.svelte';
+
 let bold = $state(false);
 let italic = $state(false);
 let underline = $state(false);
@@ -21,8 +23,9 @@ let textAlign = $state<'left' | 'center' | 'right' | 'justify'>('left');
 let alignAvailable = $state(true);
 /** Align is off because the caret is in a list item, which the control says. */
 let alignInList = $state(false);
+/** The focused editor holds lists (a title or a connection label doesn't). */
+let listsAvailable = $state(true);
 let heading = $state<'normal' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'>('normal');
-let spellcheck = $state(true);
 /**
  * The note the focused editor shows, or null for a label or a title. The
  * toolbar reads the note's line spacing from it, so an undo shows at once.
@@ -46,8 +49,10 @@ export const toolbarStore = {
   get textAlign() { return textAlign; },
   get alignAvailable() { return alignAvailable; },
   get alignInList() { return alignInList; },
+  get listsAvailable() { return listsAvailable; },
   get heading() { return heading; },
-  get spellcheck() { return spellcheck; },
+  /** Spell check, kept with the vault's layout (`.filo/workspace.json`) and read by every editor made after a change. */
+  get spellcheck() { return workspaceStore.spellcheck; },
   get lineSpacingNote() { return lineSpacingNote; },
   get lineSpacingAvailable() { return lineSpacingNote !== null; },
   get editorHistory() { return editorHistory; },
@@ -67,6 +72,7 @@ export const toolbarStore = {
     textAlign?: 'left' | 'center' | 'right' | 'justify';
     alignAvailable?: boolean;
     alignInList?: boolean;
+    listsAvailable?: boolean;
     heading?: 'normal' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
     lineSpacingNote?: string | null;
     editorHistory?: { canUndo: boolean; canRedo: boolean } | null;
@@ -82,16 +88,18 @@ export const toolbarStore = {
     if (state.textAlign !== undefined) textAlign = state.textAlign;
     if (state.alignAvailable !== undefined) alignAvailable = state.alignAvailable;
     if (state.alignInList !== undefined) alignInList = state.alignInList;
+    if (state.listsAvailable !== undefined) listsAvailable = state.listsAvailable;
     if (state.heading !== undefined) heading = state.heading;
     if (state.lineSpacingNote !== undefined) lineSpacingNote = state.lineSpacingNote;
     if (state.editorHistory !== undefined) editorHistory = state.editorHistory;
   },
 
   toggleSpellcheck() {
-    spellcheck = !spellcheck;
-    // Apply to all Tiptap editor elements
+    const on = !workspaceStore.spellcheck;
+    workspaceStore.setSpellcheck(on);
+    // The editors already open show it at once; each reads the setting again on its next update.
     document.querySelectorAll('.tiptap').forEach((el) => {
-      (el as HTMLElement).setAttribute('spellcheck', String(spellcheck));
+      (el as HTMLElement).setAttribute('spellcheck', String(on));
     });
   },
 
@@ -110,6 +118,7 @@ export const toolbarStore = {
     textAlign = 'left';
     alignAvailable = true;
     alignInList = false;
+    listsAvailable = true;
     heading = 'normal';
     lineSpacingNote = null;
     editorHistory = null;

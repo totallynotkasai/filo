@@ -78,6 +78,7 @@
     aria-expanded={open}
     aria-haspopup="menu"
     aria-label={label}
+    title={label}
   >
     {#if swatch}
       <span class="dropdown-swatch" style:background={swatch} aria-hidden="true"></span>
@@ -129,6 +130,20 @@
 
   .dropdown-trigger:active {
     background: var(--ui-surface-active);
+  }
+
+  /* A long vault name stops short of the formatting toolbar; the tooltip has it whole. */
+  .dropdown-label {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* At laptop widths the formatting toolbar needs the room. */
+  @media (max-width: 1199px) {
+    .dropdown-label {
+      max-width: 112px;
+    }
   }
 
   .dropdown-swatch {

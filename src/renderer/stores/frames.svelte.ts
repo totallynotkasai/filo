@@ -49,13 +49,11 @@ export const framesStore = {
   },
 
   /**
-   * Moves all tiles contained in a frame by the given delta.
+   * Moves the given tiles by the given delta (a frame drag's tiles: those of
+   * the frame and of the frames nested in it). A locked tile stays put.
    */
-  moveContainedTiles(frameId: string, dx: number, dy: number) {
-    const frame = boardStore.frames.find((f) => f.id === frameId);
-    if (!frame) return;
-
-    for (const tileId of frame.tileIds) {
+  moveTiles(tileIds: readonly string[], dx: number, dy: number) {
+    for (const tileId of tileIds) {
       const tile = boardStore.getTile(tileId);
       if (tile && !tile.locked) {
         boardStore.updateTile(tileId, {
@@ -66,6 +64,16 @@ export const framesStore = {
         });
       }
     }
+  },
+
+  /**
+   * After frames and tiles moved together (a frame drag, its undo or redo):
+   * each moved frame takes the tiles now inside it, and each moved tile
+   * leaves the frames it left and joins those it landed in, wherever they are.
+   */
+  refreshMembership(frameIds: readonly string[], tileIds: readonly string[]) {
+    for (const frameId of frameIds) framesStore.updateContainment(frameId);
+    for (const tileId of tileIds) framesStore.syncTileMembership(tileId);
   },
 
   /**

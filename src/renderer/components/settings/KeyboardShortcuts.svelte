@@ -30,7 +30,7 @@
     { term: 'Board', definition: 'A board is a canvas where you can create and manage your content. A board can be of any type, such as a Mind Map, Kanban Board, Task List, or Document. Files can be dragged onto a board — Filo creates the relevant tile type to contain the file.' },
     { term: 'Tile', definition: 'A tile is a container for content that can be placed on any board. Tiles can be moved, resized, and deleted. Types include Text, Image, Video, Audio, File, Link, Iframe (Embed), and Timer. Text tiles can be expanded into a full Document board.' },
     { term: 'Tags', definition: 'A tag is a label that can be applied to a tile. Tags can be used to organize and filter tiles across your vault.' },
-    { term: 'Links', definition: 'Links can navigate to another board or location on the board. They can also perform actions such as inputting text into a tile or creating a new tile with specific text.' },
+    { term: 'Links', definition: 'A link in a note can open a web page, or another board, tile, card, task or note in your vault. Right-click a tab, a tile, a card, a task, or a note or board in the vault sidebar and choose Copy link, then paste it into a note (it reads as the name of what it links to), or into Insert Link (Ctrl+K). Ctrl+click a link to follow it while you are editing; a click follows it everywhere else.' },
     { term: 'Tabs', definition: 'Tabs are used to organize boards and switch between them. The Tab Bar is located at the bottom of the screen. Use the Board Browser button to quickly open and close tabs.' },
   ];
 

@@ -168,6 +168,7 @@ export const tiptapToolbar = {
     }
     activeEditor = editor;
     activeNote = note ?? null;
+    toolbarStore.setEditorActive(true);
     syncStateToToolbar(editor);
   },
 

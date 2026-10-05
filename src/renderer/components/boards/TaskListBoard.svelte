@@ -1093,7 +1093,7 @@
       dragController.cancelDrag();
     };
     const onKeydownEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelSectionDrag();
+      if (e.key === 'Escape') { e.preventDefault(); cancelSectionDrag(); }
     };
     window.addEventListener('dragend', cancelSectionDrag);
     window.addEventListener('pointercancel', cancelSectionDrag);

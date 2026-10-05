@@ -36,6 +36,9 @@ let lineSpacingNote = $state<string | null>(null);
  * toolbar's Undo / Redo act on it then, as Ctrl+Z does.
  */
 let editorHistory = $state<{ canUndo: boolean; canRedo: boolean } | null>(null);
+// Whether a text editor is the toolbar's target; without one the formatting
+// controls are shown disabled, as they'd do nothing.
+let editorActive = $state(false);
 
 export const toolbarStore = {
   get bold() { return bold; },
@@ -56,6 +59,8 @@ export const toolbarStore = {
   get lineSpacingNote() { return lineSpacingNote; },
   get lineSpacingAvailable() { return lineSpacingNote !== null; },
   get editorHistory() { return editorHistory; },
+  get editorActive() { return editorActive; },
+  setEditorActive(active: boolean) { editorActive = active; },
 
   /**
    * Updates all formatting state at once (called by the active Tiptap editor).
@@ -122,5 +127,6 @@ export const toolbarStore = {
     heading = 'normal';
     lineSpacingNote = null;
     editorHistory = null;
+    editorActive = false;
   },
 };

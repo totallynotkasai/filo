@@ -1,7 +1,7 @@
 import type { ContextMenuItem } from '../../stores/ui.svelte';
 import type { Frame } from '../../schema/index';
 import { STYLE_ICON_PATH } from '../../constants/icons';
-import { MENU_ICON, MENU_LABEL, lockLabel, selectedHeading } from '../../constants/menuVocabulary';
+import { MENU_ICON, MENU_LABEL, copyLinkLabel, lockLabel, selectedHeading } from '../../constants/menuVocabulary';
 
 interface BuildTileMenuOpts {
   selectedCount: number;
@@ -9,6 +9,8 @@ interface BuildTileMenuOpts {
   anyUnlocked: boolean;
   /** Present for one note-backed text tile; opens its note in a Document tab. */
   onOpenAsDocument?: () => void;
+  /** Puts a link to the one tile right-clicked on the clipboard. */
+  onCopyLink?: () => void;
   onStyle: () => void;
   onTags: () => void;
   onSaveTemplate: () => void;
@@ -26,11 +28,12 @@ export function buildTileContextMenu(opts: BuildTileMenuOpts): ContextMenuItem[]
   const items: ContextMenuItem[] = [];
   if (several) {
     items.push({ id: 'selection-heading', label: selectedHeading(opts.selectedCount, 'tile'), heading: true });
-  } else if (opts.onOpenAsDocument) {
-    items.push(
-      { id: 'open-as-document', label: MENU_LABEL.openAsDocument, icon: MENU_ICON.openAsDocument, action: opts.onOpenAsDocument },
-      { id: 'div-open', label: '', divider: true },
-    );
+  } else {
+    if (opts.onOpenAsDocument) {
+      items.push({ id: 'open-as-document', label: MENU_LABEL.openAsDocument, icon: MENU_ICON.openAsDocument, action: opts.onOpenAsDocument });
+    }
+    if (opts.onCopyLink) items.push({ id: 'copy-link', label: copyLinkLabel('tile'), icon: MENU_ICON.link, action: opts.onCopyLink });
+    if (items.length > 0) items.push({ id: 'div-open', label: '', divider: true });
   }
   items.push(
     { id: 'style', label: MENU_LABEL.style, icon: STYLE_ICON_PATH, action: opts.onStyle },

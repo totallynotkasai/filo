@@ -206,6 +206,11 @@ export const IPC_PAYLOAD_SCHEMAS = {
 
   // ── Shell / OS ────────────────────────────────────────────────────────
   'shell:show-item-in-folder': z.tuple([nonEmptyString]),
+  // Text, and for a Filo link the name it reads as (main checks both again).
+  'shell:copy-text': z.union([
+    z.tuple([nonEmptyString.max(100_000)]),
+    z.tuple([nonEmptyString.max(4_000), z.string().max(500)]),
+  ]),
 
   // ── App lifecycle (renderer → main) ───────────────────────────────────
   'app:ready-to-quit': z.tuple([]),
@@ -219,6 +224,8 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'app:session-ending-done': z.tuple([]),
   // Whether leaving now could lose work.
   'app:unsaved-state': z.tuple([z.boolean()]),
+  // The answer to a text menu's query: its id, and whether a link can go at the caret.
+  'app:text-menu-reply': z.tuple([z.number().int(), z.object({ link: z.enum(['insert', 'edit', 'none']) })]),
 
   // ── Sidebar geometry ──────────────────────────────────────────────────
   'sidebar:get-state': z.tuple([]),

@@ -335,7 +335,7 @@ export class MultiSelectController {
     if (sel.length === 0) return;
     uiStore.openConfirm({
       title: 'Delete selected tasks',
-      body: `Remove ${sel.length} task${sel.length === 1 ? '' : 's'} from this board? Their backing files remain in the vault.`,
+      body: `Remove ${sel.length} task${sel.length === 1 ? '' : 's'} from this board? Their notes stay in the vault.`,
       confirmLabel: 'Delete',
       danger: true,
       onConfirm: () => {

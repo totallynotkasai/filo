@@ -25,7 +25,8 @@ export interface CommandWithShortcutOptions {
   label: string;
   description: string;
   binding: ShortcutBinding;
-  execute: () => void | Promise<void>;
+  /** `false` (returned at once, not from a promise): nothing to act on, the key is left alone. */
+  execute: () => void | boolean | Promise<void>;
   /**
    * Gates whether the shortcut may fire. Forwarded to the global key handler:
    * a disabled command is SKIPPED so another command sharing the same binding
@@ -60,7 +61,9 @@ export function registerCommandWithShortcut(opts: CommandWithShortcutOptions): (
     // command is skipped and the loop keeps scanning for another match.
     enabled: opts.enabled,
     action: () => {
-      void opts.execute();
+      const result = opts.execute();
+      if (result === false) return false;
+      void result;
     },
   });
   return () => {

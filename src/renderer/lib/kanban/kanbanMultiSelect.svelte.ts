@@ -153,7 +153,7 @@ export class KanbanMultiSelect {
     }
     uiStore.openConfirm({
       title: `Remove ${selected.length} cards from the board?`,
-      body: 'The backing vault files are kept — only the column placements are removed. You can undo via the toolbar history if you change your mind.',
+      body: 'The cards leave this board; their notes stay in the vault. Undo puts them back.',
       confirmLabel: 'Remove cards',
       danger: true,
       onConfirm: () => {

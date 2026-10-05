@@ -1,6 +1,7 @@
 import { CANVAS_DEFAULTS } from '../constants/defaults';
 import { boardCacheStore } from './boardCache.svelte';
 import { getActiveScope, makeFacade } from '../lib/boards/boardScope.svelte';
+import { workspaceStore } from './workspace.svelte';
 
 /**
  * Canvas transform state for a board view. Each `BoardScope` owns its own
@@ -65,10 +66,11 @@ export function createCanvasScope(): CanvasScope {
   let transform = $state<CanvasTransform>({ x: 0, y: 0, scale: 1 });
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
-  let minimapVisible = $state(true);
   let semanticZoomEnabled = $state(true);
   let snapEnabled = $state(false);
-  let waypointsVisible = $state(true);
+  // The board the minimap and waypoints toggles belong to: they are
+  // remembered per board, in the workspace store (`.filo/workspace.json`).
+  let panelsBoardId = $state<string | null>(null);
 
   // Active camera-fly animation (null when idle).
   let flyToRaf: number | null = null;
@@ -130,10 +132,10 @@ export function createCanvasScope(): CanvasScope {
     get scale() { return transform.scale; },
     get viewportWidth() { return viewportWidth; },
     get viewportHeight() { return viewportHeight; },
-    get minimapVisible() { return minimapVisible; },
+    get minimapVisible() { return panelsBoardId ? workspaceStore.mindMapPanelsOf(panelsBoardId).minimap : true; },
     get semanticZoomEnabled() { return semanticZoomEnabled; },
     get snapEnabled() { return snapEnabled; },
-    get waypointsVisible() { return waypointsVisible; },
+    get waypointsVisible() { return panelsBoardId ? workspaceStore.mindMapPanelsOf(panelsBoardId).waypoints : true; },
 
     get isSemanticZoomActive(): boolean {
       return semanticZoomEnabled && transform.scale < CANVAS_DEFAULTS.semanticZoomThreshold;
@@ -161,6 +163,7 @@ export function createCanvasScope(): CanvasScope {
       cancelFlyTo();
       flushPendingViewport();
       currentBoardId = boardId;
+      panelsBoardId = boardId;
       if (!boardId) {
         transform = { x: 0, y: 0, scale: 1 };
         return;
@@ -288,7 +291,7 @@ export function createCanvasScope(): CanvasScope {
     },
 
     toggleMinimap() {
-      minimapVisible = !minimapVisible;
+      if (panelsBoardId) workspaceStore.setMindMapPanel(panelsBoardId, 'minimap', !store.minimapVisible);
     },
 
     setSemanticZoomEnabled(v: boolean) {
@@ -300,11 +303,11 @@ export function createCanvasScope(): CanvasScope {
     },
 
     toggleWaypointsVisible() {
-      waypointsVisible = !waypointsVisible;
+      if (panelsBoardId) workspaceStore.setMindMapPanel(panelsBoardId, 'waypoints', !store.waypointsVisible);
     },
 
     setWaypointsVisible(v: boolean) {
-      waypointsVisible = v;
+      if (panelsBoardId) workspaceStore.setMindMapPanel(panelsBoardId, 'waypoints', v);
     },
 
     flushViewport() {

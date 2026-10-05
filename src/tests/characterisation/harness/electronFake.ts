@@ -35,6 +35,9 @@ export interface MessageBoxCall {
 /** How many open pickers were shown, and the paths queued for the next ones (cancelled when none). */
 export const folderPicks: { shown: number; answers: string[] } = { shown: 0, answers: [] };
 
+/** What the app put on the clipboard, in order (main writes it: `shell:copy-text`). */
+export const clipboardWrites: Array<{ text: string; html?: string }> = [];
+
 /** Every message box shown, in order, and the answers (button labels) queued for the next ones. */
 export const messageBoxes: { shown: MessageBoxCall[]; answers: string[] } = { shown: [], answers: [] };
 /** Every path the app asked the OS to select in a file manager window (Show in folder). */
@@ -106,6 +109,16 @@ export const electronFake = {
       if (index < 0) throw new Error(`message box has no "${answer}" button: ${buttons.join(', ')}`);
       return { response: index };
     },
+  },
+  clipboard: {
+    writeText: async (text: string) => { clipboardWrites.push({ text }); },
+    write: async (items: Array<{ entries: Record<string, string> }>) => {
+      const entries = items[0]?.entries ?? {};
+      clipboardWrites.push({ text: entries['text/plain'] ?? '', html: entries['text/html'] });
+    },
+  },
+  ClipboardItem: class {
+    constructor(readonly entries: Record<string, string>) {}
   },
   shell: {
     openExternal: async () => {},

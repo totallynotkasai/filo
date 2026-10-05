@@ -581,7 +581,7 @@
     class="file-tag-overlay"
     style="z-index: calc(var(--z-sidebar) + 49);"
     onclick={closeFileTagEditor}
-    onkeydown={(e) => { if (e.key === 'Escape') closeFileTagEditor(); }}
+    onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeFileTagEditor(); } }}
     role="presentation"
   ></div>
   <div class="file-tag-anchor" style="position: fixed; left: {fileTagEditor.x}px; top: {fileTagEditor.y}px; z-index: calc(var(--z-sidebar) + 50);">

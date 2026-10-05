@@ -171,7 +171,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
       reportError(
         'tasklist.seed-md',
         err,
-        `Backing file for "${title}" (${kindForError}) was created, but post-write setup lagged — it should recover on the next edit`,
+        `The note for the ${kindForError} "${title}" was made, but Filo couldn't read it back yet. It will at the next edit.`,
       );
     }
     return { relPath, title };

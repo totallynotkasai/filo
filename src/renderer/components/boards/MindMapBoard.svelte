@@ -44,6 +44,9 @@
   import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
   import { templatesStore } from '../../stores/templates.svelte';
   import { hitTestFrame } from '../../lib/mindmap/frameHitTest';
+  import { framesInPaintOrder } from '../../lib/frames/nestedFrames';
+  import { copyFiloLink } from '../../lib/utils/copyLink';
+  import { linkToTile } from '../../schema/link';
   import {
     buildTileContextMenu,
     buildFrameContextMenu,
@@ -141,6 +144,9 @@
   $effect(() => {
     syncConnectionEdgePan(canvasStore, !!connectionsStore.drawing, isActiveScope(scope));
   });
+
+  // A frame inside another is drawn, and hit, above it.
+  let paintedFrames = $derived(framesInPaintOrder(boardStore.frames));
 
   const viewModel = new VisibleTilesViewModel({
     board: boardStore,
@@ -259,10 +265,12 @@
       const selectedIds = selectionActions.tileIds();
       const hitTile = boardStore.getTile(tileId);
       const notePath = hitTile ? resolveTextTileVaultPath(hitTile) : null;
+      const boardId = boardStore.current?.id;
       const items = buildTileContextMenu({
         selectedCount: selectionStore.selectedIds.size,
         anyUnlocked: selectedIds.some((id) => !boardStore.getTile(id)?.locked),
         onOpenAsDocument: notePath ? () => openNoteInDocumentTab(notePath) : undefined,
+        onCopyLink: hitTile && boardId ? () => void copyFiloLink(linkToTile(boardId, tileId), hitTile.title) : undefined,
         onStyle: () => selectionActions.openStyle(tileId, e.clientX, e.clientY),
         onTags: () => selectionActions.openTags(e.clientX, e.clientY),
         onSaveTemplate: () => uiStore.openModal('save-template'),
@@ -274,7 +282,7 @@
       return;
     }
 
-    const hitFrame = hitTestFrame(canvasPos.x, canvasPos.y, boardStore.frames);
+    const hitFrame = hitTestFrame(canvasPos.x, canvasPos.y, paintedFrames);
     if (hitFrame) {
       showFrameContextMenu(e, hitFrame);
       return;
@@ -437,10 +445,14 @@
     // moves between its rows) is not the canvas's.
     if (isArrowKey(e.key) && e.defaultPrevented) return;
 
+    // An Escape that acts says so (preventDefault), so the Search panel
+    // behind the board doesn't close with it.
     if (e.key === 'Escape') {
       if (connectionsStore.drawing) {
+        e.preventDefault();
         connectionsStore.cancelDrawing();
       } else if (connectionsStore.connectionMode) {
+        e.preventDefault();
         connectionsStore.setConnectionMode(false);
       }
       return;
@@ -604,7 +616,7 @@
   <!-- Canvas content layer with transform -->
   <div class="canvas-transform" style={transformStyle}>
     <!-- Frames (rendered behind tiles) -->
-    {#each boardStore.frames as frame (frame.id)}
+    {#each paintedFrames as frame (frame.id)}
       <FrameComponent
         {frame}
         oncontextmenu={(e: MouseEvent, f: Frame) => showFrameContextMenu(e, f)}

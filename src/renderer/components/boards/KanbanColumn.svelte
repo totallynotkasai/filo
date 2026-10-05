@@ -17,6 +17,8 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
+  import { copyFiloLink } from '../../lib/utils/copyLink';
+  import { linkToTile } from '../../schema/link';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
   const selectionStore = scope.selection;
@@ -430,11 +432,20 @@
     const menuY = e.clientY;
     uiStore.showContextMenu(menuX, menuY, buildCardContextMenu({
       onOpenAsDocument: tilesById[tileId]?.type === 'text' ? () => onOpenAsDocument(tileId) : undefined,
+      onCopyLink: copyCardLink(tileId),
       onStyle: () => onOpenCardStyle?.(tileId, menuX, menuY),
       onRemove: () => onDeleteTile(tileId),
       moveTargets,
       onMoveTo: onMoveTile ? (columnId) => onMoveTile(tileId, columnId) : undefined,
     }), tileId);
+  }
+
+  /** "Copy link to card", for a card on a board this column knows. */
+  function copyCardLink(tileId: string): (() => void) | undefined {
+    const card = tilesById[tileId];
+    const boardId = scope.board.current?.id;
+    if (!card || !boardId) return undefined;
+    return () => void copyFiloLink(linkToTile(boardId, tileId), card.title);
   }
 
   /**

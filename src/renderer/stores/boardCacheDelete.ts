@@ -20,7 +20,7 @@ import { isPathFailed } from '../lib/boards/writeStateTracking';
 import { trashVaultPath } from '../lib/vault/vaultOperations';
 import { reportError } from '../lib/utils/errorBus';
 import { invokeOk } from '../lib/utils/invokeOk';
-import { workspaceStore, type BoardToolbarState } from './workspace.svelte';
+import { workspaceStore, type BoardToolbarState, type MindMapPanelsState } from './workspace.svelte';
 
 /** The board cache's own state, handed to this slice. */
 export interface BoardDeleteContext {
@@ -34,10 +34,11 @@ export interface BoardDeleteContext {
   markDirty(boardId: string): void;
 }
 
-/** How a board was last shown: its camera and its side toolbar. */
+/** How a board was last shown: its camera, its side toolbar and (a Mind Map) its panels. */
 export interface BoardView {
   viewport: ViewportEntry | null;
   toolbar: BoardToolbarState;
+  panels?: MindMapPanelsState;
 }
 
 /** A board file the delete moved into Filo's trash. */
@@ -120,6 +121,7 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
       // debounced flush so .filo/viewports.json reflects the deletion.
       removeViewport(boardId);
       workspaceStore.removeBoardToolbar(boardId);
+      workspaceStore.removeMindMapPanels(boardId);
       return true;
     },
 
@@ -187,7 +189,11 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
 
     /** How the board is shown now, for a delete's Undo to put back. */
     boardView(boardId: string): BoardView {
-      return { viewport: getViewportFromCache(boardId), toolbar: workspaceStore.boardToolbar(boardId) };
+      return {
+        viewport: getViewportFromCache(boardId),
+        toolbar: workspaceStore.boardToolbar(boardId),
+        panels: workspaceStore.mindMapPanelsOf(boardId),
+      };
     },
 
     /**
@@ -197,6 +203,10 @@ export function makeBoardDeleteSlice(ctx: BoardDeleteContext) {
      */
     putBackBoardView(boardId: string, view: BoardView): void {
       if (view.viewport && !getViewportFromCache(boardId)) setViewport(boardId, view.viewport);
+      if (view.panels && !(boardId in workspaceStore.mindMapPanels)) {
+        workspaceStore.setMindMapPanel(boardId, 'minimap', view.panels.minimap);
+        workspaceStore.setMindMapPanel(boardId, 'waypoints', view.panels.waypoints);
+      }
       const now = workspaceStore.boardToolbar(boardId);
       if (now.position || now.pinned) return;
       if (view.toolbar.position) workspaceStore.setBoardToolbarPosition(boardId, view.toolbar.position);

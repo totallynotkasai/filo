@@ -1,7 +1,7 @@
 # Audit-28 implementation plan (draft, 2026-10-04)
 
 - **Source:** [AUDIT28_PRE_DAILY_USE_2026-10-04.md](AUDIT28_PRE_DAILY_USE_2026-10-04.md). Finding IDs (A-01, H-01 …) refer to it.
-- **Status:** Phases 0 and 1 done on 2026-10-04, Phases 2, 3 and 4 on 2026-10-05 (see section 4); Phases 5 to 8 not started. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs, Phase 2 D6 and D7 at theirs, Phase 3 D2 at its default, Phase 4 D8 at its default.
+- **Status:** Phases 0 and 1 done on 2026-10-04, Phases 2, 3, 4 and 5 on 2026-10-05 (see section 4); Phases 6 to 8 not started. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs, Phase 2 D6 and D7 at theirs, Phase 3 D2 at its default, Phase 4 D8 at its default, Phase 5 D9 at its default.
 - **Scores:** out of 10, as in the report. **Hard:** 0/10 = minutes, 5/10 = a few days with tests, 10/10 = weeks.
 
 ## 1. How this plan works
@@ -21,7 +21,7 @@
   - the E2E suite (with `FILO_E2E_SCALE=1`) when the phase touches the shell, startup, quit, file watching or the editor;
   - the corpus check (`corpus:run` + `corpus:compare` against today's baseline) for any phase that touches the editor or Markdown writing;
   - an outcome section in this file: what changed, deviations, new findings.
-- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them, Phase 1 BL-25 and BL-26; Phase 2 added BL-27, fixed there, and BL-28; Phase 3 BL-29 and BL-30, fixed there, and BL-31 and BL-32; Phase 4 added two owner decisions and no numbered item).
+- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them, Phase 1 BL-25 and BL-26; Phase 2 added BL-27, fixed there, and BL-28; Phase 3 BL-29 and BL-30, fixed there, and BL-31 and BL-32; Phase 4 added two owner decisions and no numbered item; Phase 5 BL-33 and BL-34, fixed there, and BL-35).
 - **Comments explain why, never history.** Audit IDs go in commit messages.
 
 "Sum of Hard scores" adds up the Hard scores of the phase's tasks. It's a rough guide to size, not a score.
@@ -140,18 +140,18 @@ Phases 2 to 7 can be reordered or split to suit you; each stands on its own. Pha
 
 | # | Task | Finding | Hard |
 |---|---|---|---|
-| 5.1 | A right-click menu on text, built in main from roles (Cut, Copy, Paste, Select All, enabled from `editFlags`), plus the spelling items and "Insert link" (sent to the renderer) (D9). | E-04 | 2/10 |
-| 5.2 | Ctrl+W, Ctrl+Tab and Ctrl+Shift+Tab work while typing. Ctrl+S and Ctrl+Shift+F work in text fields. | E-10 | 1/10 |
-| 5.3 | Laptop widths: below a breakpoint, a docked sidebar pushes the content instead of covering it (or folds away). The toolbar uses `justify-content: safe center` (BL-01). Check at 1,100, 1,280 and 1,366 px. | H-04, BL-01 | 2/10 |
-| 5.4 | A Settings button in the toolbar, and one saving rule for every Settings tab, or clearer labels. | H-06 | 1/10 |
-| 5.5 | The formatting toolbar shows as disabled when no editor has focus. | H-10 | 1/10 |
-| 5.6 | Dragging a frame moves the frames inside it. Membership is recomputed for every affected frame, and frames are ordered by nesting. | E-09 | 4/10 |
-| 5.7 | Keyboard focus entering a pane makes it the active pane. | E-21 | 1/10 |
-| 5.8 | The minimap and waypoint toggles are remembered per board. | E-26 | 1/10 |
-| 5.9 | Messages in plain words. Add "placement", "backing", "out-of-band" and "persist" to the components gate's word list. | E-23 | 1/10 |
-| 5.10 | "Copy link to board / tile / note", and Help text that matches. | E-22 | 3/10 |
-| 5.11 | Remove `CurrentBoardDocument.svelte` and its spec line, or store per-note page settings (decide in the phase). | E-20 | 2/10 |
-| 5.12 | Escape closes the Search panel wherever focus is, unless something above it takes the key. | BL-03 | 1/10 |
+| 5.1 | A right-click menu on text, built in main from roles (Cut, Copy, Paste, Select All, enabled from `editFlags`), plus the spelling items and "Insert link" (sent to the renderer) (D9). *Done, D9 at its default; main asks the renderer whether a link can go at the caret, and the popup opens where the menu did (section 4, deviation 1).* | E-04 | 2/10 |
+| 5.2 | Ctrl+W, Ctrl+Tab and Ctrl+Shift+Tab work while typing. Ctrl+S and Ctrl+Shift+F work in text fields. *Done; the edit ends first, and Ctrl+W waits for the title it commits (section 4, deviation 2).* | E-10 | 1/10 |
+| 5.3 | Laptop widths: below a breakpoint, a docked sidebar pushes the content instead of covering it (or folds away). The toolbar uses `justify-content: safe center` (BL-01). Check at 1,100, 1,280 and 1,366 px. *Done; the breakpoint is 1,340 px (the page plus the sidebar both sides), and the toolbar narrows and folds into "More formatting" as its room calls for (section 4, deviations 3 and 4).* | H-04, BL-01 | 2/10 |
+| 5.4 | A Settings button in the toolbar, and one saving rule for every Settings tab, or clearer labels. *Done: the gear button, and clearer labels (section 4, deviation 5).* | H-06 | 1/10 |
+| 5.5 | The formatting toolbar shows as disabled when no editor has focus. *Done (section 4).* | H-10 | 1/10 |
+| 5.6 | Dragging a frame moves the frames inside it. Membership is recomputed for every affected frame, and frames are ordered by nesting. *Done (section 4, deviation 6).* | E-09 | 4/10 |
+| 5.7 | Keyboard focus entering a pane makes it the active pane. *Done as planned (section 4).* | E-21 | 1/10 |
+| 5.8 | The minimap and waypoint toggles are remembered per board. *Done, in `.filo/workspace.json` (section 4).* | E-26 | 1/10 |
+| 5.9 | Messages in plain words. Add "placement", "backing", "out-of-band" and "persist" to the components gate's word list. *Done; "backing up" stays allowed (section 4).* | E-23 | 1/10 |
+| 5.10 | "Copy link to board / tile / note", and Help text that matches. *Done, cards and tasks too; main writes the clipboard (section 4, deviation 7).* | E-22 | 3/10 |
+| 5.11 | Remove `CurrentBoardDocument.svelte` and its spec line, or store per-note page settings (decide in the phase). *Done: removed (section 4, deviation 8).* | E-20 | 2/10 |
+| 5.12 | Escape closes the Search panel wherever focus is, unless something above it takes the key. *Done (section 4, deviation 9).* | BL-03 | 1/10 |
 
 **Pass:**
 - Component tests.
@@ -628,7 +628,7 @@ These were written into `docs/BACKLOG.md` first. The owner then asked for them t
 
 ### Phase 4 outcome (2026-10-05)
 
-**Status:** done, not yet committed. All twelve tasks are in; D8 was taken at its default (quick add reads a repeat). Ten deviations are listed below. The ones you will notice: Group By now groups the rows inside each section, so a Task List made before this change shows its stored Group By (Status, unless you changed it) as "To Do" / "Done" headings inside its sections (deviation 4; pick None in Group By for the old look); priority chips say "Urgent" and "Medium" where they said "!!!" and "Med" (deviation 8); and a Kanban card's due date is picked in the Task List's date picker. No new numbered backlog item; two owner decisions went to `docs/BACKLOG.md` (end of this section).
+**Status:** done and committed. All twelve tasks are in; D8 was taken at its default (quick add reads a repeat). Ten deviations are listed below. The ones you will notice: Group By now groups the rows inside each section, so a Task List made before this change shows its stored Group By (Status, unless you changed it) as "To Do" / "Done" headings inside its sections (deviation 4; pick None in Group By for the old look); priority chips say "Urgent" and "Medium" where they said "!!!" and "Med" (deviation 8); and a Kanban card's due date is picked in the Task List's date picker. No new numbered backlog item; two owner decisions went to `docs/BACKLOG.md` (end of this section).
 
 **What changed**
 - **4.1, the keys and ranges follow the screen (E-01).** The view model draws each section's rows flat (`flatSections` in `lib/tasklist/taskListViewModel.svelte.ts`: a row, then its shown subtasks, group by group) and lists the rows on screen top to bottom (`renderedRows`): sections in order, a folded section's rows and a folded parent's subtasks left out. ArrowUp / ArrowDown, Tab (indent under the row above), Shift-click ranges and Ctrl+A (Select All) use it (`taskListKeyboardNav.svelte.ts`, `multiSelectController.svelte.ts`), so under the default priority sort a range is the rows shown between the two clicks, and ArrowDown no longer sticks on a folded parent. The board's own flattening moved into the view model with it.
@@ -720,3 +720,166 @@ These were written into `docs/BACKLOG.md` first. The owner then asked for them t
 **Owner decisions added to `docs/BACKLOG.md` (section 2)**
 - **Removing one card or task:** keep it at once (undoable), ask first as the Mind Map does, or make the Mind Map's one-tile Remove immediate with an Undo toast and a "Delete from vault…" menu item (Useful 1/10, Hard 1/10).
 - **Folding a group inside a section** (Useful 2/10, Hard 2/10).
+
+### Phase 5 outcome (2026-10-05)
+
+**Status:** done and committed (Phase 4 and Phase 5 as two commits). All twelve tasks are in; D9 was taken at its default (no templates in the text menu). Nine deviations are listed below. The changes you will notice:
+- right-clicking text shows Cut, Copy, Paste, Select All and, in a note, Insert Link;
+- the formatting toolbar greys out with no text to format, and at laptop widths it narrows and folds its last group into a **More formatting** (⋯) button;
+- below 1,340 px the docked sidebar pushes the board aside instead of covering it;
+- a gear button opens Settings;
+- **Copy link to …** on tiles, cards, tasks, tabs and the sidebar's notes and boards;
+- Escape closes the Search panel from anywhere, and now also clears a Kanban selection (it never did).
+
+Two bugs turned up and were fixed in the phase: BL-33 (the font box blank in a vault whose `app.json` names no font) and BL-34 ("Copy all problems" never reached the clipboard). BL-35 (the Task List's Table of Contents over the list at laptop widths, older than this phase) is in `docs/BACKLOG.md`.
+
+**What changed**
+- **5.1, the right-click menu on text (E-04, D9).**
+  - Main builds it (`src/main/utils/textMenu.ts`, wired in `main.ts`): the spelling suggestions and Add to Dictionary on a misspelled word, then Cut, Copy and Paste, then Select All (each enabled from Chromium's `editFlags`), then **Insert Link…** in a note's text, or **Edit Link…** on a link. Text selected in an embedded page offers Copy alone; anywhere else Filo keeps its own menus, as before.
+  - Only the renderer knows which editor has the focus, so as the menu opens main asks it (`app:text-menu-query`, answered by `app:text-menu-reply`; `src/main/services/textMenuQuery.ts`). An answer that doesn't come within 300 ms opens the menu without the link item. A title, a label or the Raw view gets no link item: they have no link mark.
+  - The link item sends `app:insert-link` with where the menu opened, and the renderer (`lib/editor/textMenu.ts`) opens the Insert Link popup there, on the editor the menu was opened over, even though the native menu took the focus.
+- **5.2, keys while typing (E-10).** Ctrl+W, Ctrl+Tab and Ctrl+Shift+Tab work in a note, a title, a text field and the Raw view, and Ctrl+Shift+F in a text field (Ctrl+S already did since Phase 1). Before closing or leaving a tab they end the edit, as a click on a tab does (`releaseTextFocus`), so a title or field that saves on blur hands its text over.
+- **5.3, laptop widths (H-04, BL-01).**
+  - The docked sidebar pushes the workspace aside (a left margin of its width) where the 860 px Document page would start under it: below 1,340 px with the default 240 px sidebar, more with a wider one (`lib/utils/sidebarLayout.ts`, `uiStore.sidebarPushesWorkspace`). Above that it lies over the workspace as before. Kanban's own shift for the sidebar stands down while the workspace is pushed.
+  - The formatting toolbar starts at its left edge when it doesn't fit (`justify-content: safe center`), and no control is squeezed any more: at 1,100 px the font-size box had been squeezed to 2 px wide.
+  - It takes the roomiest of three densities whose controls fit the room it has, measured (`lib/utils/toolbarDensity.ts`, a `ResizeObserver`): **normal**; **tight** (narrower dividers, font and style boxes); **compact** (short alignment labels, and line spacing, the indents and Clear Formatting folded into a **More formatting** popover). A toolbar still too wide (a large toolbar scale) scrolls from its left edge.
+  - The vault menu's name is cut short with an ellipsis (160 px, 112 px below 1,200 px), with the whole name in its tooltip.
+- **5.4, Settings (H-06).** A gear button (Settings, Ctrl+,) at the right of the toolbar. Every Settings tab now says how it saves in the same place, the bar above its page: *Changes here save as you make them.* (General), *No changes. Changes here wait for Apply.* / *Unsaved changes: Apply saves them, Revert drops them.* (Global Defaults, Current Board), *Picking a theme applies it at once. The theme editor saves when you click Save.* (Themes), *Restore and Empty trash act at once.* (Trash). General's old italic line moved into that bar.
+- **5.5, the formatting toolbar with nothing to format (H-10).** With no editor as its target (`toolbarStore.editorActive`), the font, size, B / I / U, colour, style, link, align, list, indent and Clear Formatting controls are disabled and dimmed, and the toolbar's tooltip says *Click into a note or a title to format its text*. Spelling, a setting for every editor, stays live. Focus moving from an editor into the toolbar keeps that editor as the target, so the controls can now be reached with Tab; leaving the toolbar for anything else lets it go.
+- **5.6, nested frames (E-09).**
+  - Dragging a frame carries the frames wholly inside it (`lib/frames/nestedFrames.ts` `framesInside`) and their tiles.
+  - Afterwards each moved frame takes the tiles now inside it, and each moved tile leaves the frames it left and joins those it landed in (`framesStore.refreshMembership`).
+  - One undo puts it all back (`MoveFrameCommand` holds the nested frames' ids), and a drag torn down mid-gesture reverts them too (`frameDragCancel.ts`).
+  - Frames are drawn and hit larger first (`framesInPaintOrder`), so a frame inside another is above it whichever was made first.
+- **5.7, panes (E-21).** Focus moving into a pane (Tab, or a focus a dialog gives back) makes it the active pane, as a click does (`PaneView.svelte`).
+- **5.8, the Mind Map's panels (E-26).** The minimap and the waypoints are shown or hidden per board, in `.filo/workspace.json` (`mindMapPanels`, by board id). The key is written only once a board hides one, so other vaults' files don't change. A deleted board's entry goes with it, and undoing a sidebar delete puts it back (it is part of the board's `BoardView`).
+- **5.9, plain words (E-23).** The components gate's word list gains `placement`, `backing` (not "backing up"), `out-of-band` and `persist`. With them it found 13 messages, all reworded: for example *This column holds 3 cards. They leave this board with it; their notes stay in the vault. Undo puts them back.* and *Couldn't save the board "Plan" to disk*. Two labels the gate can't see were reworded too: the broken tile's **Recreate note** (was *Recreate backing file*) and its badge's tooltip.
+- **5.10, links (E-22).**
+  - **Copy link to tile / card / task** (their menus), **to board / note** (a tab's menu; the sidebar's menu on a loaded board or a note).
+  - A note has a link of its own now: `filo://note/<path>` (`schema/link.ts`). It opens only a plain Markdown path in the vault: no drive or leading slash, no `..`, nothing in `.filo/`. A missing note says so instead of opening an empty tab.
+  - The link goes on the clipboard twice over: as its address, and as a link reading the name of what it opens. Pasted into a note it is a named link (`[River City](filo://note/River%20City.md)`); pasted into Insert Link's address box it is the address.
+  - Main writes the clipboard (`shell:copy-text`, `src/main/utils/clipboardPayload.ts`; deviation 7).
+  - Help's Links entry says how links are made and followed. The link popup's address box suggests *example.com, or a link copied in Filo* (it asked for `filo://board/<id>`, which nothing showed).
+  - KNOWN_LIMITATIONS #52: a link to a note names its path, so a rename or move leaves it behind.
+- **5.11, Current Board for a note (E-20).** `CurrentBoardDocument.svelte` is gone (deviation 8). The Current Board tab, off while a note is shown, now says why: *A note has no board settings: its page follows Global Defaults → Document*. The design doc's "Document Board Settings" line says the same.
+- **5.12, Escape and the Search panel (BL-03).**
+  - Escape closes the panel wherever the focus is, once whatever lies above it has had the key (`lib/search/searchEscape.ts`; deviation 9): a dialog, a menu, a popup, a board's selection or connection mode, a text field or a title being edited.
+  - Escape inside the panel closes it as before.
+- **Size ceiling.** `TaskItem.svelte` went from 1,180 to 1,161 lines of code: its three inline-style computations moved to `lib/tasklist/taskRowStyle.ts`, which made room for the Copy link item. Its row in the `file-sizes` gate was lowered to match.
+- **Docs.**
+  - CLAUDE.md: the new modules, hotkeys, the toolbar, the workspace store, the gate's words, the test setup and the E2E list.
+  - The design doc: the Settings button and saving rule, a note's Current Board, Escape and Search, the panels per board, panes, nested frames, the text menu (Insert Template is not in it), the Copy link items and a Links entry, the toolbar at laptop widths, and the sidebar's push.
+  - KNOWN_LIMITATIONS #52; `docs/BACKLOG.md`.
+
+**Deviations from the plan**
+1. **How the text menu learns about links, and where the popup opens (5.1).**
+   - The plan sent Insert Link to the renderer without saying how main knows to show it. Main asks the renderer as the menu opens (a 300 ms bound), since only the renderer knows which editor has the focus and whether it takes links.
+   - The item reads **Edit Link…** on a link.
+   - The popup opens where the menu opened, not at the caret.
+   - The editor is focused again with ProseMirror's own `view.focus()`: TipTap's focus command waits for an animation frame, so the popup asked for the editor before it had the focus and said "Click into a text tile or document first". A component test found it.
+2. **Keys while typing (5.2) end the edit first, and Ctrl+W waits for it.** A title being typed is committed by its blur through an undoable command, which writes asynchronously. Closing the tab at once ran the close's save before that write was queued, and the close then asked *Unsaved changes* about the note and its board (the characterisation case found it). Ctrl+W waits for the history chain (`whenChainSettled`) before closing. The wait isn't inside `tabStore.close`, since a board delete's command closes tabs and would wait on itself. The tab keys also work in text fields, not only in editors (the plan said "while typing").
+3. **The sidebar's breakpoint (5.3)** is where the page would start under the sidebar: 860 px plus the sidebar on both sides, 1,340 px at the default width. A first rule (960 px of room, 1,440 px) pushed at 1,366 px too. There the page already clears the sidebar, and pushing made the Task List's Table of Contents open over the list instead of beside it. So at 1,366 px the sidebar lies over the workspace as before, with the page 38 px clear of it.
+4. **The formatting toolbar needed more than `safe center` (5.3).**
+   - `safe center` alone left the right end scrolled off with no visible scrollbar at 1,100 px: the controls need about 1,013 px and had 769. Every control also shrank, the size box to 2 px.
+   - Controls no longer shrink. The toolbar narrows its boxes and then folds its last group into a popover, as far as its room calls for.
+   - The room is measured, not read off the window's width. Fixed width steps fitted with a vault called "Book" but not with "Chrome Vault" (the E2E vault), since the vault's name and the toolbar scale change the room.
+5. **Clearer labels, not one saving rule (5.4).** The plan offered either. The Apply tabs have a live preview and Revert, and the leave, quit and session-end prompts (and their gate, `leave-settles-unapplied-settings`) exist to guard their unapplied edits. Making those tabs save as you go would drop that safety net and ripple through all of it, far past the task's Hard 1/10. Every tab now states its rule in the same place instead.
+6. **What "inside" means for frames (5.6).** A frame is inside another when it lies wholly within it and is smaller; two frames the same size don't carry each other, and one that only overlaps stays put. Membership is refreshed for the moved frames and every moved tile, which also covers frames elsewhere that a moved tile landed in or left. A frame's resize is unchanged (the plan named the drag).
+7. **The clipboard is written by main (5.10).**
+   - Filo's permission policy denies every page's clipboard writes, Filo's own included, and `permissionPolicy.test.ts` pins that. So `navigator.clipboard` failed in the app: the board-load notice's "Copy all problems" never copied anything (BL-34).
+   - Rather than loosen the security policy, main writes the clipboard on request (`shell:copy-text`). It checks the text: at most 100,000 characters, and a name only on one of Filo's own `filo://` links. It builds the link's HTML itself.
+   - Electron 44's main-process clipboard is the asynchronous W3C-style API (`write([new ClipboardItem(…)])`).
+   - Cards and tasks got Copy link too (they are tiles on their boards).
+8. **Removed, not per-note settings (5.11).** `CurrentBoardDocument.svelte` could not be reached: the Current Board tab edits no board while a note is shown (`settingsBoard()`). Per-note page settings would add keys to the user's notes for colours that Global Defaults → Document already sets for every note.
+9. **How "something above it takes the key" is told (5.12).**
+   - A listener that acts on Escape now says so (`preventDefault`). The Search panel decides once the whole dispatch is over, and closes only on an Escape nobody took.
+   - Escape's global `app:cancel` used to take every Escape, whether it closed anything or not. It now leaves the key alone when there was no dialog or menu to close (a shortcut's action may return `false`).
+   - Handlers that acted without saying so now say so: the four style popups, the Mind Map's connection mode, Kanban's selection, a Task List section drag, the side toolbars' menus, the save-error popover, and the tag and emoji popup overlays.
+   - Escape typed in a text field or an editor stays with the edit (it ends a title, or clears a search box) and doesn't close the panel.
+   - **A side effect:** Kanban's Escape now clears its selection. Its handler ignored a key already taken, and `app:cancel` had always taken it.
+
+**Also changed, outside the plan's wording**
+- `shell:copy-text` joins the IPC contract: the channel union, the payload schema (100,000 characters; a 4,000-character link with a 500-character name), the contract types, and the ipc-parity gate's and its test's lists for the three text-menu channels.
+- The test setup gives jsdom an inert `ResizeObserver` (the toolbar measures its room). The characterisation suite's Electron fake records clipboard writes (`clipboardWrites`).
+- Test fixtures that build a workspace layout by hand gained `mindMapPanels`. Test shortcuts written `() => n++` now return nothing.
+
+**Tests** (each new case was run against the Phase 4 tree, the Phase 4 commit's; see Checks)
+- **Unit:**
+  - New `textMenu.test.ts` (8): the menu's items for editable text, spelling, Insert / Edit Link, an embed's selection; the reply checked; the query's answer, a reply from another page or to another question ignored, the 300 ms bound and a closed page.
+  - New `interfaceAroundViews.test.ts` (16):
+    - Escape and the Search panel (closes, and the five things that keep it);
+    - the sidebar's breakpoint, at the plan's widths and with a wider sidebar, and the push only while docked and open;
+    - nested frames, paint order, and a torn-down drag putting nested frames back;
+    - the panels per board, hydrated, saved and dropped;
+    - links read back, refused note paths, the copy going to main with its result toasted, main's payload checks, and the Copy link items on one item and not on a selection;
+    - the row styles.
+  - `hotkeys.test.ts`: an action that found nothing to act on leaves the key unprevented. `boardSchemaProblems.test.ts`: "Copy all problems" goes through main. `workspace.test.ts`: the round trip carries `mindMapPanels`.
+- **Component:**
+  - New `nestedFramesDrag.test.ts` (3, the real frames dragged by their headers): the inner frame and tiles travel, and each frame lists the tiles inside it; one undo and redo; an overlapping frame stays.
+  - New `toolbarAndTextMenu.test.ts` (4, the real toolbar and a real tile): the controls disabled until an editor has the focus and again after; the editor kept while the focus moves into the toolbar; the menu's answer (none, insert, edit); Insert Link opening the popup on the editor after it lost the focus.
+  - `projectSettingsDialog.test.ts`: the General tab's tooltip wording.
+- **Characterisation:** new `interfaceAroundViews.test.ts` (12, in the `characterisation-suite` gate's list):
+  - Ctrl+W on a task title being typed;
+  - Ctrl+Tab and Ctrl+Shift+Tab from a note;
+  - Ctrl+Shift+F from quick add;
+  - Escape after a click on the board;
+  - Escape closing a menu, then ending a title edit, before the panel;
+  - the Settings button and every tab's rule;
+  - Current Board's reason in a Document tab;
+  - the toolbar disabled and then enabled;
+  - focus moving into either pane;
+  - the minimap per board, after reopening;
+  - Copy link to tile and to note, and a note link followed;
+  - the push at 1,100, 1,366 and 1,280 px, and with the sidebar hidden.
+
+  `errorStates.test.ts`: the menu label *Recreate note*.
+- **E2E:**
+  - New `interfaceAroundViews.e2e.ts` (4, the built app):
+    - the text menu built by main (its native popup captured) and its Insert Link opening the popup;
+    - Filo's own menu on a tab building no text menu;
+    - at 1,100, 1,280 and 1,366 px the note clear of the sidebar, every formatting control on screen and the font box showing Arial Rounded MT, and More formatting at 1,100;
+    - a link copied from the sidebar pasted into a note as `[River City](filo://note/River%20City.md)` and followed with Ctrl+click. That case uses the machine's real clipboard and puts back what it held.
+  - `searchPanel.e2e.ts`: Escape closes the panel after a click outside it.
+
+**Checks**
+- `npm run ci:verify` on Windows: passed on the final code. 853 test files, 8,345 passed and 5 skipped (as before), 91/91 gates; its test step took 287 s.
+  - The first run stopped at lint (an unneeded `svelte-ignore`, and an unused variable in the new E2E spec), fixed.
+  - The next three each failed on real-disk tests in code this phase didn't touch, every one passing alone:
+    - two runs while a game was running on the PC (the runs took about 410 s against the usual 290): five watcher and recovery-snapshot cases, then one recovery-snapshot case;
+    - one on a quieter machine: the characterisation case "the Root Directory is cleared, and undo puts it back", whose tree read met the folder mid-move (3 of 3 alone).
+
+    BL-09 now names them.
+- E2E with `FILO_E2E_SCALE=1` on the final build: 44 passed (the 39 from before and the 5 new), 3.3 min.
+  - An earlier full run, with the game running, took 7.9 min and missed three scale budgets (Kanban 300 open 1,111 ms, switch back 1,641 ms; Task List fields 1,473 ms; the 2,000-note folder's whole check 6,832 ms).
+  - Two alternating runs of `scaleBudgets.e2e.ts` on the Phase 4 build and this one right after met every budget on both.
+- **Bite checks** (the new tests on the Phase 4 tree, the Phase 4 commit's, in a detached worktree with `node_modules` junctioned, since removed):
+  - **Unit and component:** every new case fails. `textMenu`, `interfaceAroundViews` (unit) and `toolbarAndTextMenu` fail to load (their modules are new). The 3 frame-drag cases, the new `hotkeys` case, the clipboard case in `boardSchemaProblems` and the Settings tooltip fail. The 36 that pass are the files' existing cases.
+  - **Characterisation:** all 12 cases fail, each for the reason it tests:
+    - the tab never closes;
+    - Ctrl+Tab stays on "Two";
+    - no Search panel from quick add;
+    - Escape leaves the panel open (twice);
+    - no Settings button (twice);
+    - the toolbar enabled with no editor;
+    - focus doesn't move the active pane;
+    - the second Mind Map's minimap hidden too;
+    - no Copy link item;
+    - no push at 1,100 px.
+  - **E2E** (`FILO_E2E_MAIN` on a build of the Phase 4 tree): the text menu case (no menu built), the width case (the note's text at 217 px, under the 240 px sidebar), the link case (no Copy link item) and the Search panel's Escape case all fail. The tab-menu case is a control.
+  - **The plain-words gate:** with the four new words it failed on 13 messages in the source, before they were reworded.
+- **Screenshots** (a throwaway Playwright script on a fresh vault, not kept in the repo):
+  - The Phase 4 build at 1,100 px: the sidebar over the note ("kara working"), the size box gone and the font box blank.
+  - This build at 1,100 px: the note's text at 337 px, clear of the sidebar, and every control on screen at 1,100, 1,280, 1,366, 1,440 and 1,600 px. At 1,100 px the More formatting popover holds line spacing, the indents and Clear Formatting. Kanban and the Mind Map at 1,100 px show the toolbar disabled.
+- **Corpus check:** not run. Nothing in the editor's Markdown reading or writing changed: the text menu and the toolbar call the existing commands, and a pasted link goes through the existing rich paste.
+
+**Pass test**
+- Component tests: **met**, for 5.1, 5.5 and 5.6. The others are tested where they live: 5.2, 5.4, 5.7, 5.8, 5.10, 5.11 and 5.12 in the characterisation suite (the whole app), 5.3 there and in the E2E suite (only a real window has layout), 5.9 by its gate.
+- The axe E2E scan is still clean: **met** (`a11y.e2e.ts`, in the 44, scans each view, the Raw view and its find bar).
+- Screenshots at 1,100 and 1,366 px show nothing covered or cut off: **met** for the note, the toolbar, Kanban and the Mind Map (the E2E case checks the geometry at 1,100, 1,280 and 1,366 px). The Task List's Table of Contents still opens over the list at 1,100 px, as it did before this phase (BL-35).
+
+**Found and fixed in this phase (BL-33, BL-34)**
+- **BL-33: the formatting toolbar's font box was blank in a vault whose `app.json` names no font** (Impact 1/10, Hard 0/10; found by the screenshot check, and the Phase 4 build shows it too). An `app.json` without `globalFont` loads as an empty font, which means the stylesheet's default (Arial Rounded MT), but the toolbar showed the empty name, and no option matched it. The toolbar now reads an empty global font as the default. The E2E width case checks the box.
+- **BL-34: "Copy all problems" on a board that couldn't load never reached the clipboard** (Impact 1/10, Hard 1/10; found while building 5.10). The permission policy denies the page's clipboard writes, so the copy failed and said *Couldn't copy the problems*. It now goes through main (`shell:copy-text`). `boardSchemaProblems.test.ts` checks it.
+
+**Found in this phase, not fixed (BL-35)**
+- **BL-35: below about 1,300 px a Task List's Table of Contents opens over the list** (Impact 2/10, Hard 2/10), covering the progress count and the rows' right ends. It can't be closed. The Phase 4 build does the same at these widths.

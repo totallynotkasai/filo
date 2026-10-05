@@ -267,7 +267,7 @@ describe('the .filo/ settings bundle', () => {
       settings: { general: { globalFont: font }, mindmap: {}, kanban: {}, tasklist: {}, document: {} } as never,
       theme: 'light',
       workspace: { openTabs: [], activeTabId: '' },
-      layout: { paneTree: null, activePaneId: null, boardToolbars: {}, spellcheck: true },
+      layout: { paneTree: null, activePaneId: null, boardToolbars: {}, mindMapPanels: {}, spellcheck: true },
     });
     const appFont = (): string | undefined =>
       (JSON.parse(files.get('app.json')?.text ?? '{}') as { globalFont?: string }).globalFont;

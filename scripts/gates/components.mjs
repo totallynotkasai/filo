@@ -622,7 +622,9 @@ export const checks = [
       'Escape (rare): `// allow-jargon: <reason>` on the line.',
     run(ctx) {
       const out = [];
-      const JARGON = /\b(sentinels?|cascad(?:e|es|ed|ing)|drain(?:s|ed|ing)?|baselines?|IPC|envelopes?)\b/i;
+      // "backing up" is plain English; "a backing file" isn't.
+      const JARGON =
+        /\b(sentinels?|cascad(?:e|es|ed|ing)|drain(?:s|ed|ing)?|baselines?|IPC|envelopes?|placements?|backing(?!\s+(?:it\s+|them\s+)?up\b)|out-of-band|persist(?:s|ed|ing|ence)?)\b/i;
       // reportError(source, err, message): only the message is shown.
       const CALL = /\b(?:uiStore\s*\.\s*(?:toast|pushToast|openConfirm|confirmAsync)|pushToast|(reportError))\s*\(/g;
       const LITERAL = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g;

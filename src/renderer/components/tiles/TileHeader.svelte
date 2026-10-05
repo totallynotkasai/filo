@@ -301,7 +301,7 @@
 
   /**
    * Opens a context-menu-style quick-action popup anchored to the broken-ref
-   * badge. Offers Recreate backing file (a text tile only: puts the note back
+   * badge. Offers Recreate note (a text tile only: puts the note back
    * at its path), Re-link (pick a different vault file via the modal picker)
    * and Remove (drops the placement). A media file can't be recreated from
    * anything Filo holds, so it gets no Recreate.
@@ -313,7 +313,7 @@
     const recreate = tile.type === 'text'
       ? [{
           id: 'broken-recreate',
-          label: 'Recreate backing file',
+          label: 'Recreate note',
           icon: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
           action: () => { void recreateBackingFile(); },
         }]
@@ -493,8 +493,8 @@
       <button
         type="button"
         class="tile-broken-badge-inline"
-        title="Backing file is missing. Click for quick actions."
-        aria-label="Broken file reference. Click for quick actions."
+        title="The file this tile shows is missing. Click for what you can do."
+        aria-label="Missing file. Click for what you can do."
         onclick={openBrokenRefMenu}
       >!</button>
     {/if}

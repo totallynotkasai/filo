@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, MenuItem, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, protocol, session, shell, type MenuItemConstructorOptions, type WebContents } from 'electron';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
@@ -24,6 +24,8 @@ import { createSessionEndHandlers } from './services/sessionEnd';
 import { buildAppContentSecurityPolicy } from './utils/contentSecurityPolicy';
 import { installPermissionHandlers } from './utils/permissionPolicy';
 import { SYSTEM_LOCALE_ARG } from '../shared/systemLocale';
+import { textMenuItems, type TextMenuItem } from './utils/textMenu';
+import { createTextMenuQuery } from './services/textMenuQuery';
 
 // Must run before `app.whenReady`. Registers the `filo://` URL scheme as a
 // privileged standard scheme so the renderer can load vault-local media
@@ -109,6 +111,32 @@ const sessionEnd = createSessionEndHandlers({
 ipcMain.on('app:unsaved-state', (_event, mayLoseWork: unknown) => {
   sessionEnd.noteUnsavedState(mayLoseWork === true);
 });
+
+// The right-click menu on text asks the renderer whether a link can go at
+// the caret, and opens without that item if no answer comes within this.
+const textMenuQuery = createTextMenuQuery(300);
+ipcMain.on('app:text-menu-reply', (event, id: unknown, context: unknown) => {
+  textMenuQuery.onReply(event.sender.id, id, context);
+});
+
+// `at`: where the menu opened, so the Insert Link popup opens there too.
+function textMenuEntry(item: TextMenuItem, contents: WebContents, at: { x: number; y: number }): MenuItemConstructorOptions {
+  switch (item.kind) {
+    case 'suggestion':
+      return { label: item.word, click: () => contents.replaceMisspelling(item.word) };
+    case 'add-word':
+      return {
+        label: `Add "${item.word}" to Dictionary`,
+        click: () => contents.session.addWordToSpellCheckerDictionary(item.word),
+      };
+    case 'role':
+      return { role: item.role, enabled: item.enabled };
+    case 'link':
+      return { label: item.label, click: () => contents.send('app:insert-link', at) };
+    case 'separator':
+      return { type: 'separator' };
+  }
+}
 
 function scheduleWindowStateSave(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -363,30 +391,19 @@ async function createWindow(): Promise<void> {
     appWebContentsId = null;
   });
 
-  // Right-click spell check suggestions
+  // The right-click menu on text (utils/textMenu.ts): spelling, Cut, Copy,
+  // Paste, Select All and, in a note's text, Insert Link. The renderer shows
+  // its own menus everywhere else, so this fires only on editable text (or
+  // text selected in an embed's page).
   mainWindow.webContents.on('context-menu', (_event, params) => {
-    const { misspelledWord, dictionarySuggestions } = params;
-    if (!misspelledWord) return;
-
-    const menu = new Menu();
-
-    dictionarySuggestions.slice(0, 6).forEach((word: string) => {
-      menu.append(new MenuItem({
-        label: word,
-        click: () => mainWindow?.webContents.replaceMisspelling(word),
-      }));
+    const contents = mainWindow?.webContents;
+    if (!contents) return;
+    void textMenuQuery.ask(contents).then((context) => {
+      const items = textMenuItems(params, context);
+      if (items.length === 0 || !mainWindow || mainWindow.isDestroyed()) return;
+      const at = { x: params.x, y: params.y };
+      Menu.buildFromTemplate(items.map((item) => textMenuEntry(item, contents, at))).popup({ window: mainWindow });
     });
-
-    if (dictionarySuggestions.length > 0) {
-      menu.append(new MenuItem({ type: 'separator' }));
-    }
-
-    menu.append(new MenuItem({
-      label: `Add "${misspelledWord}" to Dictionary`,
-      click: () => mainWindow?.webContents.session.addWordToSpellCheckerDictionary(misspelledWord),
-    }));
-
-    menu.popup({ window: mainWindow! });
   });
 
   // Navigation hardening (defense-in-depth beyond the CSP).

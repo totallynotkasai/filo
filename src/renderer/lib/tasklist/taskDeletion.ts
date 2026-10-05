@@ -167,7 +167,7 @@ export function makeTaskDeleter(deps: TaskDeletionDeps): TaskDeleter {
     }
     uiStore.openConfirm({
       title: 'Delete completed tasks',
-      body: `Delete ${completedTileIds.length} completed task${completedTileIds.length === 1 ? '' : 's'}? Their backing files remain in the vault.`,
+      body: `Delete ${completedTileIds.length} completed task${completedTileIds.length === 1 ? '' : 's'}? Their notes stay in the vault.`,
       confirmLabel: 'Delete',
       danger: true,
       onConfirm: () => {

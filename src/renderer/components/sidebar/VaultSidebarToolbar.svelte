@@ -110,7 +110,7 @@
       closeMenus();
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') closeMenus();
+      if (e.key === 'Escape') { e.preventDefault(); closeMenus(); }
     }
     function onResize() {
       menuAnchor = computeAnchorFor(openMenu === 'sort' ? sortBtnEl : groupBtnEl);

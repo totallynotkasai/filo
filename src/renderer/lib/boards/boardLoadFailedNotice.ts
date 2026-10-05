@@ -8,6 +8,7 @@
 import type { FailedBoardEntry } from './boardLoader';
 import { normalizePath } from '../utils/path';
 import { uiStore } from '../../stores/ui.svelte';
+import { copyText } from '../utils/copyLink';
 
 export interface BoardLoadFailedToast {
   text: string;
@@ -67,10 +68,10 @@ function copyProblemsAction(problems: readonly string[]): { label: string; handl
   return {
     label: 'Copy all problems',
     handler: () => {
-      void navigator.clipboard.writeText(problems.join('\n')).then(
-        () => uiStore.toast(`Copied ${problems.length} problems`, 'info', 2000),
-        () => uiStore.toast('Couldn\'t copy the problems', 'error', 3000),
-      );
+      void copyText(problems.join('\n')).then((copied) => {
+        if (copied) uiStore.toast(`Copied ${problems.length} problems`, 'info', 2000);
+        else uiStore.toast('Couldn\'t copy the problems', 'error', 3000);
+      });
     },
   };
 }

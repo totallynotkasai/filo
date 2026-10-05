@@ -12,7 +12,7 @@ Everything known to be open that no current plan covers, in one place. Start the
 - **Useful** (improvements): 0/10 = no gain; 5/10 = a clear improvement you'd notice every week or so; 10/10 = essential.
 - **Hard**: 0/10 = minutes; 5/10 = a few days, several files, new tests; 10/10 = weeks, rewriting a major part of Filo.
 
-Last updated 2026-10-05, after Audit-28 Phase 4 ([AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md](AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md)), which added two owner decisions (section 2: removing one card or task, folding a group inside a section), saw BL-28 again, and added no new numbered item, so the next new item is still BL-33. Phase 3's outcome records BL-29 (a space typed in a tab's rename box was lost) and BL-30 (Help → Shortcuts failed with one board in two split panes), found and fixed there, and which added BL-31 and BL-32 and two owner decisions (section 2). The next new item is BL-33. Phase 2 took and fixed BL-06 and added BL-27 and BL-28; BL-27 (spaces typed at the end of a line) was then fixed in the same phase at the owner's request. Phase 1 took and fixed BL-14, and its outcome records BL-25 and BL-26, found and fixed there. Phase 0's outcome records BL-22 to BL-24, found and fixed there. Before that, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20 and BL-21. BL-20 (30 MB of unused `node_modules` in the package) was fixed the same day, in that outcome's follow-up. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
+Last updated 2026-10-05, after Audit-28 Phase 5 ([AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md](AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md)), which took and fixed BL-01 and BL-03, records BL-33 (the formatting toolbar's font box blank in a vault whose `app.json` names no font) and BL-34 ("Copy all problems" never reached the clipboard), found and fixed there, and added BL-35. The next new item is BL-36. Before that, after Audit-28 Phase 4, which added two owner decisions (section 2: removing one card or task, folding a group inside a section), saw BL-28 again, and added no new numbered item, so the next new item is still BL-33. Phase 3's outcome records BL-29 (a space typed in a tab's rename box was lost) and BL-30 (Help → Shortcuts failed with one board in two split panes), found and fixed there, and which added BL-31 and BL-32 and two owner decisions (section 2). The next new item is BL-33. Phase 2 took and fixed BL-06 and added BL-27 and BL-28; BL-27 (spaces typed at the end of a line) was then fixed in the same phase at the owner's request. Phase 1 took and fixed BL-14, and its outcome records BL-25 and BL-26, found and fixed there. Phase 0's outcome records BL-22 to BL-24, found and fixed there. Before that, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20 and BL-21. BL-20 (30 MB of unused `node_modules` in the package) was fixed the same day, in that outcome's follow-up. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
 
 ---
 
@@ -22,14 +22,12 @@ None of these loses data. Scores are estimates made when the item was written do
 
 | # | Finding | Found in | Impact | Hard |
 |---|---|---|---|---|
-| BL-01 | The formatting toolbar cuts off its left end at about 1,380 px wide | Audit-27 Phase 3 | 2/10 | 2/10 |
 | BL-02 | Opening a Kanban board with no saved view writes one to its file | Audit-27 Phase 5 | 1/10 | 2/10 |
-| BL-03 | Escape closes the Search panel only while focus is inside it | Audit-27 Phase 6 | 1/10 | 2/10 |
 | BL-04 | With a filter in the search, `C:\foo` loses its backslash | Audit-27 Phase 2 | 1/10 | 2/10 |
 | BL-05 | A Replace skipped because the note changed still moves on to the next match | Audit-27 Phase 2 | 1/10 | 1/10 |
 | BL-07 | The Task List's speed budget has the least room of the scale checks | Audit-27 Phase 6 | 1/10 | 4/10 |
 | BL-08 | About 0.4 MB of memory kept each time a note is loaded into the same editor (seen in tests) | Audit-26 Phase 2 | 1/10 | 3/10 |
-| BL-09 | Three real-file watcher tests can fail when the machine is very busy | Audit-27 Phase 5 | 0/10 | 2/10 |
+| BL-09 | Some real-disk tests (the watcher, recovery snapshots, one folder-delete undo) can fail when the machine is very busy | Audit-27 Phase 5 | 0/10 | 2/10 |
 | BL-10 | A unit test that makes its own write scheduler leaves state behind for the next test | Audit-27 Phase 1 | 0/10 | 1/10 |
 | BL-15 | Text typed with a single `~` each side (`a ~one~ b`) shows struck through on GitHub | Library updates Phase 5 | 1/10 | 3/10 |
 | BL-16 | A `~` typed right before struck text makes GitHub show the tildes and strike nothing | Library updates Phase 5 | 1/10 | 2/10 |
@@ -39,12 +37,7 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-28 | The Kanban 300 "tab comes back in under 0.5 s" scale budget fails now and then on a spike | Audit-28 Phase 2 | 0/10 | 2/10 |
 | BL-31 | Kanban's "From Template…" lists board templates too; picking one makes a card from its text and drops its board | Audit-28 Phase 3 | 1/10 | 1/10 |
 | BL-32 | A board template can be started only from a Mind Map (Ctrl+T and Insert Template are Mind Map only) | Audit-28 Phase 3 | 1/10 | 2/10 |
-
-### BL-01: the formatting toolbar cuts off its left end (Impact 2/10, Hard 2/10)
-- **What you see:** at a window about 1,380 px wide or narrower, the text-formatting toolbar overflows. Its left end is cut off, so the font box shows only its arrow, and you can't scroll to it.
-- **How to see it:** open a note, then narrow the window to about 1,380 px.
-- **Where:** `src/renderer/components/layout/TextFormattingToolbar.svelte`, `.toolbar-section.formatting` (`justify-content: center; overflow-x: auto;`). Content centred in a scrolling box spills off both ends, and the left overflow can't be scrolled to.
-- **Fix idea:** `justify-content: safe center` (Chromium supports it in flexbox), or auto margins on the first and last child, so an overflowing toolbar starts at its left edge and scrolls. Check the Phase 2 screenshot width and the a11y E2E scan afterwards.
+| BL-35 | Below about 1,300 px the Task List's Table of Contents opens over the list, and can't be closed | Audit-28 Phase 5 | 2/10 | 2/10 |
 
 ### BL-02: opening a Kanban board with no saved view writes one (Impact 1/10, Hard 2/10)
 - **What you see:** nothing on screen. About a second after a Kanban board shows, Filo adds `settings.lastView` (`sortBy`, `filterTags`, `filterProp`) to its `.board.json`.
@@ -52,11 +45,6 @@ None of these loses data. Scores are estimates made when the item was written do
 - **Why it matters later:** when the first real board-format migration step exists, a migrated Kanban board without a `lastView` would be saved just by opening it. It would still be copied to `.filo/recovery/` first, so nothing is lost, but KNOWN_LIMITATIONS #29's "the file changes only when you change the board" wouldn't hold for it. **Fix before adding the first real step to `MIGRATION_STEPS`.**
 - **Where:** `src/renderer/components/boards/KanbanBoard.svelte`, the "lastView persistence" `$effect`. Once the board's filters are hydrated it arms a 300 ms persist through `flushLastViewForBoard` (`lib/boards/lastViewFlush.ts`). That skips a write equal to the stored `lastView`, but a board with none stored never equals the default view, so the default is written.
 - **Fix idea:** treat a missing `lastView` as the default view in that comparison, so it is written only once the user changes the sort or a filter. Check the Task List's `lastView` the same way. The E2E `noBytesByLooking.e2e.ts` could gain a hand-written Kanban board with no `lastView`.
-
-### BL-03: Escape closes the Search panel only while focus is inside it (Impact 1/10, Hard 2/10)
-- **What you see:** open Search (Ctrl+Shift+F), drag it by its header or click anywhere outside it, then press Escape: nothing happens. The ✕ button works (fixed in Audit-27 Phase 6).
-- **Where:** `src/renderer/components/search/SearchPanel.svelte`, `onPanelKeydown` on the panel's `<section>`, so it only hears keys while focus is inside.
-- **Fix idea:** while the panel is open, close it on an Escape that nothing else handled. Check first that it doesn't steal Escape from an open dialog, menu, popup, title edit or the canvas selection. `src/tests/e2e/searchPanel.e2e.ts` can take the case.
 
 ### BL-04: with a filter in the search, `C:\foo` loses its backslash (Impact 1/10, Hard 2/10)
 - **What you see:** a search such as `tag:x C:\foo` searches for `C:foo`. Quoting doesn't help, because the escape is read inside quotes too. A search with no filter (no `tag:`, `board:` …) is taken exactly as typed and isn't affected.
@@ -79,9 +67,9 @@ None of these loses data. Scores are estimates made when the item was written do
 - **Where:** `src/renderer/lib/editor/noteEditorView.ts` (the reload) and `markdownSync.ts`.
 - **Fix idea:** first measure in the built app (a heap snapshot after many disk changes to an open note). Fix only if it grows there.
 
-### BL-09: three watcher tests can miss under heavy load (Impact 0/10, Hard 2/10)
-- **What you see:** in a full `ci:verify` on a busy machine, `watcherOwnWriteBytes.test.ts` ("is reported when its bytes differ from ours") or `fileWatcherOwnMoves.test.ts` ("a rename by another program is still reported") can fail once; Audit-28 Phase 3 also saw `fileWatcherSuppressCaseFold.test.ts` ("a sibling file with a similar prefix is NOT swallowed by suppress") fail once that way. All pass alone and on a quiet machine. This affects the tests only, not the app.
-- **Fix idea:** give their waits for a real file-system event more room, or wait on the event instead of a fixed time, without loosening what they check.
+### BL-09: real-disk tests can miss under heavy load (Impact 0/10, Hard 2/10)
+- **What you see:** in a full `ci:verify` on a busy machine, `watcherOwnWriteBytes.test.ts` ("is reported when its bytes differ from ours") or `fileWatcherOwnMoves.test.ts` ("a rename by another program is still reported") can fail once; Audit-28 Phase 3 also saw `fileWatcherSuppressCaseFold.test.ts` ("a sibling file with a similar prefix is NOT swallowed by suppress") fail once that way. Audit-28 Phase 5, with a game running on the PC, saw `fileWatcherOwnMoves.test.ts` (two cases), `watcherOwnWriteReconcile.test.ts`, `watcherSyncEdges.test.ts` and two `recoverySnapshot.test.ts` cases (the retention cap, the tiebreak) time out or miss, and once, on a quieter machine, the characterisation case "the Root Directory is cleared, and undo puts it back" (`folderPinsAndVaultName.test.ts`) got a "Could not read vault tree (ENOENT)" toast from a tree read that met the folder mid-move. All pass alone and on a quiet machine. This affects the tests only, not the app.
+- **Fix idea:** give their waits for a real file-system event more room, or wait on the event instead of a fixed time, without loosening what they check. `recoverySnapshot.test.ts` could take the 20 s budget `recoverySnapshotKeep.test.ts` got (BL-26). The tree-read toast is worth a look in the app too: a sidebar refresh that meets a folder mid-move could retry once before saying so.
 
 ### BL-10: test schedulers leave state behind (Impact 0/10, Hard 1/10)
 - **What you see:** a unit test that makes its own `createScheduler` leaves its armed-path check registered for the rest of its file, so a scheduler left armed by one test can keep a path "pending" in the next.
@@ -134,6 +122,13 @@ None of these loses data. Scores are estimates made when the item was written do
 - **What you see:** the Template Browser (Ctrl+T, or the canvas menu's Insert Template) opens only on a Mind Map, so a board template (which makes a new Kanban board, Task List or Mind Map) is reached only from a Mind Map tab. A Kanban or Task List user has no way to it, and no other place lists board templates.
 - **Where:** `components/layout/AppShell.svelte` (`template:open` is `enabled: onMindMap`), `components/modals/TemplateBrowser.svelte`.
 - **Fix idea:** let Ctrl+T open the browser on every board and on a Document tab, showing the layout templates (and inserting a Markdown template as a tile) only on a Mind Map; or add "New board from template…" to the New Tab menu.
+
+### BL-35: the Task List's Table of Contents covers the list at laptop widths (Impact 2/10, Hard 2/10)
+- **What you see:** at a window about 1,300 px wide or narrower, a Task List's floating Table of Contents first opens over the right part of the list: the filter chips' end, the progress count and the right ends of the rows. It can be dragged and resized but not closed, and its place is saved per board once moved. At 1,366 px and wider it opens beside the list.
+- **How to see it:** make a Task List in a window 1,280 px wide (or 1,100 px with the vault sidebar docked).
+- **Where:** `src/renderer/lib/tasklist/tocPlacement.ts` (`tocDefaultBounds` falls back to the top-right corner when there is no room beside the list), `src/renderer/components/boards/FloatingTocPanel.svelte`.
+- **Not new in Phase 5:** the Phase 4 build does the same at these widths. Phase 5 kept 1,366 px as it was: the docked sidebar pushes the workspace aside only below 1,340 px, where the list had no room beside it anyway.
+- **Fix idea:** let the panel fold to its header (a Table of Contents button that shows and hides it, remembered per board), folded at first where there is no room beside the list; or move the list to the left of the panel while it is open.
 
 ---
 

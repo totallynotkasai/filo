@@ -126,7 +126,7 @@
         oninput={() => (error = null)}
         type="text"
         class="link-input"
-        placeholder="example.com or filo://board/<id>"
+        placeholder="example.com, or a link copied in Filo"
         aria-invalid={error !== null}
         aria-describedby={error !== null ? 'link-popup-error' : undefined}
       />

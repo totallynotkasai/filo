@@ -72,7 +72,7 @@ describe('rescue copies of .filo/ state', () => {
     const before = { general: { globalFont: 'Old' }, mindmap: {}, kanban: {}, tasklist: {}, document: {} } as ProjectSettings;
     const after = { ...before, general: { globalFont: 'New' } } as ProjectSettings;
     const workspace = { openTabs: [], activeTabId: '' };
-    const layout = { paneTree: null, activePaneId: null, boardToolbars: {}, spellcheck: true };
+    const layout = { paneTree: null, activePaneId: null, boardToolbars: {}, mindMapPanels: {}, spellcheck: true };
     seedConfigSnapshots(before, 'light', workspace, layout);
     scheduleConfigWrite(() => ({ vaultRoot: VAULT, settings: after, theme: 'light', workspace, layout }));
     await waitFor(() => unsavedWork().failed.length === 1);

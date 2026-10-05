@@ -22,7 +22,7 @@ const LOC_LIMIT = 1000;
 const FILE_SIZE_ALLOWLIST = {
   'src/renderer/components/boards/TaskListBoard.svelte': 1170,
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1248,
-  'src/renderer/components/boards/TaskItem.svelte': 1180,
+  'src/renderer/components/boards/TaskItem.svelte': 1161,
 };
 
 // The refactor characterisation suite: user-visible behaviour the file-model
@@ -70,6 +70,7 @@ const CHARACTERISATION_SPECS = {
   'spellCheckSetting.test.ts': 2,
   'makingAndFindingNotes.test.ts': 16,
   'listsAndBoards.test.ts': 9,
+  'interfaceAroundViews.test.ts': 12,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

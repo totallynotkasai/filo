@@ -10,8 +10,8 @@
    * Activation is tracked at the workspace level (`workspaceStore.activePaneId`).
    * A capture-phase pointerdown listener activates the pane on first input
    * so the global facade pivots BEFORE downstream pointer handlers (drag,
-   * zoom, select) read board/canvas/selection state. Activation also
-   * retargets the focused tab.
+   * zoom, select) read board/canvas/selection state; focus moving into the
+   * pane activates it as well. Activation also retargets the focused tab.
    */
   import { onMount, onDestroy, setContext } from 'svelte';
   import BoardRouter from '../boards/BoardRouter.svelte';
@@ -120,6 +120,12 @@
     activate();
   }
 
+  // Keyboard focus moving into the pane (Tab, or a focus brought back by a
+  // dialog) activates it too, so the keys reach the board the caret is in.
+  function onFocusIn() {
+    activate();
+  }
+
   function closePane(e: MouseEvent) {
     e.stopPropagation();
     workspaceStore.closeLeaf(paneId);
@@ -132,6 +138,7 @@
   class="pane-view"
   class:active={showActiveOutline}
   onpointerdowncapture={onPointerDownCapture}
+  onfocusin={onFocusIn}
   role={tab ? 'tabpanel' : 'group'}
   id={tab ? `tabpanel-${tab.id}` : undefined}
   aria-labelledby={tab ? `tab-${tab.id}` : undefined}

@@ -18,7 +18,9 @@
 </script>
 
 <div class="settings-action-bar" role="group" aria-label="Unapplied changes">
-  <span class="settings-action-status" role="status">{dirty ? 'Unsaved changes' : 'No changes'}</span>
+  <span class="settings-action-status" role="status">
+    {dirty ? 'Unsaved changes: Apply saves them, Revert drops them.' : 'No changes. Changes here wait for Apply.'}
+  </span>
   <div class="settings-action-buttons">
     <button class="action-btn revert" onclick={onRevert} disabled={!dirty || busy}>Revert</button>
     <button class="action-btn apply" onclick={onApply} disabled={!dirty || busy}>Apply</button>

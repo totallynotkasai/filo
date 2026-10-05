@@ -34,6 +34,7 @@
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { createTile } from '../../stores/tiles.svelte';
   import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
+  import { releaseTextFocus } from '../../lib/boards/componentFlush';
   import { createNewNote, folderOfNote } from '../../lib/notes/newNote';
   import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
   import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
@@ -44,6 +45,7 @@
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
   import { installLinkClickHandling } from '../../lib/editor/linkClicks';
+  import { installTextMenu } from '../../lib/editor/textMenu';
   import { loadVaultFonts } from '../../lib/fonts/importedFonts';
   import { scheduleBoardModulePreload } from '../../lib/boards/boardModulePreload';
   import { allBoardModuleLoaders } from '../../core/boardModules';
@@ -314,12 +316,12 @@
       registerCommandWithShortcut({
         name: 'app:cancel', label: 'Cancel / Close', description: 'Cancel / Close',
         binding: { key: 'Escape' },
-        execute: () => {
-          // Layering-aware: close only the topmost dismissable layer
-          // (confirm dialog → modal → context menu) so a stacked confirm
-          // doesn't take the modal beneath it down with it.
-          uiStore.cancelTopLayer();
-        },
+        // Layering-aware: close only the topmost dismissable layer
+        // (confirm dialog → modal → context menu) so a stacked confirm
+        // doesn't take the modal beneath it down with it. With none open
+        // the key is left unprevented, for the board's own Escape and,
+        // after them, the Search panel's.
+        execute: () => uiStore.cancelTopLayer() !== null,
       }),
 
       // ── New tile at viewport center ──
@@ -410,9 +412,11 @@
         label: 'Search Vault',
         description: 'Open the vault-wide Search panel',
         binding: { key: 'f', ctrl: true, shift: true },
-        // Fires from inside a TipTap editor so users editing a tile can hop
-        // into Search without breaking focus. Mirrors editor:insert-link.
+        // Fires from inside a TipTap editor or a text field so users editing
+        // a tile can hop into Search without breaking focus. It changes no
+        // text being typed.
         allowInEditor: true,
+        allowInField: true,
         execute: () => {
           if (vaultStore.project === null) return;
           searchStore.openPanel('find');
@@ -422,18 +426,23 @@
       // ── Tab bar a11y ──
       //
       // Ctrl+W closes the active tab; Ctrl+Tab cycles forward, Ctrl+Shift+Tab
-      // cycles backward. All three respect the standard hotkeys editor
-      // guard (an editor with `allowInEditor: false` will skip these),
-      // matching browser / VS Code semantics.
+      // cycles backward. All three work while typing, as in a browser: the
+      // edit ends first (`releaseTextFocus`), as a click on a tab ends it.
       registerCommandWithShortcut({
         name: 'tab:close',
         label: 'Close Tab',
         description: 'Close the active tab',
         binding: { key: 'w', ctrl: true },
+        allowInEditor: true,
+        allowInField: true,
         execute: () => {
           const activeId = tabStore.activeTabId;
           if (!activeId) return;
-          tabStore.close(activeId);
+          releaseTextFocus();
+          // A title that blur committed is written by a command: the close
+          // waits for it to queue its write, so the close's own save takes
+          // it (else the close finds it unsaved and asks).
+          void historyStore.whenChainSettled().then(() => tabStore.close(activeId));
         },
       }),
       registerCommandWithShortcut({
@@ -441,8 +450,11 @@
         label: 'Next Tab',
         description: 'Cycle to the next open tab',
         binding: { key: 'Tab', ctrl: true },
+        allowInEditor: true,
+        allowInField: true,
         execute: () => {
           if (tabStore.count < 2) return;
+          releaseTextFocus();
           const ids = tabStore.tabs.map((t) => t.id);
           const cur = tabStore.activeTabId;
           if (!cur) return;
@@ -457,8 +469,11 @@
         label: 'Previous Tab',
         description: 'Cycle to the previous open tab',
         binding: { key: 'Tab', ctrl: true, shift: true },
+        allowInEditor: true,
+        allowInField: true,
         execute: () => {
           if (tabStore.count < 2) return;
+          releaseTextFocus();
           const ids = tabStore.tabs.map((t) => t.id);
           const cur = tabStore.activeTabId;
           if (!cur) return;
@@ -485,11 +500,21 @@
   // opens; everywhere else a click opens (see linkClicks.ts).
   $effect(() => installLinkClickHandling());
 
+  // The right-click menu on text: main asks whether a link can go at the
+  // caret, and its Insert Link opens the popup here.
+  $effect(() => installTextMenu());
+
+  // In a narrow window the docked sidebar pushes the workspace aside, so it
+  // never covers the start of a note's lines (uiStore.sidebarPushesWorkspace).
+  $effect(() => uiStore.trackWindowWidth());
+  let dockedSidebarShown = $derived(vaultStore.project !== null && !shouldShowHome && !uiStore.sidebarFloating);
+
   // Vaults are opened via folder picker from the HomeScreen.
   // No .filo file association handling needed.
 
   // Prevent native context menu on the app — except inside editable text,
-  // where the browser's native menu provides spell-check suggestions.
+  // where main shows its text menu (spelling, Cut, Copy, Paste, Select All,
+  // and Insert Link in a note: main/utils/textMenu.ts).
   function handleContextMenu(e: MouseEvent) {
     if (isEditableTextTarget(e.target)) return;
     e.preventDefault();
@@ -502,11 +527,16 @@
   <GlobalToolbar onGoHome={goHome} showSidebarToggle={!shouldShowHome} />
 
   <div class="app-body">
-    {#if vaultStore.project !== null && !shouldShowHome && !uiStore.sidebarFloating}
+    {#if dockedSidebarShown}
       <VaultSidebar open={uiStore.sidebarOpen} />
     {/if}
 
-    <main id="main-workspace" class="workspace" aria-label="Board workspace">
+    <main
+      id="main-workspace"
+      class="workspace"
+      aria-label="Board workspace"
+      style:margin-left={dockedSidebarShown && uiStore.sidebarPushesWorkspace ? `${uiStore.sidebarWidth}px` : null}
+    >
       {#if shouldShowHome}
         <HomeScreen onReturnToVault={() => showHome = false} />
       {:else if tabStore.count > 0}

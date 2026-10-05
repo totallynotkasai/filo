@@ -1,10 +1,12 @@
 import type { ContextMenuItem } from '../../stores/ui.svelte';
 import { STYLE_ICON_PATH } from '../../constants/icons';
-import { MENU_ICON, MENU_LABEL } from '../../constants/menuVocabulary';
+import { MENU_ICON, MENU_LABEL, copyLinkLabel } from '../../constants/menuVocabulary';
 
 interface TaskMenuOpts {
   completed: boolean;
   onOpenAsDocument: () => void;
+  /** Puts a link to the task on the clipboard. */
+  onCopyLink?: () => void;
   onRename: () => void;
   /** Present when the task can take a subtask. */
   onAddSubtask?: () => void;
@@ -25,8 +27,9 @@ interface TaskMenuOpts {
 export function buildTaskContextMenu(opts: TaskMenuOpts): ContextMenuItem[] {
   const items: ContextMenuItem[] = [
     { id: 'open', label: MENU_LABEL.openAsDocument, icon: MENU_ICON.openAsDocument, action: opts.onOpenAsDocument },
-    { id: 'edit', label: 'Rename task', icon: MENU_ICON.rename, action: opts.onRename },
   ];
+  if (opts.onCopyLink) items.push({ id: 'copy-link', label: copyLinkLabel('task'), icon: MENU_ICON.link, action: opts.onCopyLink });
+  items.push({ id: 'edit', label: 'Rename task', icon: MENU_ICON.rename, action: opts.onRename });
   if (opts.onAddSubtask) {
     items.push({ id: 'add-subtask', label: 'Add subtask', icon: MENU_ICON.add, action: opts.onAddSubtask });
   }

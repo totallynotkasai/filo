@@ -5,6 +5,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import { reportError } from '../lib/utils/errorBus';
 import type { RelinkTargets } from '../lib/vault/relinkTargets';
+import { sidebarPushesWorkspace } from '../lib/utils/sidebarLayout';
 
 // ── Sidebar ──
 let sidebarOpen = $state(true);
@@ -24,6 +25,9 @@ let floatingBounds = $state<{ x: number; y: number; width: number; height: numbe
 let sidebarHydrated = false;
 let sidebarWidthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let floatingBoundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+// The window's width, for the docked sidebar's push (`sidebarPushesWorkspace`).
+let windowWidth = $state(typeof window === 'undefined' ? 1440 : window.innerWidth);
 
 // ── Board Toolbar ──
 let boardToolbarVisible = $state(true);
@@ -221,6 +225,23 @@ export const uiStore = {
     sidebarFloating = floating;
     if (!sidebarHydrated) return;
     void window.filo.invoke('sidebar:set-state', { floating });
+  },
+
+  /**
+   * Whether the docked sidebar, open, takes its width from the workspace
+   * instead of lying over it: in a window too narrow for a centred page
+   * beside it (`lib/utils/sidebarLayout.ts`).
+   */
+  get sidebarPushesWorkspace() {
+    return sidebarOpen && !sidebarFloating && sidebarPushesWorkspace(windowWidth, sidebarWidth);
+  },
+
+  /** Follows the window's width while mounted; returns the unsubscribe. */
+  trackWindowWidth(): () => void {
+    const onResize = (): void => { windowWidth = window.innerWidth; };
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   },
 
   get floatingBounds() { return floatingBounds; },

@@ -93,7 +93,7 @@ export async function seedTextFileForNewTile(
     reportError(
       'boardCache.create-text-md',
       err,
-      `Failed to create backing file ${filename} for new text tile`,
+      `Couldn't create the note "${filename}" for the new tile`,
       filename,
     );
   }

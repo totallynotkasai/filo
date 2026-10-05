@@ -1,10 +1,12 @@
 import type { ContextMenuItem } from '../../stores/ui.svelte';
 import { STYLE_ICON_PATH } from '../../constants/icons';
-import { MENU_ICON, MENU_LABEL, selectedHeading } from '../../constants/menuVocabulary';
+import { MENU_ICON, MENU_LABEL, copyLinkLabel, selectedHeading } from '../../constants/menuVocabulary';
 
 interface CardMenuOpts {
   /** Present for a note-backed card; opens its note in a Document tab. */
   onOpenAsDocument?: () => void;
+  /** Puts a link to the card on the clipboard. */
+  onCopyLink?: () => void;
   onStyle: () => void;
   /** Drops the card's placement; the note stays in the vault. */
   onRemove: () => void;
@@ -21,11 +23,10 @@ interface CardMenuOpts {
 export function buildCardContextMenu(opts: CardMenuOpts): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
   if (opts.onOpenAsDocument) {
-    items.push(
-      { id: 'open-as-document', label: MENU_LABEL.openAsDocument, icon: MENU_ICON.openAsDocument, action: opts.onOpenAsDocument },
-      { id: 'div', label: '', divider: true },
-    );
+    items.push({ id: 'open-as-document', label: MENU_LABEL.openAsDocument, icon: MENU_ICON.openAsDocument, action: opts.onOpenAsDocument });
   }
+  if (opts.onCopyLink) items.push({ id: 'copy-link', label: copyLinkLabel('card'), icon: MENU_ICON.link, action: opts.onCopyLink });
+  if (items.length > 0) items.push({ id: 'div', label: '', divider: true });
   items.push(
     { id: 'style', label: MENU_LABEL.style, icon: STYLE_ICON_PATH, action: opts.onStyle },
     { id: 'remove', label: MENU_LABEL.removeFromBoard, icon: MENU_ICON.remove, danger: true, action: opts.onRemove },

@@ -241,7 +241,7 @@ describe('app shortcuts', () => {
       ['search:open', 'f', true],
       ['vault:open', 'o', false],
     ] as const) {
-      registerShortcut({ commandId: id, key, ctrl: true, shift, description: id, allowInEditor: true, action: () => fired.push(id) });
+      registerShortcut({ commandId: id, key, ctrl: true, shift, description: id, allowInEditor: true, action: () => { fired.push(id); } });
     }
     const { view } = await rawViewOf({ 'Plan.md': NOTE }, 'Plan.md');
     await caretToEnd(view);

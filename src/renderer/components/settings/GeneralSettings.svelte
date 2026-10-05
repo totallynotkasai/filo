@@ -267,7 +267,6 @@
 
 <div class="general-settings">
   <h3 class="section-title">General Settings</h3>
-  <p class="auto-save-hint">Changes here save automatically.</p>
 
   <!-- Launch behaviour -->
   <div class="setting-row">
@@ -555,13 +554,6 @@
     font-weight: 600;
     color: var(--text-primary);
     margin: 0 0 4px;
-  }
-
-  .auto-save-hint {
-    margin: 0 0 8px;
-    font-size: 11px;
-    color: var(--text-tertiary);
-    font-style: italic;
   }
 
   .setting-row {

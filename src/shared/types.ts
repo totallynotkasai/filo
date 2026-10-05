@@ -117,6 +117,8 @@ export type IpcChannel =
   | 'font:list-imported'
   // Shell / OS operations
   | 'shell:show-item-in-folder'
+  // Text (or a Filo link with its name) onto the clipboard, written by main
+  | 'shell:copy-text'
   // App lifecycle (main -> renderer)
   | 'app:flush-and-quit'
   // App lifecycle (renderer -> main)
@@ -142,6 +144,12 @@ export type IpcChannel =
   // unapplied Settings, a focused field), pushed when it changes, so main can
   // decide at once whether to hold a Windows shutdown back.
   | 'app:unsaved-state'
+  // A right-click menu on text is about to open: can a link go at the caret?
+  // (main -> renderer), and the answer from the renderer (renderer -> main).
+  | 'app:text-menu-query'
+  | 'app:text-menu-reply'
+  // Insert Link or Edit Link was picked in that menu (main -> renderer).
+  | 'app:insert-link'
   // Sidebar — per-machine state (width, in-app floating mode, bounds)
   | 'sidebar:get-state'
   | 'sidebar:set-state';
@@ -165,7 +173,8 @@ export type SendChannel =
   | 'app:quit-awaiting-user'
   | 'app:drain-heartbeat'
   | 'app:session-ending-done'
-  | 'app:unsaved-state';
+  | 'app:unsaved-state'
+  | 'app:text-menu-reply';
 
 /**
  * Channels the renderer may SUBSCRIBE to via `window.filo.on`: the pure
@@ -190,6 +199,8 @@ export const RECEIVE_CHANNELS: readonly IpcChannel[] = [
   'vault:sync-conflict',
   'app:flush-and-quit',
   'app:session-ending',
+  'app:text-menu-query',
+  'app:insert-link',
 ];
 
 /**

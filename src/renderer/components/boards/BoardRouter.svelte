@@ -106,7 +106,7 @@
           reportError(
             'BoardRouter.auto-create',
             err,
-            `Failed to persist newly-created board "${board?.name ?? t.boardId}"`,
+            `Couldn't save the new board "${board?.name ?? t.boardId}"`,
           ),
         );
       }

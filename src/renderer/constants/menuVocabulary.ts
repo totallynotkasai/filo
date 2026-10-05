@@ -4,9 +4,9 @@
  * the file; "Delete from vault…" moves it to Filo's trash. A label ends in "…"
  * when the action asks for more before it runs (a popup or a confirm).
  *
- * Menus list these in one order: Open, Style, Tags, Lock, Remove, Delete.
- * A menu leaves out what it doesn't offer; its other items keep a sensible
- * place around them.
+ * Menus list these in one order: Open, Copy link, Style, Tags, Lock, Remove,
+ * Delete. A menu leaves out what it doesn't offer; its other items keep a
+ * sensible place around them.
  */
 export const MENU_LABEL = {
   openAsDocument: 'Open as document',
@@ -27,7 +27,13 @@ export const MENU_ICON = {
   rename: 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z',
   add: 'M12 5v14M5 12h14',
   moveTo: 'M5 12h14M13 5l7 7-7 7',
+  link: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
 } as const;
+
+/** "Copy link to tile", "Copy link to note"…: a `filo://` link to paste into a note. */
+export function copyLinkLabel(what: 'board' | 'tile' | 'card' | 'task' | 'note'): string {
+  return `Copy link to ${what}`;
+}
 
 /** "1 card", "3 cards". */
 export function countOf(count: number, singular: string, plural = `${singular}s`): string {

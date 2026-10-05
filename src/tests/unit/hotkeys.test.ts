@@ -206,12 +206,12 @@ describe('hotkeys', () => {
       registerShortcut({
         commandId: 'a', key: 'n', description: 'A',
         enabled: () => false,
-        action: () => fired.push('a'),
+        action: () => { fired.push('a'); },
       });
       registerShortcut({
         commandId: 'b', key: 'n', description: 'B',
         enabled: () => true,
-        action: () => fired.push('b'),
+        action: () => { fired.push('b'); },
       });
 
       dispatchKey({ key: 'n' });
@@ -224,12 +224,12 @@ describe('hotkeys', () => {
       registerShortcut({
         commandId: 'b', key: 'n', description: 'B',
         enabled: () => true,
-        action: () => fired.push('b'),
+        action: () => { fired.push('b'); },
       });
       registerShortcut({
         commandId: 'a', key: 'n', description: 'A',
         enabled: () => false,
-        action: () => fired.push('a'),
+        action: () => { fired.push('a'); },
       });
 
       dispatchKey({ key: 'n' });
@@ -417,9 +417,9 @@ describe('hotkeys', () => {
     it('skips app shortcuts, but Escape and an allowInDialog command still fire', () => {
       initKeyboardShortcuts();
       const fired: string[] = [];
-      registerShortcut({ key: 'z', ctrl: true, description: 'Undo', action: () => fired.push('undo') });
-      registerShortcut({ key: 's', ctrl: true, allowInDialog: true, description: 'Save', action: () => fired.push('save') });
-      registerShortcut({ key: 'Escape', description: 'Cancel', action: () => fired.push('cancel') });
+      registerShortcut({ key: 'z', ctrl: true, description: 'Undo', action: () => { fired.push('undo'); } });
+      registerShortcut({ key: 's', ctrl: true, allowInDialog: true, description: 'Save', action: () => { fired.push('save'); } });
+      registerShortcut({ key: 'Escape', description: 'Cancel', action: () => { fired.push('cancel'); } });
       const dialog = document.createElement('div');
       dialog.setAttribute('aria-modal', 'true');
       const button = document.createElement('button');
@@ -456,9 +456,9 @@ describe('hotkeys', () => {
 
     it('fires an allowInField shortcut from an input or a textarea, and no other', () => {
       const fired: string[] = [];
-      registerShortcut({ key: 's', ctrl: true, allowInField: true, description: 'Save', action: () => fired.push('save') });
-      registerShortcut({ key: 'z', ctrl: true, allowInEditor: true, description: 'Undo', action: () => fired.push('undo') });
-      registerShortcut({ key: 'n', description: 'Add card', action: () => fired.push('add') });
+      registerShortcut({ key: 's', ctrl: true, allowInField: true, description: 'Save', action: () => { fired.push('save'); } });
+      registerShortcut({ key: 'z', ctrl: true, allowInEditor: true, description: 'Undo', action: () => { fired.push('undo'); } });
+      registerShortcut({ key: 'n', description: 'Add card', action: () => { fired.push('add'); } });
       const input = document.createElement('input');
       const textarea = document.createElement('textarea');
       document.body.append(input, textarea);
@@ -473,6 +473,15 @@ describe('hotkeys', () => {
         input.remove();
         textarea.remove();
       }
+    });
+
+    // Escape's app:cancel closes the top layer; with none open it says so, and
+    // the key stays for the board's own Escape and the Search panel's (BL-03).
+    it('leaves a key unprevented when the shortcut found nothing to act on', () => {
+      let open = true;
+      registerShortcut({ key: 'Escape', description: 'Cancel', action: () => { const was = open; open = false; return was; } });
+      expect(press(document.body, { key: 'Escape' }).defaultPrevented).toBe(true);
+      expect(press(document.body, { key: 'Escape' }).defaultPrevented).toBe(false);
     });
 
     it("leaves a key the field already took (the Raw view's own Ctrl+S) alone", () => {

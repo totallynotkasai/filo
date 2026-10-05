@@ -1,7 +1,8 @@
 /**
  * Workspace store — persisted layout state that belongs to "the window",
  * not the project. Split-pane tree, sidebar width, active pane id, the
- * boards' side toolbars, and whether spell check is on.
+ * boards' side toolbars, each Mind Map's minimap and waypoints shown or
+ * hidden, and whether spell check is on.
  * Persisted to `.filo/workspace.json` alongside open-tab state.
  *
  * A pane leaf references a tab id (the tab's board determines what's
@@ -43,11 +44,19 @@ export interface BoardToolbarState {
   pinned: boolean;
 }
 
+/** Whether a Mind Map shows its minimap and its waypoints (both, unless hidden). */
+export interface MindMapPanelsState {
+  minimap: boolean;
+  waypoints: boolean;
+}
+
 export interface WorkspaceLayout {
   paneTree: PaneNode | null;
   activePaneId: string | null;
   /** Each board's side toolbar, by board id. A board left docked and unpinned has no entry. */
   boardToolbars: Record<string, BoardToolbarState>;
+  /** Each Mind Map's minimap and waypoints, by board id. A board showing both has no entry. */
+  mindMapPanels: Record<string, MindMapPanelsState>;
   /** Spell check in every text editor (the toolbar's Spelling button), on unless turned off. */
   spellcheck: boolean;
 }
@@ -56,10 +65,12 @@ const DEFAULT_LAYOUT: WorkspaceLayout = {
   paneTree: null,
   activePaneId: null,
   boardToolbars: {},
+  mindMapPanels: {},
   spellcheck: true,
 };
 
 const DOCKED_TOOLBAR: BoardToolbarState = { position: null, pinned: false };
+const PANELS_SHOWN: MindMapPanelsState = { minimap: true, waypoints: true };
 
 function asToolbarPosition(value: unknown): ToolbarPosition | null {
   if (!value || typeof value !== 'object') return null;
@@ -79,6 +90,26 @@ function asBoardToolbars(value: unknown): Record<string, BoardToolbarState> {
     if (state.position || state.pinned) out[boardId] = state;
   }
   return out;
+}
+
+/** Validated like the toolbars: only a hidden panel is kept, a bad entry is dropped. */
+function asMindMapPanels(value: unknown): Record<string, MindMapPanelsState> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, MindMapPanelsState> = {};
+  for (const [boardId, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!boardId || !entry || typeof entry !== 'object') continue;
+    const { minimap, waypoints } = entry as { minimap?: unknown; waypoints?: unknown };
+    const state: MindMapPanelsState = { minimap: minimap !== false, waypoints: waypoints !== false };
+    if (!state.minimap || !state.waypoints) out[boardId] = state;
+  }
+  return out;
+}
+
+/** The panels map with `boardId` set to `next`; a board showing both needs no entry. */
+function withMindMapPanels(boardId: string, next: MindMapPanelsState): Record<string, MindMapPanelsState> {
+  const { [boardId]: _old, ...rest } = layout.mindMapPanels;
+  void _old;
+  return next.minimap && next.waypoints ? rest : { ...rest, [boardId]: next };
 }
 
 /** The toolbar map with `boardId` set to `next`; a docked, unpinned toolbar needs no entry. */
@@ -189,6 +220,7 @@ export const workspaceStore = {
   get activePaneId() { return layout.activePaneId; },
   get paneTree() { return layout.paneTree; },
   get boardToolbars() { return layout.boardToolbars; },
+  get mindMapPanels() { return layout.mindMapPanels; },
   get spellcheck() { return layout.spellcheck; },
   get leafCount() { return countLeaves(layout.paneTree); },
   get leaves() { return collectLeaves(layout.paneTree); },
@@ -242,6 +274,27 @@ export const workspaceStore = {
   removeBoardToolbar(boardId: string) {
     if (!(boardId in layout.boardToolbars)) return;
     layout = { ...layout, boardToolbars: withBoardToolbar(boardId, DOCKED_TOOLBAR) };
+    notify();
+  },
+
+  /** A Mind Map's minimap and waypoints: shown, unless hidden on this board. */
+  mindMapPanelsOf(boardId: string): MindMapPanelsState {
+    return layout.mindMapPanels[boardId] ?? PANELS_SHOWN;
+  },
+
+  /** Shows or hides one of a Mind Map's panels, remembered for that board. */
+  setMindMapPanel(boardId: string, panel: keyof MindMapPanelsState, shown: boolean) {
+    if (!boardId) return;
+    const current = workspaceStore.mindMapPanelsOf(boardId);
+    if (current[panel] === shown) return;
+    layout = { ...layout, mindMapPanels: withMindMapPanels(boardId, { ...current, [panel]: shown }) };
+    notify();
+  },
+
+  /** A deleted board's panels entry goes with it. */
+  removeMindMapPanels(boardId: string) {
+    if (!(boardId in layout.mindMapPanels)) return;
+    layout = { ...layout, mindMapPanels: withMindMapPanels(boardId, PANELS_SHOWN) };
     notify();
   },
 
@@ -456,6 +509,7 @@ export const workspaceStore = {
       paneTree,
       activePaneId,
       boardToolbars: asBoardToolbars(persisted.boardToolbars),
+      mindMapPanels: asMindMapPanels(persisted.mindMapPanels),
       spellcheck: persisted.spellcheck !== false,
     };
   },

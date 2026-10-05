@@ -29,6 +29,7 @@ const layout = (toolbarX?: number): WorkspaceLayout => ({
   paneTree: null,
   activePaneId: null,
   boardToolbars: toolbarX === undefined ? {} : { b: { position: { x: toolbarX, y: 0 }, pinned: false } },
+  mindMapPanels: {},
   spellcheck: true,
 });
 const settingsWith = (mindmap: Record<string, unknown>): ProjectSettings =>

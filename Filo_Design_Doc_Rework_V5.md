@@ -571,6 +571,8 @@ The Global Toolbar consists of the following buttons:
 
 * **Home** — Takes the user to the home screen where they can manage their vaults and choose to create a new vault or open an existing vault.
 
+* **Settings (Gear button, Ctrl+,)** — Opens Settings, as the vault menu's Settings does. Each Settings tab says how it saves in the same place, the bar above its page: General saves as you make changes and Trash acts at once; Global Defaults and Current Board wait for **Apply** (with **Revert**); on Themes a pick applies at once and the theme editor saves on its Save button.
+
 * **Manage Filo (Dropdown)**
     * **Settings (Button)** — Takes the user into the Filo settings page. Settings are split into two scopes: **Global Settings** (vault-wide defaults stored in `.filo/`) and **Current Board Settings** (per-board overrides stored in the active board's `.board.json`). The override cascade is: **per-element style** (e.g., Tile Style popup) > **Current Board Settings** > **Global Defaults**. If a value is not set at a higher level, the next level down is used. Applying a Theme overwrites Global Defaults — themes are a convenient way to bulk-set Global Defaults rather than a separate cascade layer. Once applied, the user can further customise Global Defaults as they wish; those customised values become the new Global Defaults.
 
@@ -632,7 +634,7 @@ The Global Toolbar consists of the following buttons:
             * **Mind Map Board Settings** — Board Background Colour, Board Background Pattern, Semantic Zoom (Toggle), Dynamic Contrast Text (Toggle), and all Tile/Connection/Frame default overrides.
             * **Kanban Board Settings** — Board Background Colour, Accent Colour, Dynamic Contrast Text (Toggle), and all Column/Tile default overrides.
             * **Task List Board Settings** — Board Background Colour, Accent Colour, Dynamic Contrast Text (Toggle), and all Task default overrides.
-            * **Document Board Settings** — Board Background Colour, Accent Colour, Dynamic Contrast Text (Toggle), and all Document Page default overrides.
+            * **A Document tab** shows a note, which has no board file, so it has no Current Board settings: the tab is off while a note is shown, and says why. A note's page follows Global Defaults → Document, and its line spacing is the note's own (`lineSpacing:` in its frontmatter, from the toolbar).
 
     * **Help (Button)** — See Help button below for full description.
 
@@ -640,7 +642,7 @@ The Global Toolbar consists of the following buttons:
 
 * **Global Redo (Button / Ctrl+Y or Ctrl+Shift+Z)** — Redoes the last undone action on the active board. Uses the same per-board redo stack. This button is faded if there is no redo action available.
 
-* **Search, Find and Replace (Button / Ctrl+Shift+F)** — Opens a floating Search panel in the top-left of the workspace. The panel is draggable so the user can reposition it; closing returns focus to the previously focused element. The find box accepts a query; toggling Replace mode reveals a second box and the Replace / Replace All actions. Supports search operators (combinable; AND-joined):
+* **Search, Find and Replace (Button / Ctrl+Shift+F)** — Opens a floating Search panel in the top-left of the workspace. The panel is draggable so the user can reposition it; closing returns focus to the previously focused element. Escape closes it wherever the focus is (a click on the board takes the focus out of it), once whatever lies above it has had the key: a dialog, a menu or popup, a board's selection or connection mode, or a text field or title being edited. The find box accepts a query; toggling Replace mode reveals a second box and the Replace / Replace All actions. Supports search operators (combinable; AND-joined):
     * `tag:#tagname` — Search by frontmatter tag (leading `#` is optional)
     * `board:boardname` — Restrict to a single board (case-insensitive, quoted strings preserve spaces)
     * `has:connections` — Tiles with at least one connection on either end
@@ -691,6 +693,8 @@ The Global Toolbar consists of the following buttons:
 
 * **Clear formatting** — Removes all bold, italic, font, and size adjustments, returning the text to the default style (a 'T' with a diagonal slash through it).
 
+With no text editor to act on, the formatting controls show disabled (Spelling, a setting for every editor, stays live); the focus moving from an editor into the toolbar keeps that editor as their target, so they can be reached with Tab. At laptop widths the toolbar narrows its boxes rather than run off the end, as far as the room it has calls for (the vault's name and the toolbar scale count): first the dividers and the font and style boxes, then shorter alignment labels, with the note-layout controls (line spacing, indents, Clear formatting) folded into a **More formatting** (⋯) button. A toolbar still too wide scrolls from its left edge. The vault menu's name is cut short with an ellipsis (its tooltip has it whole).
+
 Typing in a note: `# `, `- `, `* `, `1. `, `> ` and `[ ] ` start a heading, list, quote or checkbox once the space after them is typed, never on Enter, and a number of three digits or more (a year opening a sentence) starts no list. A scene break typed on a line of its own (a lone `#`, `* * *`, `- - -`, `_ _ _`, `***`) becomes a horizontal rule on Enter; Ctrl+Z puts the typed line back. Rich text pasted from Word, Google Docs or a web page keeps its bold, italic, underline, colours, fonts, pixel sizes and highlights; the source's own text colour (black or white), main font and point sizes are dropped, so the paste takes the note's look, and Word's bullets become a real list. Ctrl+Shift+V pastes plain text. An image a note embeds (`![map](images/map.png)`) shows from the vault, its address read from the note's folder, in the editor and in a Kanban card's preview. A tile, card, frame or connection title is one line: Enter saves it.
 
 ### Side Toolbar — Mind Map
@@ -715,11 +719,11 @@ Typing in a note: `# `, `- `, `* `, `1. `, `> ` and `[ ] ` start a heading, list
     * **Tags Browser (Button)** — Opens Tag Browser pop-up window. Where the user can see all the tags they have created and how many tiles have each tag. The user can also fade tiles of associated tags, rename, change the colour of tags or delete tags from here. Tags are sourced from both inline `#tags` and frontmatter properties.
     * **Hide All Connection Paths (Toggle)** — Hides all connection paths by switching their opacity to 0. *(Mind Map only)*
     * **Hide All Connection Labels (Toggle)** — Hides all connection labels by switching their opacity to 0. *(Mind Map only)*
-    * **Hide Waypoints (Toggle)** — Hides all waypoints by switching their opacity to 0. *(Mind Map only)*
+    * **Hide Waypoints (Toggle)** — Hides all waypoints by switching their opacity to 0. Remembered for each board (`.filo/workspace.json`), like the minimap. *(Mind Map only)*
     * **Orphan Catcher (Button)** — Highlights all orphaned tiles on the canvas: tiles that have no connections, no tags, and are physically far from any tile cluster, as well as completely empty tiles. Highlighted tiles are visually marked (e.g., pulsing border or distinct overlay colour) and listed in a popup panel. From the panel the user can select individual tiles to navigate to, bulk-select, or delete them. Useful for cleaning up abandoned thoughts on large boards. *(Mind Map only)*
 
 * **Toggle Minimap (Button)**
-    * Mini-Map — when toggled on a mini-map displays in the bottom right of the board it can be used to navigate quickly around the board.
+    * Mini-Map — when toggled on a mini-map displays in the bottom right of the board it can be used to navigate quickly around the board. Shown or hidden is remembered for each board, in `.filo/workspace.json`.
     * Waypoints — On massive boards, panning around gets tedious. Allow users to right-click a spot on the canvas or a specific Tile and select "Save as Waypoint." These waypoints appear as a list next to the Minimap, allowing the user to instantly snap the camera to that specific area.
 
 * **Help (Button)**
@@ -776,7 +780,7 @@ There is no side toolbar for the document board. The document board uses the glo
 
 ## Vault Sidebar
 
-The Vault Sidebar displays the contents of the current vault as a file and folder tree. It allows the user to browse, organise, and manage all files and boards in the vault.
+The Vault Sidebar displays the contents of the current vault as a file and folder tree. It allows the user to browse, organise, and manage all files and boards in the vault. Docked, it lies over the left edge of the workspace while a centred page still clears it; in a window narrower than the Document page plus the sidebar on both sides (1,340 px with the default 240 px sidebar) it pushes the workspace aside instead, so it never covers the start of a note's lines. Popped out, it floats where the user puts it.
 
 * **Search** — Finds files and folders by name, and notes by their title too (the row then shows the title beside the file name), so a note is found by what the user called it.
 * **+ (New note or folder)** — A note or a folder at the vault's top: a new note opens in a Document tab with its title ready to type; a new folder shows with its name ready to type. The same two are on the right-click menu of the empty space below the files, and a folder's right-click menu makes them inside that folder.
@@ -788,6 +792,8 @@ The Vault Sidebar displays the contents of the current vault as a file and folde
 The sidebar shows **filenames**, not note titles (see **Note titles** in the Data Model). Right-clicking an item offers, among others:
 
 * **New note / New folder** *(folders only)* — Makes a note or a folder inside the folder (see **+** above).
+
+* **Copy link to note / Copy link to board** *(a note, or a board Filo has loaded)* — Puts a link to it on the clipboard (see **Links** under General Features).
 
 * **Rename** — Renames the file or folder. Characters that aren't allowed in filenames are blocked with an inline message. Renaming a note's file never changes its title, and every board tile pointing at it follows the new path.
 * **Rename file to match title** *(notes only)* — Renames the `.md` file to its current title (with the same character rules as creation). Undoable.
@@ -879,7 +885,7 @@ Tiles are the main way that the user interacts with the tool. Tiles can be creat
 
 ### Frames
 
-Frames are selectable objects that can be placed on a board, they are used to group tiles together. Frames have a header and a body, the header is where the user can input the frame title and the body is where the user can add tiles to the frame. The user can add tiles to a frame by dragging and dropping them into the frame. The user can remove tiles from a frame by dragging and dropping them out of the frame. Frames can also be moved around the board by dragging and dropping them everything in the frame moves with it. Frames can also be resized by dragging and dropping the corners of the frame.
+Frames are selectable objects that can be placed on a board, they are used to group tiles together. Frames have a header and a body, the header is where the user can input the frame title and the body is where the user can add tiles to the frame. The user can add tiles to a frame by dragging and dropping them into the frame. The user can remove tiles from a frame by dragging and dropping them out of the frame. Frames can also be moved around the board by dragging and dropping them everything in the frame moves with it, frames drawn inside it included (with their tiles); each tile moved then belongs to the frames it lands in, and one undo puts it all back. A frame inside another is drawn above it, whichever was made first. Frames can also be resized by dragging and dropping the corners of the frame.
 
 * **Frame Collapse** — The collapse button collapses the frame, hiding the body of the frame and resizing it to only show the header. All of the tiles within the frame are also hidden when the frame is collapsed.
 * **Frame Title** — The title of the frame, the user can edit this by clicking on it and typing in the new title.
@@ -903,11 +909,13 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 
 * **Tab Bar** — The tab bar is located at the bottom of the screen and is permanently visible. If all tabs are closed the tool defaults to blank screen with a message in the centre that says "Open a Tab to get started". The tab bar displays all the tabs that are currently open and can be used to switch between tabs. Users can double click on the tab name to rename the tab, tabs can be closed by clicking a small "x" next to their name. Closing a tab does not delete it.
 
-* **Split Panes** — Users can drag a tab to the left or right edge of the workspace to create a side-by-side split view. This allows referencing one board while working on another, or dragging tiles between boards. Splits can be horizontal or vertical and are resizable. A maximum of 3 panes can be open simultaneously. The same board can be opened in multiple panes. Undo/redo applies to whichever pane the user is actively editing — each pane targets its board's independent undo stack. If a board displayed in a split pane is deleted from the Vault Sidebar, that pane is automatically closed. Split layout state is persisted in `.filo/workspace.json` and restored on next launch.
+* **Split Panes** — Users can drag a tab to the left or right edge of the workspace to create a side-by-side split view. This allows referencing one board while working on another, or dragging tiles between boards. Splits can be horizontal or vertical and are resizable. A maximum of 3 panes can be open simultaneously. The same board can be opened in multiple panes. Undo/redo applies to whichever pane the user is actively editing — each pane targets its board's independent undo stack. A pane becomes the active one when the user clicks in it or the keyboard focus moves into it (Tab). If a board displayed in a split pane is deleted from the Vault Sidebar, that pane is automatically closed. Split layout state is persisted in `.filo/workspace.json` and restored on next launch.
 
 * **Board Browser** — The board browser is a button that opens a pop-up menu from which the user can view all of their boards. It is located in the bottom left corner of the screen and in line with the Tab Bar. The Board Browser is a list of all the boards that currently exist in the user's vault. From this list the user can open a new tab for a board, rename boards, create new board and delete boards (a deleted board moves to Filo's trash; its notes stay in the vault, and it can be restored from the toast's Undo or Settings → Trash). The user can also drag and drop boards to re-organize them in the browser, they can also CTRL + Click to select multiple boards. There is a search bar at the top of the board browser that allows the user to search for boards by name, the board browser also has a scroll bar if the user has more boards than can fit in the browser window. The Board Type is listed next to the name of the board in the browser.
 
 ## General Features
+
+* **Links** — A link in a note can open a web page, or a board, a tile, card or task, or a note in the vault. **Copy link to …** (on a tab, a tile, a card, a task, and a note or board in the vault sidebar) puts the link on the clipboard twice over: as its address (`filo://board/<id>`, `filo://tile/<board id>/<tile id>`, `filo://note/<path>`) and as a link reading the name of what it opens, so pasting it into a note makes a named link, and pasting it into Insert Link's address box (Ctrl+K) gives the address. A click follows a link; in a note being edited, Ctrl+click does. A link to a note names its path, so it no longer opens the note once the note is renamed or moved (KNOWN_LIMITATIONS #52). Main writes the clipboard; the page itself may not (the permission policy).
 
 * **Edge-Panning** — When a user is dragging a tile or drawing a connection line and their mouse hits the edge of the screen, the canvas should automatically begin panning in that direction. This is crucial for infinite canvases so users don't have to drop the tile, manually pan, and pick it up again.
 * **Viewpoint Rendering** — The canvas viewport uses GPU-accelerated `transform` for smooth panning and zooming. Only tiles within the visible viewport are rendered (powered by the rbush spatial index) to maintain performance on large boards.
@@ -1052,7 +1060,7 @@ A custom-built context menu component replaces the browser/Electron default righ
 - **Activation:** Right-click (or Ctrl+Click on Mac) on canvas, tiles, frames, connections, or tabs
 - **Positioning:** Fixed position at mouse cursor coordinates, clamped to viewport edges
 - **Dismissal:** Click outside the menu, press Escape, or select an item
-- **Prevention:** The native browser/Electron context menu is suppressed via `e.preventDefault()`
+- **Prevention:** The native browser/Electron context menu is suppressed via `e.preventDefault()`, except on editable text (a note, a title being edited, a text field), which gets Filo's **text menu**, built by the main process: the spelling suggestions and **Add to Dictionary** on a misspelled word, then **Cut**, **Copy**, **Paste** and **Select All** (each enabled as the text allows), and in a note's text **Insert Link…** (**Edit Link…** on a link), which opens the Insert Link popup where the menu opened. Text selected in an embedded page offers **Copy**.
 
 ### Menu Items — Mind Map Board (Canvas)
 
@@ -1073,6 +1081,7 @@ Right-clicking on a **tile** (or with tiles selected):
 
 | Item | Icon | Shortcut | Action |
 |---|---|---|---|
+| Copy link to tile | `icon-link` | — | One tile only: puts a link to it on the clipboard (see **Links**) |
 | Style | `icon-palette` | — | Opens the tile style popup (colours, shape, border) |
 | Tags | `icon-tag` | — | Opens the tag editor for the selected tile |
 | ─── | Divider | | |
@@ -1128,6 +1137,7 @@ Right-clicking on a **text tile within a Kanban column**:
 | Item | Icon | Action |
 |---|---|---|
 | Open as Document | `icon-expand` | Opens the tile's `.md` file as a Document board in a new tab (also wired to double-click on the card body) |
+| Copy link to card | `icon-link` | Puts a link to the card on the clipboard (see **Links**) |
 | ─── | Divider | |
 | Remove from Column | `icon-trash` | Drops the placement from this column (danger action; the underlying `.md` and any other placements are preserved) |
 | ─── | Divider | |
@@ -1142,6 +1152,7 @@ Right-clicking on a **task row**:
 | Item | Icon | Action |
 |---|---|---|
 | Open as Document | `icon-expand` | Opens the task's `.md` file as a Document board in a new tab |
+| Copy link to task | `icon-link` | Puts a link to the task on the clipboard (see **Links**) |
 | Tags | `icon-tag` | Opens the tag editor for the task |
 | ─── | Divider | |
 | Toggle Complete | `icon-check` | Toggles the task's completed state |
@@ -1151,12 +1162,13 @@ Right-clicking on a **task row**:
 
 ### Menu Items — Document Board
 
-Right-clicking within the **Document board editor area** uses the standard TipTap/ProseMirror context menu with text editing actions (Cut, Copy, Paste, Select All) plus:
+Right-clicking within the **Document board editor area** (or a text tile's or card's text being edited) shows the text menu (see **Trigger Behaviour**): spelling, Cut, Copy, Paste, Select All, and:
 
 | Item | Icon | Action |
 |---|---|---|
-| Insert Link | `icon-link` | Opens the URL insertion dialog |
-| Insert Template | `icon-file-text` | Opens the template picker (Ctrl+T) |
+| Insert Link… / Edit Link… | — | Opens the Insert Link popup (as Ctrl+K does) |
+
+Templates are inserted from the Template Browser (Ctrl+T on a Mind Map), not from this menu.
 
 ### Menu Items — Tab Bar
 
@@ -1166,6 +1178,7 @@ Right-clicking on a **tab**:
 |---|---|---|
 | Rename Board | `icon-edit` | Focuses the tab name for inline editing |
 | Set Board Icon | `icon-smile` | Opens the icon picker for the tab |
+| Copy link to board / note | `icon-link` | Puts a link to the tab's board, or (a Document tab) its note, on the clipboard (see **Links**) |
 | Split Right | `icon-columns` | Opens this board in a right split pane |
 | Split Down | `icon-rows` | Opens this board in a bottom split pane |
 | ─── | Divider | |

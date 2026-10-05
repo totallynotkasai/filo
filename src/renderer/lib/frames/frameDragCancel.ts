@@ -29,6 +29,8 @@ export interface FrameDragRevertArgs {
   lastY: number;
   /** Tile ids captured at drag start (the set the undo command would move). */
   containedTileIds: string[];
+  /** The frames nested in it that moved with it, at their drag-start positions. */
+  nestedFrames?: ReadonlyArray<{ id: string; startX: number; startY: number }>;
 }
 
 export interface FrameDragRevertDeps {
@@ -46,6 +48,9 @@ export function revertFrameDragOnTeardown(
   // Jitter / never-moved drag: nothing was written, nothing to revert.
   if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
   deps.updateFramePosition(args.frameId, { x: args.startX, y: args.startY });
+  for (const nested of args.nestedFrames ?? []) {
+    deps.updateFramePosition(nested.id, { x: nested.startX, y: nested.startY });
+  }
   for (const tileId of args.containedTileIds) {
     const tile = deps.getTile(tileId);
     // Locked tiles never moved with the drag (`moveContainedTiles` skips

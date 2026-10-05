@@ -114,6 +114,11 @@ describe('IPC channel parity', () => {
       'app:session-ending',
       'app:session-ending-done',
       'app:unsaved-state',
+      // The text right-click menu: main asks, the renderer answers (ipcMain.on
+      // in main.ts), and main sends the picked Insert Link back.
+      'app:text-menu-query',
+      'app:text-menu-reply',
+      'app:insert-link',
       // Audit-12 S1 — preload-internal approved-source registration; registered
       // via ipcMain.on in dialog.ipc.ts (not an ipcMain.handle), fired by the
       // preload's getPathForFile through a direct ipcRenderer.send.

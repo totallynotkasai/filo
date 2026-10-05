@@ -166,7 +166,7 @@ export async function repairRenameCascade(
   const tagFlush = await fileTagsStore.flushPendingSave();
   if (!tagFlush.ok) {
     uiStore.pushToast({
-      text: `${verb} updated the board files but failed to persist tag membership to .filo/tags.json. Reopen the vault to retry.`,
+      text: `${verb} updated the board files, but the moved files' tags couldn't be saved to .filo/tags.json. Reopen the vault to try again.`,
       type: 'error',
       duration: 0,
     });

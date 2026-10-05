@@ -1611,3 +1611,23 @@ file, which mustn't run in the middle of that save.
 **Impact:** Now and then a note keeps a name like `New Card (2).md` after a
 title typed at the last moment; editing its title once more, or "Rename file
 to match title" in the sidebar, gives it the title's name.
+
+## 52. A link to a note names its path, so it stops opening the note once the note moves
+
+**What:** "Copy link to note" (the sidebar, a Document tab) puts
+`filo://note/<path>` on the clipboard, and a note it is pasted into keeps
+that address. When the linked note is renamed or moved, the link still names
+the old path: following it says the note isn't in the vault any more. Links
+to a board, a tile, a card or a task name their ids and keep working.
+
+**Where:** [src/renderer/schema/link.ts](src/renderer/schema/link.ts)
+(`linkToNote`, `decodeFiloLink`), [src/renderer/stores/links.svelte.ts](src/renderer/stores/links.svelte.ts)
+(`openLinkedNote`).
+
+**Why accepted:** A note's only identity is its path (no id in its file,
+by design), and a rename doesn't rewrite the text of other notes: Filo only
+rewrites board files on a rename. Rewriting links in every note that names
+the old path would be a vault-wide text rewrite on each rename.
+
+**Impact:** After renaming or moving a note, links to it from other notes
+need pasting again (Copy link to note, then paste over the old link).

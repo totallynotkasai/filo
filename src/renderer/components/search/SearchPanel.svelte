@@ -9,6 +9,7 @@
   import { replaceAllConfirmBody, searchedText, ONLY_SYNTAX_MATCHES, TOO_MANY_TO_REPLACE } from '../../lib/search/replaceAllText';
   import { groupMatches, snippetParts, MAX_GROUPS_SHOWN, MATCHES_SHOWN_PER_GROUP, type MatchGroup } from '../../lib/search/matchGroups';
   import { handleListKeyNav } from '../../lib/utils/listKeyNav';
+  import { escapeClosesSearchPanel } from '../../lib/search/searchEscape';
 
   /**
    * Vault-wide Search panel.
@@ -125,6 +126,27 @@
   function handleClose(): void {
     searchStore.closePanel();
   }
+
+  // Escape closes the panel wherever the focus is (a click on the board
+  // took it out of the panel), unless something above the panel used the
+  // key: decided once every listener has had it (`escapeClosesSearchPanel`).
+  $effect(() => {
+    if (!searchStore.open) return;
+    let decide: ReturnType<typeof setTimeout> | null = null;
+    function onWindowKeydown(e: KeyboardEvent): void {
+      if (e.key !== 'Escape') return;
+      if (decide) clearTimeout(decide);
+      decide = setTimeout(() => {
+        decide = null;
+        if (searchStore.open && escapeClosesSearchPanel(e, panelEl)) handleClose();
+      }, 0);
+    }
+    window.addEventListener('keydown', onWindowKeydown);
+    return () => {
+      window.removeEventListener('keydown', onWindowKeydown);
+      if (decide) clearTimeout(decide);
+    };
+  });
 
   function toggleReplace(): void {
     const next: SearchMode = searchStore.mode === 'find' ? 'replace' : 'find';

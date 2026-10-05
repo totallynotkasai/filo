@@ -10,6 +10,8 @@ import { navigateToTile } from '../lib/utils/navigation.svelte';
 import { historyStore } from './history.svelte';
 import { AddTileCommand } from '../commands/index';
 import type { Tile } from '../schema/index';
+import { vaultIndexStore } from './vaultIndex.svelte';
+import { openNoteInDocumentTab } from '../lib/notes/openNote';
 
 /**
  * Links store — handles navigation and actions for internal filo:// links.
@@ -39,6 +41,11 @@ export const linksStore = {
         navigateToTile(parsed.targetBoardId, parsed.targetTileId);
         return true;
 
+      case 'note-nav':
+        if (!parsed.targetPath) return false;
+        this.openLinkedNote(parsed.targetPath);
+        return true;
+
       case 'create-tile':
         this.createTileWithText(parsed.text ?? '');
         return true;
@@ -62,6 +69,19 @@ export const linksStore = {
     }
 
     tabStore.open(board.id, board.name, board.type, board.emoji);
+  },
+
+  /**
+   * Opens a linked note in a Document tab, or says it isn't there: a note is
+   * linked by its path, which a rename or a move outside Filo leaves behind.
+   */
+  openLinkedNote(path: string) {
+    if (!vaultIndexStore.getMetadata(path)) {
+      const name = path.split('/').pop() ?? path;
+      uiStore.toast(`"${name}" isn't in the vault any more: it was renamed, moved or deleted.`, 'warning', 4000);
+      return;
+    }
+    openNoteInDocumentTab(path);
   },
 
   /**

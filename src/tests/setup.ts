@@ -52,6 +52,17 @@ if (typeof Range !== 'undefined') {
   }
 }
 
+// jsdom has no ResizeObserver; with no layout nothing would ever resize, so an
+// inert one is what it would report. The formatting toolbar measures its room
+// with one. Chromium (the browser project) has the real one.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver;
+}
+
 if (typeof globalThis.PointerEvent === 'undefined') {
   class JsDomPointerEvent extends MouseEvent {
     pointerId: number;

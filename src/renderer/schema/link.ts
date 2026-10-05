@@ -10,13 +10,15 @@ import { z } from 'zod';
  * - position-nav: Navigate to a specific position on a board
  * - tile-nav: Navigate to a specific tile/task/card on any board type
  *             (Mind Map tile, Task List task, Kanban card)
+ * - note-nav: Open a note (by its vault path) in a Document tab
  * - create-tile: Create a new tile with specific content
  */
 export const FiloLinkSchema = z.object({
   id: z.string().min(1),
-  type: z.enum(['board-nav', 'position-nav', 'tile-nav', 'create-tile']),
+  type: z.enum(['board-nav', 'position-nav', 'tile-nav', 'note-nav', 'create-tile']),
   targetBoardId: z.string().optional(),
   targetTileId: z.string().optional(),
+  targetPath: z.string().optional(),
   targetPosition: z.object({
     // .finite() rejects NaN / ±Infinity that a hand-
     // edited filo:// link could otherwise propagate into pan transforms.
@@ -41,9 +43,10 @@ type FiloLink = z.infer<typeof FiloLinkSchema>;
  * reaches `canvasStore.centerOn` and corrupts the pan transform.
  */
 export const DecodedFiloLinkSchema = z.object({
-  type: z.enum(['board-nav', 'position-nav', 'tile-nav', 'create-tile']),
+  type: z.enum(['board-nav', 'position-nav', 'tile-nav', 'note-nav', 'create-tile']),
   targetBoardId: z.string().optional(),
   targetTileId: z.string().optional(),
+  targetPath: z.string().optional(),
   targetPosition: z.object({
     x: z.number().finite(),
     y: z.number().finite(),
@@ -68,6 +71,8 @@ export function encodeFiloLink(link: FiloLink): string {
       return `filo://position/${link.targetBoardId}/${link.targetPosition?.x ?? 0}/${link.targetPosition?.y ?? 0}`;
     case 'tile-nav':
       return `filo://tile/${link.targetBoardId}/${link.targetTileId}`;
+    case 'note-nav':
+      return linkToNote(link.targetPath ?? '');
     case 'create-tile':
       return `filo://create-tile/${encodeURIComponent(link.text ?? '')}`;
     default:
@@ -111,6 +116,12 @@ export function decodeFiloLink(uri: string): DecodedFiloLink | null {
     case 'tile':
       candidate = { type: 'tile-nav', targetBoardId: parts[1], targetTileId: parts[2] };
       break;
+    case 'note': {
+      const notePath = asLinkedNotePath(parts.slice(1).join('/'));
+      if (notePath === null) return null;
+      candidate = { type: 'note-nav', targetPath: notePath };
+      break;
+    }
     case 'create-tile':
       candidate = { type: 'create-tile', text: decodeURIComponent(parts.slice(1).join('/')) };
       break;
@@ -119,6 +130,44 @@ export function decodeFiloLink(uri: string): DecodedFiloLink | null {
   }
   const parsed = DecodedFiloLinkSchema.safeParse(candidate);
   return parsed.success ? parsed.data : null;
+}
+
+/** The link to a board, as "Copy link to board" puts it on the clipboard. */
+export function linkToBoard(boardId: string): string {
+  return `filo://board/${encodeURIComponent(boardId)}`;
+}
+
+/** The link to a tile, card or task on its board. */
+export function linkToTile(boardId: string, tileId: string): string {
+  return `filo://tile/${encodeURIComponent(boardId)}/${encodeURIComponent(tileId)}`;
+}
+
+/**
+ * The link to a note: its vault path, encoded whole (a `/` too). A note is
+ * named by its path alone, so a link to it follows it only while the file
+ * keeps its name and folder (KNOWN_LIMITATIONS #52).
+ */
+export function linkToNote(path: string): string {
+  return `filo://note/${encodeURIComponent(path)}`;
+}
+
+/**
+ * A note path read from a link, or null: a link comes from any note's text,
+ * so only a plain vault-relative Markdown path is opened (no drive or
+ * leading slash, no `..`, nothing in `.filo/`).
+ */
+function asLinkedNotePath(encoded: string): string | null {
+  let path: string;
+  try {
+    path = decodeURIComponent(encoded);
+  } catch {
+    return null;
+  }
+  if (!path || path.includes('\\') || path.startsWith('/') || /^[a-z]:/i.test(path)) return null;
+  const segments = path.split('/');
+  if (segments.some((s) => s === '' || s === '.' || s === '..')) return null;
+  if (segments[0]?.toLowerCase() === '.filo') return null;
+  return /\.(md|markdown)$/i.test(path) ? path : null;
 }
 
 /**

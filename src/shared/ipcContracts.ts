@@ -483,6 +483,11 @@ export interface IpcChannelMap {
     args: [absolutePath: string];
     result: boolean;
   };
+  // False when main refused the text (too long, a label on a non-Filo link) or the write failed.
+  'shell:copy-text': {
+    args: [text: string, linkLabel?: string];
+    result: boolean;
+  };
 
   // ── App lifecycle (renderer → main) ──────────────────────────────
   'app:ready-to-quit': {
@@ -516,6 +521,11 @@ export interface IpcChannelMap {
   // end the session.
   'app:unsaved-state': {
     args: [mayLoseWork: boolean];
+    result: void;
+  };
+  // The answer to `app:text-menu-query`: whether a link can go at the caret.
+  'app:text-menu-reply': {
+    args: [id: number, context: { link: 'insert' | 'edit' | 'none' }];
     result: void;
   };
 

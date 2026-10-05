@@ -450,9 +450,9 @@ export class MoveTilesCommand extends Command {
     if (missing > 0) {
       console.warn(`[MoveTilesCommand.execute] Skipped ${missing} tile(s) that no longer exist`);
       // Symmetric with the undo toast: tell the user the redo didn't fully
-      // restore the move because some tiles were deleted out-of-band.
+      // restore the move because some tiles were deleted meanwhile.
       uiStore.toast(
-        `Redo skipped ${missing} tile(s) that were deleted out-of-band.`,
+        `Redo couldn't move ${missing === 1 ? '1 tile: it was' : `${missing} tiles: they were`} deleted.`,
         'warning',
         4000,
       );
@@ -474,7 +474,7 @@ export class MoveTilesCommand extends Command {
     if (missing > 0) {
       console.warn(`[MoveTilesCommand.undo] Skipped ${missing} tile(s) that no longer exist`);
       uiStore.toast(
-        `Undo skipped ${missing} tile(s) that were deleted out-of-band.`,
+        `Undo couldn't move ${missing === 1 ? '1 tile back: it was' : `${missing} tiles back: they were`} deleted.`,
         'warning',
         4000,
       );

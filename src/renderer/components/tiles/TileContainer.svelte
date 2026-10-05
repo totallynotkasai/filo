@@ -357,7 +357,7 @@
           use:portal
           class="tag-popup-overlay"
           onclick={closeTagPopup}
-          onkeydown={(e) => { if (e.key === 'Escape') closeTagPopup(); }}
+          onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeTagPopup(); } }}
           role="presentation"
         ></div>
         <div use:portal class="tag-popup-anchor" style="position: fixed; left: {tagPopup.x}px; top: {tagPopup.y}px; z-index: var(--z-tile-popup);">

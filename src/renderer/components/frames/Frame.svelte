@@ -31,6 +31,7 @@
   import { historyStore } from '../../stores/history.svelte';
   import { registerComponentFlush } from '../../lib/boards/componentFlush';
   import { UpdateFrameCommand, MoveFrameCommand } from '../../commands/index';
+  import { framesInside } from '../../lib/frames/nestedFrames';
 
   let {
     frame,
@@ -325,6 +326,8 @@
   // pointer event, not from `frame.position` after `updateFrame`, so it
   // doesn't depend on the cache↔active proxy bridge. Reference: tileDrag.ts.
   let dragContainedTileIds: string[] = [];
+  // The frames nested in this one travel with it, as they were at drag start.
+  let dragNestedFrames: FrameType[] = [];
   let dragRafPending = false;
   let dragLatestEvent: PointerEvent | null = null;
   // Board the frame belonged to when the drag began. The
@@ -347,9 +350,12 @@
     dragStartPosY = frame.position.y;
     lastFrameX = frame.position.x;
     lastFrameY = frame.position.y;
-    // Only unlocked tiles travel with the frame (`moveContainedTiles` skips
-    // locked ones), so only they belong in the undo set.
-    dragContainedTileIds = frame.tileIds.filter((id) => boardStore.getTile(id)?.locked !== true);
+    // The frames nested in this one go with it, and so do their tiles. Only
+    // unlocked tiles travel (`moveTiles` skips locked ones), so only they
+    // belong in the undo set.
+    dragNestedFrames = framesInside(frame, boardStore.frames).map((f) => ({ ...f, position: { ...f.position } }));
+    const travelling = new Set([frame.tileIds, ...dragNestedFrames.map((f) => f.tileIds)].flat());
+    dragContainedTileIds = [...travelling].filter((id) => boardStore.getTile(id)?.locked !== true);
     dragHomeBoardId = boardStore.current?.id ?? null;
     // Batch the spatial revision bumps from each contained-tile move so
     // the viewport-culling consumers only re-derive once per RAF, not once
@@ -389,12 +395,15 @@
     lastFrameX = newX;
     lastFrameY = newY;
 
-    // Move frame.
+    // Move the frame, and the frames nested in it by the same distance.
     boardStore.updateFrame(frame.id, { position: { x: newX, y: newY } });
+    for (const nested of dragNestedFrames) {
+      boardStore.updateFrame(nested.id, { position: { x: nested.position.x + dx, y: nested.position.y + dy } });
+    }
 
     // Move contained tiles with the frame.
     if (Math.abs(tileDx) > 0.01 || Math.abs(tileDy) > 0.01) {
-      framesStore.moveContainedTiles(frame.id, tileDx, tileDy);
+      framesStore.moveTiles(dragContainedTileIds, tileDx, tileDy);
     }
   }
 
@@ -429,9 +438,11 @@
         { x: dragStartPosX, y: dragStartPosY },
         { x: lastFrameX, y: lastFrameY },
         dragContainedTileIds,
+        undefined,
+        dragNestedFrames.map((f) => f.id),
       ));
     }
-    framesStore.updateContainment(frame.id);
+    framesStore.refreshMembership([frame.id, ...dragNestedFrames.map((f) => f.id)], dragContainedTileIds);
   }
 
   // ── Resize ──
@@ -499,6 +510,7 @@
           lastX: lastFrameX,
           lastY: lastFrameY,
           containedTileIds: dragContainedTileIds,
+          nestedFrames: dragNestedFrames.map((f) => ({ id: f.id, startX: f.position.x, startY: f.position.y })),
         },
         {
           // Dual-route: the pane's scope stores while the board is still
@@ -508,8 +520,10 @@
             if (boardStore.frames.some((f) => f.id === id)) {
               boardStore.updateFrame(id, { position });
             } else {
+              const base = id === frame.id ? frame : dragNestedFrames.find((f) => f.id === id);
+              if (!base) return;
               boardCacheStore.persistUpdateFrame(id, {
-                ...frame,
+                ...base,
                 position,
                 updatedAt: Date.now(),
               } as FrameType);

@@ -1,7 +1,7 @@
 /**
  * Detects whether an event target is an editable text element so callers can
- * leave a right-click there to the app's spell-check menu (main process: shown
- * only on a misspelled word; there is no cut / copy / paste menu) instead of
+ * leave a right-click there to the app's text menu (main process: spelling,
+ * Cut, Copy, Paste, Select All, and Insert Link in a note) instead of
  * preempting it with a custom one.
  *
  * Returns true for contenteditable elements (TipTap editors), `<textarea>`,
@@ -47,11 +47,10 @@ export function isContentEditableAware(el: HTMLElement): boolean {
 }
 
 /**
- * Whether a right-click is left to the spell-check menu rather than Filo's:
+ * Whether a right-click is left to the text menu rather than Filo's own:
  * on editable text, except a tile's or card's text (`data-tile-text`) that
  * isn't being edited. Such text shows its tile's or card's menu, loaded
- * editor or not; the text being typed in keeps spell-check (which shows
- * nothing on a word spelt right).
+ * editor or not; the text being typed in gets the text menu.
  */
 export function wantsNativeTextMenu(e: MouseEvent): boolean {
   if (!isEditableTextTarget(e.target)) return false;

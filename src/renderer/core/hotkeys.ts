@@ -34,8 +34,12 @@ export interface ShortcutBinding {
 export interface Shortcut extends ShortcutBinding {
   /** Unique command id (verb:noun). Required for user-customisable shortcuts. */
   commandId?: string;
-  /** Action invoked when the shortcut fires. */
-  action: () => void;
+  /**
+   * Action invoked when the shortcut fires. Returning `false` says it found
+   * nothing to act on: the key is then left unprevented, so a handler later
+   * in the dispatch (or the Search panel's Escape) can still use it.
+   */
+  action: () => void | boolean;
   /** Human-readable label shown in the shortcuts panel. */
   description: string;
   /**
@@ -134,8 +138,7 @@ function handleKeyDown(e: KeyboardEvent) {
       // Skip (don't fire, don't preventDefault) so a same-binding shortcut
       // registered by the active pane can still match — see `enabled` above.
       if (shortcut.enabled && !shortcut.enabled()) continue;
-      e.preventDefault();
-      shortcut.action();
+      if (shortcut.action() !== false) e.preventDefault();
       return;
     }
   }

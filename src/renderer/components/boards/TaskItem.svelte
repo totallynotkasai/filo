@@ -13,11 +13,14 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import type { Tile } from '../../schema/index';
   import type { ResolvedTaskStyle } from '../../lib/styles/effectiveStyle';
+  import { taskRowStyles } from '../../lib/tasklist/taskRowStyle';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { getBodyPreview } from '../../lib/tasks/taskBodyText';
   import { NotesBox } from '../../lib/tasklist/notesBox.svelte';
   import { TaskTitleEdit } from '../../lib/tasklist/taskTitleEdit.svelte';
+  import { copyFiloLink } from '../../lib/utils/copyLink';
+  import { linkToTile } from '../../schema/link';
   import type { SetBodyStatus } from '../../stores/notes.svelte';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { buildTaskContextMenu } from '../../lib/tasklist/taskContextMenus';
@@ -219,37 +222,9 @@
     }
   }
 
-  // `.task-item-wrap` owns border + shadow so one rounded outline encloses
-  // the title strip and the expanded notes panel as a single card.
-  let wrapInlineStyle = $derived.by(() => {
-    if (!taskStyle) return '';
-    const parts: string[] = [];
-    if (taskStyle.borderColor) parts.push(`border-color: ${taskStyle.borderColor}`);
-    if (taskStyle.borderStyle) parts.push(`border-style: ${taskStyle.borderStyle}`);
-    if (taskStyle.borderWidth >= 0) parts.push(`border-width: ${taskStyle.borderWidth}px`);
-    if (taskStyle.shadowIntensity >= 0)
-      parts.push(`box-shadow: 0 1px ${6 * taskStyle.shadowIntensity}px rgba(0,0,0,${0.25 * taskStyle.shadowIntensity})`);
-    return parts.join('; ');
-  });
-
-  // `.task-item` paints the title strip background + text colour only.
-  let taskInlineStyle = $derived.by(() => {
-    if (!taskStyle) return '';
-    const parts: string[] = [];
-    if (taskStyle.headerColor) parts.push(`background-color: ${taskStyle.headerColor}`);
-    if (taskStyle.headerTextColor) parts.push(`color: ${taskStyle.headerTextColor}`);
-    return parts.join('; ');
-  });
-
-  // `.task-notes-panel-inner` paints the expanded notes block. Body Colour
-  // applies here (not the whole row), so a user can dial the notes background independently of the row strip.
-  let notesInlineStyle = $derived.by(() => {
-    if (!taskStyle) return '';
-    const parts: string[] = [];
-    if (taskStyle.bodyColor) parts.push(`background-color: ${taskStyle.bodyColor}`);
-    if (taskStyle.bodyTextColor) parts.push(`color: ${taskStyle.bodyTextColor}`);
-    return parts.join('; ');
-  });
+  // One outline around the title strip and the open notes; the strip's
+  // colours and the notes' own (`taskRowStyles`).
+  let rowStyles = $derived(taskRowStyles(taskStyle));
 
   let titleFontSize = $derived(taskStyle?.fontSizeTitle);
   let bodyFontSize = $derived(taskStyle?.fontSizeBody);
@@ -333,6 +308,7 @@
     uiStore.showContextMenu(e.clientX, e.clientY, buildTaskContextMenu({
       completed,
       onOpenAsDocument: onOpen,
+      onCopyLink: tile.boardId ? () => void copyFiloLink(linkToTile(tile.boardId, tile.id), tile.title) : undefined,
       onRename: () => startEdit(),
       onAddSubtask: onAddSubtask && canAddSubtask ? onAddSubtask : undefined,
       onToggleComplete,
@@ -433,7 +409,7 @@
   class:force-show-buttons={forceShowButtons}
   class:fields-pending={fieldsPending}
   style:--task-depth={depth}
-  style={wrapInlineStyle}
+  style={rowStyles.wrap}
   data-task-id={tile.id}
   data-drag-count={dragCount > 0 ? dragCount : null}
 >
@@ -451,7 +427,7 @@
   tabindex="0"
   aria-current={selected ? 'true' : undefined}
   data-task-id={tile.id}
-  style={taskInlineStyle}
+  style={rowStyles.strip}
 >
   {#if childCount > 0}
     <button
@@ -766,7 +742,7 @@
     closed grid row to collapse to zero.
   -->
   <div class="task-notes-panel" class:open={isExpanded} aria-hidden={!isExpanded}>
-    <div class="task-notes-panel-inner" style={notesInlineStyle}>
+    <div class="task-notes-panel-inner" style={rowStyles.notes}>
       {#if isExpanded}
         <textarea
           bind:this={notesEl}
@@ -836,7 +812,7 @@
     use:portal
     class="tag-popup-overlay"
     onclick={closeTagPopup}
-    onkeydown={(e) => { if (e.key === 'Escape') closeTagPopup(); }}
+    onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeTagPopup(); } }}
     role="presentation"
   ></div>
   <div

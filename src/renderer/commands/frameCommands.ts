@@ -111,6 +111,8 @@ export class MoveFrameCommand extends Command {
   private beforePos: { x: number; y: number };
   private afterPos: { x: number; y: number };
   private containedTileIds: string[];
+  /** The frames nested in it, which moved with it (`framesInside`). */
+  private nestedFrameIds: string[];
 
   constructor(
     frameId: string,
@@ -118,10 +120,13 @@ export class MoveFrameCommand extends Command {
     afterPos: { x: number; y: number },
     containedTileIds: string[],
     boardId?: string,
+    nestedFrameIds: string[] = [],
   ) {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
     this.frameId = frameId;
+    // allow-shallow: frame ids are primitive strings.
+    this.nestedFrameIds = [...nestedFrameIds];
     // allow-shallow: positions are `{x, y}` primitives, containedTileIds
     // are primitive strings.
     this.beforePos = { ...beforePos };
@@ -137,6 +142,10 @@ export class MoveFrameCommand extends Command {
     const dx = pos.x - fromPos.x;
     const dy = pos.y - fromPos.y;
     if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+    for (const id of this.nestedFrameIds) {
+      const nested = boardStore.frames.find((f) => f.id === id);
+      if (nested) boardStore.updateFrame(id, { position: { x: nested.position.x + dx, y: nested.position.y + dy } });
+    }
     const updates = this.containedTileIds
       .map((id) => {
         const tile = boardStore.getTile(id);
@@ -149,15 +158,16 @@ export class MoveFrameCommand extends Command {
 
   execute() {
     this.applyTo(this.afterPos, this.beforePos);
-    // Recompute containment so tiles added or removed between the
-    // original drag and a redo (or any tile whose centre now falls
-    // outside the frame's restored position) get the correct tileIds.
-    framesStore.updateContainment(this.frameId);
+    // Recompute membership so tiles added or removed between the original
+    // drag and a redo (or any tile whose centre now falls outside the
+    // frame's restored position) get the correct tileIds, in the moved
+    // frames and in any frame a moved tile left or landed in.
+    framesStore.refreshMembership([this.frameId, ...this.nestedFrameIds], this.containedTileIds);
   }
 
   undo() {
     this.applyTo(this.beforePos, this.afterPos);
-    framesStore.updateContainment(this.frameId);
+    framesStore.refreshMembership([this.frameId, ...this.nestedFrameIds], this.containedTileIds);
   }
 }
 

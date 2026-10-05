@@ -277,7 +277,7 @@
       title: `Delete column "${col.title}"?`,
       body: tileCount === 0
         ? 'This column will be removed. You can undo via the toolbar history if you change your mind.'
-        : `This column has ${tileCount} tile placement(s). Removing the column drops those placements from this board; the backing vault files are preserved.`,
+        : `This column holds ${tileCount === 1 ? '1 card' : `${tileCount} cards`}. They leave this board with it; their notes stay in the vault. Undo puts them back.`,
       confirmLabel: 'Delete column',
       danger: true,
       onConfirm: () => {
@@ -565,6 +565,7 @@
       openFindBar();
     }
     if (e.key === 'Escape' && !isEditableTextTarget(e.target) && selectionStore.count > 0) {
+      e.preventDefault();
       multiSelect.clearSelectionAndAnchor();
     }
     if ((e.key === 'Delete' || e.key === 'Backspace')
@@ -905,8 +906,9 @@
     return Math.max(0, x + width + 16);
   });
 
+  // A docked sidebar that pushes the workspace aside already clears the columns.
   let dockedShiftPx = $derived.by<number>(() => {
-    if (uiStore.sidebarFloating || !uiStore.sidebarOpen) return 0;
+    if (uiStore.sidebarFloating || !uiStore.sidebarOpen || uiStore.sidebarPushesWorkspace) return 0;
     return uiStore.sidebarWidth;
   });
 </script>

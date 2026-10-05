@@ -732,7 +732,7 @@ export const boardCacheStore = {
       reportError(
         'boardCache.persist',
         err,
-        `Failed to persist board "${board.name}" — not saved to disk`,
+        `Couldn't save the board "${board.name}" to disk`,
       );
       return false;
     } finally {

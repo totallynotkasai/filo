@@ -12,6 +12,9 @@
   import { renameVaultEntry } from '../../lib/vault/renameVaultEntry';
   import { fileNameProblem } from '@shared/fileNames';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
+  import { noteTitle } from '../../stores/noteMeta';
+  import { copyFiloLink } from '../../lib/utils/copyLink';
+  import { linkToBoard, linkToNote } from '../../schema/link';
   import { boardStore } from '../../stores/board.svelte';
   import { normalizePath, samePath, toPosix, toVaultRelative } from '../../lib/utils/path';
   import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
@@ -360,6 +363,20 @@
     await vaultStore.refreshTree();
   }
 
+  /** "Copy link to note" on a note, "Copy link to board" on a board Filo has loaded. */
+  function copyLinkFor(): { what: 'note' | 'board'; action: () => void } | undefined {
+    const relPath = vaultRelativePath();
+    if (isNoteFile) {
+      return { what: 'note', action: () => void copyFiloLink(linkToNote(relPath), noteTitle(relPath) || node.name) };
+    }
+    if (node.isDirectory || !node.name.toLowerCase().endsWith('.board.json')) return undefined;
+    const target = toPosix(relPath).toLowerCase();
+    const paths = boardCacheStore.paths;
+    const boardId = Object.keys(paths).find((id) => toPosix(paths[id] ?? '').toLowerCase() === target);
+    const board = boardId ? vaultStore.project?.boards?.find((b) => b.id === boardId) : undefined;
+    return board ? { what: 'board', action: () => void copyFiloLink(linkToBoard(board.id), board.name) } : undefined;
+  }
+
   function handleDoubleClick() {
     if (node.isDirectory) return;
     const lowerName = node.name.toLowerCase();
@@ -458,6 +475,7 @@
     uiStore.showContextMenu(e.clientX, e.clientY, buildSidebarFileMenu({
       isDirectory: node.isDirectory,
       isNote: isNoteFile,
+      copyLink: copyLinkFor(),
       onNewNote: () => { void newNoteIn(node.path); },
       onNewFolder: () => { void newFolderIn(node.path); },
       onTags: () => {

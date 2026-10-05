@@ -95,7 +95,7 @@ describe('a Document tab whose note is gone', () => {
 });
 
 describe('a text tile whose note is gone', () => {
-  it('Recreate backing file puts the note back with its title', async () => {
+  it('Recreate note puts the note back with its title', async () => {
     const app = await startApp({ 'Plan.md': '---\ntitle: Plan\ntags: [work]\n---\nBody\n' });
     await createBoard(app, 'mindmap');
     await placeNoteOnBoard(app, 'mindmap', 'Plan.md');
@@ -105,7 +105,7 @@ describe('a text tile whose note is gone', () => {
 
     expect(app.exists('Plan.md')).toBe(false);
 
-    await chooseBrokenTileAction(app, tile, 'Recreate backing file');
+    await chooseBrokenTileAction(app, tile, 'Recreate note');
     await waitFor(() => app.exists('Plan.md'), 'the note recreated');
     const text = app.read('Plan.md');
     expect(text).toContain('title: Plan');
@@ -129,7 +129,7 @@ describe('a media tile whose file is gone', () => {
     await waitFor(() => brokenBadgeShown(tile), 'the broken badge', 25000);
     await mediaFailsToLoad(tile);
     await waitFor(() => mediaErrorShown(tile) === 'File not found', '"File not found"');
-    expect(await brokenTileMenuLabels(app, tile)).not.toContain('Recreate backing file');
+    expect(await brokenTileMenuLabels(app, tile)).not.toContain('Recreate note');
   });
 });
 

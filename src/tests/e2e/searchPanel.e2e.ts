@@ -53,3 +53,15 @@ test('the header still moves the panel', async () => {
   await panel.locator('button[aria-label="Close search"]').click();
   await expect(panel).toHaveCount(0);
 });
+
+// BL-03: a click outside the panel took the focus with it, and Escape then did nothing.
+test('Escape closes the panel after a click outside it', async () => {
+  const { win } = launched;
+  const panel = win.locator('.search-panel');
+  await win.keyboard.press('Control+Shift+F');
+  await expect(panel).toBeVisible();
+  await win.locator('main.workspace').click({ position: { x: 520, y: 40 } });
+  await expect(win.locator('#search-find-input')).not.toBeFocused();
+  await win.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+});

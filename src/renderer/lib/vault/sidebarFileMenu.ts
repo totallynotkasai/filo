@@ -1,5 +1,5 @@
 import type { ContextMenuItem } from '../../stores/ui.svelte';
-import { MENU_LABEL } from '../../constants/menuVocabulary';
+import { MENU_LABEL, copyLinkLabel } from '../../constants/menuVocabulary';
 
 /** The sidebar's two ways to make something in a folder. */
 interface MakeInFolder {
@@ -13,6 +13,8 @@ interface SidebarFileMenuOpts extends Partial<MakeInFolder> {
   isDirectory: boolean;
   /** A Markdown note, which can be renamed to match its title. */
   isNote: boolean;
+  /** A note or a board: puts a link to it on the clipboard. */
+  copyLink?: { what: 'note' | 'board'; action: () => void };
   onTags: () => void;
   onRename: () => void;
   onRenameToTitle: () => void;
@@ -37,6 +39,7 @@ export function buildSidebarFileMenu(opts: SidebarFileMenuOpts): ContextMenuItem
   if (opts.isDirectory && opts.onNewNote && opts.onNewFolder) {
     items.push(...makeItems({ onNewNote: opts.onNewNote, onNewFolder: opts.onNewFolder }), { id: 'sep-new', divider: true, label: '' });
   }
+  if (opts.copyLink) items.push({ id: 'copy-link', label: copyLinkLabel(opts.copyLink.what), action: opts.copyLink.action });
   if (!opts.isDirectory) items.push({ id: 'edit-tags', label: MENU_LABEL.tags, action: opts.onTags });
   items.push({ id: 'rename', label: 'Rename', action: opts.onRename });
   if (opts.isNote) items.push({ id: 'rename-to-title', label: 'Rename file to match title', action: opts.onRenameToTitle });

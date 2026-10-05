@@ -21,7 +21,6 @@
   import CurrentBoardMindMap from './CurrentBoardMindMap.svelte';
   import CurrentBoardKanban from './CurrentBoardKanban.svelte';
   import CurrentBoardTaskList from './CurrentBoardTaskList.svelte';
-  import CurrentBoardDocument from './CurrentBoardDocument.svelte';
 
   let board = $derived(settingsBoard());
   let settings = $derived(pendingSettingsStore.effectiveBoardSettings);
@@ -75,8 +74,6 @@
       <CurrentBoardKanban />
     {:else if boardType === 'tasklist'}
       <CurrentBoardTaskList />
-    {:else if boardType === 'document'}
-      <CurrentBoardDocument />
     {/if}
   </div>
 {/if}

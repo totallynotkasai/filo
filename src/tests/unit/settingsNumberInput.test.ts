@@ -97,11 +97,11 @@ describe('every settings number field names a real schema field', () => {
   });
 
   it('Current Board', () => {
-    const byFile: Record<string, 'mindmap' | 'kanban' | 'tasklist' | 'document'> = {
+    // A Document tab shows a note, which has no board file: it has no Current Board fields.
+    const byFile: Record<string, 'mindmap' | 'kanban' | 'tasklist'> = {
       'CurrentBoardMindMap.svelte': 'mindmap',
       'CurrentBoardKanban.svelte': 'kanban',
       'CurrentBoardTaskList.svelte': 'tasklist',
-      'CurrentBoardDocument.svelte': 'document',
     };
     const files = readdirSync(SETTINGS_DIR).filter((f) => f.startsWith('CurrentBoard') && f !== 'CurrentBoardSettings.svelte');
     expect(files.sort()).toEqual(Object.keys(byFile).sort());

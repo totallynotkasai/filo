@@ -12,6 +12,7 @@
   import LinkInsertPopup from './LinkInsertPopup.svelte';
   import { fontFromStack } from '../../../shared/fontStack';
   import { GENERAL_SETTINGS_DEFAULTS } from '../../../shared/generalSettingsDefaults';
+  import { fittingDensity, type ToolbarDensity } from '../../lib/utils/toolbarDensity';
 
   let showTextColorPicker = $state(false);
   let showHighlightColorPicker = $state(false);
@@ -30,7 +31,8 @@
   );
   // The font the selection is shown in: its own font mark, else the global font.
   let shownFont = $derived(fontFromStack(
-    toolbarStore.fontFamily || (vaultStore.project?.settings?.general?.globalFont ?? GENERAL_SETTINGS_DEFAULTS.globalFont)
+    // An empty global font (a vault whose app.json names none) is the default one.
+    toolbarStore.fontFamily || vaultStore.project?.settings?.general?.globalFont || GENERAL_SETTINGS_DEFAULTS.globalFont
   ));
   // The shown font is always listed, so the box never goes blank for a font
   // the lists don't name (a mark pasted in, or a font typed into a file).
@@ -165,6 +167,79 @@
     linkSavedEditor = null;
   }
 
+  // With no editor to act on the controls are shown disabled (Spelling, a
+  // setting for every editor, stays). Focus moving into the toolbar keeps the
+  // editor it came from as the target, so the controls can be reached with
+  // Tab; leaving the toolbar for anything but an editor lets it go.
+  let noEditor = $derived(!toolbarStore.editorActive);
+
+  // DECISION: at laptop widths the controls get narrower rather than run off
+  // the end, as far as the room the toolbar has calls for (`fittingDensity`):
+  // tight, then compact, which folds the note-layout group into "More
+  // formatting". Every control keeps its width (none is squeezed to nothing);
+  // a toolbar still too wide (a large toolbar scale) scrolls from its left edge.
+  let density = $state<ToolbarDensity>('normal');
+  let compact = $derived(density === 'compact');
+  let sectionEl = $state<HTMLDivElement | null>(null);
+  let rowEl = $state<HTMLDivElement | null>(null);
+
+  // The width the controls took at each density seen (not reactive: read by `fit`).
+  const needs: Partial<Record<ToolbarDensity, number>> = {};
+  function fit(): void {
+    if (!sectionEl || !rowEl) return;
+    needs[density] = rowEl.offsetWidth;
+    const next = fittingDensity(sectionEl.clientWidth, needs);
+    if (next !== density) density = next;
+  }
+
+  // Measured again when the room changes (the window, the vault's name), when
+  // the controls change size (the toolbar scale), and after each refold.
+  $effect(() => {
+    const section = sectionEl;
+    const row = rowEl;
+    if (!section || !row) return;
+    const observer = new ResizeObserver(() => fit());
+    observer.observe(section);
+    observer.observe(row);
+    return () => observer.disconnect();
+  });
+  $effect(() => {
+    void density;
+    fit();
+  });
+
+  // Compact, the note-layout group (line spacing, indents, Clear Formatting)
+  // folds into a "More formatting" popover.
+  let showMore = $state(false);
+  let moreBtnRef = $state<HTMLDivElement | null>(null);
+  let morePanelRef = $state<HTMLDivElement | null>(null);
+  let morePanelLeft = $state(0);
+  let morePanelTop = $state(0);
+
+  function toggleMore() {
+    if (!showMore && moreBtnRef) {
+      const rect = moreBtnRef.getBoundingClientRect();
+      morePanelLeft = Math.max(8, Math.min(rect.left, window.innerWidth - 280));
+      morePanelTop = rect.bottom + 4;
+    }
+    showMore = !showMore;
+  }
+
+  function closeMore() {
+    showMore = false;
+    moreBtnRef?.querySelector('button')?.focus();
+  }
+
+  $effect(() => {
+    if (!compact || noEditor) showMore = false;
+  });
+
+  function handleToolbarFocusOut(e: FocusEvent) {
+    const next = e.relatedTarget;
+    if (next instanceof Node && (e.currentTarget as HTMLElement).contains(next)) return;
+    tiptapToolbar.clearActiveEditor();
+  }
+
   function handleDocClick(e: MouseEvent) {
     const target = e.target as Node;
     if (showTextColorPicker && textColorBtnRef && !textColorBtnRef.contains(target) &&
@@ -175,6 +250,9 @@
         (!highlightColorPanelRef || !highlightColorPanelRef.contains(target))) {
       showHighlightColorPicker = false;
     }
+    if (showMore && moreBtnRef && !moreBtnRef.contains(target) && (!morePanelRef || !morePanelRef.contains(target))) {
+      showMore = false;
+    }
   }
 
   $effect(() => {
@@ -184,134 +262,160 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="toolbar-section formatting" onmousedown={() => tiptapToolbar.keepActiveEditor()}>
-  <select
-    class="toolbar-select font-select"
-    title="Font Family"
-    aria-label="Font family"
-    value={shownFont}
-    onfocus={() => tiptapToolbar.keepActiveEditor()}
-    onchange={handleFontChange}
-  >
-    {#each availableFonts as font (font)}
-      <option value={font} style="font-family: {font}">{font}</option>
-    {/each}
-  </select>
+<div
+  class="toolbar-section formatting"
+  class:no-editor={noEditor}
+  class:tight={density !== 'normal'}
+  class:compact
+  title={noEditor ? 'Click into a note or a title to format its text' : undefined}
+  onmousedown={() => tiptapToolbar.keepActiveEditor()}
+  onfocusin={() => tiptapToolbar.keepActiveEditor()}
+  onfocusout={handleToolbarFocusOut}
+  bind:this={sectionEl}
+>
+  <div class="formatting-row" bind:this={rowEl}>
+    <select
+      class="toolbar-select font-select"
+      title="Font Family"
+      aria-label="Font family"
+      disabled={noEditor}
+      value={shownFont}
+      onfocus={() => tiptapToolbar.keepActiveEditor()}
+      onchange={handleFontChange}
+    >
+      {#each availableFonts as font (font)}
+        <option value={font} style="font-family: {font}">{font}</option>
+      {/each}
+    </select>
 
-  <div class="font-size-control">
-    <button class="size-btn" title="Decrease font size" aria-label="Decrease font size" onmousedown={(e) => e.preventDefault()} onclick={() => tiptapToolbar.decreaseFontSize()}>
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    </button>
-    <span class="size-value">{toolbarStore.fontSize}</span>
-    <button class="size-btn" title="Increase font size" aria-label="Increase font size" onmousedown={(e) => e.preventDefault()} onclick={() => tiptapToolbar.increaseFontSize()}>
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    </button>
+    <div class="font-size-control">
+      <button class="size-btn" title="Decrease font size" aria-label="Decrease font size" disabled={noEditor} onmousedown={(e) => e.preventDefault()} onclick={() => tiptapToolbar.decreaseFontSize()}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+      <span class="size-value">{toolbarStore.fontSize}</span>
+      <button class="size-btn" title="Increase font size" aria-label="Increase font size" disabled={noEditor} onmousedown={(e) => e.preventDefault()} onclick={() => tiptapToolbar.increaseFontSize()}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+    </div>
+
+    <div class="toolbar-divider"></div>
+
+    <IconButton title="Bold (Ctrl+B)" disabled={noEditor} active={toolbarStore.bold} pressed={toolbarStore.bold} size="small" onclick={() => tiptapToolbar.toggleBold()}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/></svg>
+    </IconButton>
+
+    <IconButton title="Italic (Ctrl+I)" disabled={noEditor} active={toolbarStore.italic} pressed={toolbarStore.italic} size="small" onclick={() => tiptapToolbar.toggleItalic()}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>
+    </IconButton>
+
+    <IconButton title="Underline (Ctrl+U)" disabled={noEditor} active={toolbarStore.underline} pressed={toolbarStore.underline} size="small" onclick={() => tiptapToolbar.toggleUnderline()}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
+    </IconButton>
+
+    <div class="toolbar-divider"></div>
+
+    <div class="color-picker-inline" bind:this={textColorBtnRef}>
+      <button class="toolbar-color-btn" title="Text Color" aria-label="Text color" disabled={noEditor} onmousedown={(e) => e.preventDefault()} onclick={() => {
+        if (!showTextColorPicker && textColorBtnRef) {
+          const rect = textColorBtnRef.getBoundingClientRect();
+          textColorPanelLeft = rect.left + rect.width / 2;
+          textColorPanelTop = rect.bottom + 4;
+        }
+        showTextColorPicker = !showTextColorPicker;
+        if (showTextColorPicker) showHighlightColorPicker = false;
+      }}>
+        <span class="color-a">A</span>
+        <span class="color-bar" style="background: {toolbarStore.textColor};"></span>
+      </button>
+    </div>
+
+    <div class="color-picker-inline" bind:this={highlightColorBtnRef}>
+      <button class="toolbar-color-btn" title="Highlight Color" aria-label="Highlight color" disabled={noEditor} onmousedown={(e) => e.preventDefault()} onclick={() => {
+        if (!showHighlightColorPicker && highlightColorBtnRef) {
+          const rect = highlightColorBtnRef.getBoundingClientRect();
+          highlightColorPanelLeft = rect.left + rect.width / 2;
+          highlightColorPanelTop = rect.bottom + 4;
+        }
+        showHighlightColorPicker = !showHighlightColorPicker;
+        if (showHighlightColorPicker) showTextColorPicker = false;
+      }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <span class="color-bar" style="background: {toolbarStore.highlightColor};"></span>
+      </button>
+    </div>
+
+    <div class="toolbar-divider"></div>
+
+    <select
+      class="toolbar-select style-select"
+      title="Text Style"
+      aria-label="Text style"
+      disabled={noEditor}
+      value={toolbarStore.heading}
+      onfocus={() => tiptapToolbar.keepActiveEditor()}
+      onchange={handleStyleChange}
+    >
+      {#each HEADING_OPTIONS as option (option.value)}
+        <option value={option.value} class="style-option-{option.value}">{option.label}</option>
+      {/each}
+    </select>
+
+    <div class="toolbar-divider"></div>
+
+    <IconButton title="Spelling & Grammar" size="small" active={toolbarStore.spellcheck} pressed={toolbarStore.spellcheck} onclick={() => toolbarStore.toggleSpellcheck()}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v18"/><path d="M4 8l4 4 8-8"/><path d="M20 21l-4-4"/><path d="M16 21l4-4"/></svg>
+    </IconButton>
+
+    <div class="toolbar-divider"></div>
+
+    <IconButton title={toolbarStore.link ? 'Edit Link (Ctrl+K)' : 'Insert Link (Ctrl+K)'} active={toolbarStore.link} pressed={toolbarStore.link} size="small" disabled={noEditor} onclick={handleInsertLink}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+    </IconButton>
+
+    <select
+      class="toolbar-select align-select"
+      title={toolbarStore.alignInList ? "Text in a list can't be aligned" : 'Text Align'}
+      aria-label="Text alignment"
+      disabled={noEditor || !toolbarStore.alignAvailable}
+      value={toolbarStore.textAlign}
+      onfocus={() => tiptapToolbar.keepActiveEditor()}
+      onchange={(e) => tiptapToolbar.setTextAlign((e.target as HTMLSelectElement).value as 'left' | 'center' | 'right' | 'justify')}
+    >
+      <option value="left">{compact ? 'Left' : 'Align Left'}</option>
+      <option value="center">{compact ? 'Center' : 'Align Center'}</option>
+      <option value="right">{compact ? 'Right' : 'Align Right'}</option>
+      <option value="justify">Justify</option>
+    </select>
+
+    <div class="toolbar-divider"></div>
+
+    <IconButton title="Bulleted List" size="small" disabled={noEditor || !toolbarStore.listsAvailable} onclick={() => tiptapToolbar.toggleBulletList()}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.5" fill="currentColor"/><circle cx="3.5" cy="12" r="1.5" fill="currentColor"/><circle cx="3.5" cy="18" r="1.5" fill="currentColor"/></svg>
+    </IconButton>
+
+    <IconButton title="Numbered List" size="small" disabled={noEditor || !toolbarStore.listsAvailable} onclick={() => tiptapToolbar.toggleOrderedList()}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><text x="2" y="8" font-size="8" fill="currentColor" font-family="sans-serif">1</text><text x="2" y="14" font-size="8" fill="currentColor" font-family="sans-serif">2</text><text x="2" y="20" font-size="8" fill="currentColor" font-family="sans-serif">3</text></svg>
+    </IconButton>
+
+    <IconButton title="Checklist (Ctrl+Shift+9)" size="small" disabled={noEditor || !toolbarStore.listsAvailable} onclick={() => tiptapToolbar.toggleTaskList()}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
+    </IconButton>
+
+    <div class="toolbar-divider"></div>
+
+    {#if compact}
+      <div class="more-anchor" bind:this={moreBtnRef}>
+        <IconButton title="More formatting" ariaLabel="More formatting" size="small" pressed={showMore} disabled={noEditor} onclick={toggleMore}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        </IconButton>
+      </div>
+    {:else}
+      {@render noteLayoutControls()}
+    {/if}
   </div>
+</div>
 
-  <div class="toolbar-divider"></div>
-
-  <IconButton title="Bold (Ctrl+B)" active={toolbarStore.bold} pressed={toolbarStore.bold} size="small" onclick={() => tiptapToolbar.toggleBold()}>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/></svg>
-  </IconButton>
-
-  <IconButton title="Italic (Ctrl+I)" active={toolbarStore.italic} pressed={toolbarStore.italic} size="small" onclick={() => tiptapToolbar.toggleItalic()}>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>
-  </IconButton>
-
-  <IconButton title="Underline (Ctrl+U)" active={toolbarStore.underline} pressed={toolbarStore.underline} size="small" onclick={() => tiptapToolbar.toggleUnderline()}>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
-  </IconButton>
-
-  <div class="toolbar-divider"></div>
-
-  <div class="color-picker-inline" bind:this={textColorBtnRef}>
-    <button class="toolbar-color-btn" title="Text Color" aria-label="Text color" onmousedown={(e) => e.preventDefault()} onclick={() => {
-      if (!showTextColorPicker && textColorBtnRef) {
-        const rect = textColorBtnRef.getBoundingClientRect();
-        textColorPanelLeft = rect.left + rect.width / 2;
-        textColorPanelTop = rect.bottom + 4;
-      }
-      showTextColorPicker = !showTextColorPicker;
-      if (showTextColorPicker) showHighlightColorPicker = false;
-    }}>
-      <span class="color-a">A</span>
-      <span class="color-bar" style="background: {toolbarStore.textColor};"></span>
-    </button>
-  </div>
-
-  <div class="color-picker-inline" bind:this={highlightColorBtnRef}>
-    <button class="toolbar-color-btn" title="Highlight Color" aria-label="Highlight color" onmousedown={(e) => e.preventDefault()} onclick={() => {
-      if (!showHighlightColorPicker && highlightColorBtnRef) {
-        const rect = highlightColorBtnRef.getBoundingClientRect();
-        highlightColorPanelLeft = rect.left + rect.width / 2;
-        highlightColorPanelTop = rect.bottom + 4;
-      }
-      showHighlightColorPicker = !showHighlightColorPicker;
-      if (showHighlightColorPicker) showTextColorPicker = false;
-    }}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-      <span class="color-bar" style="background: {toolbarStore.highlightColor};"></span>
-    </button>
-  </div>
-
-  <div class="toolbar-divider"></div>
-
-  <select
-    class="toolbar-select style-select"
-    title="Text Style"
-    aria-label="Text style"
-    value={toolbarStore.heading}
-    onfocus={() => tiptapToolbar.keepActiveEditor()}
-    onchange={handleStyleChange}
-  >
-    {#each HEADING_OPTIONS as option (option.value)}
-      <option value={option.value} class="style-option-{option.value}">{option.label}</option>
-    {/each}
-  </select>
-
-  <div class="toolbar-divider"></div>
-
-  <IconButton title="Spelling & Grammar" size="small" active={toolbarStore.spellcheck} pressed={toolbarStore.spellcheck} onclick={() => toolbarStore.toggleSpellcheck()}>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v18"/><path d="M4 8l4 4 8-8"/><path d="M20 21l-4-4"/><path d="M16 21l4-4"/></svg>
-  </IconButton>
-
-  <div class="toolbar-divider"></div>
-
-  <IconButton title={toolbarStore.link ? 'Edit Link (Ctrl+K)' : 'Insert Link (Ctrl+K)'} active={toolbarStore.link} pressed={toolbarStore.link} size="small" onclick={handleInsertLink}>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-  </IconButton>
-
-  <select
-    class="toolbar-select align-select"
-    title={toolbarStore.alignInList ? "Text in a list can't be aligned" : 'Text Align'}
-    aria-label="Text alignment"
-    disabled={!toolbarStore.alignAvailable}
-    value={toolbarStore.textAlign}
-    onfocus={() => tiptapToolbar.keepActiveEditor()}
-    onchange={(e) => tiptapToolbar.setTextAlign((e.target as HTMLSelectElement).value as 'left' | 'center' | 'right' | 'justify')}
-  >
-    <option value="left">Align Left</option>
-    <option value="center">Align Center</option>
-    <option value="right">Align Right</option>
-    <option value="justify">Justify</option>
-  </select>
-
-  <div class="toolbar-divider"></div>
-
-  <IconButton title="Bulleted List" size="small" disabled={!toolbarStore.listsAvailable} onclick={() => tiptapToolbar.toggleBulletList()}>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.5" fill="currentColor"/><circle cx="3.5" cy="12" r="1.5" fill="currentColor"/><circle cx="3.5" cy="18" r="1.5" fill="currentColor"/></svg>
-  </IconButton>
-
-  <IconButton title="Numbered List" size="small" disabled={!toolbarStore.listsAvailable} onclick={() => tiptapToolbar.toggleOrderedList()}>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><text x="2" y="8" font-size="8" fill="currentColor" font-family="sans-serif">1</text><text x="2" y="14" font-size="8" fill="currentColor" font-family="sans-serif">2</text><text x="2" y="20" font-size="8" fill="currentColor" font-family="sans-serif">3</text></svg>
-  </IconButton>
-
-  <IconButton title="Checklist (Ctrl+Shift+9)" size="small" disabled={!toolbarStore.listsAvailable} onclick={() => tiptapToolbar.toggleTaskList()}>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
-  </IconButton>
-
-  <div class="toolbar-divider"></div>
-
+{#snippet noteLayoutControls()}
   <div class="line-spacing-control" title={lineSpacingTitle}>
     <svg class="line-spacing-glyph" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="21" y1="6" x2="11" y2="6"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="18" x2="11" y2="18"/><polyline points="4 6 7 3 7 21 4 18"/></svg>
     <select
@@ -333,20 +437,37 @@
     </select>
   </div>
 
-  <IconButton title="Decrease Indent" size="small" onclick={() => tiptapToolbar.decreaseIndent()}>
+  <IconButton title="Decrease Indent" size="small" disabled={noEditor} onclick={() => tiptapToolbar.decreaseIndent()}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="18" x2="11" y2="18"/><polyline points="7 15 3 12 7 9"/></svg>
   </IconButton>
 
-  <IconButton title="Increase Indent" size="small" onclick={() => tiptapToolbar.increaseIndent()}>
+  <IconButton title="Increase Indent" size="small" disabled={noEditor} onclick={() => tiptapToolbar.increaseIndent()}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="18" x2="11" y2="18"/><polyline points="3 9 7 12 3 15"/></svg>
   </IconButton>
 
   <div class="toolbar-divider"></div>
 
-  <IconButton title="Clear Formatting" size="small" onclick={() => tiptapToolbar.clearFormatting()}>
+  <IconButton title="Clear Formatting" size="small" disabled={noEditor} onclick={() => tiptapToolbar.clearFormatting()}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/><line x1="3" y1="21" x2="21" y2="3" stroke-width="1.5"/></svg>
   </IconButton>
-</div>
+{/snippet}
+
+{#if compact && showMore}
+  <!-- A group of toolbar controls: the handlers keep its editor active and let Escape close it. -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="toolbar-more-panel"
+    bind:this={morePanelRef}
+    role="group"
+    aria-label="More formatting"
+    style="left: {morePanelLeft}px; top: {morePanelTop}px;"
+    onmousedown={() => tiptapToolbar.keepActiveEditor()}
+    onfocusin={() => tiptapToolbar.keepActiveEditor()}
+    onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeMore(); } }}
+  >
+    {@render noteLayoutControls()}
+  </div>
+{/if}
 
 {#if showTextColorPicker}
   <div
@@ -394,15 +515,71 @@
     gap: 2px;
   }
 
+  /* `safe center`: centred while it fits; once it doesn't, it starts at its
+     left edge and scrolls, rather than spilling off both ends where the left
+     end can't be scrolled to. */
   .toolbar-section.formatting {
     flex: 1;
-    justify-content: center;
+    min-width: 0;
+    justify-content: safe center;
     overflow-x: auto;
     scrollbar-width: none;
   }
 
   .toolbar-section.formatting::-webkit-scrollbar {
     display: none;
+  }
+
+  /* The controls at their own widths (a squeezed one showed nothing: the size
+     box went to 2 px); the row's width is what they need, for `fit`. */
+  .formatting-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .formatting-row > :global(*) {
+    flex-shrink: 0;
+  }
+
+  .tight .toolbar-divider {
+    margin: 0 3px;
+  }
+
+  .tight .font-select {
+    width: 112px;
+  }
+
+  /* "Normal text", its longest, in full. */
+  .tight .style-select {
+    width: 104px;
+  }
+
+  .compact .font-select {
+    width: 92px;
+  }
+
+  .compact .style-select {
+    width: 104px;
+  }
+
+  .compact .align-select {
+    width: 74px;
+  }
+
+  .toolbar-more-panel {
+    position: fixed;
+    z-index: var(--z-context-menu-overlay);
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 8px;
+    background: var(--ui-surface);
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+    box-shadow: var(--ui-shadow-lg);
+    animation: fadeIn 0.1s ease;
   }
 
   .toolbar-divider {
@@ -584,9 +761,21 @@
     padding-left: 24px;
   }
 
-  .toolbar-select:disabled {
+  .toolbar-select:disabled,
+  .size-btn:disabled,
+  .toolbar-color-btn:disabled {
     opacity: 0.45;
     cursor: default;
+  }
+
+  .size-btn:disabled:hover,
+  .toolbar-color-btn:disabled:hover {
+    background: transparent;
+  }
+
+  /* With no editor the size shown is no text's size. */
+  .no-editor .size-value {
+    opacity: 0.45;
   }
 
   .toolbar-select:disabled:hover {

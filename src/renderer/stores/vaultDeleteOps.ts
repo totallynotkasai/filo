@@ -268,7 +268,7 @@ export async function performDelete(ctx: VaultContext, itemPath: string): Promis
       }
       if (!tagsDropFlushOk) {
         uiStore.pushToast({
-          text: `"${rel}" was moved to Filo's trash, but its tag-membership update didn't persist. It'll be cleaned up automatically on the next vault open.`,
+          text: `"${rel}" was moved to Filo's trash, but taking its tags out of .filo/tags.json couldn't be saved. Filo tidies them the next time the vault opens.`,
           type: 'warning',
           duration: 0,
         });

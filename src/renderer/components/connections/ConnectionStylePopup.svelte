@@ -240,7 +240,7 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') onclose();
+    if (e.key === 'Escape') { e.preventDefault(); onclose(); }
   }
 
   // Focus restoration: capture the trigger element so keyboard users return

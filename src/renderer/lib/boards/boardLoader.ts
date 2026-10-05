@@ -661,10 +661,10 @@ export async function loadBoard(
       parts.push(`orphan tile refs in ${orphanReport.framesWithStrippedTileIds.length} frame(s)`);
     }
     if (orphanReport.droppedKanbanDuplicates.length > 0) {
-      parts.push(`${orphanReport.droppedKanbanDuplicates.length} duplicate card placement(s)`);
+      parts.push(`${orphanReport.droppedKanbanDuplicates.length} card(s) listed twice`);
     }
     if (orphanReport.droppedTaskListDuplicates.length > 0) {
-      parts.push(`${orphanReport.droppedTaskListDuplicates.length} duplicate task placement(s)`);
+      parts.push(`${orphanReport.droppedTaskListDuplicates.length} task(s) listed twice`);
     }
     const summary = parts.join(', ');
     const snapshotHint = snapshotPath
@@ -673,7 +673,7 @@ export async function loadBoard(
     reportError(
       'board-load-pruned-orphans',
       `Pruned from "${boardName}": ${summary}`,
-      `Filo pruned ${summary} from "${boardName}" while loading. The board still works; the dropped entries either pointed at tiles that don't exist on this board or duplicated an existing placement.${snapshotHint}`,
+      `Filo pruned ${summary} from "${boardName}" while loading. The board still works; the dropped entries either pointed at tiles that don't exist on this board or repeated a card or task already on it.${snapshotHint}`,
     );
   }
 

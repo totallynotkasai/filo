@@ -10,6 +10,9 @@
   import { untrack } from 'svelte';
   import { NOTE_EDITOR_ATTRIBUTE } from '../../lib/utils/editableTarget';
   import { boardRenameProblem, renameBoard, setBoardEmoji } from '../../stores/boardIdentity';
+  import { copyFiloLink } from '../../lib/utils/copyLink';
+  import { linkToBoard, linkToNote } from '../../schema/link';
+  import { MENU_ICON, copyLinkLabel } from '../../constants/menuVocabulary';
 
   const RENAME_ICON = 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z';
 
@@ -180,8 +183,12 @@
           { id: 'rename', label: 'Rename Board', icon: RENAME_ICON, action: startRename },
           { id: 'emoji', label: 'Set Board Emoji', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01', action: () => { showEmojiPicker = true; emojiPickerPos = { x: evX, y: evY }; } },
         ];
+    const copyLink = notePath
+      ? { id: 'copy-link', label: copyLinkLabel('note'), icon: MENU_ICON.link, action: () => void copyFiloLink(linkToNote(notePath), noteTitle(notePath) || tab.name) }
+      : { id: 'copy-link', label: copyLinkLabel('board'), icon: MENU_ICON.link, action: () => void copyFiloLink(linkToBoard(tab.boardId), tab.name) };
     uiStore.showContextMenu(x, y, [
       ...identityItems,
+      copyLink,
       { id: 'div-split', label: '', divider: true },
       { id: 'split-right', label: 'Split Right', icon: 'M3 3h18v18H3zM12 3v18', disabled: !canSplit, action: () => splitPane('right') },
       { id: 'split-down', label: 'Split Down', icon: 'M3 3h18v18H3zM3 12h18', disabled: !canSplit, action: () => splitPane('down') },
@@ -304,7 +311,7 @@
 
 {#if showEmojiPicker}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="emoji-picker-overlay" onclick={() => showEmojiPicker = false} onkeydown={(e) => { if (e.key === 'Escape') showEmojiPicker = false; }}></div>
+  <div class="emoji-picker-overlay" onclick={() => showEmojiPicker = false} onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); showEmojiPicker = false; } }}></div>
   <!-- Place the picker trigger at the cursor; EmojiPicker clamps + flips
        its own panel into the viewport. -->
   <div class="emoji-picker-float" style="left: {emojiPickerPos.x}px; top: {emojiPickerPos.y}px;">

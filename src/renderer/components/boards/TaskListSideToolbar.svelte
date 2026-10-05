@@ -149,7 +149,7 @@
       closeAll();
     }
     function onDocKeydown(e: KeyboardEvent) {
-      if (e.key === 'Escape') closeAll();
+      if (e.key === 'Escape') { e.preventDefault(); closeAll(); }
     }
     document.addEventListener('pointerdown', onDocPointerDown, true);
     document.addEventListener('keydown', onDocKeydown);

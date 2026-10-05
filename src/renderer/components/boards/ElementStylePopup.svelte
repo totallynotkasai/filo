@@ -166,7 +166,7 @@
     hasChanged = true;
   }
 
-  function handleKeydown(e: KeyboardEvent) { if (e.key === 'Escape') onclose(); }
+  function handleKeydown(e: KeyboardEvent) { if (e.key === 'Escape') { e.preventDefault(); onclose(); } }
 
   let trap: FocusTrap | null = null;
   $effect(() => {

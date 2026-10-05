@@ -10,6 +10,7 @@
   import { pendingSettingsStore, settingsBoard } from '../../stores/pendingSettings.svelte';
   import { boardStore } from '../../stores/board.svelte';
   import { uiStore } from '../../stores/ui.svelte';
+  import { tabStore } from '../../stores/tabs.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { settleUnappliedEdits } from '../../lib/settings/unappliedEditsPrompt';
   import { settleThemeEditor } from '../../lib/themes/themeEditorGuard';
@@ -24,6 +25,13 @@
   // in a Document tab, whose pane still holds the board it showed before).
   let targetBoard = $derived(settingsBoard());
   let hasActiveBoard = $derived(targetBoard !== null);
+  // A note has no board file to keep per-board settings in: its page
+  // follows Global Defaults → Document, and its line spacing is its own.
+  let currentBoardOffHint = $derived(
+    tabStore.activeTab?.notePath !== undefined
+      ? 'A note has no board settings: its page follows Global Defaults → Document'
+      : 'Open a board to edit its per-board settings',
+  );
 
   // ── Layout ──
   //
@@ -205,14 +213,20 @@
 
   // The `saveMode` chip flags each tab's commit semantics — auto-save vs
   // explicit Apply / Revert — a user-visible cue, since the modal mixes save
-  // behaviours and a small helper line isn't loud enough.
+  // behaviours. Every tab also says its rule in words in the same place, the
+  // bar above its page: the Apply / Revert bar, or this line.
   // Themes has no chip: a pick applies at once, but the theme editor saves
   // only on its Save button, so neither label is true of the whole tab.
   const SAVE_MODE_HINT = {
-    auto: 'Saves automatically as you change values.',
-    apply: 'Changes here take effect when you click Apply.',
+    auto: 'Changes here save as you make them.',
+    apply: 'Changes here wait for Apply.',
     themes: 'Picking a theme applies it at once. The theme editor saves when you click Save.',
   } as const;
+  const SAVE_RULE: Partial<Record<SettingsTab, string>> = {
+    general: SAVE_MODE_HINT.auto,
+    themes: SAVE_MODE_HINT.themes,
+    trash: 'Restore and Empty trash act at once.',
+  };
   const tabs: { id: SettingsTab; label: string; icon: string; saveMode: 'auto' | 'apply' | 'themes' }[] = [
     { id: 'general', label: 'General', saveMode: 'auto', icon: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' },
     { id: 'defaults', label: 'Global Defaults', saveMode: 'apply', icon: 'M12 3v18M3 12h18M5.5 5.5l13 13M18.5 5.5l-13 13' },
@@ -271,7 +285,7 @@
           aria-controls="settings-tabpanel"
           onclick={() => selectTab(tab.id)}
           onfocus={() => { if (!disabled) void selectTab(tab.id); }}
-          title={disabled ? 'Open a board to edit its per-board settings' : SAVE_MODE_HINT[tab.saveMode]}
+          title={disabled ? currentBoardOffHint : SAVE_MODE_HINT[tab.saveMode]}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d={tab.icon}/>
@@ -302,6 +316,8 @@
       <SettingsActionBar dirty={globalDirty} busy={applying} onApply={applyGlobal} onRevert={cancelGlobal} />
     {:else if activeTab === 'current-board'}
       <SettingsActionBar dirty={boardDirty} busy={applying} onApply={applyBoard} onRevert={cancelBoard} />
+    {:else if SAVE_RULE[activeTab]}
+      <p class="settings-save-rule">{SAVE_RULE[activeTab]}</p>
     {/if}
 
     <!-- Keyed by tab, so each tab's page opens at its top rather than at
@@ -451,6 +467,17 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+  }
+
+  /* Where an Apply tab has its Apply / Revert bar, the others say how they save. */
+  .settings-save-rule {
+    margin: 0;
+    padding: 14px 16px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    border-bottom: 1px solid var(--ui-border);
+    background: var(--ui-bg-secondary, var(--ui-surface));
+    flex-shrink: 0;
   }
 
   .settings-scroll {

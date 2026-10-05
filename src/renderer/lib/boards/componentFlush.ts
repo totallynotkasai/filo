@@ -14,6 +14,7 @@
  * others still run.
  */
 import { reportError } from '../utils/errorBus';
+import { isEditableTextTarget } from '../utils/editableTarget';
 
 type Flush = () => Promise<void> | void;
 
@@ -49,6 +50,16 @@ export async function flushAllComponents(): Promise<void> {
 export function releaseFocusedField(): void {
   const el = typeof document === 'undefined' ? null : document.activeElement;
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.blur();
+}
+
+/**
+ * Ctrl+W and Ctrl+Tab while typing end the edit as a click on another tab
+ * would: the field or editor with focus is blurred first, so a title, field
+ * or Raw view that saves on blur hands its text over before its view goes.
+ */
+export function releaseTextFocus(): void {
+  const el = typeof document === 'undefined' ? null : document.activeElement;
+  if (el instanceof HTMLElement && isEditableTextTarget(el)) el.blur();
 }
 
 /** Test-only: forget every registered flush. */

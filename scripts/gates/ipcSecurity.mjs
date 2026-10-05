@@ -11,6 +11,8 @@ const MAIN_TO_RENDERER_EVENTS = new Set([
   'vault:sync-conflict',
   'app:flush-and-quit',
   'app:session-ending',
+  'app:text-menu-query',
+  'app:insert-link',
 ]);
 const MIN_LITERAL_REGISTRATIONS = 30;
 

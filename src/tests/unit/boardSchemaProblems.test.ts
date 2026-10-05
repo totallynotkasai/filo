@@ -51,11 +51,16 @@ describe('a board that fails validation', () => {
     expect(toast.text.length).toBeLessThan(700);
     expect(toast.actions.map((a) => a.label)).toEqual(['Show in folder', 'Copy all problems']);
 
-    const writeText = vi.fn(async () => {});
-    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    // Main writes the clipboard (`shell:copy-text`): the page itself may not.
+    const copied: string[] = [];
+    (window as unknown as { filo: { invoke: (channel: string, ...args: unknown[]) => Promise<unknown> } }).filo.invoke = async (channel, ...args) => {
+      if (channel === 'shell:copy-text') copied.push(args[0] as string);
+      return true;
+    };
     toast.actions[1]!.handler();
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('board.placements.t299.x'));
-    expect((writeText.mock.calls[0] as unknown as [string])[0].split('\n')).toHaveLength(300);
+    await Promise.resolve();
+    expect(copied[0]).toContain('board.placements.t299.x');
+    expect(copied[0]?.split('\n')).toHaveLength(300);
   });
 
   it('a few problems are all named, with nothing to copy', () => {

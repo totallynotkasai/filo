@@ -75,7 +75,7 @@ describe('Settings dialog', () => {
   it('labels each tab and its panel, and hides the save-mode chip', () => {
     const tab = document.getElementById('settings-tab-general');
     expect(tab?.getAttribute('aria-controls')).toBe('settings-tabpanel');
-    expect(tab?.getAttribute('title')).toMatch(/automatically/);
+    expect(tab?.getAttribute('title')).toMatch(/save as you make them/);
     expect(tab?.querySelector('.settings-tab-save-mode')?.getAttribute('aria-hidden')).toBe('true');
     const panel = document.getElementById('settings-tabpanel');
     expect(panel?.getAttribute('aria-labelledby')).toBe('settings-tab-general');

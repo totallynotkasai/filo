@@ -22,6 +22,7 @@
   import { historyStore } from '../../stores/history.svelte';
   import { ToggleFadeCommand } from '../../commands/index';
   import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
+  import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
 
   let showNewTileMenu = $state(false);
   let showManageMenu = $state(false);
@@ -59,11 +60,19 @@
     };
   }
 
+  /** The top-left corner that centres an element of `size` in the view. */
+  function viewportCentre(size: { width: number; height: number }): { x: number; y: number } {
+    const vp = canvasStore.viewportRect;
+    return { x: vp.left + vp.width / 2 - size.width / 2, y: vp.top + vp.height / 2 - size.height / 2 };
+  }
+
   function createTile(tileType: TileType) {
     showNewTileMenu = false;
-    const tile = newTile(tileType, nearViewportCentre(TILE_DEFAULTS), boardStore.current?.id ?? '', {
+    const tile = newTile(tileType, viewportCentre(TILE_DEFAULTS), boardStore.current?.id ?? '', {
       title: boardStore.getNextTileName(),
     });
+    // In the middle of the view, or stepped clear of the tiles already there.
+    tile.position = { ...tile.position, ...placeClear(viewportCentre(tile.size), tile.size, tileRects(boardStore.tiles), viewRect(canvasStore.viewportRect)) };
     boardStore.addTileWithHistory(tile);
     // Typing next names the tile, instead of reaching the board's keys.
     editTitleWhenShown(tile.id);

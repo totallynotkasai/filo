@@ -63,6 +63,23 @@ describe('isCanvasKeyBlocked', () => {
     const host = add('<input type="text">');
     expect(isCanvasKeyBlocked('n', host.querySelector('input'))).toBe(true);
   });
+
+  it('leaves every key to a focused vault sidebar row (its tree moves, opens and renames with them)', () => {
+    const host = add(`
+      <aside class="vault-sidebar">
+        <div class="file-tree" role="tree">
+          <div class="file-row" role="treeitem" tabindex="0" aria-selected="false">Chapter 1.md</div>
+        </div>
+      </aside>`);
+    const row = host.querySelector<HTMLElement>('[role="treeitem"]')!;
+    row.focus();
+    for (const key of ['ArrowDown', 'Enter', 'Delete', 'Backspace', 'n', 'c']) {
+      expect(isCanvasKeyBlocked(key, row), key).toBe(true);
+    }
+    // The floating sidebar too.
+    const floating = add('<div class="floating-vault-panel"><button>Sort by</button></div>');
+    expect(isCanvasKeyBlocked('n', floating.querySelector('button'))).toBe(true);
+  });
 });
 
 describe('Snap Tiles is saved on the board', () => {

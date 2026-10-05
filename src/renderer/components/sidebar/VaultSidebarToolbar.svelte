@@ -2,7 +2,7 @@
   /**
    * Header toolbar for the vault sidebar.
    *
-   * Buttons (left → right): New Folder, Sort By, Group By,
+   * Buttons (left → right): New (note or folder), Sort By, Group By,
    * Expand/Collapse (toggle), Pop-Out / Dock.
    *
    * Sort By and Group By each open an inline menu with two sections:
@@ -20,7 +20,9 @@
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
   import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
-  import { pathsEqualExact } from '../../lib/utils/path';
+  import { newFolderIn, newNoteIn } from '../../lib/vault/sidebarNewItems';
+  import { buildSidebarSpaceMenu } from '../../lib/vault/sidebarFileMenu';
+  import { getAnchorBelow } from '../../lib/utils/popupAnchor';
   import { SORT_FIELDS, GROUP_FIELDS, DIRECTIONS } from '../../constants/vaultSidebarOptions';
   import type {
     VaultSortField,
@@ -136,37 +138,20 @@
     else sidebarTagFilter.expandAll();
   }
 
-  // ── New Folder (silent create) ──
-  //
-  // After a successful create we stash the new folder's
-  // absolute path on `uiStore.pendingSidebarRenameId`. The matching
-  // VaultFileItem reads that on mount and immediately enters rename
-  // mode with the suggested name pre-selected, so the user can type a
-  // real name without a second click.
-  async function handleNewFolderClick() {
-    if (!vaultStore.path) return;
-    // An empty folder matches no tag, so under a tag filter its row (and the
-    // rename it starts) would never show.
-    sidebarTagFilter.clear();
-    const name = await vaultStore.suggestFolderName(vaultStore.path, 'New Folder');
-    const result = await vaultStore.createFolder(vaultStore.path, name);
-    if (!result.success) {
-      // Surface main-process create-folder failures (EACCES, EEXIST race
-      // after suggest, ENOENT on a swapped vault, …) so the user sees
-      // something fired rather than the sidebar silently gaining no row.
-      uiStore.toast(
-        `Couldn't create folder "${name}"${result.code ? ` (${result.code})` : ''}`,
-        'error',
-        4000,
-      );
-      return;
-    }
-    // The row matches on its exact tree path, and the tree keeps the
-    // platform's separators (backslashes on Windows), so take the spelling
-    // from the refreshed tree rather than joining one here.
-    const newAbs = `${vaultStore.path.replace(/[\\/]+$/, '')}/${name}`;
-    const node = vaultStore.tree.find((n) => n.isDirectory && pathsEqualExact(n.path, newAbs));
-    uiStore.setPendingSidebarRenameId(node?.path ?? newAbs);
+  // ── New: a note or a folder ──
+  // At the vault's top, as on the empty space below the files: a note opens
+  // with its title ready to type, a folder with its name (the new row takes
+  // `uiStore.pendingSidebarRenameId` when it mounts). A folder's own menu
+  // makes them inside it. One button with a menu, so the header still fits
+  // the sidebar at its narrowest.
+  function handleNewClick(e: MouseEvent) {
+    const root = vaultStore.path;
+    if (!root) return;
+    const anchor = getAnchorBelow(e.currentTarget as HTMLElement);
+    uiStore.showContextMenu(anchor.x, anchor.y, buildSidebarSpaceMenu({
+      onNewNote: () => { void newNoteIn(root); },
+      onNewFolder: () => { void newFolderIn(root); },
+    }));
   }
 
   // ── Float / Dock ──
@@ -201,17 +186,17 @@
 -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="sidebar-actions" onpointerdown={(e) => e.stopPropagation()}>
-  <!-- New Folder -->
+  <!-- New: a note or a folder -->
   <button
     class="sidebar-btn"
-    onclick={handleNewFolderClick}
-    title="New Folder"
-    aria-label="New Folder"
+    onclick={handleNewClick}
+    title="New note or folder"
+    aria-label="New note or folder"
+    aria-haspopup="menu"
   >
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-      <line x1="12" y1="11" x2="12" y2="17"/>
-      <line x1="9" y1="14" x2="15" y2="14"/>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <line x1="12" y1="5" x2="12" y2="19"/>
+      <line x1="5" y1="12" x2="19" y2="12"/>
     </svg>
   </button>
 

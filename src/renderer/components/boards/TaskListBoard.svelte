@@ -63,6 +63,7 @@
   } from '../../lib/styles/effectiveStyle';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
+  import { renameTaskTitle } from '../../lib/tasklist/taskRename';
   import { noteFrontmatter } from '../../stores/noteMeta';
   import { flushLastViewForBoard } from '../../lib/boards/lastViewFlush';
   import { onMount, onDestroy, untrack } from 'svelte';
@@ -87,7 +88,6 @@
     BatchCommand,
     ToggleSubtaskCollapsedCommand,
     TogglePlacementLockCommand,
-    UpdateTitleCommand,
   } from '../../commands/index';
   import { executeReorderSwitchingToManual } from '../../lib/tasklist/manualSortSwitch';
   import { makeTaskCreator } from '../../lib/tasklist/taskCreation';
@@ -687,23 +687,11 @@
   // `cacheVersion` for optimistic re-render. See the slice's header comment for the full
   // architecture rationale.
 
-  // ── Title edit (the note's frontmatter `title:`; the file keeps its name) ──
+  // ── Title edit (the note's frontmatter `title:`; see `taskRename.ts`) ──
 
   async function renameTask(row: TaskRow, newTitle: string) {
     if (!board) return;
-    const trimmed = newTitle.trim();
-    if (!trimmed || trimmed === row.tile.title) return;
-    const path = vaultPathForTile(row.tile);
-    if (!path) return;
-    await historyStore.execute(new UpdateTitleCommand({
-      tileId: row.tile.id,
-      boardId: board.id,
-      notePath: path,
-      oldTitle: row.tile.title,
-      newTitle: trimmed,
-      oldTitleHtml: undefined,
-      newTitleHtml: undefined,
-    })).catch(() => {});
+    await renameTaskTitle(board.id, row.tile, vaultPathForTile(row.tile), newTitle);
     tickAndPersist();
   }
 

@@ -16,6 +16,7 @@ import { AddTaskCommand } from '../../commands/index';
 import type { SeededFile } from '../../commands/taskCommands';
 import { createId } from '../utils/ids';
 import { newNoteText } from '../notes/noteFile';
+import { noteMadeForNewItem } from '../notes/madeForNewItems';
 import { noteTitle } from '../../stores/noteMeta';
 import { reportError } from '../utils/errorBus';
 import { sectionIdForPlacementIndex } from './sectionMath';
@@ -153,6 +154,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     // existing off-board file with the same name is never overwritten.
     const created = await noteStore.createUnique(args.relPath, () => seedFile);
     const relPath = created.relPath;
+    noteMadeForNewItem(relPath);
     // Post-write hydration is best-effort — the file IS on disk now, so the row
     // is valid; a lagging index / doc-load just hydrates lazily on the next edit.
     // A failure here must NOT roll the placement back (hence its own try/catch).

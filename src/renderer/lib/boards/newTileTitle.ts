@@ -1,6 +1,7 @@
 /**
  * newTileTitle — a tile or card the user just made opens with its title
- * selected for editing, so typing names it.
+ * selected for editing, so typing names it. So does the tab of a note made
+ * with New note (keyed by the tab's id).
  *
  * Without this, focus stayed on the button that made it (Kanban's Add Card,
  * which the space bar then pressed again) or fell to the page (the Mind Map,

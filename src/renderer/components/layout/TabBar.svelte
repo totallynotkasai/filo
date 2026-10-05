@@ -10,6 +10,8 @@
   import { boardRegistry } from '../../core/boardRegistry';
   import { handleListKeyNav } from '../../lib/utils/listKeyNav';
   import { BOARD_TYPE_ICON_PATH } from '../../constants/boardIcons';
+  import { createNewNote } from '../../lib/notes/newNote';
+  import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
 
   // Tab bar color flows through `--tabbar-bg` (written to :root by App.svelte
   // from `general.tabBarColor`). Height derives from `--ui-tabbar-scale`,
@@ -32,16 +34,14 @@
     overflowBtnEl?.focus();
   }
 
-  const allBoardTypes: { type: BoardType; label: string; icon: string }[] = [
+  // Every type has a board file but Document: a Document tab shows a note,
+  // and "Document" here makes a new note (in the Root Directory) and opens it.
+  const boardTypes: { type: BoardType; label: string; icon: string }[] = [
     { type: 'mindmap', label: 'Mind Map', icon: BOARD_TYPE_ICON_PATH.mindmap },
     { type: 'kanban', label: 'Kanban', icon: BOARD_TYPE_ICON_PATH.kanban },
     { type: 'tasklist', label: 'Task List', icon: BOARD_TYPE_ICON_PATH.tasklist },
     { type: 'document', label: 'Document', icon: BOARD_TYPE_ICON_PATH.document },
   ];
-
-  // Document board type isn't directly creatable — documents are opened via
-  // "Expand to Document" on text tiles.
-  const boardTypes = allBoardTypes.filter(b => b.type !== 'document');
 
   function openBoardBrowser() {
     showNewTabMenu = false;
@@ -70,6 +70,10 @@
   async function createQuickBoard(type: BoardType) {
     showNewTabMenu = false;
     if (!vaultStore.project) return;
+    if (type === 'document') {
+      await createNewNote(getActiveContentFolder(null));
+      return;
+    }
 
     // Single source of truth for default board shape per type.
     const board = boardRegistry[type].createDefault(

@@ -166,10 +166,16 @@ describe('smartListMatch — all 5 buckets + all + completed', () => {
 describe('compareRows — all sortBys', () => {
   const sortBy: SortBy[] = ['title', 'created', 'dueDate', 'priority', 'manual'];
 
-  it('sortBy "title" compares case-insensitively via localeCompare', () => {
+  it('sortBy "title" compares case-insensitively', () => {
     const a = makeRow({ tile: { id: 'a', title: 'apple' } as Tile });
     const b = makeRow({ tile: { id: 'b', title: 'Banana' } as Tile });
     expect(compareRows(a, b, 'title')).toBeLessThan(0);
+  });
+
+  it('sortBy "title" puts "Chapter 2" before "Chapter 10"', () => {
+    const titles = ['Chapter 10', 'Chapter 2', 'chapter 1'];
+    const rows = titles.map((title, i) => makeRow({ tile: { id: `t${i}`, title } as Tile }));
+    expect(rows.sort((a, b) => compareRows(a, b, 'title')).map((r) => r.tile.title)).toEqual(['chapter 1', 'Chapter 2', 'Chapter 10']);
   });
 
   it('sortBy "created" compares ascending createdAt', () => {

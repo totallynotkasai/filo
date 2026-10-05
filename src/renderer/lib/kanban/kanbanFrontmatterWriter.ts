@@ -8,7 +8,7 @@ import {
   UpdateCardFieldCommand,
   UpdateCoverImageCommand,
 } from '../../commands/index';
-import { copyFileIntoVault } from '../vault/vaultOperations';
+import { bringPickedFileIn } from '../vault/pickedFile';
 import { getActiveContentFolder } from '../vault/conventionPaths';
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
 import { openNoteInDocumentTab } from '../notes/openNote';
@@ -130,18 +130,16 @@ export function makeKanbanFrontmatterWriter(
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
     });
     if (!paths || paths.length === 0) return;
-    // Drain pending writers before the copy so a debounced
-    // card-cover update doesn't fire against a stale src before the new
-    // image lands on disk.
     const src = paths[0];
     if (!src) return; // paths non-empty (checked above)
-    const res = await copyFileIntoVault(src, vaultRoot, getActiveContentFolder(board));
+    // An image already in the vault is linked; one from outside is copied in
+    // (after pending writes land, so none fires against a stale cover).
+    const res = await bringPickedFileIn(src, vaultRoot, getActiveContentFolder(board));
     if (!res.success) {
-      uiStore.toast(`Failed to import image: ${res.error ?? 'unknown error'}`, 'error', 3000);
+      uiStore.toast(`Failed to import image: ${res.error}`, 'error', 3000);
       return;
     }
-    const stored = res.relativePath ?? res.path ?? '';
-    if (!stored) return;
+    const stored = res.relPath;
     // Route through UpdateCoverImageCommand so Ctrl+Z
     // restores the prior cover (or no-cover state).
     const before = getCurrentCoverImage(board.id, tileId);

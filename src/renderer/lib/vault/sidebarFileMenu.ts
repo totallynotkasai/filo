@@ -1,7 +1,15 @@
 import type { ContextMenuItem } from '../../stores/ui.svelte';
 import { MENU_LABEL } from '../../constants/menuVocabulary';
 
-interface SidebarFileMenuOpts {
+/** The sidebar's two ways to make something in a folder. */
+interface MakeInFolder {
+  /** A note in the folder, opened with its title ready to type. */
+  onNewNote: () => void;
+  /** A folder in the folder, with its name ready to type. */
+  onNewFolder: () => void;
+}
+
+interface SidebarFileMenuOpts extends Partial<MakeInFolder> {
   isDirectory: boolean;
   /** A Markdown note, which can be renamed to match its title. */
   isNote: boolean;
@@ -13,9 +21,22 @@ interface SidebarFileMenuOpts {
   onDelete: () => void;
 }
 
-/** The sidebar's menu on a file or folder. A folder has no tags of its own. */
+function makeItems(opts: MakeInFolder): ContextMenuItem[] {
+  return [
+    { id: 'new-note', label: 'New note', action: opts.onNewNote },
+    { id: 'new-folder', label: 'New folder', action: opts.onNewFolder },
+  ];
+}
+
+/**
+ * The sidebar's menu on a file or folder. A folder has no tags of its own,
+ * and offers a new note or folder inside it.
+ */
 export function buildSidebarFileMenu(opts: SidebarFileMenuOpts): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
+  if (opts.isDirectory && opts.onNewNote && opts.onNewFolder) {
+    items.push(...makeItems({ onNewNote: opts.onNewNote, onNewFolder: opts.onNewFolder }), { id: 'sep-new', divider: true, label: '' });
+  }
   if (!opts.isDirectory) items.push({ id: 'edit-tags', label: MENU_LABEL.tags, action: opts.onTags });
   items.push({ id: 'rename', label: 'Rename', action: opts.onRename });
   if (opts.isNote) items.push({ id: 'rename-to-title', label: 'Rename file to match title', action: opts.onRenameToTitle });
@@ -25,4 +46,9 @@ export function buildSidebarFileMenu(opts: SidebarFileMenuOpts): ContextMenuItem
     { id: 'delete', label: MENU_LABEL.deleteFromVault, danger: true, action: opts.onDelete },
   );
   return items;
+}
+
+/** The sidebar's menu on its empty space: a new note or folder at the vault's top. */
+export function buildSidebarSpaceMenu(opts: MakeInFolder): ContextMenuItem[] {
+  return makeItems(opts);
 }

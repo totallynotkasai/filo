@@ -34,6 +34,9 @@
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { createTile } from '../../stores/tiles.svelte';
   import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
+  import { createNewNote, folderOfNote } from '../../lib/notes/newNote';
+  import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
+  import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
   import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
   import { requestDeleteSelected, selectableTileIds, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
   import { framesStore } from '../../stores/frames.svelte';
@@ -95,6 +98,12 @@
   }
 
   const vaultIsOpen = (): boolean => vaultStore.project !== null;
+
+  /** Focus is on a Mind Map canvas (or a tile on it), or on nothing at all. */
+  function focusOnCanvasOrPage(): boolean {
+    const active = document.activeElement;
+    return !active || active === document.body || active.closest('.mindmap-board') !== null;
+  }
 
   const deleteSelectionDeps: DeleteSelectionDeps = {
     board: boardStore,
@@ -321,15 +330,35 @@
         execute: () => {
           if (!boardStore.current) return;
           const vp = canvasStore.viewportRect;
-          const jitterX = (Math.random() - 0.5) * 100;
-          const jitterY = (Math.random() - 0.5) * 100;
-          const tile = createTile('text', {
-            x: vp.left + vp.width / 2 - 150 + jitterX,
-            y: vp.top + vp.height / 2 - 100 + jitterY,
-          }, boardStore.current.id);
+          const tile = createTile('text', { x: 0, y: 0 }, boardStore.current.id);
+          // In the middle of the view, or stepped clear of the tiles already there.
+          tile.position = {
+            ...tile.position,
+            ...placeClear(
+              { x: vp.left + vp.width / 2 - tile.size.width / 2, y: vp.top + vp.height / 2 - tile.size.height / 2 },
+              tile.size,
+              tileRects(boardStore.tiles),
+              viewRect(vp),
+            ),
+          };
           boardStore.addTileWithHistory(tile);
           selectionStore.select(tile.id);
           editTitleWhenShown(tile.id);
+        },
+      }),
+
+      // ── New note beside the one a Document tab shows ──
+      // Ctrl+N is each board's own "new" (tile, card, task); in a Document
+      // tab it makes a note, in the same folder. It works while typing in the
+      // note, as the boards' do from their canvas.
+      registerCommandWithShortcut({
+        name: 'note:new', label: 'New Note', description: 'New Note (in a Document tab)',
+        binding: { key: 'n', ctrl: true },
+        allowInEditor: true,
+        enabled: () => tabStore.activeTab?.boardType === 'document' && vaultIsOpen(),
+        execute: () => {
+          const notePath = tabStore.activeTab?.notePath;
+          void createNewNote(notePath ? folderOfNote(notePath) : getActiveContentFolder(null));
         },
       }),
 
@@ -348,8 +377,9 @@
       registerCommandWithShortcut({
         name: 'tile:delete', label: 'Remove Selected', description: 'Remove Selected',
         binding: { key: 'Delete' },
-        // Not while a dialog or menu is open over the board.
-        enabled: () => onMindMap() && !isCanvasKeyBlocked('Delete', document.activeElement),
+        // Not while a dialog or menu is open over the board, nor from the
+        // sidebar or a toolbar: only with focus on the canvas or on the page.
+        enabled: () => onMindMap() && focusOnCanvasOrPage() && !isCanvasKeyBlocked('Delete', document.activeElement),
         execute: () => requestDeleteSelected(deleteSelectionDeps),
       }),
 

@@ -7,6 +7,7 @@
   import { tabStore } from '../../stores/tabs.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { buildSidebarFileMenu } from '../../lib/vault/sidebarFileMenu';
+  import { newFolderIn, newNoteIn } from '../../lib/vault/sidebarNewItems';
   import { renameNoteFileToTitle } from '../../lib/notes/renameToTitle';
   import { renameVaultEntry } from '../../lib/vault/renameVaultEntry';
   import { fileNameProblem } from '@shared/fileNames';
@@ -123,9 +124,10 @@
   // Folder open/closed state goes through the tag filter, which shows every
   // folder holding a match open without touching the user's own expansion.
   const isExpanded = $derived(sidebarTagFilter.isFolderExpanded(node.path));
-  // Reordering a cut-down list would drop the hidden rows' ranks.
+  // Reordering a cut-down list would drop the hidden rows' ranks; under a
+  // Group By, a row dropped into another group would jump back to its own.
   const reorderDisabled = $derived(
-    vaultStore.sortField !== 'none' || vaultStore.search !== '' || sidebarTagFilter.active,
+    vaultStore.sortField !== 'none' || vaultStore.groupField !== 'none' || vaultStore.search !== '' || sidebarTagFilter.active,
   );
 
   const isSelected = $derived(vaultStore.isSelected(node.path));
@@ -168,6 +170,15 @@
     return node.name.endsWith(node.extension)
       ? node.name.slice(0, -node.extension.length)
       : node.name;
+  });
+
+  // A note the sidebar's search found by its title, not its file name: the
+  // title shows beside the name, so the row says why it is listed.
+  const matchedTitle = $derived.by(() => {
+    const query = vaultStore.search.toLowerCase();
+    if (!query || node.isDirectory || node.name.toLowerCase().includes(query)) return null;
+    const title = vaultStore.searchTitleOf(node);
+    return title && title.toLowerCase().includes(query) ? title : null;
   });
 
   function toggleExpand() {
@@ -447,6 +458,8 @@
     uiStore.showContextMenu(e.clientX, e.clientY, buildSidebarFileMenu({
       isDirectory: node.isDirectory,
       isNote: isNoteFile,
+      onNewNote: () => { void newNoteIn(node.path); },
+      onNewFolder: () => { void newFolderIn(node.path); },
       onTags: () => {
         // Match the icon button dispatch so the TagEditor mounts via
         // VaultSidebar's single shared host instead of an inline popover.
@@ -558,6 +571,9 @@
     {:else}
       <span class="file-label">
         <span class="file-name">{displayName}</span>
+        {#if matchedTitle}
+          <span class="file-title-match" title={matchedTitle}>{matchedTitle}</span>
+        {/if}
         {#if !node.isDirectory}
           <FileTagChips filePath={vaultRelativePath()} />
         {/if}
@@ -794,6 +810,18 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+
+  /* The title a search found the row by gives way first, so the file name stays readable. */
+  .file-title-match {
+    flex: 0 1000 auto;
+    min-width: 0;
+    margin-left: 6px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--text-tertiary);
+    font-style: italic;
   }
 
   .rename-input {

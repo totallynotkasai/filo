@@ -9,6 +9,7 @@ import { noteBody, noteTags } from '../../stores/noteMeta';
 import { vaultPathForTile } from './kanbanFrontmatterWriter';
 
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
+import { naturalCompare } from '../utils/naturalSort';
 export type KanbanSortBy = 'manual' | 'title' | 'created' | 'dueDate' | 'priority';
 
 export interface KanbanFilterProp {
@@ -109,7 +110,7 @@ export class KanbanFiltersAndSort {
       const ta = a.t;
       const tb = b.t;
       if (!ta || !tb) return 0;
-      if (sortBy === 'title') return ta.title.localeCompare(tb.title);
+      if (sortBy === 'title') return naturalCompare(ta.title, tb.title);
       if (sortBy === 'created') return (ta.createdAt ?? 0) - (tb.createdAt ?? 0);
       const fmA = (vaultIndexStore.getMetadata(vaultPathForTile(ta) ?? '')?.frontmatter ?? {}) as Record<string, unknown>;
       const fmB = (vaultIndexStore.getMetadata(vaultPathForTile(tb) ?? '')?.frontmatter ?? {}) as Record<string, unknown>;

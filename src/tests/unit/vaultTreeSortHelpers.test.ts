@@ -95,19 +95,72 @@ describe('sortTree', () => {
     expect(names(out)).toEqual(['y', 'z', 'a.md', 'b.md']);
   });
 
-  it('uses the group field as a secondary sort for primary ties', () => {
+  it('lists files group by group, each group in the Sort By order', () => {
     const nodes = [
       file('b.md', { sizeBytes: 10 }),
       file('a.png', { sizeBytes: 10 }),
       file('c.md', { sizeBytes: 5 }),
+      file('d.png', { sizeBytes: 1 }),
     ];
-    const out = sortTree(nodes, cfg({ sortField: 'size', groupField: 'name', groupDirection: 'desc' }));
-    expect(names(out)).toEqual(['c.md', 'b.md', 'a.png']);
+    // Grouped by type (.md before .png), sizes ascending inside each group.
+    const out = sortTree(nodes, cfg({ sortField: 'size', groupField: 'type' }));
+    expect(names(out)).toEqual(['c.md', 'b.md', 'd.png', 'a.png']);
+    const desc = sortTree(nodes, cfg({ sortField: 'size', groupField: 'type', groupDirection: 'desc' }));
+    expect(names(desc)).toEqual(['d.png', 'a.png', 'c.md', 'b.md']);
   });
 
-  it('leaves primary ties in input order when groupField is none', () => {
+  it('breaks primary ties by name when groupField is none, so the order never depends on arrival', () => {
     const nodes = [file('b.md', { sizeBytes: 10 }), file('a.md', { sizeBytes: 10 })];
-    expect(names(sortTree(nodes, cfg({ sortField: 'size' })))).toEqual(['b.md', 'a.md']);
+    expect(names(sortTree(nodes, cfg({ sortField: 'size' })))).toEqual(['a.md', 'b.md']);
+  });
+
+  it('under Sort By None, a folder never reordered by hand lists by name in natural order, and new files follow the hand-made order that way', () => {
+    // The raw listing's order (Windows lists 1, 10, 2).
+    const nodes = [file('Chapter 1.md'), file('Chapter 10.md'), file('Chapter 2.md'), folder('Part 10'), folder('Part 2')];
+    expect(names(sortTree(nodes, cfg({ sortField: 'none' })))).toEqual(['Part 2', 'Part 10', 'Chapter 1.md', 'Chapter 2.md', 'Chapter 10.md']);
+    const placed = sortTree(nodes, cfg({ sortField: 'none', manualOrder: { '': ['/vault/Chapter 10.md'] } }));
+    expect(names(placed)).toEqual(['Part 2', 'Part 10', 'Chapter 10.md', 'Chapter 1.md', 'Chapter 2.md']);
+  });
+
+  it('puts "Chapter 2" before "Chapter 10", as File Explorer does', () => {
+    const nodes = [file('Chapter 10.md'), file('Chapter 2.md'), file('chapter 1.md'), folder('Part 10'), folder('Part 9')];
+    expect(names(sortTree(nodes, cfg()))).toEqual(['Part 9', 'Part 10', 'chapter 1.md', 'Chapter 2.md', 'Chapter 10.md']);
+  });
+
+  it('groups boards apart from other files under Group By Type, under any Sort By', () => {
+    const nodes = [
+      file('a.md', { extension: '.md' }),
+      file('b.board.json', { extension: '.json' }),
+      file('c.md', { extension: '.md' }),
+      file('d.board.json', { extension: '.json' }),
+      file('e.json', { extension: '.json' }),
+    ];
+    expect(names(sortTree(nodes, cfg({ groupField: 'type' })))).toEqual(['b.board.json', 'd.board.json', 'e.json', 'a.md', 'c.md']);
+    // Under Sort By None, each group keeps the manual order.
+    const manual = sortTree(nodes, cfg({ sortField: 'none', groupField: 'type', manualOrder: { '': ['/vault/c.md', '/vault/d.board.json'] } }));
+    expect(names(manual)).toEqual(['d.board.json', 'b.board.json', 'e.json', 'c.md', 'a.md']);
+  });
+
+  it('groups names by first letter, dates by day and sizes by File Explorer bands', () => {
+    const day = (d: number, h: number): number => new Date(2026, 9, d, h).getTime();
+    const byName = sortTree(
+      [file('beta.md', { sizeBytes: 1 }), file('Alpha.md', { sizeBytes: 9 }), file('apple.md', { sizeBytes: 5 }), file('2nd.md')],
+      cfg({ sortField: 'size', groupField: 'name' }),
+    );
+    expect(names(byName)).toEqual(['2nd.md', 'apple.md', 'Alpha.md', 'beta.md']);
+
+    const byDay = sortTree(
+      [file('late.md', { modifiedAt: day(5, 23) }), file('next.md', { modifiedAt: day(6, 1) }), file('early.md', { modifiedAt: day(5, 1) })],
+      cfg({ sortField: 'name', groupField: 'modified', groupDirection: 'desc' }),
+    );
+    expect(names(byDay)).toEqual(['next.md', 'early.md', 'late.md']);
+
+    const bySize = sortTree(
+      [file('b.md', { sizeBytes: 2_000_000 }), file('a.md', { sizeBytes: 20_000 }), file('c.md', { sizeBytes: 900_000 }), file('z.md', { sizeBytes: 0 })],
+      cfg({ sortField: 'name', groupField: 'size' }),
+    );
+    // Empty, then Small (16 KB to 1 MB: a, c by name), then Medium.
+    expect(names(bySize)).toEqual(['z.md', 'a.md', 'c.md', 'b.md']);
   });
 
   it('returns the same array when nothing changes (identity preserved)', () => {
@@ -172,6 +225,21 @@ describe('filterTree', () => {
     ]);
     const out = filterTree([chapter, file('Other.md')], 'chapter 1');
     expect(out).toEqual([chapter]);
+  });
+
+  it("finds a note by its title as well as its file name, and opens the folders above it", () => {
+    const titles: Record<string, string> = { '/vault/Kanban 1/New Card (7).md': 'The Siege' };
+    const titleOf = (n: FileTreeNode): string | null => titles[n.path] ?? null;
+    const board = folder('Kanban 1', [
+      file('New Card (7).md', { path: '/vault/Kanban 1/New Card (7).md' }),
+      file('New Card.md', { path: '/vault/Kanban 1/New Card.md' }),
+    ], { path: '/vault/Kanban 1' });
+    const out = filterTree([board, file('Siege notes.md')], 'siege', titleOf);
+    expect(names(out)).toEqual(['Kanban 1', 'Siege notes.md']);
+    expect(names(out[0]?.children ?? [])).toEqual(['New Card (7).md']);
+    expect([...foldersOpenForSearch([board], 'siege', titleOf)]).toEqual(['/vault/Kanban 1']);
+    // Without the titles, only the file name counts.
+    expect(names(filterTree([board], 'siege'))).toEqual([]);
   });
 });
 

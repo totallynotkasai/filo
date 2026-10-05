@@ -23,6 +23,7 @@
   import { takeTitleEdit } from '../../lib/boards/newTileTitle';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { recreateMissingNote } from '../../lib/notes/recreateNote';
+  import { withPlaceholderRename } from '../../lib/notes/placeholderNames';
   import { reportError } from '../../lib/utils/errorBus';
   import { relinkTargets } from '../../lib/vault/relinkTargets';
   import { UpdateTitleCommand, ToggleFramelessCommand, textTileNotePaths } from '../../commands/index';
@@ -156,10 +157,11 @@
     const titleChanged = plain !== tile.title;
     const titleHtmlChanged = (oldTitleHtml ?? '') !== (newTitleHtml ?? '');
     if (!titleChanged && !titleHtmlChanged) return;
+    const notePath = tile.type === 'text' ? ((tile as TextTile).filePath ?? null) : null;
     const cmd = new UpdateTitleCommand({
       tileId: tile.id,
       boardId: tile.boardId,
-      notePath: tile.type === 'text' ? ((tile as TextTile).filePath ?? null) : null,
+      notePath,
       oldTitle: tile.title,
       newTitle: plain,
       oldTitleHtml,
@@ -169,7 +171,9 @@
       await cmd.execute();
       historyStore.pushWithoutExecuteOnBoard(cmd, tile.boardId);
     } else {
-      await historyStore.execute(cmd).catch(() => {});
+      // A note still named "New Tile 3.md" or "New Card.md" takes its first title as its name too.
+      const step = titleChanged ? withPlaceholderRename(cmd, notePath, plain, tile.boardId) : cmd;
+      await historyStore.execute(step).catch(() => {});
     }
   }
 

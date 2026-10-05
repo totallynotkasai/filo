@@ -6,7 +6,7 @@
   import { reportError } from '../../lib/utils/errorBus';
   import { normalizePath, toPosix } from '../../lib/utils/path';
   import { openVaultFileExternally } from '../../lib/utils/openVaultFile';
-  import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
+  import { bringPickedFileIn } from '../../lib/vault/pickedFile';
   import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
 
   const scope = getContext<BoardScope>(BOARD_SCOPE_KEY);
@@ -32,9 +32,9 @@
   }
 
   /**
-   * Opens a native file picker and copies the chosen file into the vault
-   * under `attachments/{tile.id}/` so the file travels with the project. The
-   * tile only stores the vault-relative path.
+   * Opens a native file picker. A file already in the vault is linked where
+   * it is; one from outside is copied into the board's folder, so it travels
+   * with the vault. The tile only stores the vault-relative path.
    */
   async function handleChooseFile() {
     if (picking) return;
@@ -53,21 +53,20 @@
 
       const sourcePath = paths[0];
       if (!sourcePath) return; // paths non-empty (checked above)
-      // Drain pending writers before the copy so a debounced
-      // tile-definition write doesn't fire against a stale `filePath`
-      // before the new file lands on disk.
-      const res = await copyFileIntoVault(sourcePath, vaultDir, getActiveContentFolder(boardStore.current));
+      // A file already in the vault is linked; one from outside is copied in
+      // (after pending writes land, so none fires against a stale `filePath`).
+      const res = await bringPickedFileIn(sourcePath, vaultDir, getActiveContentFolder(boardStore.current));
 
       if (!res.success) {
         reportError(
           'FileTile.import',
-          res.error ?? null,
+          res.error,
           `Failed to import "${toPosix(sourcePath).split('/').pop() ?? 'file'}" into the vault`,
         );
         return;
       }
 
-      const storedPath = res.relativePath || res.path || '';
+      const storedPath = res.relPath;
       const fileName = toPosix(sourcePath).split('/').pop() || 'file';
       const fileExtension = fileName.includes('.') ? fileName.split('.').pop() || '' : '';
 

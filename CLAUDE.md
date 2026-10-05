@@ -288,6 +288,7 @@ filo/
 │   │   │   ├── settings.ts
 │   │   │   ├── tagsFile.ts             # .filo/tags.json envelope + migration scaffold
 │   │   │   ├── layoutTemplate.ts       # .filo/templates/*.json envelope + migration scaffold
+│   │   │   ├── boardTemplate.ts        # A board template's ```filo-board``` skeleton: type, settings, columns / sections / tiles
 │   │   │   ├── link.ts                 # filo:// link encode/decode + DecodedFiloLinkSchema
 │   │   │   ├── migrations.ts          # Board format steps (`MIGRATION_STEPS`, none yet): an older board is carried forward on a copy, one version at a time; a newer one is refused
 │   │   │   └── schemaUtils.ts          # uniqueBy / uniqueStrings / idString (NANOID_REGEX)
@@ -301,11 +302,13 @@ filo/
 │   │   │   ├── changeRefusedError.ts  # A note that can't take a command's change: toast, and the step leaves the stack
 │   │   │   ├── noteLayoutCommands.ts  # SetLineSpacingCommand (frontmatter `lineSpacing:`)
 │   │   │   ├── tileCommands.ts        # tile add/delete/move/resize/style/lock
+│   │   │   ├── newNoteUndo.ts         # Undo of a new tile, card or task: its empty note (one Filo made for it, on no other board) to Filo's trash; redo brings it back
 │   │   │   ├── trashedFiles.ts        # trashFiles / restoreFiles: shared by the delete commands' undo
 │   │   │   ├── noteFieldCommand.ts    # Base of the card/task field commands: forward + inverse FrontmatterDelta
 │   │   │   ├── frontmatterInverse.ts  # inverseDelta, applyDeltaChecked (same-key conflict check on undo)
 │   │   │   ├── updateTitleCommand.ts  # Title edit = frontmatter `title:` delta (+ board titleHtml)
 │   │   │   ├── renameFileCommand.ts   # Undo of "Rename file to match title"
+│   │   │   ├── renamePlaceholderCommand.ts # A placeholder-named note renamed after its first title, inside that title edit's step
 │   │   │   ├── tileTagCommands.ts     # tile/path tag add/remove
 │   │   │   ├── connectionCommands.ts  # connection add/delete/update
 │   │   │   ├── frameCommands.ts       # frame add/update/move/delete
@@ -341,11 +344,14 @@ filo/
 │   │   │   │   ├── renameGrace.ts     # askUnlessMoved: wait out a rename before "deleted" / "couldn't save"
 │   │   │   │   ├── unsavedNoteTexts.ts # The text a rescue copy holds for each unsaved note
 │   │   │   │   ├── createNote.ts      # createNoteFile: exclusive create with `title:`, ` (n)` on collision
+│   │   │   │   ├── newNote.ts         # createNewNote: "New note" (sidebar, Ctrl+N in a Document tab, New Tab → Document): `Untitled.md`, opened with its title ready to type
+│   │   │   │   ├── placeholderNames.ts # New Card / New Tile n / New Task n / Untitled / X - Subtask n: renamed after the first title (withPlaceholderRename), not while leaving the vault
+│   │   │   │   ├── madeForNewItems.ts # The notes Filo made this session for a new tile, card or task (an undo may trash them while empty); follows renames
 │   │   │   │   ├── keepVersion.ts     # keepNoteVersion: a copy in `.filo/recovery/<ts>-keep/` of a version a reload is about to drop
 │   │   │   │   ├── openNote.ts        # openNoteInDocumentTab
 │   │   │   │   ├── recreateNote.ts    # recreateMissingNote: a broken text tile's "Recreate backing file" (exclusive create)
-│   │   │   │   ├── renameToTitle.ts   # "Rename file to match title"
-│   │   │   │   └── setNoteTitle.ts    # Document-tab title edit → frontmatter `title:`
+│   │   │   │   ├── renameToTitle.ts   # "Rename file to match title"; pathForTitle (also the placeholder rename's target)
+│   │   │   │   └── setNoteTitle.ts    # Document-tab title edit → frontmatter `title:` (and a placeholder name → the title)
 │   │   │   ├── vault/                 # Vault-side helpers (renderer)
 │   │   │   │   ├── vaultIndex.ts      # Per-note metadata (frontmatter, title, tags, body; no Markdown parse)
 │   │   │   │   ├── vaultOperations.ts # Disk-shape IPC: withDrainedWrites, rename, trash/restore, folder, copy
@@ -370,6 +376,7 @@ filo/
 │   │   │   │   ├── unsavedStateReport.ts # Tells main whether leaving now could lose work (`app:unsaved-state`); a title being typed counts, a note editor (`data-note-editor`) only through the note store
 │   │   │   │   ├── conventionPaths.ts # Default folders + free-name helpers for new files
 │   │   │   │   ├── droppedFiles.ts    # classifyDroppedFile: a file dropped from Explorer is in the vault (link it, by `toVaultRelative`) or outside (copy it); isInsideVault
+│   │   │   │   ├── pickedFile.ts      # bringPickedFileIn: a file picked for a cover, File tile or background is linked when in the vault (not in a hidden folder), else copied in
 │   │   │   │   ├── extension.ts
 │   │   │   │   ├── moveIntoFolder.ts
 │   │   │   │   ├── moveIntoFolderFeedback.ts # The toast wording for a failed move into a folder
@@ -399,8 +406,9 @@ filo/
 │   │   │   │   ├── unreconciledFolderMoves.ts # Folder moves any tree read saw, kept for the next reconcile
 │   │   │   │   ├── unsavedMessages.ts # Close / open / quit wording for unsaved work, by cause; the quit dialog ("Waiting for your decision" when only held decisions are left) and the Retry result
 │   │   │   │   ├── sidebarTagFilter.ts # Files a tag (or child tag) selects; tree cut down to them
-│   │   │   │   ├── sidebarFileMenu.ts # The sidebar file / folder context menu
-│   │   │   │   └── vaultTreeSort.ts   # Sidebar sort/group helpers
+│   │   │   │   ├── sidebarFileMenu.ts # The sidebar file / folder context menu (a folder: New note, New folder) and the empty space's
+│   │   │   │   ├── sidebarNewItems.ts # newNoteIn / newFolderIn: the sidebar's New (toolbar +, empty space, a folder's menu); filters cleared, the folder opened
+│   │   │   │   └── vaultTreeSort.ts   # Sidebar sort (natural order) and Group By (the primary key: first letter, day, size band, type); the search matches a note's title too
 │   │   │   ├── boards/                # Board file load/save logic
 │   │   │   │   ├── boardLoader.ts     # Loads and validates a board; hands its stat back, never stamps the drift baseline
 │   │   │   │   ├── boardBaseline.ts   # adoptLoadedBoardBaseline: stamps a loaded board's baseline once its data is in the cache (and records an older format)
@@ -452,6 +460,7 @@ filo/
 │   │   │   │   ├── dragDrop.ts        # OS file drop → tile factory
 │   │   │   │   ├── markdownTileSeed.ts
 │   │   │   │   ├── layout.ts          # Auto-layout algorithms
+│   │   │   │   ├── newTilePlacement.ts # placeClear: a new tile (side toolbar, Ctrl+N, N) steps to the nearest spot clear of other tiles, one in view first
 │   │   │   │   ├── orphanCatcher.ts
 │   │   │   │   ├── floatingToolbarDrag.ts # Shared toolbar drag: background only, pin blocks it, cancel reverts, clamp to window
 │   │   │   │   ├── minimapBounds.ts   # Minimap window math: a local window around the viewport, tiles AABB apart
@@ -540,6 +549,7 @@ filo/
 │   │   │   │   ├── datePickerViewState.svelte.ts # TaskDatePicker's shown month (re-seeds only when the value changes)
 │   │   │   │   ├── clearStaleDndStyles.ts # Action clearing svelte-dnd-action's leftover inline styles on a section
 │   │   │   │   ├── sectionMembership.ts # A Task List as section + order per task: undo moves only the tasks a step moved, starts recomputed live
+│   │   │   │   ├── taskRename.ts      # renameTaskTitle: a row's new title (+ the placeholder rename)
 │   │   │   │   ├── taskCreation.ts, taskDeletion.ts, sectionOps.ts, sectionMath.ts, blockMove.ts
 │   │   │   │   ├── taskDragController.svelte.ts, multiSelectController.svelte.ts, indentGesture.ts
 │   │   │   │   └── filtersAndViews.svelte.ts, taskListViewModel.svelte.ts, taskListKeyboardNav.svelte.ts
@@ -550,7 +560,8 @@ filo/
 │   │   │   │   └── recurrence.ts, dateMath.ts, dateOrder.ts, dueDateFormat.ts, taskListModel.ts, taskMove.ts
 │   │   │   ├── mindmap/               # Mind-map keyboard + selection
 │   │   │   │   ├── mindMapContextMenus.ts # Tile / frame / canvas menus ("N tiles selected" group)
-│   │   │   │   ├── mindMapKeyboard.ts # Arrow-key neighbour tile, and when the canvas leaves keys alone
+│   │   │   │   ├── mindMapKeyboard.ts # Arrow-key neighbour tile, and when the canvas leaves keys alone (a dialog, a menu, a focused control, the vault sidebar)
+│   │   │   │   ├── mindMapShortcuts.ts # N, C, Enter, Backspace as commands (`mindmap:*`, listed in Help, rebindable), only with focus in the canvas
 │   │   │   │   ├── marqueeSelectionController.svelte.ts # Per-pane shift-drag marquee selection
 │   │   │   │   ├── visibleTilesViewModel.svelte.ts # Per-pane viewport culling of tiles
 │   │   │   │   ├── frameHitTest.ts    # Topmost frame under a point (a collapsed frame: its header only)
@@ -582,18 +593,22 @@ filo/
 │   │   │   │   ├── themeEditorGuard.ts # Unsaved theme-editor changes: Save / Discard / Keep editing before a tab switch or Settings closing
 │   │   │   │   ├── defaultColours.ts  # The Global Defaults colours a theme pick hands back to the theme
 │   │   │   │   └── chromeText.ts      # Toolbar / tab bar colour settings over the theme's, and their black / white text
-│   │   │   ├── templates/             # Layout templates
+│   │   │   ├── templates/             # Layout and Markdown templates
 │   │   │   │   ├── templateService.ts
+│   │   │   │   ├── templateNote.ts    # noteFromTemplate: the note a template makes on every board (frontmatter kept and filled in, title, body)
+│   │   │   │   ├── boardFromTemplate.ts # createBoardFromTemplate: a ```filo-board``` template's board, its columns and cards / sections and tasks / tiles each with a note
 │   │   │   │   ├── layoutCapture.ts
 │   │   │   │   └── layoutTemplateStore.ts
 │   │   │   ├── search/                # Query parser + search runner (matches over the vault index's bodies)
 │   │   │   │   ├── queryParser.ts     # `tag:` / `board:` / `has:` / `property:` / `type:` operators, /regex/, free text (with no operator: exactly as typed, spaces and quotes included)
 │   │   │   │   ├── runSearch.ts       # runVaultSearch: every tile on every board plus notes on no board; Match case / Whole word
+│   │   │   │   ├── matchGroups.ts     # The Search panel's list under the box: matches grouped by note, the matched words marked
 │   │   │   │   ├── markdownSyntax.ts  # Where a body holds Markdown syntax (list markers, rules, table delimiter rows, link addresses, HTML tags): Replace leaves a match there alone
 │   │   │   │   └── replaceAllText.ts  # Replace All's confirm (the search and the replacement quoted with every space kept, body matches only, the notes named, matches in Markdown syntax counted apart) and its refusal at the match cap
 │   │   │   ├── spatialIndex.ts        # rbush wrapper
 │   │   │   └── utils/                 # Shared utilities
 │   │   │       ├── ids.ts             # nanoid wrapper
+│   │   │       ├── naturalSort.ts     # naturalCompare: "Chapter 2" before "Chapter 10" (sidebar, Task List and Kanban title sorts, templates)
 │   │   │       ├── keyedReactivity.svelte.ts # KeyedVersions: a reader tracks one key, so adding an entry doesn't re-run every other key's readers
 │   │   │       ├── progressiveCount.svelte.ts # Renders a long list's first rows at once, the rest in idle time (a large sidebar folder)
 │   │   │       ├── forEachLimited.ts  # Runs async work over a list, a few at a time (the tag sweep's reads and writes)
@@ -656,7 +671,7 @@ filo/
 │   │       │   └── PaneDropOverlay.svelte
 │   │       ├── sidebar/               # Vault sidebar
 │   │       │   ├── VaultSidebar.svelte
-│   │       │   ├── VaultSidebarToolbar.svelte # Header buttons: New Folder, Sort By, Group By, Expand / Collapse, Pop-out / Dock
+│   │       │   ├── VaultSidebarToolbar.svelte # Header buttons: New (note or folder), Sort By, Group By, Expand / Collapse, Pop-out / Dock
 │   │       │   ├── FloatingVaultPanel.svelte # The sidebar as a draggable, resizable in-window panel
 │   │       │   ├── VaultFileItem.svelte
 │   │       │   ├── FileIcon.svelte    # A tree row's icon by file kind (board type, Markdown, media, folder)
@@ -738,7 +753,7 @@ filo/
 │   │       │   ├── RelinkTileModal.svelte # Re-link a broken tile to a vault file (undoable)
 │   │       │   └── RecoveryFiles.svelte
 │   │       ├── search/                # Search, Find and Replace
-│   │       │   ├── SearchPanel.svelte # The floating find / replace panel (Ctrl+Shift+F)
+│   │       │   ├── SearchPanel.svelte # The floating find / replace panel (Ctrl+Shift+F); the matches listed under the box, grouped by note
 │   │       │   └── SearchFindAllPopup.svelte
 │   │       └── tags/                  # Tag UI
 │   │           ├── NoteTagRow.svelte  # Tag row at the top of a note in a Document tab
@@ -993,6 +1008,7 @@ When adding a new tile type or board type: register it, implement the interface,
 - **A queued execute runs on its own board.** An execute body waiting behind a running command switches back to the board it was made on first (as a queued undo or redo does), and is rolled back with a toast if that board was closed.
 - **Undo on a note that's gone doesn't queue a write.** `applyDeltaChecked` throws `NoteGoneError` when the file no longer exists; the history store puts the command back where it was and shows *Couldn't undo: "Card.md" no longer exists.* with **Skip this step** (drops it so earlier steps can still be undone).
 - **A change a note can't take leaves no undo step.** A tag add or remove on a note whose frontmatter the rewriter won't touch (malformed YAML, an anchored `tags:`), that isn't UTF-8, is a link, or has an unsaved edit rejects with `ChangeRefusedError` (`commands/changeRefusedError.ts`); the history store shows its message and takes the step off the stack (or, for undo / redo, leaves it where it was).
+- **Undoing a new tile, card or task trashes its empty note.** A note Filo made for the add (`madeForNewItems.ts`) that is still empty and on no other board goes to Filo's trash with the undo, and comes back before the redo re-adds the item (`commands/newNoteUndo.ts`); a note with text stays.
 - **No command keeps a note body.** Delete undo is a restore from `.filo/trash` (a rename back); Replace All keeps only the replaced snippets and before/after hashes, and applies only while the file's bytes match. Gate `no-note-body-in-commands`.
 - Text editing undo is handled by TipTap/ProseMirror internally (separate from board undo). Board-level Ctrl+Z fires when no TipTap editor is focused.
 - **Vault-wide tag delete and rename are undone from their toast** (`stores/tagUndo.svelte.ts`; it stays until dismissed or the next tag action's toast replaces it), not from board history, because they touch many files and belong to no board. Each Undo changes back only what its action changed (the notes it rewrote, the attachments, board-only tiles and filter chips that carried the tag), so a note tagged with the new name in between keeps it. A merge (a rename into a tag that exists in any spelling, registered or only in a note: `isMergingRename`) asks first and has no undo.
@@ -1035,7 +1051,7 @@ Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, U
 - **Electron context isolation** — `contextBridge` exposes a small API object as `window.filo` (`invoke`, `on`, `send`, `getPathForFile`, `systemLocale`). The renderer calls `window.filo.invoke('vault:read-file-text', vaultRoot, relPath)`, NOT `require('fs')`. The preload validates every payload against `ipcSchemas.ts` before it reaches main.
 - **Board JSON `filePath` field** — Vault-relative paths, not absolute. e.g., `"Notes.md"` or `"subfolder/Notes.md"`. The path is a note's only identity (no `contentId` / `docId`); path-keyed maps use the case-folded `VaultPath` and follow renames.
 - **A note that is a symbolic link is read-only.** `vault:read-file-text` reports `link: true` (lstat), the views freeze with *"This note is a link; edit the original."*, and main refuses a write to it (`NOTE_IS_LINK`, `atomicWriteFile({ refuseLink })`), since an atomic rename would replace the link with a plain file. Hard links aren't detected (KNOWN_LIMITATIONS #34).
-- **Titles are not filenames.** A title edit writes frontmatter `title:` and never renames the file. The filename is derived from the title once, at creation (illegal characters become `-`, leading dots and spaces dropped, ` (n)` on collision). The sidebar shows filenames; its context menu offers "Rename file to match title".
+- **Titles are not filenames.** A title edit writes frontmatter `title:` and doesn't rename the file. The filename is derived from the title once, at creation (illegal characters become `-`, leading dots and spaces dropped, ` (n)` on collision). The exception: a note Filo made before it had a title (`New Card`, `New Tile 3`, `New Task 2`, `Plot - Subtask 1`, `Untitled`, each maybe ` (n)`) takes its first title as its name, in the title edit's undo step (`withPlaceholderRename`, `RenamePlaceholderCommand`); not while the vault is closing or quitting (the editors are frozen then). The sidebar shows filenames, and its search matches titles too; its context menu offers "Rename file to match title".
 - **A board's name is its file name.** `Plan.board.json` is the board "Plan"; `board.name` in the JSON is a copy, and on load the stem wins. Renaming the board renames the file (and, with board-specific folders on, its folder while that folder still has the board's name); renaming the file renames the board. A name the file system can't take, or another board's name in the same folder (with board-specific folders on, anywhere in the vault, since each board is alone in its folder: `boardNameTakenWithFolders`), is refused inline, never bumped to ` (2)` (`board:create` is an exclusive create). With `general.boardFolders` on, a new board gets its own folder and `settings.defaultFolder` pins it; `getActiveContentFolder` then uses only the board pin, and with it off only the vault-wide Root Directory. A new vault's `app.json` is seeded with it on (`newVaultGeneralSettings`); the schema default stays off, so an existing vault whose `app.json` lacks the key keeps its notes where they went.
 - **Boards load at the current version or through tested migration steps.** `CURRENT_BOARD_FILE_VERSION` is 8. An older board is carried forward by `MIGRATION_STEPS` (`schema/migrations.ts`, none yet), one version at a time, on a copy of what was read, then validated by the current schema. Opening it writes nothing; its first save copies the file as it was to `.filo/recovery/<ts>-keep/` before writing the current format (`lib/boards/migratedBoards.ts`; a copy that fails refuses the save, kept for Retry), and one notice per open names the boards read that way. A board from a newer Filo, older than the first step, or whose step fails is listed as failed and never written. A format change bumps the version, appends a step and adds its fixtures (gate `board-migration-steps`).
 - **Frontmatter writes are source-preserving.** `assembleNoteText` (`lib/notes/noteFile.ts`) hands the fresh frontmatter source to `assembleMarkdownFile` (`lib/editor/markdownSync.ts`), which patches it with `patchFrontmatterSourceCst` (`lib/vault/frontmatterCstModel.ts`), a CST engine on the `yaml` package. It rewrites only the keys whose value changed and emits every untouched key byte-for-byte from the on-disk source: comments, key order, quoting, and exotic scalars (`02134`, `0xFF00FF`, `1_000`) all survive. A full re-dump (`new Document(fm).toString()`) happens only for a new file, a block that isn't a block mapping, or a changed/deleted key carrying an anchor/alias or tag, and for an existing block only when every untouched key comes out saying what it said (`dumpPreservesUntouched`): a dump that would turn `02134` into `2134` or drop a `!tag` is refused (`lossy`) and the block kept. Remaining narrow losses: KNOWN_LIMITATIONS #1.

@@ -12,7 +12,7 @@
    */
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
-  import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
+  import { bringPickedFileIn } from '../../lib/vault/pickedFile';
   import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
   import { boardStore } from '../../stores/board.svelte';
 
@@ -60,16 +60,15 @@
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
     });
     if (!paths || paths.length === 0) return;
-    // Drain pending writers before the copy so a debounced
-    // .board.json write referring to the new image path doesn't fire
-    // before the file lands on disk.
     const src = paths[0];
     if (!src) return; // paths non-empty (checked above)
-    const res = await copyFileIntoVault(src, vaultPath, folder ?? getActiveContentFolder(boardStore.current));
+    // An image already in the vault is linked; one from outside is copied in
+    // (after pending writes land, so no board write names it before it exists).
+    const res = await bringPickedFileIn(src, vaultPath, folder ?? getActiveContentFolder(boardStore.current));
     if (res.success) {
-      onChange(res.relativePath ?? res.path ?? '');
+      onChange(res.relPath);
     } else {
-      uiStore.toast(`Failed to import image: ${res.error ?? 'unknown error'}`, 'error', 3000);
+      uiStore.toast(`Failed to import image: ${res.error}`, 'error', 3000);
     }
   }
 

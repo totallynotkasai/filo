@@ -35,7 +35,7 @@ Filo is a highly customizable, PKM (Personal Knowledge Management) tool. It util
 
 **Frontmatter Source-of-Truth Rule:** The `.md` file is the only copy of a note's title, tags, metadata (completed, due date, priority, status, recurrence, etc.) and body. Board JSON never copies them: a board refers to a note by its vault path (`filePath`) and stores only what is visual (position, size, style, lock/fade, which column or section it sits in and its order there, and optional title formatting). Because there is no second copy, there is nothing to reconcile: an external edit to the `.md` file shows on every board at once.
 
-**Note titles.** A note's title is its frontmatter `title:` value. A note without a `title:` key (for example one written by another app) shows its filename without `.md`. Filo always writes `title:` when it creates a note. Editing a title — in a tile header, a card, a task row or a Document tab — changes only the `title:` line; the file is **never renamed** by a title edit. The filename is derived from the title once, at creation: characters that aren't allowed in filenames become `-`, and ` (2)`, ` (3)`… is added if the name is taken. After that, titles and filenames are independent. The Vault Sidebar shows filenames, and its right-click menu offers **Rename file to match title** when you want them aligned (undoable). Formatting applied to a tile title (bold, colour…) is stored on the board as `titleHtml` and shown only while its text still matches the note's title.
+**Note titles.** A note's title is its frontmatter `title:` value. A note without a `title:` key (for example one written by another app) shows its filename without `.md`. Filo always writes `title:` when it creates a note. Editing a title — in a tile header, a card, a task row or a Document tab — changes only the `title:` line; the file is **not renamed** by a title edit. The filename is derived from the title once, at creation: characters that aren't allowed in filenames become `-`, and ` (2)`, ` (3)`… is added if the name is taken. After that, titles and filenames are independent. The one exception is a note Filo had to make before it had a title (a new card, tile or task, a subtask, a new note): it is made under a placeholder name (`New Card.md`, `New Tile 3.md`, `New Task 2.md`, `Plot - Subtask 1.md`, `Untitled.md`), and the first title it is given names the file too, in the same undo step, so the vault reads by title in any other app. A title set while the vault is closing or quitting leaves the file for the next title edit. The Vault Sidebar shows filenames, and its right-click menu offers **Rename file to match title** when you want them aligned (undoable). Formatting applied to a tile title (bold, colour…) is stored on the board as `titleHtml` and shown only while its text still matches the note's title.
 
 ### Tile Storage
 
@@ -54,7 +54,7 @@ For tile types that store a file in the vault (Text, Image, Video, Audio, File),
 
 ### Text Tile / Document Board Relationship
 
-A Text Tile and a Document Board are two views of the same underlying `.md` file. When a user creates a Text Tile on a Mind Map board, the tile content is written to a `.md` file in the vault. The "Expand to Document" button opens that same `.md` file as a full-page Document board in a new tab. Any edits made in either view are reflected immediately in the other: every open view of a note shares one in-memory copy of it, and the view being typed in owns it while the others follow. All writes to the file go through a single writer that re-reads the file before each save, so a change made elsewhere (another view, another app, a sync client) is never overwritten unseen. The expanded view of a text tile *is* its Document tab; there is no separate expanded-tile mode. A Document board can also be created independently (without originating from a tile) — in this case Filo still creates a backing `.md` file in the vault. If that file is later referenced as a tile on a Mind Map board, the same bidirectional sync applies.
+A Text Tile and a Document Board are two views of the same underlying `.md` file. When a user creates a Text Tile on a Mind Map board, the tile content is written to a `.md` file in the vault. The "Expand to Document" button opens that same `.md` file as a full-page Document board in a new tab. Any edits made in either view are reflected immediately in the other: every open view of a note shares one in-memory copy of it, and the view being typed in owns it while the others follow. All writes to the file go through a single writer that re-reads the file before each save, so a change made elsewhere (another view, another app, a sync client) is never overwritten unseen. The expanded view of a text tile *is* its Document tab; there is no separate expanded-tile mode. A Document board can also be created independently (without originating from a tile): **New note** on the vault sidebar (a folder's right-click menu, the empty space below the files, or the sidebar's **+** button), **Ctrl+N** in a Document tab (a note beside the one it shows), or **+ New Tab → Document** (a note in the Root Directory). Filo creates the backing `.md` file at once as `Untitled.md`, opens it in a Document tab with its title (the tab's name) selected for typing, and the title typed names the file; Enter then puts the caret in the note's text. If that file is later referenced as a tile on a Mind Map board, the same bidirectional sync applies.
 
 ### Tiles on Multiple Boards
 
@@ -521,6 +521,7 @@ Filo uses a **command pattern** for undo/redo. Every undoable action is encapsul
 * Style change commands — Tile, connection, and frame style modifications
 * `UpdateTitleCommand`, the tag commands, the card/task field commands and `UpdatePropertiesCommand` (the Document tab's tag row) — note metadata, undone as the opposite frontmatter change
 * `RenameFileCommand` — undo of "Rename file to match title" (renames back)
+* `RenamePlaceholderCommand` — a placeholder-named note renamed after its first title, inside that title edit's step
 * `CascadeDeleteCommand` — a sidebar delete and the tiles it removed; undo restores both from Filo's trash
 
 **Text editing integration:** Text content changes within the Tiptap editor use Tiptap's built-in ProseMirror undo/redo (Ctrl+Z / Ctrl+Y while the editor is focused). Board-level undo (Ctrl+Z while no editor is focused) operates on the board's command stack. These two undo systems are independent.
@@ -647,6 +648,7 @@ The Global Toolbar consists of the following buttons:
     * `type:image` — Search by tile type (`text|image|video|audio|file|link|iframe|timer`)
     * Regex support with `/pattern/` or `/pattern/flags` syntax (the global flag is added automatically; user flags are preserved)
     * Find / Find All buttons sit next to the find box. **Find** cycles through matches in order — board name → tile title → match offset — and highlights the active tile via the existing `navigateToTile` flow (board switch, viewport centre, 2 s highlight pulse). **Find All** opens a popup listing every match with its tile title, owning board, tags, and a snippet; click-to-jump.
+    * **The list under the box** — Below the find box the panel lists the matching notes, grouped by note: each note's title, its board (or "On no board"), how many matches it has, and its first three matches with the words around each, the matched text marked ("N more in this note" opens the rest). A click on a match shows it, as Find does; the current match is marked and kept in view. Arrow keys move through the list, which is one Tab stop. The first 100 notes are listed; a narrower search shows the rest.
     * **Replace** (single match) and **Replace All** sit next to the replace box. Replace All is **atomic in its pre-flight phase**: if any candidate file fails to read, no writes occur. Once writes begin, per-write failures are surfaced via toast but already-committed writes remain on disk (the filesystem can't be atomically rolled back across files). Both Replace and Replace All push a `ReplaceAllCommand`, so Ctrl+Z puts each replaced match's original text back. The command keeps only the replacements and a hash of each file before and after, never a copy of the note, and it rewrites a file only while its bytes are exactly what the replace left — an edit made to the file in between is never overwritten.
     * **Replace scope:** body matches only. Title-only matches surface in Find / Find All but are skipped by Replace, because a title edit is its own undoable command (`UpdateTitleCommand`, a frontmatter `title:` change).
     * **Match cap:** the engine returns at most 5 000 matches; a truncation indicator surfaces in the panel header so the user knows to refine the query.
@@ -693,7 +695,7 @@ Typing in a note: `# `, `- `, `* `, `1. `, `> ` and `[ ] ` start a heading, list
 
 ### Side Toolbar — Mind Map
 
-* **+ New Tile (Button)** — Prompts the user to select what tile type they'd like to create out of the following options: Text, Audio, Link, Iframe (Embed), Timer. Creates a new tile on the board. This uses the tile defaults setup in Filo Settings. Image, Video, and File tiles cannot be created via this button — they are created exclusively by dragging and dropping a file from the user's computer onto the canvas (see **Drag-and-Drop File Import** in General Features).
+* **+ New Tile (Button)** — Prompts the user to select what tile type they'd like to create out of the following options: Text, Audio, Link, Iframe (Embed), Timer. Creates a new tile on the board, in the middle of the view, or stepped clear of the tiles already there (the nearest free spot, a tile's width or height and a gap at a time, preferring one in view), so new tiles never pile up; Ctrl+N and N do the same. This uses the tile defaults setup in Filo Settings. Undoing a new tile whose note is still empty (and shown by no other tile) moves that note to Filo's trash, and redo brings it back; the same goes for a new Kanban card or Task List task. Image, Video, and File tiles cannot be created via this button — they are created exclusively by dragging and dropping a file from the user's computer onto the canvas (see **Drag-and-Drop File Import** in General Features).
 
 * **Connections Mode (Button)** — Toggles connections mode on and off.
 
@@ -775,17 +777,16 @@ There is no side toolbar for the document board. The document board uses the glo
 
 The Vault Sidebar displays the contents of the current vault as a file and folder tree. It allows the user to browse, organise, and manage all files and boards in the vault.
 
-* **Search** — Allows the user to search for a specific file or folder within the vault.
-* **New Folder** — Creates a new folder in the vault.
-* **Change sort order** — Changes the sort order of the files and folders in the vault. Options are:
-    * Alphabetical
-    * Reverse Alphabetical
-    * Newest
-    * Oldest
+* **Search** — Finds files and folders by name, and notes by their title too (the row then shows the title beside the file name), so a note is found by what the user called it.
+* **+ (New note or folder)** — A note or a folder at the vault's top: a new note opens in a Document tab with its title ready to type; a new folder shows with its name ready to type. The same two are on the right-click menu of the empty space below the files, and a folder's right-click menu makes them inside that folder.
+* **Sort By** — Name, Date Modified, Type or Size, ascending or descending, or None (the order the user dragged the files into; files never dragged follow, by name). Names sort as File Explorer does: "Chapter 2" before "Chapter 10", case and accents aside.
+* **Group By** — Lists the files group by group, each group in the Sort By order: names by their first letter, dates by day, sizes by File Explorer's bands (Empty, Tiny, Small, Medium, Large, Huge, Gigantic), types by extension (boards apart from other JSON). Folders lead, by name. While a Group By is on, dragging to reorder is off.
 * **Collapse All** — Collapses all folders and subfolders in the vault.
 * **Expand All** — Expands all folders and subfolders in the vault.
 
 The sidebar shows **filenames**, not note titles (see **Note titles** in the Data Model). Right-clicking an item offers, among others:
+
+* **New note / New folder** *(folders only)* — Makes a note or a folder inside the folder (see **+** above).
 
 * **Rename** — Renames the file or folder. Characters that aren't allowed in filenames are blocked with an inline message. Renaming a note's file never changes its title, and every board tile pointing at it follows the new path.
 * **Rename file to match title** *(notes only)* — Renames the `.md` file to its current title (with the same character rules as creation). Undoable.
@@ -812,7 +813,7 @@ Tiles are the main way that the user interacts with the tool. Tiles can be creat
 * Expand to Document (Button(Text Tile Exclusive))
 * Delete Tile (Button)
 
-* **Tile Title** — The Tile Title is a text field that can be edited by the user. It is located in the top left corner of the tile header. The Tile Title can be edited with the Toolbar's text formatting options. For a text tile it is the note's title: frontmatter `title:`, or the filename stem if the note has none (see **Note titles** in the Data Model). When a new note is created, its filename is derived from the title once. Editing the title later changes only the note's `title:` line and never renames the file, so no board references change; the new title shows on every board at once. Use **Rename file to match title** in the Vault Sidebar to align the filename. Formatting on the title is stored per board and hidden once the title text changes elsewhere. Board-only tiles (Link, Iframe, Timer) keep their title in the board file.
+* **Tile Title** — The Tile Title is a text field that can be edited by the user. It is located in the top left corner of the tile header. The Tile Title can be edited with the Toolbar's text formatting options. For a text tile it is the note's title: frontmatter `title:`, or the filename stem if the note has none (see **Note titles** in the Data Model). When a new note is created, its filename is derived from the title once. Editing the title later changes only the note's `title:` line and doesn't rename the file (except the first title of a note still under its placeholder name, see **Note titles**), so no board references change; the new title shows on every board at once. Use **Rename file to match title** in the Vault Sidebar to align the filename. Formatting on the title is stored per board and hidden once the title text changes elsewhere. Board-only tiles (Link, Iframe, Timer) keep their title in the board file.
 
 * **Tags (Button)** — When the tags button is clicked by the user it opens a pop-up with a text field where the user can input the tags they want a tile to have this is comma separated. For a text tile, tags are written to the note's frontmatter `tags:`; for a media or file tile, to `.filo/tags.json`; for a Link, Iframe or Timer tile, to the tile in the board file. When submitted tags are put in the bottom left corner of a tile, they can be clicked which opens the **Tag Context Menu**.
     * **Tag Context Menu** — Clicking a tag displayed on a tile opens a contextual menu showing all other tiles that share that tag. The menu lists each tile's Title, Board Name, and all tags on that tile. Clicking an entry navigates directly to that tile. This is a lightweight, contextual version of the full Tags Browser (accessible from the Side Toolbar's View dropdown), which offers additional management features such as renaming, recolouring, fading, and deleting tags across the entire vault.
@@ -885,12 +886,13 @@ Templates capture reusable structure that can be inserted into the current board
 * **Layout Templates** — Capture the *structure* of a selection of Mind Map tiles: each tile's type, size, position (relative to the selection's bounding box), and full style settings. They deliberately do **not** capture content: titles, body content, tags, lock state, file references (`src` / `url` / `filePath`), and the contents of any backing `.md` file are all stripped. Layout templates persist as `.template.json` files inside `<vault>/.filo/templates/`.
     * **Save as Template** — Right-click a tile or multi-tile selection on the Mind Map and choose **Save as Template**. Filo prompts for a name (uniqueness-checked) and saves the layout. Type-specific configuration that isn't content — for example a Timer tile's `duration` and `mode` — is preserved.
     * **Insert** — Right-click empty canvas and choose **Insert Template**, or press **Ctrl+T**, to open the Template Browser. Inserting a layout template re-creates the structure with fresh tiles: every tile gets a new id, and each Text tile (or group of tiles that shared one note) gets a new empty `.md` file at a fresh path, named via the normal tile-naming sequence with `title:` in its frontmatter, and the whole batch lands as a single undo step. When invoked from the canvas right-click, the layout anchors to the click position; when invoked via Ctrl+T, it lands centred in the viewport.
-* **Markdown Templates** — Plain Markdown files in a configurable vault folder (default `Templates/`) with `{{title}}`, `{{date}}`, `{{time}}`, `{{datetime}}`, `{{year}}`, `{{month}}`, `{{day}}` variable substitution. A Markdown template may also embed a fenced ```` ```filo-board ```` block carrying a `.board.json` skeleton; instantiating such a template creates an entirely new board.
+* **Markdown Templates** — Plain Markdown files in a configurable vault folder (default `Templates/`) with `{{title}}`, `{{date}}`, `{{time}}`, `{{datetime}}`, `{{year}}`, `{{month}}`, `{{day}}` variable substitution. Every board makes a note from a template the same way (the Mind Map's Template Browser, a Kanban card's **From Template…**): the template's frontmatter is kept, every key of it (`boardType`, a picker hint, aside), with the variables filled in wherever it holds text; the note's title is the template's own `title:` (filled in), else the template's name; the body is filled in too. On the Mind Map the new tile goes where the menu was opened, or the middle of the view, clear of the tiles there.
+    * **Board templates** — A Markdown template may also embed a fenced ```` ```filo-board ```` block; instantiating it creates an entirely new board, named after the template and the day. The block is JSON: `type` (`mindmap`, `kanban` or `tasklist`), `settings`, and the board's skeleton — `columns: [{ "title": "To do", "cards": ["Outline", { "title": "Draft", "body": "…" }] }]` for a Kanban board, `sections: [{ "title": "Monday", "tasks": [ … ] }]` for a Task List, `tiles: [{ "title": "Hero", "x": 0, "y": 0, "width": 300, "height": 200, "body": "…" }]` for a Mind Map. Each card, task and tile gets a note of its own in the board's folder (titles and bodies filled in). The template's own text, outside the block, goes into the first of them without text, or into a note of its own, titled after the template, first on the board. A block that can't be read makes no board and says so; at most 200 notes are made.
 * **Template Browser (Ctrl+T)** — Unified picker with two sections. The **Layout Templates** section is a grid of cards showing an SVG mini-preview of each layout (rectangles coloured to match each tile's style), along with rename and delete actions. The **Markdown Templates** section lists `.md` templates from the vault. A single search input filters both sections.
 
 ### Tabs
 
-Tabs are used to organize the user's boards. Each tab represents a different board. When the user clicks the "+ New Tab" button in the tab bar they are prompted to select the board type they would like to create and the name of the board.
+Tabs are used to organize the user's boards. Each tab represents a different board. When the user clicks the "+ New Tab" button in the tab bar they are prompted to select the board type they would like to create and the name of the board. **Document** makes a new note in the Root Directory and opens it (see **Text Tile / Document Board Relationship**).
 
 * **Tab Bar** — The tab bar is located at the bottom of the screen and is permanently visible. If all tabs are closed the tool defaults to blank screen with a message in the centre that says "Open a Tab to get started". The tab bar displays all the tabs that are currently open and can be used to switch between tabs. Users can double click on the tab name to rename the tab, tabs can be closed by clicking a small "x" next to their name. Closing a tab does not delete it.
 
@@ -922,7 +924,7 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 
 | Shortcut | Action |
 |---|---|
-| Ctrl + N | New Tile (Mind Map), New Card (Kanban), New Task (Task List) |
+| Ctrl + N | New Tile (Mind Map), New Card (Kanban), New Task (Task List), New Note beside the open one (Document tab) |
 | Ctrl + T | Insert Template |
 | Ctrl + Z | Undo |
 | Ctrl + Y, Ctrl + Shift + Z | Redo |
@@ -938,6 +940,10 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 | Ctrl + K | Insert Link |
 | Ctrl + Shift + F | Vault-wide Search |
 | Ctrl + Shift + T | Tags Browser |
+| N | New tile beside the selected tile, or in the middle of the view (Mind Map) |
+| C | Start a connection from the selected tile (Mind Map) |
+| Enter | Rename the selected tile (Mind Map) |
+| Backspace | Remove the selected tiles from the board, after a confirm (Mind Map) |
 | Arrow | Select the nearest tile in that direction (Mind Map) |
 | Ctrl + Shift + Arrow | Add the nearest tile in that direction to the selection (Mind Map) |
 | Ctrl + Arrow | Move the selected tiles (Mind Map) |
@@ -946,7 +952,7 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 | Escape | Cancel Action |
 | Alt + Click | Open in Split Pane |
 
-Every shortcut registered as a command is listed in Help → Shortcuts and can be rebound there; overrides are stored in `.filo/hotkeys.json`. There is no native application menu: these shortcuts replace it.
+Every shortcut registered as a command is listed in Help → Shortcuts and can be rebound there; overrides are stored in `.filo/hotkeys.json`. The Mind Map's N, C, Enter and Backspace are commands like the others (`mindmap:new-tile`, `mindmap:connect`, `mindmap:rename-tile`, `mindmap:remove-tiles`). They, Delete and the arrows act on the Mind Map only while focus is on its canvas or a tile on it (a click on the empty canvas gives it focus): typed on a sidebar row or a toolbar button they do nothing there. There is no native application menu: these shortcuts replace it.
 
 ## Animations
 

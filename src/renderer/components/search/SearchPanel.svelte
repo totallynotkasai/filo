@@ -7,6 +7,8 @@
   import IconButton from '../shared/IconButton.svelte';
   import { replaceableMatches } from '../../lib/search/runSearch';
   import { replaceAllConfirmBody, searchedText, ONLY_SYNTAX_MATCHES, TOO_MANY_TO_REPLACE } from '../../lib/search/replaceAllText';
+  import { groupMatches, snippetParts, MAX_GROUPS_SHOWN, MATCHES_SHOWN_PER_GROUP, type MatchGroup } from '../../lib/search/matchGroups';
+  import { handleListKeyNav } from '../../lib/utils/listKeyNav';
 
   /**
    * Vault-wide Search panel.
@@ -230,6 +232,48 @@
     searchStore.refreshNow();
   }
 
+  // ── The matches under the box, grouped by note ──
+  // Each note shows its first few matches; "N more" opens the rest, and the
+  // note holding the current match is always open. A click (or Enter) on a
+  // match shows it, as Next does.
+  let resultsEl = $state<HTMLElement | null>(null);
+  let expanded = $state<ReadonlySet<string>>(new Set());
+  const groups = $derived(groupMatches(searchStore.matches));
+  const shownGroups = $derived(groups.slice(0, MAX_GROUPS_SHOWN));
+
+  // A new search starts with every note folded to its first matches.
+  $effect(() => {
+    void searchStore.query;
+    expanded = new Set();
+  });
+
+  function rowsOf(group: MatchGroup): number[] {
+    const open = expanded.has(group.key) || group.indexes.indexOf(searchStore.currentIndex) >= MATCHES_SHOWN_PER_GROUP;
+    return open ? group.indexes : group.indexes.slice(0, MATCHES_SHOWN_PER_GROUP);
+  }
+
+  function expand(key: string): void {
+    expanded = new Set([...expanded, key]);
+  }
+
+  // One stop for Tab: the current match's row when it shows, else the first.
+  const tabRow = $derived.by(() => {
+    const current = searchStore.currentIndex;
+    for (const g of shownGroups) if (rowsOf(g).includes(current)) return current;
+    return shownGroups[0]?.indexes[0] ?? -1;
+  });
+
+  function onResultsKeydown(e: KeyboardEvent): void {
+    if (resultsEl && handleListKeyNav(e, resultsEl, { selector: 'button', orientation: 'vertical', wrap: false })) e.preventDefault();
+  }
+
+  // The current match's row stays in sight as Next and Previous move it.
+  $effect(() => {
+    const current = searchStore.currentIndex;
+    if (!resultsEl || searchStore.matches.length === 0) return;
+    resultsEl.querySelector<HTMLElement>(`[data-match-index="${current}"]`)?.scrollIntoView?.({ block: 'nearest' });
+  });
+
   // No onDestroy cleanup needed — the panel is renderer-light and the
   // store's vault-swap reset handles lifecycle teardown.
 </script>
@@ -401,6 +445,58 @@
       {#if searchStore.truncated}
         <p class="replace-note" role="note">{TOO_MANY_TO_REPLACE}</p>
       {/if}
+    {/if}
+
+    {#if searchStore.matches.length > 0}
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div class="results" role="region" aria-label="Matches by note" bind:this={resultsEl} onkeydown={onResultsKeydown}>
+        <p class="results-summary">
+          {searchStore.matches.length}{searchStore.truncated ? '+' : ''} {searchStore.matches.length === 1 ? 'match' : 'matches'}
+          in {groups.length} {groups.length === 1 ? 'note' : 'notes'}
+        </p>
+        <ul class="result-groups">
+          {#each shownGroups as group (group.key)}
+            {@const rows = rowsOf(group)}
+            <li class="result-group">
+              <div class="group-head">
+                <span class="group-title">{group.title}</span>
+                <span class="group-where">{group.where}</span>
+                <span class="group-count" aria-label="{group.indexes.length} {group.indexes.length === 1 ? 'match' : 'matches'}">{group.indexes.length}</span>
+              </div>
+              <ul class="group-rows">
+                {#each rows as i (i)}
+                  {@const m = searchStore.matches[i]}
+                  {#if m}
+                    {@const parts = snippetParts(m)}
+                    <li>
+                      <button
+                        type="button"
+                        class="result-row"
+                        class:current={i === searchStore.currentIndex}
+                        aria-current={i === searchStore.currentIndex ? 'true' : undefined}
+                        data-match-index={i}
+                        tabindex={i === tabRow ? 0 : -1}
+                        onclick={() => searchStore.jumpTo(i)}
+                      >
+                        {#if m.matchKind === 'title'}<span class="row-kind">Title</span>{/if}
+                        <span class="row-snippet">{parts.before}{#if parts.hit}<mark>{parts.hit}</mark>{/if}{parts.after}</span>
+                      </button>
+                    </li>
+                  {/if}
+                {/each}
+              </ul>
+              {#if rows.length < group.indexes.length}
+                <button type="button" class="more-btn" tabindex="-1" onclick={() => expand(group.key)}>
+                  {group.indexes.length - rows.length} more in this note
+                </button>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+        {#if groups.length > shownGroups.length}
+          <p class="results-note">Showing the first {shownGroups.length} notes. Narrow the search to see the rest.</p>
+        {/if}
+      </div>
     {/if}
   </section>
 
@@ -585,6 +681,134 @@
     overflow: hidden;
     clip: rect(0 0 0 0);
     white-space: nowrap;
+  }
+
+  .results {
+    max-height: min(50vh, 420px);
+    overflow-y: auto;
+    border-top: 1px solid var(--ui-border);
+    padding: 6px 0 8px;
+  }
+
+  .results-summary,
+  .results-note {
+    margin: 0;
+    padding: 0 10px 6px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+
+  .results-note {
+    padding-top: 6px;
+  }
+
+  .result-groups,
+  .group-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .result-group + .result-group {
+    margin-top: 6px;
+  }
+
+  .group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 2px 10px;
+    font-size: 12px;
+  }
+
+  .group-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .group-where {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .group-count {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .result-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    width: 100%;
+    padding: 3px 10px 3px 18px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-system);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .result-row:hover,
+  .result-row:focus-visible {
+    background: var(--ui-surface-hover);
+    outline: none;
+  }
+
+  .result-row.current {
+    background: var(--ui-surface-hover);
+    color: var(--text-primary);
+    box-shadow: inset 2px 0 0 var(--accent-primary);
+  }
+
+  .row-kind {
+    flex-shrink: 0;
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+
+  .row-snippet {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .row-snippet mark {
+    background: var(--accent-primary);
+    color: var(--text-inverse);
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+
+  .more-btn {
+    margin: 2px 0 0 18px;
+    padding: 1px 4px;
+    border: none;
+    background: transparent;
+    color: var(--accent-primary);
+    font-family: var(--font-system);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .more-btn:hover,
+  .more-btn:focus-visible {
+    text-decoration: underline;
+    outline: none;
   }
 
   @media (prefers-reduced-motion: reduce) {

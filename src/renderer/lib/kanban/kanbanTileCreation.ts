@@ -10,12 +10,10 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { AddCardCommand } from '../../commands/index';
 import { createId } from '../utils/ids';
 import { createNoteFile } from '../notes/createNote';
+import { noteMadeForNewItem } from '../notes/madeForNewItems';
 import { reportError } from '../utils/errorBus';
-import {
-  interpolate,
-  type TemplateContent,
-  type TemplateRef,
-} from '../templates/templateService';
+import type { TemplateContent, TemplateRef } from '../templates/templateService';
+import { noteFromTemplate } from '../templates/templateNote';
 import { getActiveContentFolder } from '../vault/conventionPaths';
 import { editTitleWhenShown } from '../boards/newTileTitle';
 
@@ -110,6 +108,7 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
         // one the user sees ('New Card'); only the filename is bumped, so no
         // "renamed because it exists" toast.
         ({ relPath } = await createNoteFile({ vaultRoot, folder, title: tileTitle }));
+        noteMadeForNewItem(relPath);
       } catch (err) {
         reportError('kanban.seed-md', err, `Failed to create a file for "${tileTitle}" — the card was not added`);
         return;
@@ -159,21 +158,14 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
     }
 
     const folder = newCardFolder(board);
-    // The card's title is the template's `title:` when it has one, else the
-    // template's name. Frontmatter is forwarded verbatim (minus `boardType`,
-    // a picker hint, not user content); `{{title}}` interpolates the title.
-    const title = typeof content.frontmatter.title === 'string' && content.frontmatter.title.trim()
-      ? content.frontmatter.title
-      : ref.name;
-    const { boardType: _bt, ...templateFm } = content.frontmatter as Record<string, unknown> & {
-      boardType?: unknown;
-    };
-    void _bt;
-    const body = interpolate(content.bodyWithoutBoardBlock, { title });
+    // The same note every board makes from a template: the template's
+    // `title:` (else its name), its frontmatter kept, `{{date}}`… filled in.
+    const { title, frontmatter, body } = noteFromTemplate(content, ref.name);
 
     let relPath: string;
     try {
-      ({ relPath } = await createNoteFile({ vaultRoot, folder, title, frontmatter: templateFm, body }));
+      ({ relPath } = await createNoteFile({ vaultRoot, folder, title, frontmatter, body }));
+      noteMadeForNewItem(relPath);
       await vaultStore.refreshTree();
     } catch (err) {
       reportError(

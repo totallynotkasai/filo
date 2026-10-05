@@ -11,6 +11,7 @@ import type {
   PartialTaskStyle,
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
+import { NewNoteUndo } from './newNoteUndo';
 import { restoreFiles, stillTrashed, trashFiles, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
 import { applyMove, layoutOf, movedTasks, regroup, type SectionKey, type TaskLayout } from '../lib/tasklist/sectionMembership';
@@ -142,6 +143,8 @@ export class AddTaskCommand extends Command {
   // A new subtask's parent, set on its placement (the hierarchy is the board's).
   private parentTileId?: string;
   private hasExecuted = false;
+  /** A new task's empty note goes to Filo's trash on undo, and back on redo. */
+  private newNote = new NewNoteUndo();
 
   constructor(
     boardId: string,
@@ -169,6 +172,11 @@ export class AddTaskCommand extends Command {
   async execute(): Promise<void> {
     const isFirst = !this.hasExecuted;
     this.hasExecuted = true;
+    // A redo after an undo that trashed the empty note brings it back first.
+    if (!isFirst && this.newNote.trashedNote) {
+      const back = await this.newNote.restore('AddTaskCommand.redo');
+      if (back) this.def = { ...this.def, filePath: back } as TileDefinition;
+    }
     // Placement first, synchronously (before any await) so callers/tests that
     // inspect the cache right after execute() — and the placement-only path
     // (file-drop, round-trip tests) — are unaffected.
@@ -215,8 +223,9 @@ export class AddTaskCommand extends Command {
     return defTitle(this.def);
   }
 
-  undo() {
+  async undo(): Promise<void> {
     this.removePlacement();
+    await this.newNote.trashIfUnused((this.def as { filePath?: string }).filePath, 'AddTaskCommand.undo');
   }
 
   private removePlacement(): void {

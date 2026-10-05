@@ -4,10 +4,11 @@ import {
   parseTemplate,
   interpolate,
   searchTemplates,
-  instantiateTemplate,
   defaultTemplatesFolder,
   templateMatchesBoardType,
 } from '@renderer/lib/templates/templateService';
+import { noteFromTemplate } from '@renderer/lib/templates/templateNote';
+import { BoardTemplateSkeletonSchema } from '@renderer/schema/boardTemplate';
 import type { FileTreeNode } from '@shared/types';
 
 function mkFile(name: string, path: string): FileTreeNode {
@@ -173,14 +174,29 @@ describe('searchTemplates', () => {
   });
 });
 
-describe('instantiateTemplate', () => {
-  it('parses and interpolates in one call', () => {
-    const raw = '---\ntitle: Daily {{date}}\n---\nToday is {{date}}';
-    const result = instantiateTemplate(
-      { path: 'Templates/Daily.md', name: 'Daily', isBoard: false },
-      raw,
-      { now: new Date(2026, 3, 24) },
-    );
-    expect(result.interpolatedBody).toBe('Today is 2026-04-24');
+describe('noteFromTemplate: the note a template makes on every board', () => {
+  const ref = { path: 'Templates/Character.md', name: 'Character', isBoard: false };
+  const now = new Date(2026, 3, 24);
+
+  it('keeps every frontmatter key, fills in {{date}} and {{title}} in text, lists and maps, and drops boardType', () => {
+    const raw = '---\ntitle: Daily {{date}}\nboardType: kanban\ntags: [character, "{{year}}"]\nrole: lead\nage: 34\nmeta:\n  made: "{{date}}"\n---\n# {{title}}\nToday is {{date}}';
+    const note = noteFromTemplate(parseTemplate(ref, raw), 'Character', now);
+    expect(note.title).toBe('Daily 2026-04-24');
+    expect(note.frontmatter).toEqual({ tags: ['character', '2026'], role: 'lead', age: 34, meta: { made: '2026-04-24' } });
+    expect(note.body).toBe('# Daily 2026-04-24\nToday is 2026-04-24');
+  });
+
+  it("takes the template's name when it has no title of its own", () => {
+    const note = noteFromTemplate(parseTemplate(ref, 'Body for {{title}}'), 'Character', now);
+    expect(note.title).toBe('Character');
+    expect(note.frontmatter).toEqual({});
+    expect(note.body).toBe('Body for Character');
+  });
+
+  it('leaves a board block out of the body, and reads its skeleton', () => {
+    const raw = 'Intro\n\n```filo-board\n{"type":"kanban","columns":[{"title":"To do"}]}\n```\n';
+    const content = parseTemplate(ref, raw);
+    expect(BoardTemplateSkeletonSchema.parse(content.boardJson)).toMatchObject({ type: 'kanban', columns: [{ title: 'To do', cards: [] }] });
+    expect(noteFromTemplate(content, 'Character', now).body).toBe('Intro');
   });
 });

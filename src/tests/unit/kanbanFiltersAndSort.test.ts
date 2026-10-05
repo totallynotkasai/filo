@@ -101,3 +101,19 @@ describe('Kanban find reads every card body, open or not', () => {
     expect(findMatches('b', {}, ['a', 'b'])).toEqual(['b']);
   });
 });
+
+describe('Kanban sort by title', () => {
+  it('puts "Chapter 2" before "Chapter 10", whatever the case', () => {
+    const ctl = new KanbanFiltersAndSort({
+      getBoardColumns: () => [],
+      getAllTilesById: () => ({}),
+      getFindQuery: () => '',
+      getCacheVersion: () => 0,
+    });
+    ctl.activeSortBy = 'title';
+    const ids = ['Chapter 10', 'Chapter 2', 'chapter 1'];
+    const placements = ids.map((tileId, position) => ({ tileId, position }) as KanbanTilePlacement);
+    const tiles = Object.fromEntries(ids.map((id) => [id, tile(id)]));
+    expect(ctl.sortPlacements(placements, tiles).map((p) => p.tileId)).toEqual(['chapter 1', 'Chapter 2', 'Chapter 10']);
+  });
+});

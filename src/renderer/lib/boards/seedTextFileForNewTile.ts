@@ -5,6 +5,7 @@ import { noteStore } from '../../stores/notes.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { reportError } from '../utils/errorBus';
+import { noteMadeForNewItem } from '../notes/madeForNewItems';
 
 /**
  * Text tiles whose note was allocated by `stampTextTileSeedPath` (a brand-new
@@ -70,6 +71,7 @@ export async function seedTextFileForNewTile(
   try {
     if (fresh) {
       const result = await noteStore.createUnique(filename, () => newNoteText({ title }, body));
+      noteMadeForNewItem(result.relPath);
       if (result.relPath !== filename) {
         filename = result.relPath;
         tile.filePath = filename;

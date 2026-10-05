@@ -14,6 +14,7 @@
 import type { Tile, TaskPlacement } from '../../schema/index';
 import type { Priority } from './frontmatterReaders';
 import type { RecurrenceMode } from './recurrence';
+import { naturalCompare } from '../utils/naturalSort';
 
 export type GroupBy = 'status' | 'priority' | 'tag' | 'dueDate' | 'category' | 'none';
 export type SortBy = 'title' | 'created' | 'dueDate' | 'priority' | 'manual';
@@ -142,7 +143,7 @@ export function smartListMatch(r: TaskRow, list: SmartListId, today: Date): bool
  * canonical ordering and reflects user drag-drop reorders.
  */
 export function compareRows(a: TaskRow, b: TaskRow, sortBy: SortBy): number {
-  if (sortBy === 'title') return a.tile.title.localeCompare(b.tile.title);
+  if (sortBy === 'title') return naturalCompare(a.tile.title, b.tile.title);
   if (sortBy === 'created') return (a.tile.createdAt ?? 0) - (b.tile.createdAt ?? 0);
   if (sortBy === 'dueDate') {
     if (!a.dueDate && !b.dueDate) return 0;

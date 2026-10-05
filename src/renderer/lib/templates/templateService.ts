@@ -3,6 +3,7 @@ import type { FileTreeNode } from '../../../shared/types';
 import { normalizePath, stripLeadingSlash, toPosix } from '../utils/path';
 import { splitFrontmatterSource, parseFrontmatterObject } from '../vault/frontmatterRead';
 import { localIsoDate } from '../utils/dateFormat';
+import { naturalCompare } from '../utils/naturalSort';
 
 /**
  * Templates live as plain Markdown files in the vault's `Templates/` folder.
@@ -99,7 +100,7 @@ export function collectTemplateRefs(
   }
 
   walk(tree);
-  return out.sort((a, b) => a.name.localeCompare(b.name));
+  return out.sort((a, b) => naturalCompare(a.name, b.name));
 }
 
 /**
@@ -224,19 +225,4 @@ export function searchTemplates(refs: TemplateRef[], query: string): TemplateRef
     if (ref) out.push(ref);
   }
   return out;
-}
-
-/**
- * Convenience helper used by the picker: parse + interpolate in one call.
- */
-export function instantiateTemplate(
-  ref: TemplateRef,
-  rawContent: string,
-  vars: TemplateVariables = {},
-): TemplateContent & { interpolatedBody: string } {
-  const parsed = parseTemplate(ref, rawContent);
-  return {
-    ...parsed,
-    interpolatedBody: interpolate(parsed.bodyWithoutBoardBlock, vars),
-  };
 }

@@ -76,6 +76,8 @@ import {
 // the circular dependency between this module and vaultExternalReconcilers.
 import './vaultExternalReconcilers';
 import { noteStore } from './notes.svelte';
+import { noteTitle } from './noteMeta';
+import { isMarkdownExtension } from '../lib/vault/extension';
 import { sidebarOrderStore } from './sidebarOrder.svelte';
 import { markBoardUnloaded } from './unloadedBoards';
 import { setActiveVaultPath } from '../lib/vault/activeVaultPath';
@@ -195,10 +197,18 @@ function readSortConfig(): SortConfig {
   };
 }
 
+// The sidebar lists file names; its search also finds a note by its title.
+// Read only while a search runs, so typing in a note re-runs no sort otherwise.
+function searchTitleOf(node: FileTreeNode): string | null {
+  if (node.isDirectory || !isMarkdownExtension(node.extension)) return null;
+  const rel = toVaultRelative(node.path, vaultPath);
+  return rel ? noteTitle(rel) : null;
+}
+
 // Memoised sort/filter result. Without it, `get tree()` would allocate a fresh
 // node graph on every reactive read, churning VaultSidebar's {#each} and every
 // VaultFileItem's $derived (visible flicker).
-const treeView = $derived(sortTree(filterTree(fileTree, searchQuery), readSortConfig()));
+const treeView = $derived(sortTree(filterTree(fileTree, searchQuery, searchTitleOf), readSortConfig()));
 
 // A vault teardown's resets aren't user changes (see isVaultTearingDown).
 function markMetaDirty(): void {
@@ -769,6 +779,8 @@ export const vaultStore = {
   get tree() { return treeView; },
   get rawTree() { return fileTree; },
   get search() { return searchQuery; },
+  /** A note's title, as the sidebar's search matches it (`filterTree`). */
+  searchTitleOf,
   get sortField(): VaultSortField {
     return (currentProject?.settings.general?.sidebarSortField as VaultSortField) ?? 'none';
   },

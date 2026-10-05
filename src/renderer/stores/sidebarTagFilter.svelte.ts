@@ -53,7 +53,7 @@ function flippedNow(): SvelteSet<string> {
  */
 const openByDefault = $derived.by((): ReadonlySet<string> | null => {
   const search = vaultStore.search;
-  return search === '' ? null : foldersOpenForSearch(sidebarTagFilter.apply(vaultStore.tree), search);
+  return search === '' ? null : foldersOpenForSearch(sidebarTagFilter.apply(vaultStore.tree), search, vaultStore.searchTitleOf);
 });
 
 function isOpenUnderFilter(path: string): boolean {

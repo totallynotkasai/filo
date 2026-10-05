@@ -40,7 +40,9 @@ describe('a new card or tile takes what is typed next', () => {
     await quiesce();
 
     expect(kanbanCards(app).map((c) => c.title)).toEqual(['Outline chapter 3']);
-    expect(app.read(note)).toContain('title: Outline chapter 3');
+    // The note is named by its title too (it had Filo's placeholder name).
+    expect(app.exists(note)).toBe(false);
+    expect(app.read(note.replace('New Card.md', 'Outline chapter 3.md'))).toContain('title: Outline chapter 3');
     // The space and the N went into the title, not to Add Card or its picker.
     expect(app.userFiles().length).toBe(before + 1);
     expect($$(app.el, 'button.kn-option')).toHaveLength(0);
@@ -59,7 +61,7 @@ describe('a new card or tile takes what is typed next', () => {
     await quiesce();
 
     expect(mindMapTiles(app).map((t) => t.title)).toEqual(['Antagonist']);
-    expect(app.read(note)).toContain('title: Antagonist');
+    expect(app.read(note.replace('New Tile.md', 'Antagonist.md'))).toContain('title: Antagonist');
     expect(app.userFiles().length).toBe(before + 1);
     expect(emptyBodyHint(mindMapTiles(app)[0]!.el)).toBe('Start typing...');
   });
@@ -75,7 +77,7 @@ describe('a new card or tile takes what is typed next', () => {
 
     expect(openTitleEditor(app)).toBeNull();
     expect(mindMapTiles(app).map((t) => t.title)).toEqual(['River city']);
-    expect(app.read(note)).toContain('title: River city');
+    expect(app.read(note.replace('New Tile.md', 'River city.md'))).toContain('title: River city');
   });
 
   it('after the title, N makes the next tile from the keyboard', async () => {

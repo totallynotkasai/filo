@@ -14,6 +14,8 @@
   import VaultSidebarToolbar from './VaultSidebarToolbar.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
   import { isContentEditableAware } from '../../lib/utils/editableTarget';
+  import { buildSidebarSpaceMenu } from '../../lib/vault/sidebarFileMenu';
+  import { newFolderIn, newNoteIn } from '../../lib/vault/sidebarNewItems';
 
   /**
    * svelte-dnd-action item wrapper. The library requires an `id` field on
@@ -34,9 +36,10 @@
   let rootDndItems: DndNode[] = $derived(
     visibleTree.map((n) => ({ id: n.path, node: n })),
   );
-  // Reordering a cut-down list would drop the hidden rows' ranks.
+  // Reordering a cut-down list would drop the hidden rows' ranks; under a
+  // Group By, a row dropped into another group would jump back to its own.
   const reorderDisabled = $derived(
-    vaultStore.sortField !== 'none' || vaultStore.search !== '' || sidebarTagFilter.active,
+    vaultStore.sortField !== 'none' || vaultStore.groupField !== 'none' || vaultStore.search !== '' || sidebarTagFilter.active,
   );
 
   // Esc in the search box clears the tag filter first, then the typed text.
@@ -47,6 +50,18 @@
     else return;
     e.preventDefault();
     e.stopPropagation();
+  }
+
+  // A right-click on the empty space below the files (a row's own menu stops
+  // here): a new note or folder at the vault's top.
+  function handleSpaceContextMenu(e: MouseEvent) {
+    const root = vaultStore.path;
+    if (!root) return;
+    e.preventDefault();
+    uiStore.showContextMenu(e.clientX, e.clientY, buildSidebarSpaceMenu({
+      onNewNote: () => { void newNoteIn(root); },
+      onNewFolder: () => { void newFolderIn(root); },
+    }));
   }
 
   function onRootConsider(e: CustomEvent<DndEvent<DndNode>>) {
@@ -362,10 +377,12 @@
         break;
       case 'ArrowRight': {
         if (idx === -1 || !active) return;
+        // The tree takes every arrow on its rows, even one with nothing to
+        // do here, so a Mind Map behind the sidebar never acts on it.
+        e.preventDefault();
         const isExpanded = active.getAttribute('aria-expanded') === 'true';
         const isFolder = active.getAttribute('aria-expanded') !== null;
         if (isFolder && !isExpanded) {
-          e.preventDefault();
           const path = findFolderPathFor(active);
           if (path) sidebarTagFilter.toggleFolder(path);
         } else if (isFolder && isExpanded) {
@@ -376,9 +393,9 @@
       }
       case 'ArrowLeft': {
         if (idx === -1 || !active) return;
+        e.preventDefault();
         const isExpanded = active.getAttribute('aria-expanded') === 'true';
         if (isExpanded) {
-          e.preventDefault();
           const path = findFolderPathFor(active);
           if (path) sidebarTagFilter.toggleFolder(path);
         }
@@ -463,6 +480,7 @@
         aria-label="Vault files"
         tabindex={-1}
         onkeydown={handleTreeKeydown}
+        oncontextmenu={handleSpaceContextMenu}
         ondragover={handleRootDragOver}
         ondragleave={handleRootDragLeave}
         ondrop={handleRootDrop}

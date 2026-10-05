@@ -26,7 +26,7 @@
 
   // Keep the about content as before.
   const aboutSections = [
-    { term: 'Vault', definition: 'A vault is simply a standard folder on your computer or device. Filo stores all of its information within this folder. You can connect your vault to a cloud storage service such as Google Drive, Dropbox, OneDrive, etc. You can create both folders and subfolders to organize your information how you want.' },
+    { term: 'Vault', definition: 'A vault is simply a standard folder on your computer or device. Filo stores all of its information within this folder. You can connect your vault to a cloud storage service such as Google Drive, Dropbox, OneDrive, etc. You can create notes, folders and subfolders to organize your information how you want: right-click a folder in the vault sidebar (or the space below the files) and choose New note or New folder. Ctrl+N in a Document tab makes a note beside the one it shows.' },
     { term: 'Board', definition: 'A board is a canvas where you can create and manage your content. A board can be of any type, such as a Mind Map, Kanban Board, Task List, or Document. Files can be dragged onto a board — Filo creates the relevant tile type to contain the file.' },
     { term: 'Tile', definition: 'A tile is a container for content that can be placed on any board. Tiles can be moved, resized, and deleted. Types include Text, Image, Video, Audio, File, Link, Iframe (Embed), and Timer. Text tiles can be expanded into a full Document board.' },
     { term: 'Tags', definition: 'A tag is a label that can be applied to a tile. Tags can be used to organize and filter tiles across your vault.' },
@@ -46,7 +46,11 @@
 
   const registeredShortcuts = $derived.by(() => {
     void revision;
-    return getAllShortcuts();
+    // A board shown in two split panes registers its commands once per pane;
+    // the list names each command once (a rebind applies to both).
+    const keyOf = (s: Shortcut): string => s.commandId ?? s.description;
+    const all = getAllShortcuts();
+    return all.filter((s, i) => all.findIndex((o) => keyOf(o) === keyOf(s)) === i);
   });
 
   const overrides = $derived.by(() => {

@@ -39,8 +39,9 @@
   import { historyStore } from '../../stores/history.svelte';
   import { DeleteTilesCommand, MoveTilesCommand, UpdateFrameCommand } from '../../commands/index';
   import { isContentEditableAware, wantsNativeTextMenu } from '../../lib/utils/editableTarget';
-  import { focusIsInBoard } from '../../lib/utils/boardFocus';
+  import { registerMindMapShortcuts } from '../../lib/mindmap/mindMapShortcuts';
   import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
+  import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
   import { templatesStore } from '../../stores/templates.svelte';
   import { hitTestFrame } from '../../lib/mindmap/frameHitTest';
   import {
@@ -155,25 +156,27 @@
     }
   });
 
-  function createTileAtViewportCenter(): void {
-    if (!boardStore.current) return;
+  function createTileAtViewportCenter(): Tile | null {
+    if (!boardStore.current) return null;
     const viewportCenter = {
       x: canvasStore.viewportWidth / 2,
       y: canvasStore.viewportHeight / 2,
     };
     const canvasPos = screenToCanvas(viewportCenter.x, viewportCenter.y, canvasStore.transform);
-    addNewTextTile({
+    return addNewTextTile({
       x: canvasPos.x - TILE_DEFAULTS.width / 2,
       y: canvasPos.y - TILE_DEFAULTS.height / 2,
-    });
+    }, { stepClear: true });
   }
 
   /**
    * Adds a new text tile on this pane's board, named from this pane's board,
-   * and opens its title for typing.
+   * and opens its title for typing. `stepClear` moves it off tiles already
+   * at `position` (a spot the user didn't point at).
    */
-  function addNewTextTile(position: { x: number; y: number }): Tile {
+  function addNewTextTile(position: { x: number; y: number }, opts: { stepClear?: boolean } = {}): Tile {
     const tile = createTile('text', position, boardStore.current?.id ?? '', { title: boardStore.getNextTileName() });
+    if (opts.stepClear) tile.position = { ...tile.position, ...placeClear(position, tile.size, tileRects(boardStore.tiles), viewRect(canvasStore.viewportRect)) };
     boardStore.addTileWithHistory(tile);
     editTitleWhenShown(tile.id);
     return tile;
@@ -375,6 +378,16 @@
     uiStore.showContextMenu(e.clientX, e.clientY, items, frame.id);
   }
 
+  // A press on the empty canvas focuses it, as a press on a tile focuses the
+  // tile: the board's keys (N, Delete, the arrows) then act here, and not in
+  // the sidebar row or toolbar button that had focus before.
+  function handleCanvasPointerDown(e: PointerEvent) {
+    const t = e.target as HTMLElement | null;
+    const onBackground = t === canvasContainer || t?.classList?.contains('canvas-transform') || t?.closest?.('.board-background') != null;
+    if (onBackground && document.activeElement !== canvasContainer) canvasContainer.focus({ preventScroll: true });
+    marquee.handlePointerDown(e);
+  }
+
   // ── Click on canvas background clears selection / cancels connection drawing ──
   function handleCanvasClick(e: MouseEvent) {
     if (e.target === canvasContainer || (e.target as HTMLElement)?.classList?.contains('canvas-transform')) {
@@ -395,10 +408,7 @@
   // ── Keyboard handler ── (never while typing, or while a dialog or menu is open)
   //   Escape: cancel connection drawing / mode. Arrows: select the nearest
   //   neighbour. Ctrl+Shift+Arrow: extend the selection. Ctrl+Arrow: move the
-  //   selection 10 px. N: new tile beside the selection (or mid-viewport).
-  //   Enter: rename the selected tile. Backspace: delete the selection
-  //   (Delete is the global tile:delete). C: start a connection. N, Enter,
-  //   Backspace and C only while focus is in the canvas.
+  //   selection 10 px. N, C, Enter and Backspace are commands (below).
   function handleKeydown(e: KeyboardEvent) {
     // Pane-scope gate. `<svelte:window onkeydown>` fires for
     // EVERY mounted Mind Map pane, so without this an inactive split pane would
@@ -411,6 +421,9 @@
     if (isArrowConsumingTarget(document.activeElement)) return;
     // A dialog, menu or focused control owns the key (Settings open, Enter on a button).
     if (isCanvasKeyBlocked(e.key, document.activeElement)) return;
+    // An arrow the focused element already took (the vault sidebar's tree
+    // moves between its rows) is not the canvas's.
+    if (isArrowKey(e.key) && e.defaultPrevented) return;
 
     if (e.key === 'Escape') {
       if (connectionsStore.drawing) {
@@ -502,23 +515,40 @@
       if (best) selectionStore.select(best.id);
       return;
     }
+  }
 
-    // Backspace, N, Enter and C below act only while focus is in this canvas
-    // (`focusIsInBoard`): pressed in the sidebar, a toolbar or on the page,
-    // they would make or delete tiles the user wasn't looking at.
-    if (!focusIsInBoard(canvasContainer)) return;
+  // ── N, C, Enter and Backspace: registered commands ──
+  // Listed in Help → Shortcuts and rebindable. They act only for this pane,
+  // while focus is in this canvas (see `mindMapShortcuts.ts`).
+  function newTileFromKeyboard(): void {
+    // Beside the most recently selected tile, else in the middle of the view;
+    // clear of the tiles already there either way.
+    const ids = [...selectionStore.selectedIds];
+    const anchor = ids.length > 0 ? boardStore.getTile(ids[ids.length - 1] ?? '') : undefined;
+    const tile = anchor
+      ? addNewTextTile({ x: anchor.position.x + anchor.size.width + 40, y: anchor.position.y }, { stepClear: true })
+      : createTileAtViewportCenter();
+    if (tile) selectionStore.select(tile.id);
+  }
 
-    // Delete is owned by the GLOBAL gated `tile:delete` command (AppShell),
-    // which also removes selected connections + offers the delete-backing-file
-    // option; handling `Delete` here too would double-dispatch (two confirm
-    // dialogs). `Backspace` stays as a board-local,
-    // tiles-only alias (pane-gated above) so the mind map keeps its
-    // Backspace-to-delete affordance without a second GLOBAL Backspace binding
-    // (which would double-fire against Task List / Kanban rows that bind it).
-    if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey) {
+  $effect(() => registerMindMapShortcuts({
+    isActivePane: () => isActiveScope(scope),
+    canvas: () => canvasContainer,
+    selectedCount: () => selectionStore.selectedIds.size,
+    newTile: newTileFromKeyboard,
+    renameSelected: () => {
+      // TileHeader listens on `window` for `request-rename`, filtered by
+      // tile id, and opens the same editor a double-click on the title does.
+      const [id] = [...selectionStore.selectedIds];
+      if (id) window.dispatchEvent(new CustomEvent('request-rename', { detail: { tileId: id } }));
+    },
+    // Delete is the global `tile:delete` (it also removes selected
+    // connections and offers to delete the files); Backspace is this board's
+    // tiles-only alias, not a second global binding that would fire against
+    // Task List / Kanban rows too.
+    removeSelected: () => {
       const ids = [...selectionStore.selectedIds];
       if (ids.length === 0) return;
-      e.preventDefault();
       uiStore.openConfirm({
         title: ids.length === 1 ? 'Delete tile?' : `Delete ${ids.length} tiles?`,
         body: ids.length === 1
@@ -531,60 +561,11 @@
           selectionStore.clear();
         },
       });
-      return;
-    }
-
-    if (e.key === 'n' || e.key === 'N') {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      e.preventDefault();
-      // Anchor next to the most-recently-selected tile when available; fall
-      // back to viewport centre via the existing helper.
-      const ids = [...selectionStore.selectedIds];
-      if (ids.length === 0) {
-        createTileAtViewportCenter();
-        return;
-      }
-      const anchor = boardStore.getTile(ids[ids.length - 1] ?? '');
-      if (!anchor) {
-        createTileAtViewportCenter();
-        return;
-      }
-      const tile = addNewTextTile({
-        x: anchor.position.x + anchor.size.width + 40,
-        y: anchor.position.y,
-      });
-      selectionStore.select(tile.id);
-      return;
-    }
-
-    if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey && !e.metaKey) {
-      const ids = [...selectionStore.selectedIds];
-      if (ids.length !== 1) return;
-      // Trigger the focused tile's rename flow via a `request-rename`
-      // custom event. TileHeader listens on `window` and filters by
-      // tileId, opening the same inline editor the title double-click
-      // uses.
-      e.preventDefault();
-      window.dispatchEvent(
-        new CustomEvent('request-rename', { detail: { tileId: ids[0] } }),
-      );
-      return;
-    }
-
-    if (e.key === 'c' || e.key === 'C') {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const ids = [...selectionStore.selectedIds];
-      if (ids.length !== 1) return;
-      const tile = boardStore.getTile(ids[0] ?? '');
-      if (!tile) return;
-      e.preventDefault();
-      // Enter connection mode so the user's next click on another tile
-      // completes the connection (handled by ConnectionLayer's pointer
-      // wiring). Escape exits the mode without creating a connection.
-      connectionsStore.setConnectionMode(true);
-      return;
-    }
-  }
+    },
+    // The next click on another tile completes the connection
+    // (ConnectionLayer's pointer wiring); Escape leaves the mode.
+    connectSelected: () => connectionsStore.setConnectionMode(true),
+  }));
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -604,7 +585,7 @@
   use:viewportAction={canvasStore}
   use:dragDropAction={scope}
   use:edgePanAction
-  onpointerdown={(e) => marquee.handlePointerDown(e)}
+  onpointerdown={handleCanvasPointerDown}
   onpointermove={(e) => marquee.handlePointerMove(e)}
   onpointerup={(e) => marquee.handlePointerUp(e)}
   onpointercancel={() => marquee.handlePointerCancel()}

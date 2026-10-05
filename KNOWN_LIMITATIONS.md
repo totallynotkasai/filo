@@ -1592,3 +1592,22 @@ was written inside the first word's colour and the note reopened read-only.
 
 **Impact:** A short gap in the strikethrough line between two differently
 coloured words; nothing else changes.
+
+## 51. A title typed as the vault closes leaves the note's placeholder file name
+
+**What:** A note Filo made before it had a title (`New Card.md`,
+`New Tile 3.md`, `New Task 2.md`, `Untitled.md`) is renamed after the first
+title it is given. A title still being typed when the vault closes, another
+vault opens or Filo quits is saved, but the file keeps its placeholder name
+until the note's title is next edited.
+
+**Where:** [src/renderer/lib/notes/placeholderNames.ts](src/renderer/lib/notes/placeholderNames.ts)
+(`withPlaceholderRename`).
+
+**Why accepted:** Leaving the vault freezes the editors and saves what is
+held; a rename is a disk-shape change that drains every writer and moves the
+file, which mustn't run in the middle of that save.
+
+**Impact:** Now and then a note keeps a name like `New Card (2).md` after a
+title typed at the last moment; editing its title once more, or "Rename file
+to match title" in the sidebar, gives it the title's name.

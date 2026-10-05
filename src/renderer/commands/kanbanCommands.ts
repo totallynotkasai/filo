@@ -9,6 +9,7 @@ import type {
   PartialKanbanCardStyle,
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
+import { NewNoteUndo } from './newNoteUndo';
 
 // ── Kanban Commands ──
 //
@@ -35,6 +36,8 @@ export class AddCardCommand extends Command {
   private def: TileDefinition;
   private position: number;
   private style?: PartialKanbanCardStyle;
+  /** A new card's empty note goes to Filo's trash on undo, and back on redo. */
+  private newNote = new NewNoteUndo();
 
   constructor(
     boardId: string,
@@ -55,7 +58,20 @@ export class AddCardCommand extends Command {
     this.description = `Add card "${defTitle(def)}"`;
   }
 
-  execute() {
+  execute(): void | Promise<void> {
+    // The first run adds the card at once (its title then opens for typing).
+    if (!this.newNote.trashedNote) {
+      this.addPlacement();
+      return;
+    }
+    return (async () => {
+      const back = await this.newNote.restore('AddCardCommand.redo');
+      if (back && this.def.type === 'text') this.def = { ...this.def, filePath: back };
+      this.addPlacement();
+    })();
+  }
+
+  private addPlacement(): void {
     // Toast + bail rather than orphan the card when the column is gone (undo removes by id).
     const cached = boardCacheStore.cache[this.boardId];
     if (cached?.board.type !== 'kanban' || !cached.board.columns?.some((c) => c.id === this.columnId)) { toastMissingUndoRedoTarget('redo', 'the column'); return; }
@@ -68,8 +84,9 @@ export class AddCardCommand extends Command {
     );
   }
 
-  undo() {
+  async undo(): Promise<void> {
     boardCacheStore.removeKanbanPlacement(this.boardId, this.def.id);
+    if (this.def.type === 'text') await this.newNote.trashIfUnused(this.def.filePath, 'AddCardCommand.undo');
   }
 }
 

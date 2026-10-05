@@ -1065,9 +1065,11 @@ export function sidebarMessage(app: CharApp): string | null {
   return app.el.querySelector('.file-tree .tree-message')?.textContent?.trim() ?? null;
 }
 
-/** Click the sidebar toolbar's New Folder; resolves once a rename box shows (or after a wait). */
+/** The sidebar toolbar's New → New folder; resolves once a rename box shows (or after a wait). */
 export async function clickSidebarNewFolder(app: CharApp): Promise<void> {
-  click($(app.el, '.sidebar-actions button[aria-label="New Folder"]'));
+  click($(app.el, '.sidebar-actions button[aria-label="New note or folder"]'));
+  await settle();
+  await chooseMenuItem(app, 'New folder');
   await quiesce(300);
 }
 

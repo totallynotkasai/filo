@@ -12,7 +12,7 @@ Everything known to be open that no current plan covers, in one place. Start the
 - **Useful** (improvements): 0/10 = no gain; 5/10 = a clear improvement you'd notice every week or so; 10/10 = essential.
 - **Hard**: 0/10 = minutes; 5/10 = a few days, several files, new tests; 10/10 = weeks, rewriting a major part of Filo.
 
-Last updated 2026-10-05, after Audit-28 Phase 2 ([AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md](AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md)), which took and fixed BL-06 and added BL-27 and BL-28; BL-27 (spaces typed at the end of a line) was then fixed in the same phase at the owner's request. The next new item is BL-29. Phase 1 took and fixed BL-14, and its outcome records BL-25 and BL-26, found and fixed there. Phase 0's outcome records BL-22 to BL-24, found and fixed there. Before that, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20 and BL-21. BL-20 (30 MB of unused `node_modules` in the package) was fixed the same day, in that outcome's follow-up. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
+Last updated 2026-10-05, after Audit-28 Phase 3 ([AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md](AUDIT28_IMPLEMENTATION_PLAN_2026-10-04.md)), whose outcome records BL-29 (a space typed in a tab's rename box was lost) and BL-30 (Help → Shortcuts failed with one board in two split panes), found and fixed there, and which added BL-31 and BL-32 and two owner decisions (section 2). The next new item is BL-33. Phase 2 took and fixed BL-06 and added BL-27 and BL-28; BL-27 (spaces typed at the end of a line) was then fixed in the same phase at the owner's request. Phase 1 took and fixed BL-14, and its outcome records BL-25 and BL-26, found and fixed there. Phase 0's outcome records BL-22 to BL-24, found and fixed there. Before that, after the library updates plan's Phase 8 ([archive/LIBRARY_UPDATES_PLAN_2026-10-02.md](archive/LIBRARY_UPDATES_PLAN_2026-10-02.md), all phases done), which closed BL-11 (`npm audit` is 0 since `http-cache-semantics` 4.3.0) and BL-19 (the design doc), and added BL-20 and BL-21. BL-20 (30 MB of unused `node_modules` in the package) was fixed the same day, in that outcome's follow-up. Phase 7 added BL-19, Phase 5 BL-15 to BL-18, Phase 3 BL-14; Phase 2's outcome records BL-12 and BL-13, found and fixed there. Before that, after Audit-27 (all phases done; see [archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md](archive/AUDIT27_IMPLEMENTATION_PLAN_2026-10-01.md)).
 
 ---
 
@@ -29,7 +29,7 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-05 | A Replace skipped because the note changed still moves on to the next match | Audit-27 Phase 2 | 1/10 | 1/10 |
 | BL-07 | The Task List's speed budget has the least room of the scale checks | Audit-27 Phase 6 | 1/10 | 4/10 |
 | BL-08 | About 0.4 MB of memory kept each time a note is loaded into the same editor (seen in tests) | Audit-26 Phase 2 | 1/10 | 3/10 |
-| BL-09 | Two real-file watcher tests can fail when the machine is very busy | Audit-27 Phase 5 | 0/10 | 2/10 |
+| BL-09 | Three real-file watcher tests can fail when the machine is very busy | Audit-27 Phase 5 | 0/10 | 2/10 |
 | BL-10 | A unit test that makes its own write scheduler leaves state behind for the next test | Audit-27 Phase 1 | 0/10 | 1/10 |
 | BL-15 | Text typed with a single `~` each side (`a ~one~ b`) shows struck through on GitHub | Library updates Phase 5 | 1/10 | 3/10 |
 | BL-16 | A `~` typed right before struck text makes GitHub show the tildes and strike nothing | Library updates Phase 5 | 1/10 | 2/10 |
@@ -37,6 +37,8 @@ None of these loses data. Scores are estimates made when the item was written do
 | BL-18 | Italic, struck-through and coloured text holding `**` reads differently on GitHub | Library updates Phase 5 | 1/10 | 2/10 |
 | BL-21 | GitHub's `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19; CI's Chromium install and Linux timings are untried there | Library updates Phase 8 | 0/10 | 1/10 |
 | BL-28 | The Kanban 300 "tab comes back in under 0.5 s" scale budget fails now and then on a spike | Audit-28 Phase 2 | 0/10 | 2/10 |
+| BL-31 | Kanban's "From Template…" lists board templates too; picking one makes a card from its text and drops its board | Audit-28 Phase 3 | 1/10 | 1/10 |
+| BL-32 | A board template can be started only from a Mind Map (Ctrl+T and Insert Template are Mind Map only) | Audit-28 Phase 3 | 1/10 | 2/10 |
 
 ### BL-01: the formatting toolbar cuts off its left end (Impact 2/10, Hard 2/10)
 - **What you see:** at a window about 1,380 px wide or narrower, the text-formatting toolbar overflows. Its left end is cut off, so the font box shows only its arrow, and you can't scroll to it.
@@ -77,8 +79,8 @@ None of these loses data. Scores are estimates made when the item was written do
 - **Where:** `src/renderer/lib/editor/noteEditorView.ts` (the reload) and `markdownSync.ts`.
 - **Fix idea:** first measure in the built app (a heap snapshot after many disk changes to an open note). Fix only if it grows there.
 
-### BL-09: two watcher tests can miss under heavy load (Impact 0/10, Hard 2/10)
-- **What you see:** in a full `ci:verify` on a busy machine, `watcherOwnWriteBytes.test.ts` ("is reported when its bytes differ from ours") or `fileWatcherOwnMoves.test.ts` ("a rename by another program is still reported") can fail once. Both pass alone and on a quiet machine. This affects the tests only, not the app.
+### BL-09: three watcher tests can miss under heavy load (Impact 0/10, Hard 2/10)
+- **What you see:** in a full `ci:verify` on a busy machine, `watcherOwnWriteBytes.test.ts` ("is reported when its bytes differ from ours") or `fileWatcherOwnMoves.test.ts` ("a rename by another program is still reported") can fail once; Audit-28 Phase 3 also saw `fileWatcherSuppressCaseFold.test.ts` ("a sibling file with a similar prefix is NOT swallowed by suppress") fail once that way. All pass alone and on a quiet machine. This affects the tests only, not the app.
 - **Fix idea:** give their waits for a real file-system event more room, or wait on the event instead of a fixed time, without loosening what they check.
 
 ### BL-10: test schedulers leave state behind (Impact 0/10, Hard 1/10)
@@ -121,6 +123,17 @@ None of these loses data. Scores are estimates made when the item was written do
 - **Where:** `src/tests/e2e/scaleBudgets.e2e.ts:74`.
 - **Fix idea:** find what the slow runs spend the time on (a trace of a run over budget: garbage collection, a timer catching up, the preview cache), and fix that; or take the best of two switches, as the unit timing checks take the best of three. Don't loosen the budget.
 
+### BL-31: Kanban's "From Template…" lists board templates (Impact 1/10, Hard 1/10)
+- **What you see:** a Kanban column's Add Card → From Template… lists every template in `Templates/` whose `boardType` is unset or `kanban`, board templates (with a ```` ```filo-board ```` block) among them. Picking one makes a card from the template's text and title and ignores its board, with nothing to say so.
+- **How to see it:** put a board template such as the design doc's Sprint example in `Templates/`, then pick it from a column's From Template….
+- **Where:** `components/boards/KanbanTemplatePicker.svelte` (its list), `lib/kanban/kanbanTileCreation.ts` `createTileFromTemplate`.
+- **Fix idea:** leave board templates out of the card picker (`parsed.content.boardJson !== null`), or mark them and make the board as the Template Browser does.
+
+### BL-32: a board template can be started only from a Mind Map (Impact 1/10, Hard 2/10)
+- **What you see:** the Template Browser (Ctrl+T, or the canvas menu's Insert Template) opens only on a Mind Map, so a board template (which makes a new Kanban board, Task List or Mind Map) is reached only from a Mind Map tab. A Kanban or Task List user has no way to it, and no other place lists board templates.
+- **Where:** `components/layout/AppShell.svelte` (`template:open` is `enabled: onMindMap`), `components/modals/TemplateBrowser.svelte`.
+- **Fix idea:** let Ctrl+T open the browser on every board and on a Document tab, showing the layout templates (and inserting a Markdown template as a tile) only on a Mind Map; or add "New board from template…" to the New Tab menu.
+
 ---
 
 ## 2. Decisions waiting on the owner
@@ -132,6 +145,8 @@ Scores are estimates made when the item was written down.
 | Tertiary text in the four other themes | Dark, Blueprint, Retro and Nature keep small grey text at 3.0–3.3:1 on the app background and 2.1–2.9:1 on cards and panels (KNOWN_LIMITATIONS #47). Raise them to 4.5:1 as Light was (decision D6)? A darker grey makes the secondary / tertiary difference harder to see. | 2/10 | 1/10 |
 | Light's hovered and selected rows | Tertiary text is 4.49:1 and 4.15:1 there, just under 4.5:1. Darken it a touch more, or the hover and selection colours? | 1/10 | 1/10 |
 | Tile copy, paste and duplicate (Audit-22 `mindmap-10`) | A new feature. Does a duplicated text tile show the same note, or a copy of the file? | 5/10 | 4/10 |
+| The Search panel's Find All popup | The panel now lists the matching notes, grouped, under its box (Audit-28 task 3.9); Find All still opens a second, flat list of every match. Keep both, or drop Find All? | 1/10 | 1/10 |
+| Headings for the sidebar's Group By | Group By now orders files group by group (first letter, day, size band, type), but shows no heading over each group, so Group By Name under Sort By Name looks like Sort By Name alone. Add File Explorer-style headings ("A", "Today", "Small", ".md")? | 2/10 | 2/10 |
 
 ---
 

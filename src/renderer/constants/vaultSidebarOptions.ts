@@ -16,7 +16,9 @@ export const SORT_FIELDS: { value: VaultSortField; label: string }[] = [
   { value: 'size', label: 'Size' },
 ];
 
-// "None" turns the secondary sort off.
+// Files are listed group by group (names by first letter, dates by day,
+// sizes by File Explorer's bands, types by extension), each group in the
+// Sort By order. "None" lists them in one run.
 export const GROUP_FIELDS: { value: VaultGroupField; label: string }[] = [
   { value: 'none', label: 'None' },
   { value: 'name', label: 'Name' },

@@ -10,13 +10,17 @@
   import { createTile } from '../../stores/tiles.svelte';
   import { instantiateLayoutTemplate } from '../../lib/templates/layoutCapture';
   import { fileNameSafe, getActiveContentFolder, nextFreeMdPath } from '../../lib/vault/conventionPaths';
-  import { freeNewBoardName } from '../../lib/boards/newBoardPlace';
-  import { localIsoDate } from '../../lib/utils/dateFormat';
+  import { createNoteFile } from '../../lib/notes/createNote';
+  import { noteMadeForNewItem } from '../../lib/notes/madeForNewItems';
+  import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
+  import { reportError } from '../../lib/utils/errorBus';
+  import { createBoardFromTemplate } from '../../lib/templates/boardFromTemplate';
+  import { noteFromTemplate } from '../../lib/templates/templateNote';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import {
     collectTemplateRefs,
     defaultTemplatesFolder,
-    instantiateTemplate,
+    parseTemplate,
     searchTemplates,
     type TemplateRef,
   } from '../../lib/templates/templateService';
@@ -124,16 +128,11 @@
       uiStore.toast(`Failed to load template: ${ref.name}`, 'error');
       return;
     }
-    const instance = instantiateTemplate(ref, raw, { title: ref.name });
+    const content = parseTemplate(ref, raw);
 
-    if (instance.boardJson) {
-      const obj = instance.boardJson as { type?: string; settings?: Record<string, unknown> };
-      const type = obj.type && typeof obj.type === 'string' ? obj.type : 'mindmap';
-      const settings = (obj.settings ?? {}) as Record<string, unknown>;
-      // The name is the board's file name, so it must be free where the board goes.
-      const newName = freeNewBoardName(`${ref.name} ${localIsoDate()}`);
+    if (content.boardJson) {
       // A failure has already said why.
-      const created = await boardStore.createBoard(newName, type, settings);
+      const created = await createBoardFromTemplate(ref, content);
       if (!created) return;
       tabStore.open(created.id, created.name, created.type, created.emoji ?? '');
       uiStore.toast(`Created board "${created.name}"`, 'success', 1800);
@@ -142,18 +141,28 @@
     }
 
     const board = boardStore.current;
-    if (!board) {
+    const vaultRoot = vaultStore.path;
+    if (!board || !vaultRoot) {
       uiStore.toast('Open a board to insert a template', 'warning');
       uiStore.closeModal();
       return;
     }
+    // The same note every board makes from a template: its frontmatter kept
+    // and filled in, then a tile for it, clear of the tiles in the view.
+    const note = noteFromTemplate(content, ref.name);
+    let relPath: string;
+    try {
+      ({ relPath } = await createNoteFile({ vaultRoot, folder: getActiveContentFolder(board), title: note.title, frontmatter: note.frontmatter, body: note.body }));
+    } catch (err) {
+      reportError('TemplateBrowser.markdown', err, `Couldn't make a note from template "${ref.name}"`);
+      return;
+    }
+    noteMadeForNewItem(relPath);
     const vp = canvasStore.viewportRect;
-    const tile = createTile(
-      'text',
-      { x: vp.left + vp.width / 2 - 150, y: vp.top + vp.height / 2 - 100 },
-      board.id,
-      { title: ref.name, content: instance.interpolatedBody } as never,
-    );
+    const tile = createTile('text', { x: 0, y: 0 }, board.id, { title: note.title, filePath: relPath } as never);
+    const wanted = templatesStore.consumePendingInsertAnchor()
+      ?? { x: vp.left + vp.width / 2 - tile.size.width / 2, y: vp.top + vp.height / 2 - tile.size.height / 2 };
+    tile.position = { ...tile.position, ...placeClear(wanted, tile.size, tileRects(boardStore.tiles), viewRect(vp)) };
     boardStore.addTileWithHistory(tile);
     selectionStore.select(tile.id);
     uiStore.toast(`Inserted template "${ref.name}"`, 'success', 1800);

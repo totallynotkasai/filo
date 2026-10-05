@@ -19,6 +19,7 @@
  *  - attachmentSrcCommand  — Image/Video/Audio/File source swap
  *  - updateTitleCommand    — tile title edit (note frontmatter or board title)
  *  - renameFileCommand     — undo of "Rename file to match title" (the reverse rename)
+ *  - renamePlaceholderCommand — a placeholder-named note renamed after its first title
  *  - savedViewsCommand     — UpdateSavedViewsCommand
  *  - noteLayoutCommands    — SetLineSpacingCommand (note frontmatter `lineSpacing:`)
  *
@@ -42,5 +43,6 @@ export * from './propertiesCommands';
 export * from './attachmentSrcCommand';
 export * from './updateTitleCommand';
 export * from './renameFileCommand';
+export * from './renamePlaceholderCommand';
 export * from './savedViewsCommand';
 export * from './noteLayoutCommands';

@@ -8,17 +8,17 @@ import { fileNameSafe, nextFreeMdPath } from '../vault/conventionPaths';
 import { normalizePath } from '../utils/path';
 
 /**
- * The path "Rename file to match title" would give the note at `relPath`, or
- * `null` when its filename already matches. The stem comes from the title
- * the same way a new note's does; a name another file already has gets the
- * next free ` (n)`. A case-only difference renames in place.
+ * The path the note at `relPath` would have if its filename followed
+ * `title`, or `null` when it already does. The stem comes from the title the
+ * same way a new note's does; a name another file already has gets the next
+ * free ` (n)`. A case-only difference renames in place.
  */
-function pathMatchingTitle(relPath: string): string | null {
+export function pathForTitle(relPath: string, title: string): string | null {
   const slash = relPath.lastIndexOf('/');
   const folder = slash >= 0 ? relPath.slice(0, slash) : '';
   const ext = /\.markdown$/i.test(relPath) ? '.markdown' : '.md';
   const current = noteStem(relPath);
-  const wanted = fileNameSafe(noteTitle(relPath));
+  const wanted = fileNameSafe(title);
   if (wanted === current) return null;
   const prefix = folder ? `${folder}/` : '';
   if (wanted.toLowerCase() === current.toLowerCase()) return `${prefix}${wanted}${ext}`;
@@ -36,7 +36,7 @@ function pathMatchingTitle(relPath: string): string | null {
 export async function renameNoteFileToTitle(relPath: string): Promise<void> {
   const root = vaultStore.path;
   if (!root) return;
-  const target = pathMatchingTitle(relPath);
+  const target = pathForTitle(relPath, noteTitle(relPath));
   if (!target) {
     uiStore.toast('The file name already matches the title', 'info', 2000);
     return;

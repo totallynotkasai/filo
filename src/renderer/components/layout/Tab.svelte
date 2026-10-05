@@ -6,6 +6,9 @@
   import { getContextMenuKeyPosition } from '../../lib/utils/contextMenuKey';
   import { noteTitle } from '../../stores/noteMeta';
   import { setNoteTitle } from '../../lib/notes/setNoteTitle';
+  import { takeTitleEdit } from '../../lib/boards/newTileTitle';
+  import { untrack } from 'svelte';
+  import { NOTE_EDITOR_ATTRIBUTE } from '../../lib/utils/editableTarget';
   import { boardRenameProblem, renameBoard, setBoardEmoji } from '../../stores/boardIdentity';
 
   const RENAME_ICON = 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z';
@@ -72,6 +75,22 @@
     renameValue = displayName;
   }
 
+  // A note just made (New note, Ctrl+N) opens with its title selected, so
+  // typing names it; Enter or Escape then hands the caret to its text.
+  let namingNewNote = false;
+  $effect(() => {
+    if (untrack(() => takeTitleEdit(tab.id))) {
+      namingNewNote = true;
+      untrack(startRename);
+    }
+  });
+
+  function endNamingNewNote(): void {
+    if (!namingNewNote) return;
+    namingNewNote = false;
+    document.getElementById(`tabpanel-${tab.id}`)?.querySelector<HTMLElement>(`[${NOTE_EDITOR_ATTRIBUTE}]`)?.focus();
+  }
+
   // Auto-focus + select-all when the rename input mounts,
   // mirroring VaultFileItem / KanbanColumn. The bind populates before this
   // effect runs because Svelte mounts the input synchronously after
@@ -115,8 +134,13 @@
     // Enter on a refused name keeps the field open so it can be fixed.
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (!renameProblem) commitRename();
-    } else if (e.key === 'Escape') isRenaming = false;
+      if (renameProblem) return;
+      commitRename();
+      endNamingNewNote();
+    } else if (e.key === 'Escape') {
+      isRenaming = false;
+      endNamingNewNote();
+    }
   }
 
   function handleDblClick() {
@@ -173,6 +197,8 @@
   }
 
   function handleTabKeydown(e: KeyboardEvent) {
+    // Keys typed in the rename box are the box's: a space is part of the name.
+    if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       activate();

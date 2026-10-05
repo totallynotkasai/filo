@@ -13,6 +13,7 @@ import { DeleteCardCommand } from './kanbanCommands';
 import { restoreFiles, retargetPath, stillTrashed, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
 import { captureTileMemberships, restoreTileMemberships, type TileMemberships } from '../lib/boards/tileMemberships';
+import { NewNoteUndo } from './newNoteUndo';
 
 // ── Tile Commands ──
 
@@ -33,6 +34,8 @@ export class AddTileCommand extends Command {
   description: string;
   readonly targetBoardId: string;
   private tile: Tile;
+  /** A new text tile's empty note goes to Filo's trash on undo, and back on redo. */
+  private newNote = new NewNoteUndo();
 
   constructor(tile: Tile, boardId?: string) {
     super();
@@ -43,13 +46,23 @@ export class AddTileCommand extends Command {
     this.description = `Add tile "${tile.title}"`;
   }
 
-  execute() {
-    boardStore.addTile(this.tile);
+  execute(): void | Promise<void> {
+    // The first run adds the tile at once (its caller selects it and opens its title).
+    if (!this.newNote.trashedNote) {
+      boardStore.addTile(this.tile);
+      return;
+    }
+    return (async () => {
+      const back = await this.newNote.restore('AddTileCommand.redo');
+      if (back && this.tile.type === 'text') this.tile.filePath = back;
+      boardStore.addTile(this.tile);
+    })();
   }
 
-  undo() {
+  async undo(): Promise<void> {
     adoptNotePath(this.tile, this.targetBoardId);
     boardStore.removeTile(this.tile.id);
+    if (this.tile.type === 'text') await this.newNote.trashIfUnused(this.tile.filePath, 'AddTileCommand.undo');
   }
 }
 

@@ -485,6 +485,8 @@ export interface RecoverySnapshotInfo {
    * written file moved aside (`orphan-tmp/<ts>/`).
    */
   kind: 'snapshot' | 'unsaved' | 'keep' | 'orphan-tmp';
+  /** The copy's size in bytes (Settings → Recovery shows it). */
+  size: number;
 }
 
 function snapshotKind(dirName: string): RecoverySnapshotInfo['kind'] {
@@ -544,9 +546,11 @@ export async function listRecoverySnapshots(vaultRoot: string): Promise<Recovery
     for (const name of subEntries) {
       // Never list Filo's own sentinels as recoverable user files.
       if (isSentinelSnapshotName(name)) continue;
+      let size: number;
       try {
         const stat = await fs.stat(join(subdirPath, name));
         if (!stat.isFile()) continue;
+        size = stat.size;
       } catch {
         continue;
       }
@@ -557,6 +561,7 @@ export async function listRecoverySnapshots(vaultRoot: string): Promise<Recovery
         basename: name,
         timestamp: dir.timestamp,
         kind: dir.kind,
+        size,
       });
     }
   }

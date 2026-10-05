@@ -41,6 +41,7 @@ export type IpcChannel =
   | 'vault:pin-recent'
   | 'vault:clear-recents'
   | 'vault:reconcile'
+  | 'vault:followed-move'
   // Vault watcher events (main -> renderer)
   | 'vault:files-changed'
   | 'vault:tree-updated'
@@ -70,6 +71,8 @@ export type IpcChannel =
   | 'recovery:keep-unsaved'
   // How many partial .tmp files a failed write preserved this session
   | 'recovery:preserved-tmp'
+  | 'recovery:open'
+  | 'recovery:delete'
   // This machine id (userData) and hostname
   | 'app:machine-identity'
   // Rewrite a Windows-1252 note as UTF-8 after backing up the original

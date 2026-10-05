@@ -5,6 +5,7 @@
   import CurrentBoardSettings from '../settings/CurrentBoardSettings.svelte';
   import ThemeManager from '../settings/ThemeManager.svelte';
   import TrashSettings from '../settings/TrashSettings.svelte';
+  import RecoverySettings from '../settings/RecoverySettings.svelte';
   import LivePreview from '../settings/LivePreview.svelte';
   import SettingsActionBar from '../settings/SettingsActionBar.svelte';
   import { pendingSettingsStore, settingsBoard } from '../../stores/pendingSettings.svelte';
@@ -17,9 +18,19 @@
   import { handleListKeyNav } from '../../lib/utils/listKeyNav';
   import { reportError } from '../../lib/utils/errorBus';
   import { APP_VERSION } from '../../constants/appVersion';
+  import { settingsTabRequest, type SettingsTab } from '../../lib/settings/settingsTabRequest.svelte';
 
-  type SettingsTab = 'general' | 'defaults' | 'current-board' | 'themes' | 'trash';
-  let activeTab = $state<SettingsTab>('general');
+  // A notice may ask for a tab (Open Recovery): taken as the dialog opens, or
+  // when the dialog is already open, as it arrives.
+  let activeTab = $state<SettingsTab>(untrack(() => settingsTabRequest.take()) ?? 'general');
+  $effect(() => {
+    const asked = settingsTabRequest.requested;
+    if (asked === null) return;
+    untrack(() => {
+      settingsTabRequest.take();
+      void selectTab(asked);
+    });
+  });
 
   // Current Board tab is only meaningful when a board is active (not a note
   // in a Document tab, whose pane still holds the board it showed before).
@@ -226,6 +237,7 @@
     general: SAVE_MODE_HINT.auto,
     themes: SAVE_MODE_HINT.themes,
     trash: 'Restore and Empty trash act at once.',
+    recovery: 'Open, Show in folder and Delete act at once.',
   };
   const tabs: { id: SettingsTab; label: string; icon: string; saveMode: 'auto' | 'apply' | 'themes' }[] = [
     { id: 'general', label: 'General', saveMode: 'auto', icon: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z' },
@@ -233,6 +245,7 @@
     { id: 'current-board', label: 'Current Board', saveMode: 'apply', icon: 'M3 3h18v18H3zM9 3v18M3 9h18' },
     { id: 'themes', label: 'Themes', saveMode: 'themes', icon: 'M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z' },
     { id: 'trash', label: 'Trash', saveMode: 'auto', icon: 'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6' },
+    { id: 'recovery', label: 'Recovery', saveMode: 'auto', icon: 'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2' },
   ];
 
   // Begin a pending-edit session on mount; cancel anything still in
@@ -355,6 +368,8 @@
           <ThemeManager />
         {:else if activeTab === 'trash'}
           <TrashSettings />
+        {:else if activeTab === 'recovery'}
+          <RecoverySettings />
         {/if}
       </div>
     {/key}

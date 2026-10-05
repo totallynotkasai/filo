@@ -52,6 +52,12 @@ import { noteReadEncoding, isRegisteredNonUtf8, renameNonUtf8 } from '../service
 
 let activeWatcher: FileWatcher | null = null;
 let currentVaultRoot: string | null = null;
+/**
+ * When the last on-demand reconcile ran (`vault:reconcile`'s throttle). Reset
+ * whenever the vault changes, so the new vault's first focus reconcile isn't
+ * dropped because the old vault's ran a moment ago.
+ */
+let lastReconcileAt = 0;
 
 /** The typed refusal for a write over a non-UTF-8 file. */
 function notUtf8Refusal(relativePath: string): { success: false; code: 'NOT_UTF8'; error: string } {
@@ -110,6 +116,20 @@ export async function stopActiveWatcher(): Promise<void> {
   } catch (err) {
     logMainError('shutdown.stopActiveWatcher', err);
   }
+}
+
+/**
+ * Releases whatever vault is open, as `vault:close` does: the watcher stops,
+ * the registry lets the vault go and its approved copy sources are dropped.
+ * A renderer reloaded after a crash starts with no vault open, so it must find
+ * main the same way, or opening a different vault is refused until a restart.
+ */
+export async function releaseActiveVault(): Promise<void> {
+  await stopActiveWatcher();
+  currentVaultRoot = null;
+  vaultRegistry.setCurrentVault(null);
+  lastReconcileAt = 0;
+  clearApprovedSources();
 }
 
 /**
@@ -371,11 +391,10 @@ export function registerVaultHandlers(): void {
    * The `fs.stat` directory check is kept as defence: the vault could have
    * been deleted on disk between init-config and watch.
    */
-  // `lastReconcileAt` is shared with the `vault:reconcile`
-  // handler below (one per-process throttle) and reset to 0 on a vault swap so
-  // the post-swap focus reconcile isn't dropped by the OUTGOING vault's window.
+  // `lastReconcileAt` (module state) is the `vault:reconcile` handler's
+  // throttle, reset to 0 on a vault swap so the post-swap focus reconcile
+  // isn't dropped by the OUTGOING vault's window.
   const RECONCILE_THROTTLE_MS = 5000;
-  let lastReconcileAt = 0;
   ipcMain.handle('vault:watch', async (_event, vaultPath: string) => {
     try {
       if (typeof vaultPath !== 'string' || vaultPath.length === 0) {
@@ -452,8 +471,8 @@ export function registerVaultHandlers(): void {
    *
    * Main-side 5 s throttle (matching the renderer's focus throttle): the
    * channel is reachable from anywhere in the renderer, and hammering it
-   * would pin main on full vault walks. The throttle state is declared with
-   * `vault:watch` so a vault swap can reset it.
+   * would pin main on full vault walks. The throttle state is module state,
+   * so a vault swap or release can reset it.
    */
   /**
    * Closes the active vault: stops the watcher, drops the
@@ -500,6 +519,26 @@ export function registerVaultHandlers(): void {
     lastReconcileAt = now;
     await activeWatcher.reconcileNow({ seedOnly: false });
     return { success: true };
+  });
+
+  /**
+   * The renderer followed a folder another program moved (it reads folder
+   * moves off two tree reads). The watcher moves its walk records with it,
+   * so the next walk doesn't report every file inside as moved once more.
+   * The watcher checks the disk agrees before it moves anything.
+   */
+  ipcMain.handle('vault:followed-move', async (_event, vaultRoot: string, oldRel: string, newRel: string) => {
+    try {
+      assertActiveVault(vaultRoot);
+      assertSafeRelativePath(oldRel);
+      assertSafeRelativePath(newRel);
+      assertNotInFiloDir(oldRel, { access: 'read' });
+      assertNotInFiloDir(newRel, { access: 'read' });
+      return { success: true, moved: activeWatcher?.noteFollowedMove(oldRel, newRel) ?? false };
+    } catch (err) {
+      logMainError('vault:followed-move', err);
+      return errorResult(err);
+    }
   });
 
   /**

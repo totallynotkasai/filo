@@ -119,6 +119,19 @@ export function buildWriteErrorToast(info: WriteErrorInfo): WriteErrorToastSpec 
       retryable: false,
     };
   }
+  // Main refused the write itself: the file is inside `.filo/`, the folder
+  // Filo keeps its own state in (a note linked from a rescue copy there).
+  // Nothing is wrong with the disk, and Retry would be refused again.
+  if (errorCode(info.error) === 'FORBIDDEN') {
+    return {
+      context: 'Not saved',
+      message:
+        `Filo didn't save${where} because the file is inside .filo, the folder Filo keeps for itself. ` +
+        'Your changes are kept in Filo for now: copy the text into a note elsewhere in the vault to keep it.',
+      coalesceKey: `forbidden::${info.path ?? ''}`,
+      retryable: false,
+    };
+  }
   // A corrupt-config suppression is NOT a disk-space / permission
   // failure, so it gets its own honest copy instead of the generic message
   // below. The config write is being SKIPPED on purpose to preserve the

@@ -139,6 +139,12 @@ export interface IpcChannelMap {
     args: [];
     result: IpcSuccess<{ skipped?: boolean }>;
   };
+  // A folder move another program made, which the renderer followed: the
+  // watcher moves its walk records too (`moved`: the disk agreed).
+  'vault:followed-move': {
+    args: [vaultRoot: string, oldRel: string, newRel: string];
+    result: IpcSuccess<{ moved: boolean }>;
+  };
   'vault:copy-file': {
     args:
       | [sourcePath: string, vaultRoot: string]
@@ -253,7 +259,7 @@ export interface IpcChannelMap {
     /** `mtimeMs` / `size`: the new file's stat, absent when it failed. */
     result: IpcOk<{ path: string; mtimeMs?: number; size?: number }>;
   };
-  // Sync-client forks of a board (never in board:list).
+  // Sync-client conflict copies of a board (never in board:list) or a note.
   'board:list-conflicts': {
     args: [vaultRoot: string];
     result: IpcSuccess<{ copies: Array<{ copyPath: string; canonicalPath: string; client: string }> }>;
@@ -274,12 +280,23 @@ export interface IpcChannelMap {
     args: [vaultRoot: string];
     result: IpcOk<{ count: number }>;
   };
+  // Settings → Recovery: a copy opened in the system's app (`NO_APP` when none).
+  'recovery:open': {
+    args: [vaultRoot: string, relPath: string];
+    result: IpcOk;
+  };
+  // Settings → Recovery: copies to the Recycle Bin (`refused`: it wouldn't
+  // take them), or with `permanently` deleted for good.
+  'recovery:delete': {
+    args: [vaultRoot: string, relPaths: string[]] | [vaultRoot: string, relPaths: string[], permanently: boolean];
+    result: IpcOk<{ deleted: string[]; refused: string[]; failed: string[] }>;
+  };
   // Bare channel (like theme:load) — returns the snapshot list directly;
   // a real scan failure rejects (so the renderer can toast) rather than
   // resolving to `[]`.
   'recovery:list': {
     args: [vaultRoot: string];
-    result: Array<{ relPath: string; basename: string; timestamp: string; kind: 'snapshot' | 'unsaved' | 'keep' | 'orphan-tmp' }>;
+    result: Array<{ relPath: string; basename: string; timestamp: string; kind: 'snapshot' | 'unsaved' | 'keep' | 'orphan-tmp'; size: number }>;
   };
   // Per-machine sentinels in `.filo/` (own and foreign).
   'recovery:list-sentinels': {

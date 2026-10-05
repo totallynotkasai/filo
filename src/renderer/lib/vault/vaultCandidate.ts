@@ -163,6 +163,10 @@ export interface VaultCandidate {
   unloadedBoardPaths: string[];
   /** Why each unloaded board didn't load, by its path (its kept tab says so). */
   unloadedBoardMessages: Record<string, string>;
+  /** When this open began: a recovery copy made since is this open's own. */
+  openedAt: number;
+  /** The load-failure snapshots this open took that its own notices name (absolute paths). */
+  announcedSnapshots: string[];
 }
 
 /**
@@ -210,8 +214,10 @@ interface RawConfigs {
  * `candidate.warnings` for the commit phase to surface.
  */
 export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCandidate> {
+  const openedAt = Date.now();
   const warnings: VaultCandidateWarning[] = [];
   const corruptionTargets: CorruptionTarget[] = [];
+  const announcedSnapshots: string[] = [];
 
   // Every crash sentinel this session names is built from this machine's id;
   // load it before the first sentinel read below.
@@ -340,6 +346,10 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
         );
       }
     }
+    // Either notice names the copy: this one, or the duplicate-id notice
+    // (`duplicateBoardMessage`), which says the unloaded file's copy is in
+    // .filo/recovery.
+    if (snapshotAbs) announcedSnapshots.push(snapshotAbs);
     if (!duplicate) warnings.push(boardLoadFailedToast(newVaultPath, failed, snapshotAbs));
   }
   const unloadedBoards = failedBoards
@@ -556,6 +566,8 @@ export async function loadVaultCandidate(newVaultPath: string): Promise<VaultCan
     seededConfigBaselinePaths,
     unloadedBoardPaths,
     unloadedBoardMessages,
+    openedAt,
+    announcedSnapshots,
   };
 }
 

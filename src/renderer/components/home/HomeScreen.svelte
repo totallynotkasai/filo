@@ -38,12 +38,14 @@
 
   // Load recent vaults from the main-process userData store, then attempt
   // auto-open if the user has the "Open last vault on launch" preference
-  // enabled. The auto-open runs at most once per HomeScreen mount.
+  // enabled. The auto-open runs at most once per HomeScreen mount, and waits
+  // for the list: the preference can arrive first, and an empty list then
+  // would leave the user on Home instead of in their vault.
   $effect(() => {
-    void loadRecents();
+    const recentsLoaded = loadRecents();
     if (!autoOpenAttempted) {
       autoOpenAttempted = true;
-      void maybeAutoOpenLastVault();
+      void maybeAutoOpenLastVault(recentsLoaded);
     }
   });
 
@@ -56,16 +58,17 @@
     }
   }
 
-  async function maybeAutoOpenLastVault(): Promise<void> {
+  async function maybeAutoOpenLastVault(recentsLoaded: Promise<void>): Promise<void> {
     // Skip when a vault is already open (e.g. HomeScreen revisited from a
     // running session).
     if (vaultStore.project !== null) return;
     try {
-      const pref = await window.filo.invoke('vault:get-launch-preference');
+      const [pref] = await Promise.all([window.filo.invoke('vault:get-launch-preference'), recentsLoaded]);
       if (!pref.openOnLaunch) return;
     } catch {
       return;
     }
+    if (vaultStore.project !== null) return;
     // Pick the most-recently-opened vault. Pinned-ness is irrelevant for
     // auto-open — last-use wins so the user lands where they left off.
     const candidate = [...recentVaults].sort((a, b) => b.lastOpened - a.lastOpened)[0];

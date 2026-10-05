@@ -9,7 +9,7 @@ import {
   boardFilePath,
   scanBoardFiles,
   resolveBoardPath,
-  scanBoardConflicts,
+  scanSyncConflicts,
   serializeBoardPayload,
 } from '../vault/boardFileOps';
 import { loadKnownHosts } from '../services/syncConflictNotifier';
@@ -199,15 +199,16 @@ export function registerBoardHandlers(): void {
   });
 
   /**
-   * Lists sync-client conflict forks of boards
-   * (`Plan.board-HOST.json` …) whose canonical `*.board.json` exists. Kept
-   * separate from `board:list` so its bare `string[]` contract is unchanged.
+   * Lists sync-client conflict copies whose original exists: forks of boards
+   * (`Plan.board-HOST.json` …) and copies of notes
+   * (`Chapter.sync-conflict-…-ABCDEFG.md` …). Kept separate from `board:list`
+   * so its bare `string[]` contract is unchanged.
    */
   ipcMain.handle('board:list-conflicts', async (_event, vaultRoot: string) => {
     try {
       assertActiveVault(vaultRoot);
       const hosts = await loadKnownHosts(vaultRoot);
-      return { success: true, copies: await scanBoardConflicts(vaultRoot, hosts) };
+      return { success: true, copies: await scanSyncConflicts(vaultRoot, hosts) };
     } catch (err) {
       logMainError('board:list-conflicts', err);
       const code = classifyError(err);

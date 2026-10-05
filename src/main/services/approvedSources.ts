@@ -139,11 +139,19 @@ export function isApprovedCopySource(vaultRoot: string, sourcePath: string): boo
   ) {
     return true;
   }
-  // Registered external source — the approval is bound to the vault that was
-  // active when it was minted; require that binding to equal the CURRENTLY
-  // active vault (read from the same registry the binding used). So a path
-  // picked under vault A can't be copied into vault B even if the swap-time
-  // clear was somehow skipped.
+  return isChosenCopySource(sourcePath);
+}
+
+/**
+ * True iff the user chose `sourcePath` in this vault: picked it in a file
+ * dialog or dropped it from the OS, whether it lies inside the vault or not.
+ * The approval is bound to the vault that was active when it was minted, and
+ * that binding must equal the CURRENTLY active vault (read from the same
+ * registry the binding used). So a path picked under vault A can't be copied
+ * into vault B even if the swap-time clear was somehow skipped.
+ */
+export function isChosenCopySource(sourcePath: string): boolean {
+  if (typeof sourcePath !== 'string' || sourcePath.length === 0) return false;
   const bound = approvedSources.get(normalizeSourceKey(sourcePath));
   if (bound === undefined) return false;
   const current = activeVaultKey();

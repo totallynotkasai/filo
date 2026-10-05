@@ -98,6 +98,20 @@ describe('buildWriteErrorToast (M5)', () => {
     expect(message).not.toContain('check disk space');
     expect(coalesceKey).toBe('config-corrupt::defaults.json');
   });
+
+  // Main refused the write (the note is inside .filo): not a disk problem,
+  // and Retry would be refused again.
+  it('says a refused write was refused, not a disk-space problem', () => {
+    const info: WriteErrorInfo = {
+      kind: 'component',
+      path: '.filo/recovery/2026-10-01T10-00-00.000-unsaved/Notes__Draft.md',
+      error: new IpcEnvelopeError('vault:write-existing-file-text', 'FORBIDDEN: generic vault channel cannot touch …', 'FORBIDDEN'),
+    };
+    const spec = buildWriteErrorToast(info);
+    expect(spec.message).toContain('inside .filo, the folder Filo keeps for itself');
+    expect(spec.message).not.toContain('disk space');
+    expect(spec.retryable).toBe(false);
+  });
 });
 
 describe('write-error coalescing (L2)', () => {

@@ -1,10 +1,13 @@
 /**
  * Live sync-conflict notices.
  *
- * Two watcher-level signals share this module (so `fileWatcher.ts` only
+ * Three watcher-level signals share this module (so `fileWatcher.ts` only
  * carries a one-line hook):
  *   - a board FORK appearing (`Plan.board-HOST.json`, a Dropbox conflicted
  *     copy …) — invisible to `board:list`;
+ *   - a note's conflict copy appearing beside its original
+ *     (`Chapter.sync-conflict-…-ABCDEFG.md`): it shows in the sidebar like
+ *     every other note, but nothing would say which note it split from;
  *   - a cross-basename rename the correlator REFUSED because the present file
  *     is a conflict copy of the missing one — reported by `correlateRenames`
  *     as `conflicts`.
@@ -78,8 +81,29 @@ export function boardForkNotices(
 }
 
 /**
- * The watcher hook: announce board forks in `events` plus the correlator's
- * refused conflict pairs. Each copy path is announced once per session.
+ * Note conflict copies among the batch's present files. Only a name no person
+ * would type counts (a Syncthing, Dropbox or OneDrive suffix, never a bare
+ * `Chapter 2.md`), and only beside its original.
+ */
+export function noteConflictNotices(
+  vaultRoot: string,
+  events: readonly FileChangeEvent[],
+  exists: (rel: string) => boolean,
+): SyncConflictNotice[] {
+  const out: SyncConflictNotice[] = [];
+  for (const e of events) {
+    if (e.type !== 'document' || !exists(e.filename)) continue;
+    const hit = detectConflictCopyPath(e.filename, { knownHosts: knownHostsFor(vaultRoot) });
+    if (!hit || hit.strength !== 'strong' || !exists(hit.canonicalName)) continue;
+    out.push({ copyPath: e.filename, canonicalPath: hit.canonicalName, client: hit.client });
+  }
+  return out;
+}
+
+/**
+ * The watcher hook: announce board forks and note conflict copies in
+ * `events`, plus the correlator's refused conflict pairs. Each copy path is
+ * announced once per session.
  */
 export function announceSyncConflicts(
   vaultRoot: string,
@@ -87,7 +111,7 @@ export function announceSyncConflicts(
   exists: (rel: string) => boolean,
   refused: readonly SyncConflictNotice[] = [],
 ): void {
-  const notices = [...boardForkNotices(vaultRoot, events, exists), ...refused];
+  const notices = [...boardForkNotices(vaultRoot, events, exists), ...noteConflictNotices(vaultRoot, events, exists), ...refused];
   for (const n of notices) {
     const key = n.copyPath.toLowerCase();
     if (announced.has(key)) continue;

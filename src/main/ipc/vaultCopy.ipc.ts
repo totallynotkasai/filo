@@ -10,7 +10,7 @@ import {
   assertNotInFiloDir,
 } from '../utils/pathSecurity';
 import { assertActiveVault } from '../utils/activeVaultCheck';
-import { isApprovedCopySource } from '../services/approvedSources';
+import { isApprovedCopySource, isChosenCopySource } from '../services/approvedSources';
 import { logMainError } from '../utils/mainLogger';
 import { ipcErrorCode } from './ipcErrorCode';
 
@@ -28,6 +28,18 @@ import { ipcErrorCode } from './ipcErrorCode';
  * `copyFileToVault`. 100 MB leaves headroom for legitimate video imports.
  */
 const VAULT_COPY_MAX_SIZE_BYTES = 100 * 1024 * 1024;
+
+/**
+ * The folders of `.filo/` that hold the user's own files rather than Filo's
+ * state: rescue copies and kept versions, and Filo's trash. A file the user
+ * dragged or picked out of one of them may be copied back into the vault.
+ */
+const FILO_USER_FILE_DIRS = ['.filo/recovery/', '.filo/trash/'];
+
+function inFiloUserFileDir(sourceRel: string): boolean {
+  const lower = toPosix(sourceRel).toLowerCase();
+  return FILO_USER_FILE_DIRS.some((dir) => lower.startsWith(dir));
+}
 
 /**
  * Registers the `vault:copy-file` IPC handler. Called from `ipc/index.ts`
@@ -98,7 +110,10 @@ export function registerVaultCopyHandlers(): void {
         // Refuse `.filo/` on both ends:
         //  - dest: the subfolder + basename pair must not land inside `.filo/`
         //  - src: if the source happens to live INSIDE the vault under
-        //    `.filo/`, refuse — generic copy must not exfiltrate config.
+        //    `.filo/`, refuse — generic copy must not exfiltrate config. The
+        //    one exception is a file the user chose (dialog or OS drop) from
+        //    the folders that hold their own files: a rescue copy, a kept
+        //    version, a trashed note.
         if (subfolder) {
           const destRel = `${subfolder}/${basename(sourcePath)}`;
           assertNotInFiloDir(destRel);
@@ -108,7 +123,7 @@ export function registerVaultCopyHandlers(): void {
         // Decided on the spelling containment matched, so a source named
         // through an 8.3 or junction spelling of the vault is still seen inside.
         const sourceRel = vaultRelativeIfInside(vaultPath, sourcePath);
-        if (sourceRel) assertNotInFiloDir(sourceRel);
+        if (sourceRel && !(inFiloUserFileDir(sourceRel) && isChosenCopySource(sourcePath))) assertNotInFiloDir(sourceRel);
 
         const destPath = await copyFileToVault(sourcePath, vaultPath, subfolder, VAULT_COPY_MAX_SIZE_BYTES, true); // final `true` = noFollowSource (O_NOFOLLOW/lstat-reject; see openSourceForCopy)
         const relativePath = vaultRelativeWithin(vaultPath, destPath);

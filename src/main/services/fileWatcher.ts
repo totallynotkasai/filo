@@ -57,6 +57,15 @@ const RECONCILE_INTERVAL_MS = 30_000;
  */
 export const MISSING_NOTE_HOLD_MS = 1500;
 
+/**
+ * How soon a walk follows a change-buffer overflow. Windows reports an
+ * overflowed buffer as one event with no file name: every change it dropped
+ * is then known only to a walk. The wait lets the burst that overflowed it
+ * (a sync client delivering hundreds of files) finish first, so one walk
+ * finds the lot instead of the 30 s pass.
+ */
+export const OVERFLOW_RECONCILE_DELAY_MS = 1000;
+
 // The supervisor state machine + reopen backoff schedule live in
 // watcherSupervisor.ts; `FileWatcher` owns one `WatcherSupervisor` per vault.
 
@@ -142,6 +151,15 @@ export class FileWatcher {
   private knownDirs = new Set<VaultPath>();
 
   /**
+   * Whether each path held a file (true) or was gone (false), as last seen by
+   * an event, Filo's own write or move, or else a walk. The correlator asks
+   * it about the time before each batch, so a file renamed over an existing
+   * one is read as that file changed, not as a move (see `wasPresentBefore`
+   * in renameCorrelation).
+   */
+  private presence = new Map<VaultPath, boolean>();
+
+  /**
    * The tail of the notify-pass chain. Passes run one at a time: two passes
    * in flight at once could send their renames out of order, and a pass that
    * took the held missing notes could race one still pairing them.
@@ -159,6 +177,10 @@ export class FileWatcher {
   private readonly ownMoves = new OwnMoves();
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcileInFlight = false;
+  /** The walk an overflow asked for (see {@link OVERFLOW_RECONCILE_DELAY_MS}). */
+  private overflowTimer: ReturnType<typeof setTimeout> | null = null;
+  /** An overflow came while a walk ran: that walk may have read the folders before the changes, so walk again after it. */
+  private reconcileAgain = false;
 
   /**
    * The in-flight `reconcileNow()` walk, or `null`. `stop()` awaits it so a
@@ -262,6 +284,7 @@ export class FileWatcher {
     const key = vaultPath(relativePath);
     if (!key) return;
     this.lastKnownSizes.set(key, bytes.length);
+    this.presence.set(key, true);
     const sha1 = sha1Hex(bytes);
     if (bytes.length <= WATCHER_HASH_MAX_BYTES) this.lastKnownHashes.set(key, sha1);
     else this.lastKnownHashes.delete(key);
@@ -327,20 +350,75 @@ export class FileWatcher {
 
   /** Filo renamed or moved `oldRel` (a file, or a folder with everything in it) to `newRel`. */
   noteOwnMove(oldRel: string, newRel: string): void {
-    moveCaches({ knownDirs: this.knownDirs, lastKnownSizes: this.lastKnownSizes, lastKnownHashes: this.lastKnownHashes }, oldRel, newRel);
+    moveCaches({ knownDirs: this.knownDirs, lastKnownSizes: this.lastKnownSizes, lastKnownHashes: this.lastKnownHashes, presence: this.presence }, oldRel, newRel);
     this.ownMoves.record(this.reconcileSnapshot, (snapshot) => moveRecords(snapshot, oldRel, newRel), newRel);
+  }
+
+  /**
+   * Another program moved the folder `oldRel` to `newRel`, and the renderer
+   * has followed the move (it reads folder moves off the tree: Windows reports
+   * only the two folder names). The walk records move with it, as for Filo's
+   * own moves, so the next walk doesn't report every file inside as moved
+   * again. Taken only while the disk agrees: `oldRel` gone, `newRel` a folder.
+   * A file that changed or went missing in the move is still reported, since
+   * its record keeps the stat it had before.
+   */
+  noteFollowedMove(oldRel: string, newRel: string): boolean {
+    if (this.aborted || !oldRel || !newRel || vaultPath(oldRel) === vaultPath(newRel)) return false;
+    try {
+      statSync(join(this.vaultPath, oldRel));
+      return false;
+    } catch {
+      // Gone, as a move leaves it.
+    }
+    try {
+      if (!statSync(join(this.vaultPath, newRel)).isDirectory()) return false;
+    } catch {
+      return false;
+    }
+    this.noteOwnMove(oldRel, newRel);
+    return true;
   }
 
   /** Filo moved `rel` into its trash as `trashId`. */
   noteOwnTrash(rel: string, trashId: string): void {
     if (this.reconcileSnapshot) this.ownMoves.trashed.keep(trashId, takeRecords(this.reconcileSnapshot, rel));
     this.ownMoves.record(null, (snapshot) => { takeRecords(snapshot, rel); });
+    this.setPresenceUnder(rel, false);
   }
 
   /** Filo brought `trashId` back from its trash to `rel`. */
   noteOwnRestore(rel: string, trashId: string): void {
     const records = this.ownMoves.trashed.take(trashId);
-    if (records) this.ownMoves.record(this.reconcileSnapshot, (snapshot) => putRecords(snapshot, rel, records), rel);
+    if (records) {
+      this.ownMoves.record(this.reconcileSnapshot, (snapshot) => putRecords(snapshot, rel, records), rel);
+      for (const suffix of records.keys()) this.presence.set(vaultPath(suffix ? `${rel}/${suffix}` : rel), true);
+    }
+  }
+
+  /** Marks every known path at or under `rel` as holding a file, or not. */
+  private setPresenceUnder(rel: string, present: boolean): void {
+    const base = vaultPath(rel);
+    if (!base) return;
+    for (const key of [...this.presence.keys()]) {
+      if (key === base || key.startsWith(`${base}/`)) this.presence.set(key, present);
+    }
+  }
+
+  /**
+   * What the walk tells about where files were, for paths no event has
+   * spoken for since: `present` were files, `absent` weren't. An event's
+   * own observation is newer, so it is never overwritten here.
+   */
+  private fillPresence(present: Iterable<string>, absent: Iterable<string> = []): void {
+    for (const rel of present) {
+      const key = vaultPath(rel);
+      if (key && !this.presence.has(key)) this.presence.set(key, true);
+    }
+    for (const rel of absent) {
+      const key = vaultPath(rel);
+      if (key && !this.presence.has(key)) this.presence.set(key, false);
+    }
   }
 
   /**
@@ -423,10 +501,13 @@ export class FileWatcher {
     if (this.aborted) return false;
     try {
       this.watcher = watch(this.vaultPath, { recursive: true }, (eventType, filename) => {
-        if (!filename) return;
         // Drop events that fire after stop(); otherwise a vault swap can
         // briefly funnel the OUTGOING vault's events into the pending queue.
         if (this.aborted) return;
+        if (!filename) {
+          this.reconcileAfterOverflow();
+          return;
+        }
 
         const normalized = toPosix(filename);
 
@@ -453,6 +534,19 @@ export class FileWatcher {
       this.handleWatcherError(err);
       return false;
     }
+  }
+
+  /**
+   * Arms one walk for an overflowed change buffer. Further overflows while it
+   * waits join it; one during a walk runs another walk once that one ends.
+   */
+  private reconcileAfterOverflow(): void {
+    if (this.aborted || this.overflowTimer) return;
+    this.overflowTimer = setTimeout(() => {
+      this.overflowTimer = null;
+      if (this.reconcileInFlight) this.reconcileAgain = true;
+      else void this.reconcileNow({ seedOnly: false });
+    }, OVERFLOW_RECONCILE_DELAY_MS);
   }
 
   /**
@@ -496,6 +590,11 @@ export class FileWatcher {
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
     }
+    if (this.overflowTimer) {
+      clearTimeout(this.overflowTimer);
+      this.overflowTimer = null;
+    }
+    this.reconcileAgain = false;
     // Cancels any pending reopen retry timer and broadcasts `suspended`
     // exactly once.
     this.supervisor.shutdown();
@@ -534,6 +633,7 @@ export class FileWatcher {
     this.lastKnownSizes.clear();
     this.lastKnownHashes.clear();
     this.knownDirs.clear();
+    this.presence.clear();
     this.reconcileSnapshot = null;
     this.ownMoves.clear();
     this.reconcileInFlight = false;
@@ -605,6 +705,7 @@ export class FileWatcher {
         }
         this.reconcileSnapshot = current;
         if (options.seedOnly || previous === null) {
+          this.fillPresence(current.keys());
           const changed = options.reportChangedSince === undefined
             ? []
             : changedSinceEvents(current, options.reportChangedSince);
@@ -656,6 +757,12 @@ export class FileWatcher {
           }
         }
         if (synthesised.length === 0) return;
+        // The pass that sends these asks where files were BEFORE this walk:
+        // a path that just appeared wasn't one, one that vanished was.
+        this.fillPresence(
+          synthesised.filter((e) => previous.has(e.filename)).map((e) => e.filename),
+          synthesised.filter((e) => !previous.has(e.filename)).map((e) => e.filename),
+        );
         // Final abort check before pushing into the live queue — without
         // this, an abort mid-walk could leave events queued that the
         // post-stop reset wipes anyway but the next-tick scheduleNotify
@@ -689,6 +796,10 @@ export class FileWatcher {
     })();
     this.reconcileInFlightPromise = promise;
     await promise;
+    if (this.reconcileAgain && !this.aborted) {
+      this.reconcileAgain = false;
+      await this.reconcileNow({ seedOnly: false });
+    }
   }
 
   private scheduleNotify(): void {
@@ -890,16 +1001,26 @@ export class FileWatcher {
       await hashAsync(c.filename);
     }));
     if (this.aborted) return;
-    const { filtered: correlated, renames, conflicts } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath));
+    const wasPresentBefore = (relPath: string): boolean => this.presence.get(vaultPath(relPath)) ?? false;
+    const { filtered: correlated, renames, conflicts } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath), wasPresentBefore);
     // Re-check after the only await: a vault swap inside the hash-probe
     // window must not send the OLD vault's events — the renderer's rename
     // queue captures vault identity at ARRIVAL, so a late send would drive
     // the rename cascade against the NEW vault's same-named files.
     if (this.aborted) return;
     announceSyncConflicts(this.vaultPath, unique, exists, conflicts); // sync conflict forks
+    // Where files are after this batch, for the next one's question.
+    for (const c of correlated) {
+      if (c.type === 'document' || c.type === 'board' || c.type === 'attachment') this.presence.set(vaultPath(c.filename), exists(c.filename));
+    }
     // Move cached sizes + hashes onto the new path so a future delete of
-    // the new path can still resolve, and drop the old-path entries.
+    // the new path can still resolve, and drop the old-path entries. The walk
+    // records move too: the renderer follows this rename now, and a walk that
+    // still found the old path recorded would report it once more.
     for (const r of renames) {
+      this.presence.set(vaultPath(r.oldPath), false);
+      this.presence.set(vaultPath(r.newPath), true);
+      this.ownMoves.record(this.reconcileSnapshot, (snapshot) => moveRecords(snapshot, r.oldPath, r.newPath), r.newPath);
       const oldKey = vaultPath(r.oldPath);
       const newKey = vaultPath(r.newPath);
       const cachedSize = this.lastKnownSizes.get(oldKey);

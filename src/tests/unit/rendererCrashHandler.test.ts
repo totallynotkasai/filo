@@ -43,8 +43,15 @@ describe('renderer crash handling', () => {
   function attach(isQuitting = false) {
     const { win, emit } = fakeWindow();
     const writeBreadcrumb = vi.fn(async () => {});
-    attachRendererCrashHandlers(win as never, { writeBreadcrumb, isQuitting: () => isQuitting });
-    return { win, emit, writeBreadcrumb };
+    const order: string[] = [];
+    const releaseVault = vi.fn(async () => {
+      order.push('release');
+    });
+    win.webContents.reload.mockImplementation(() => {
+      order.push('reload');
+    });
+    attachRendererCrashHandlers(win as never, { writeBreadcrumb, isQuitting: () => isQuitting, releaseVault });
+    return { win, emit, writeBreadcrumb, releaseVault, order };
   }
 
   it('render-process-gone (oom) → breadcrumb written, dialog shown; Reload reloads', async () => {
@@ -65,11 +72,32 @@ describe('renderer crash handling', () => {
 
   it('Quit destroys the window', async () => {
     showMessageBox.mockResolvedValue({ response: 1 });
-    const { win, emit } = attach();
+    const { win, emit, releaseVault } = attach();
     emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
     await settle();
     expect(win.destroy).toHaveBeenCalledTimes(1);
     expect(win.webContents.reload).not.toHaveBeenCalled();
+    expect(releaseVault).not.toHaveBeenCalled();
+  });
+
+  // The reloaded page opens with no vault, so main must have let the old one
+  // go first: otherwise opening a different vault is refused until a restart.
+  it('Reload releases the open vault before reloading', async () => {
+    showMessageBox.mockResolvedValue({ response: 0 });
+    const { emit, releaseVault, order } = attach();
+    emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+    await settle();
+    expect(releaseVault).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['release', 'reload']);
+  });
+
+  it('a release that fails still reloads', async () => {
+    showMessageBox.mockResolvedValue({ response: 0 });
+    const { win, emit, releaseVault } = attach();
+    releaseVault.mockRejectedValueOnce(new Error('EBUSY'));
+    emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+    await settle();
+    expect(win.webContents.reload).toHaveBeenCalledTimes(1);
   });
 
   it('a crash during a quit drain closes without asking', async () => {

@@ -1,7 +1,7 @@
 # Audit-28 implementation plan (draft, 2026-10-04)
 
 - **Source:** [AUDIT28_PRE_DAILY_USE_2026-10-04.md](AUDIT28_PRE_DAILY_USE_2026-10-04.md). Finding IDs (A-01, H-01 …) refer to it.
-- **Status:** Phases 0 and 1 done on 2026-10-04, Phases 2, 3, 4 and 5 on 2026-10-05 (see section 4); Phases 6 to 8 not started. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs, Phase 2 D6 and D7 at theirs, Phase 3 D2 at its default, Phase 4 D8 at its default, Phase 5 D9 at its default.
+- **Status:** Phases 0 and 1 done on 2026-10-04, Phases 2, 3, 4, 5 and 6A on 2026-10-05 (see section 4); Phase 6 was split into 6A and 6B at the owner's request, and 6B, 7 and 8 are not started. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs, Phase 2 D6 and D7 at theirs, Phase 3 D2 at its default, Phase 4 D8 at its default, Phase 5 D9 at its default.
 - **Scores:** out of 10, as in the report. **Hard:** 0/10 = minutes, 5/10 = a few days with tests, 10/10 = weeks.
 
 ## 1. How this plan works
@@ -21,7 +21,7 @@
   - the E2E suite (with `FILO_E2E_SCALE=1`) when the phase touches the shell, startup, quit, file watching or the editor;
   - the corpus check (`corpus:run` + `corpus:compare` against today's baseline) for any phase that touches the editor or Markdown writing;
   - an outcome section in this file: what changed, deviations, new findings.
-- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them, Phase 1 BL-25 and BL-26; Phase 2 added BL-27, fixed there, and BL-28; Phase 3 BL-29 and BL-30, fixed there, and BL-31 and BL-32; Phase 4 added two owner decisions and no numbered item; Phase 5 BL-33 and BL-34, fixed there, and BL-35).
+- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them, Phase 1 BL-25 and BL-26; Phase 2 added BL-27, fixed there, and BL-28; Phase 3 BL-29 and BL-30, fixed there, and BL-31 and BL-32; Phase 4 added two owner decisions and no numbered item; Phase 5 BL-33 and BL-34, fixed there, and BL-35; Phase 6A BL-36, fixed there).
 - **Comments explain why, never history.** Audit IDs go in commit messages.
 
 "Sum of Hard scores" adds up the Hard scores of the phase's tasks. It's a rough guide to size, not a score.
@@ -34,7 +34,8 @@
 | 3 | Making and finding notes | E-03, E-13, E-11, H-08 / E-08, H-02, H-07, E-12, E-14, H-05 | 9 | 17 | 4–6 days |
 | 4 | Task List and Kanban correctness | E-01, E-02, E-05, E-15, E-16, E-17, E-06, E-18, E-25, A-06, E-19, E-24 | 12 | 23 | 6–8 days |
 | 5 | The interface around the views | E-04, E-10, H-04 (+ BL-01), H-06, H-10, E-09, E-21, E-26, E-23, E-22, E-20, BL-03 | 12 | 20 | 5–7 days |
-| 6 | Sync, recovery and boards | C-03 (+ #33), C-01, C-04, C-05, C-06, C-10, C-09, C-11, A-07, A-04, B-01, B-02, B-03, B-04 (+ BL-02), B-05, B-07, B-09, B-06 | 18 | 35 | 7–9 days |
+| 6A | Sync and recovery (tasks 6.1–6.8) | C-03 (+ #33), C-01, C-04, C-05, C-06, C-10, C-09, C-11 | 8 | 16 | 3–4 days |
+| 6B | Notes and boards (tasks 6.9–6.18) | A-07, A-04, B-01, B-02, B-03, B-04 (+ BL-02), B-05, B-07, B-09, B-06 | 10 | 19 | 4–5 days |
 | 7 | Hardening, tidying and docs | C-07, C-08, A-S2, B-08, E-28, docs drift, BL-04, BL-05, BL-10 | 6 | 13 | 3–4 days |
 | 8 | Verification and archive | — | — | — | 1 day |
 
@@ -160,16 +161,24 @@ Phases 2 to 7 can be reordered or split to suit you; each stands on its own. Pha
 
 ### Phase 6: sync, recovery and boards
 
+The owner asked for this phase in two parts, each its own session and commit. The split follows the subsystems:
+- **6A, sync and recovery** (6.1 to 6.8): the watcher, the vault-open checks, rescue copies, crash Reload and Home. Done on 2026-10-05 (section 4).
+- **6B, notes and boards** (6.9 to 6.18): the Raw view and Convert to UTF-8, then the board writer, drift, undo steps and the older-board notice. Not started.
+
+Each part has its own pass test, below the table.
+
 | # | Task | Finding | Hard |
 |---|---|---|---|
-| 6.1 | The vault-open warning lists only new failed-load snapshots. Add Settings → Recovery to list, open and delete rescue copies and kept versions (KL #33). | C-03, #33 | 3/10 |
-| 6.2 | A file dropped from a hidden vault folder is copied in, not linked. `recovery:keep-unsaved` writes item by item. A refused write isn't called a disk-space problem. | C-01 | 2/10 |
-| 6.3 | Announce note conflict copies (`.sync-conflict-`), live and at open, and fix CLAUDE.md's line. | C-04 | 2/10 |
-| 6.4 | The correlator doesn't pair a "present" path that was already a known file. Or: a displaced note with unsaved work becomes a backed-up conflict. | C-05 | 3/10 |
-| 6.5 | A watcher overflow (null filename) schedules a reconcile at once. | C-06 | 1/10 |
-| 6.6 | A folder move the renderer follows also moves the watcher's walk records. | C-10 | 3/10 |
-| 6.7 | A crash Reload releases the vault registry and the watcher first. | C-09 | 1/10 |
-| 6.8 | Home waits for the recent-vaults list before auto-opening. | C-11 | 1/10 |
+| **6A** | | | |
+| 6.1 | The vault-open warning lists only new failed-load snapshots. Add Settings → Recovery to list, open and delete rescue copies and kept versions (KL #33). *Done; every snapshot is already named by its own notice, so the open notice is now a safety net, and the tab shows sizes too (section 4, deviation 1).* | C-03, #33 | 3/10 |
+| 6.2 | A file dropped from a hidden vault folder is copied in, not linked. `recovery:keep-unsaved` writes item by item. A refused write isn't called a disk-space problem. *Done; main also had to allow copying a file the user chose out of `.filo/recovery` or `.filo/trash` (section 4, deviation 2).* | C-01 | 2/10 |
+| 6.3 | Announce note conflict copies (`.sync-conflict-`), live and at open, and fix CLAUDE.md's line. *Done, for strong names only, with Open the copy (section 4, deviation 3).* | C-04 | 2/10 |
+| 6.4 | The correlator doesn't pair a "present" path that was already a known file. Or: a displaced note with unsaved work becomes a backed-up conflict. *Done: the first option (section 4, deviation 4).* | C-05 | 3/10 |
+| 6.5 | A watcher overflow (null filename) schedules a reconcile at once. *Done (section 4, deviation 5).* | C-06 | 1/10 |
+| 6.6 | A folder move the renderer follows also moves the watcher's walk records. *Done, and the watcher's own renames move theirs (section 4, deviation 6).* | C-10 | 3/10 |
+| 6.7 | A crash Reload releases the vault registry and the watcher first. *Done as planned (section 4).* | C-09 | 1/10 |
+| 6.8 | Home waits for the recent-vaults list before auto-opening. *Done as planned (section 4).* | C-11 | 1/10 |
+| **6B** | | | |
 | 6.9 | Switching tabs away from a conflicted Raw view asks, as closing does. | A-07 | 3/10 |
 | 6.10 | A forced reload with a queued body goes through the conflict check. Convert to UTF-8 unfreezes only after its reload. | A-04 | 2/10 |
 | 6.11 | Link, embed and timer tiles are stored once. Readers skip a stale copy; the tag-delete Undo puts back what it changed. | B-01 | 2/10 |
@@ -181,10 +190,14 @@ Phases 2 to 7 can be reordered or split to suit you; each stands on its own. Pha
 | 6.17 | The saved-views and style undo steps record per-key changes. | B-09 | 2/10 |
 | 6.18 | The older-board notice says "rebuild the board; its notes are safe", and a string version is called invalid, not old. | B-06 | 1/10 |
 
-**Pass:**
-- The finder repros for C-01, C-03, C-04, C-05, B-01 and B-02 pass.
+**Pass, 6A:**
+- The finder repros for C-01, C-03, C-04 and C-05 pass.
 - `syncDeliveries.e2e.ts` gains a note conflict-copy case.
-- The full E2E suite passes with scale.
+- `ci:verify` on Windows, and the full E2E suite with scale.
+
+**Pass, 6B:**
+- The finder repros for B-01 and B-02 pass (`…\a643b672-…\scratchpad\repros\finderB`).
+- `ci:verify` on Windows, and the full E2E suite with scale.
 
 ### Phase 7: hardening, tidying and docs
 
@@ -883,3 +896,100 @@ Two bugs turned up and were fixed in the phase: BL-33 (the font box blank in a v
 
 **Found in this phase, not fixed (BL-35)**
 - **BL-35: below about 1,300 px a Task List's Table of Contents opens over the list** (Impact 2/10, Hard 2/10), covering the progress count and the rows' right ends. It can't be closed. The Phase 4 build does the same at these widths.
+
+### Phase 6A outcome (2026-10-05)
+
+**Status:** done, not committed (the owner decides when). Phase 6 was split at the owner's request: 6A (tasks 6.1 to 6.8, sync and recovery) here, 6B (6.9 to 6.18, notes and boards) in a later session. No decision from section 3 applied. Six deviations are listed below. The changes you will notice:
+- a new **Settings → Recovery** tab lists every copy Filo keeps in `.filo/recovery`, with Open, Show in folder and Delete;
+- the "Filo preserved N file snapshots … failed-load window" warning no longer comes back at every open;
+- a Syncthing (or Dropbox, OneDrive) conflict copy of a note gets a notice naming the note it split from, with **Open the copy**;
+- a rescue copy or old version dragged out of `.filo/recovery`, `.filo/trash` or `.stversions` onto a board is copied into the vault, so what you type in it is saved;
+- a folder renamed in Explorer is followed once, not once more per file 30 s later.
+
+One latent bug from Phase 3 turned up and was fixed here: BL-36 (end of this section).
+
+**What changed**
+- **6.1, Settings → Recovery and the open notice (C-03, KL #33).**
+  - New tab **Recovery** (`components/settings/RecoverySettings.svelte`, `stores/recoveryCopies.svelte.ts`). It lists the copies by kind, each with what it is: **Kept versions**, **Rescue copies**, **Files that failed to load**, **Partly written files**. A row shows the name the copy came from (`Notes/Draft.md`, not `Notes__Draft.md`), when it was kept and its size.
+  - **Open** opens the copy in the system's app for it (main, `recovery:open`, `.md` / `.json` / `.txt` only); with no such app it says so and shows the copy in its folder. **Show in folder**. **Delete** sends one copy to the Recycle Bin at once; **Delete all** (per kind) asks first. If the Recycle Bin refuses, one confirm asks "Delete permanently?", as Settings → Trash does. A copy's timestamped folder goes once it is empty.
+  - Main reaches only copies inside `.filo/recovery/` (`main/services/recoveryCopies.ts`); any other path is refused (FORBIDDEN) before anything is touched.
+  - The vault-open notice (`lib/vault/recoveryCopies.ts`, called from the recovery sequence in `vault.svelte.ts`) names only load-failure snapshots this open made that no other notice of the open named. Its text: *Filo couldn't load a file, so it kept a copy in .filo/recovery before anything could write over it: • Plan.board.json. Settings → Recovery lists every copy Filo keeps.*, with **Show in folder** and **Open Recovery**.
+  - `openSettingsAt(tab)` (`lib/settings/settingsTabRequest.svelte.ts`) opens Settings on a tab, or switches an open dialog to it.
+  - The Recovery tab's rule line: *Open, Show in folder and Delete act at once.*
+- **6.2, files from hidden vault folders (C-01).**
+  - A file dropped from a hidden folder of the vault (`.filo/recovery`, `.filo/trash`, `.stversions`, any folder whose name starts with a dot) counts as outside the vault and is copied in (`classifyDroppedFile`, `isInHiddenFolder` in `lib/vault/droppedFiles.ts`, shared with the file picker's rule).
+  - Main's `vault:copy-file` copies such a file when the user chose it (an OS drop or a file dialog) and it lies in `.filo/recovery` or `.filo/trash`; the rest of `.filo/` is still refused (deviation 2).
+  - `recovery:keep-unsaved` checks each item on its own: a name it refuses fails alone, and the others are written. A note shown from inside `.filo/` (a tile an older build linked there) is kept under a `_filo__…` name instead of failing every copy.
+  - A write main refuses (FORBIDDEN) now reads *Filo didn't save (…) because the file is inside .filo, the folder Filo keeps for itself. Your changes are kept in Filo for now: copy the text into a note elsewhere in the vault to keep it.*, with no Retry, instead of "check disk space or file permissions".
+- **6.3, a note's sync conflict copy (C-04).**
+  - Live: the watcher announces a note's conflict copy that appears beside its note (`noteConflictNotices` in `main/services/syncConflictNotifier.ts`).
+  - At open: `board:list-conflicts` lists notes' copies too (`scanSyncConflicts`, was `scanBoardConflicts`, in `main/vault/boardFileOps.ts`; the channel kept its name).
+  - The notice: *Syncthing kept two versions of the note "Chapter.md": the other is Chapter.sync-conflict-20261004-120000-ABCDEFG.md. Filo shows Chapter.md and leaves the copy alone; open the copy to take what you need from it.*, with **Open the copy**, **Show in folder**, **Dismiss**. An attachment's copy (from a refused rename) says "the file" and has no Open the copy.
+  - CLAUDE.md's line about the notice is now true, and says boards and notes.
+- **6.4, a file renamed over another (C-05).** The watcher records which paths hold a file (`presence` in `fileWatcher.ts`: every event, Filo's own writes, moves and trash moves, and its walks fill in the rest). The correlator never pairs a missing file with a "present" path that already held one (`wasPresentBefore` in `renameCorrelation.ts`): another program renaming A over B is A gone and B changed. B's open view reloads A's text, or, with typing not yet saved, the usual Reload / Keep mine prompt appears and A's text stays on disk until it is answered. A case-only rename still pairs.
+- **6.5, a change-buffer overflow (C-06).** An event with no file name arms one walk 1 s later (`OVERFLOW_RECONCILE_DELAY_MS`), so the burst that overflowed the buffer can finish first. Overflows meanwhile join it; one during a walk runs another walk after it.
+- **6.6, folder moves followed once (C-10).**
+  - After the renderer follows a folder another program moved, it tells main (`vault:followed-move`), and the watcher moves its walk records with the folder (`noteFollowedMove`), once the disk shows the old folder gone and the new one a folder.
+  - A rename the watcher itself sends moves its walk records too (deviation 6).
+- **6.7, Reload after a crash (C-09).** Reload first releases the vault in main (`releaseActiveVault` in `vault.ipc.ts`: the watcher, the registry, the approved copy sources), so the reloaded page can open any vault.
+- **6.8, "Open last vault on launch" (C-11).** Home waits for the recent-vaults list as well as the preference before it chooses (`HomeScreen.svelte`).
+- **New IPC:** `vault:followed-move`, `recovery:open`, `recovery:delete`, in the channel union, the payload schemas, the contracts and the ipc-security gate's envelope list. `recovery:list` entries carry `size`.
+- **Gate.** `deletes-go-to-trash` allowed the word "permanent" only inside Settings → Trash's confirmed fallback (`offerPermanentDelete` in `trash.svelte.ts`). The Recovery tab has the same fallback, so its `offerPermanentDelete` is allowed too (`PERMANENT_DELETE_FALLBACKS` in `scripts/gates/writePath.mjs`). Bite check: "permanent" in the Recovery tab's own Delete all confirm fails the gate.
+- **Docs.**
+  - CLAUDE.md: the new modules and channels, the watcher, correlator, crash handler, copy, drop and conflict-notice lines, and the rescue copies' Settings → Recovery.
+  - KNOWN_LIMITATIONS #33 (Settings → Recovery; the open notice) and #18 (notes' copies announced only for strong names).
+  - The design doc: Settings → Recovery, the tab rule, a note's conflict copy and a rename over another file.
+  - `docs/BACKLOG.md`: KL #33's row (Settings → Recovery with sizes) is taken and removed.
+
+**Deviations from the plan**
+1. **The open notice is a safety net now (6.1).** The plan said to list only new failed-load snapshots. Every snapshot Filo takes at open is already named by its own notice: the board-load notice names its copy, and the duplicate-board notice says the unloaded file's copy is in .filo/recovery. So the open notice names only a new snapshot no notice of that open named, which today never happens; the old warning that named every copy at every open is gone. The tab also shows each copy's size (the backlog item asked for it), and has **Delete all** per kind, since clearing many copies one at a time would be slow.
+2. **Copying out of `.filo/` (6.2).** The plan's "copied in" needed main to allow it: `vault:copy-file` refused any source inside `.filo/`, so the copy would have failed with "File rejected by vault safety check". It now copies a file the user chose (an OS drop or a dialog, registered by the preload or main) from `.filo/recovery` or `.filo/trash` only. The same refusal broke Phase 3's picker for a file in `.filo/trash` (BL-36). And `recovery:keep-unsaved` keeps a `.filo/` note's rescue copy under a `_filo__…` name rather than only failing it alone, since a board an older build linked that way still exists.
+3. **Strong names only for notes (6.3).** A Syncthing, Dropbox / Nextcloud or OneDrive name counts; Google Drive's ` (1)` and iCloud's ` 2` don't, since a book's `Chapter 2.md` sits beside `Chapter.md`. The notice offers **Open the copy**. KL #18 says so.
+4. **The first option, held as a record of where files are (6.4).** The plan offered "don't pair a present path that was already a known file" or "a displaced note with unsaved work becomes a backed-up conflict". The second would leave an open, unedited B showing its old text (the pairing swallows B's change event), so the first was taken. "Known" needed its own record (`presence`): the walk's record is replaced by each walk before the events it found are paired, and the size and hash caches keep deleted files. The cost: A's tiles show as missing (relinkable), as for any delete, since its text now lives under B's name.
+5. **The overflow walk waits 1 s (6.5)**, so one walk finds the whole burst; the plan said "at once".
+6. **The watcher's own renames move their walk records (6.6).** A single file renamed in Explorer was paired at once, then reported again by the next walk (as a delete and a create, since its caches had moved). Each rename the watcher sends now moves its walk record, as Filo's own moves always did.
+
+**Tests** (each new case was run against the Phase 5 commit, f083071; see Checks)
+- **Unit:**
+  - New `recoveryAndCopyIpc.test.ts` (11): copies out of `.filo/recovery` and `.filo/trash` only when chosen, never `.filo/app.json`; rescue copies item by item, a `.filo/` name kept as `_filo__…`; `recovery:open` (the system app, NO_APP, nothing outside `.filo/recovery`); `recovery:delete` (Recycle Bin, the emptied folder, refused then deleted for good, nothing deleted when one path is outside); `releaseActiveVault`.
+  - New `watcherOverflowAndReplace.test.ts` (7, the watcher driven through its own `fs.watch` listener): the overflow walk; a rename over a file is a change and a delete; a rename to a free name is a move, not reported again; a name freed by a delete takes a move; a followed folder move not reported again, and the control without it; a followed move taken only while the disk agrees.
+  - New `renameOntoExistingFile.test.ts` (5): the correlator with `wasPresentBefore`, across folders, a case-only rename on a case-sensitive disk, and without the probe.
+  - New `recoveryCopiesNotice.test.ts` (6): timestamps, names, sizes, which snapshots the notice names, the notice silent with old copies, and its text and actions.
+  - `droppedFiles.test.ts` (+2), `writeErrorToast.test.ts` (+1), `syncConflictNotices.test.ts` (+4), `boardLoaderConflictTieBreak.test.ts` (+1), `rendererCrashHandler.test.ts` (+2; Quit releases nothing).
+- **Component:** `homeRecentVaults.test.ts` (+2: the list arriving after the preference; the preference off). `projectSettingsDialog.test.ts` (+2: an open dialog switches to the tab asked for; a new one opens on it, and on General the next time).
+- **Characterisation:** new `syncAndRecovery.test.ts` (10, in the `characterisation-suite` gate's list; harness `harness/recovery.ts`):
+  - a kept version and a rescue copy raise no notice at open, then or after reopening;
+  - Settings → Recovery lists them by kind; Delete and Delete all send them to the Recycle Bin, and the emptied folder goes;
+  - a board two files share an id with is named once, by its own notice, and nothing else comes back at the next open;
+  - a rescue copy dragged onto a board is copied in and its typing saved; the same for a note from `.stversions`;
+  - a note's conflict copy arriving beside it is named and opens; when the other version wins, the open note shows it; copies already there are named at open, and a numbered note isn't;
+  - a note renamed over an open note with typing keeps both texts;
+  - a folder renamed in Explorer is followed once, and the next walk reports nothing more.
+
+  The suite's Electron fake now takes a file away when Filo sends it to the Recycle Bin (`recycled`), as a real one does. `interfaceAroundViews.test.ts` lists the Recovery tab's rule.
+- **E2E:** `syncDeliveries.e2e.ts` gains "that conflict copy is named in a notice, which opens it".
+
+**Checks**
+- `npm run ci:verify` on Windows: passed on the final code. 858 test files, 8,409 passed and 5 skipped (as before), 91/91 gates; its test step took 295 s.
+  - The first run had 4 failures. Three were in this phase's work, all fixed: the IPC envelope test keeps its own list of channels, which needed the three new ones; and two new watcher cases renamed files while the watcher's own first walk was still reading them (Windows refused with EPERM), so the test now waits for that walk.
+  - The fourth was the Chromium spec "Enter beside a soft break: in a list item" (`editorCaretInChromium.test.ts`), in editor code this phase didn't touch. It passed alone (11 of 11) and in the next full run. BL-09 now names it.
+- E2E with `FILO_E2E_SCALE=1` on the final build: 45 passed (the 44 from before and the new case), 3.5 min.
+- **Bite checks** (the new tests on the Phase 5 commit, `f083071`, in a detached worktree with `node_modules` junctioned, since removed):
+  - **Unit:** all 27 new cases fail, in 9 files (`recoveryCopiesNotice` fails to load, as its module is new). The 63 that pass are the files' existing cases and the controls: a move to a free name, a case-only rename, a rename without the probe, a name freed by a delete, the walk without a follow.
+  - **Component:** the Home case fails (Home stays on Home); `projectSettingsDialog` fails to load (no `openSettingsAt`).
+  - **Characterisation:** all 10 cases of `syncAndRecovery.test.ts` fail, each for the reason it tests: the old warning at open; no Recovery tab; two notices for the duplicate board; the dropped copy's edits refused (FORBIDDEN, "check disk space"); the `.stversions` copy written in place; no conflict notice (three cases); B's typing written over A's text with A's text gone; 12 renames reported by the walk after the folder move. `interfaceAroundViews.test.ts`'s rule list fails too (no Recovery tab).
+  - **E2E** (`FILO_E2E_MAIN` on a build of `f083071`): the new case fails (no notice); the four cases before it pass.
+  - One characterisation case first passed on the old code: it answered the prompt before the old bug wrote over A's text. It now waits 4 s with the question open, and fails there as the audit's repro did.
+- **The audit's repros**, run on this code: C-01, C-04 (both cases) and C-05 pass. C-03's repro asserted the old warning on the first open as its starting point, which no longer appears; its real check (nothing at the next open) holds, and the characterisation case replaces it. The refuter's C-10 measurement: 0 renames from the walk after a 40-note folder rename (was 40).
+- **Screenshots of the built app** (a throwaway Playwright tour on a fresh vault, not kept in the repo): the Syncthing notice at open and no recovery warning; Settings → Recovery at 1,280 and 1,100 px (kinds, names as paths, dates, sizes, buttons); a Delete removing its row; the Delete all confirm. The tour's Delete used this PC's real Recycle Bin: a 50-byte `Chapter.md` from a temp vault is in it.
+- **Corpus check:** not run. Nothing in the editor or the Markdown writer changed.
+
+**Pass test (6A)**
+- The finder repros for C-01, C-03, C-04 and C-05 pass: **met** for C-01, C-04 and C-05; for C-03, met for what it checks (no warning at the next open), with its starting assertion (the old warning) gone by design. All four are now permanent tests.
+- `syncDeliveries.e2e.ts` gains a note conflict-copy case: **met**.
+- `ci:verify` on Windows, and the full E2E suite with scale: **met**.
+
+**Found and fixed in this phase (BL-36)**
+- **BL-36: a file picked from Filo's trash for a card cover, a File tile or a background was refused** (Impact 1/10, Hard 1/10; found while building 6.2). Phase 3 (E-14) links a picked file that is in the vault and copies one from a hidden folder. But main's `vault:copy-file` refused any source inside `.filo/`, so a pick from `.filo/trash` failed with "File rejected by vault safety check". Phase 3's unit test mocked the copy, so it never met main. Fixed by 6.2's change in main; `recoveryAndCopyIpc.test.ts` ("copies a trashed note the user picked out of .filo/trash") fails without it.
+
+**Left for 6B** (tasks 6.9 to 6.18, its pass test above): the Raw view's tab switch with a conflict (A-07), Convert to UTF-8's reload (A-04), the board items B-01 to B-09 and BL-02. The finder repros for B-01 and B-02 are in the audit session's scratchpad (`…\a643b672-…\scratchpad\repros\finderB`). Nothing in 6A changed them.

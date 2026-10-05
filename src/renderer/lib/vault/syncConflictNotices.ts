@@ -6,14 +6,17 @@
  * (`Plan.board-DESKTOP-1A2B3C4.json`, `Note (Andrew's conflicted copy …).md`).
  * Filo never adopts or deletes such a copy; it tells the user once, stickily,
  * where the other version is. Two sources feed the same toast:
- *   - at vault open, `board:list-conflicts` (board forks `board:list` can't see);
- *   - live, main's `vault:sync-conflict` event (a board fork appearing, or a
- *     rename the correlator refused because the new name is a conflict copy
- *     of the missing file).
+ *   - at vault open, `board:list-conflicts` (board forks `board:list` can't
+ *     see, and notes' conflict copies beside their originals);
+ *   - live, main's `vault:sync-conflict` event (a board fork or a note's
+ *     conflict copy appearing, or a rename the correlator refused because the
+ *     new name is a conflict copy of the missing file).
+ * A note's notice opens the copy, so the user can take what they need from it.
  */
 import { uiStore } from '../../stores/ui.svelte';
 import { normalizePath } from '../utils/path';
 import { noteExpectedReappearance } from './externalChangeWindows';
+import { openNoteInDocumentTab } from '../notes/openNote';
 
 export interface SyncConflictNotice {
   copyPath: string;
@@ -52,10 +55,12 @@ export function syncConflictToast(vaultRoot: string, notices: readonly SyncConfl
   const copies = notices.map((n) => baseName(n.copyPath)).join(', ');
   const isBoard = first.canonicalPath.toLowerCase().endsWith('.board.json');
   const canonicalName = baseName(first.canonicalPath);
+  const isNote = first.copyPath.toLowerCase().endsWith('.md');
   const text = isBoard
     ? `${client} kept a conflicting copy of the board "${canonicalName.replace(/\.board\.json$/i, '')}": ${copies}. Filo is using ${canonicalName}; the copy is untouched.`
-    : `Sync conflict: "${canonicalName}" and ${copies}. Your boards still point at ${canonicalName}; the copy is untouched.`;
+    : `${client} kept two versions of ${isNote ? 'the note' : 'the file'} "${canonicalName}": the other is ${copies}. Filo shows ${canonicalName} and leaves the copy alone${isNote ? '; open the copy to take what you need from it' : ''}.`;
   const firstAbs = `${normalizePath(vaultRoot)}/${first.copyPath}`;
+  const openCopy = !isNote ? [] : [{ label: 'Open the copy', handler: () => openNoteInDocumentTab(first.copyPath) }];
   return {
     text,
     type: 'warning',
@@ -63,6 +68,7 @@ export function syncConflictToast(vaultRoot: string, notices: readonly SyncConfl
     sticky: true,
     dedupeKey: `sync-conflict:${first.canonicalPath.toLowerCase()}`,
     actions: [
+      ...openCopy,
       {
         label: 'Show in folder',
         handler: () => {

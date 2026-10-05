@@ -8,7 +8,9 @@ import { logMainError } from '../utils/mainLogger';
  * On `render-process-gone` the preserved-partials breadcrumb is written from
  * main (the emergency-file registry is main-side state, so it survives the
  * renderer), then the user chooses **Reload** (the vault reopens and the
- * `.dirty` recovery flow runs as on a fresh launch) or **Quit**. While the
+ * `.dirty` recovery flow runs as on a fresh launch) or **Quit**. Reload first
+ * releases the vault in main: the reloaded page starts with no vault open, and
+ * main must agree, or it would refuse to open any other vault until a restart. While the
  * renderer is gone, window close and app quit skip the flush-and-quit drain:
  * there is no renderer to drain, so waiting would only hang a blank window
  * for the drain timeout.
@@ -23,6 +25,8 @@ export interface RendererCrashDeps {
   writeBreadcrumb: () => Promise<void>;
   /** A quit drain is already running: close instead of asking. */
   isQuitting: () => boolean;
+  /** Lets the open vault go (watcher, registry), as closing it does. */
+  releaseVault: () => Promise<void>;
 }
 
 let rendererGone = false;
@@ -58,8 +62,12 @@ export function attachRendererCrashHandlers(win: BrowserWindow, deps: RendererCr
         noLink: true,
       });
       if (win.isDestroyed()) return;
-      if (response === 0) wc.reload();
-      else win.destroy();
+      if (response !== 0) {
+        win.destroy();
+        return;
+      }
+      await deps.releaseVault().catch((err: unknown) => logMainError('renderer:gone release', err));
+      if (!win.isDestroyed()) wc.reload();
     })();
   });
 

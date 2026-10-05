@@ -737,8 +737,14 @@ matching them would misread names users pick themselves (`Meeting-Notes.md`,
 `Report (2).md`). An unrecognised copy is simply an ordinary file (the pre-Audit-19
 behaviour).
 
+A note's conflict copy is announced only for the strong shapes (Syncthing,
+Dropbox / Nextcloud, OneDrive), and only beside its original: a weak
+` (1)` / ` 2` name is an ordinary note there, since a book's `Chapter 2.md`
+sits beside `Chapter.md`.
+
 **Impact:** A conflict copy with a localised name is not flagged, and could win a
-duplicate-board-id tie-break on freshness.
+duplicate-board-id tie-break on freshness. A note's Google Drive or iCloud
+copy (`Chapter (1).md`, `Chapter 2.md`) shows in the sidebar with no notice.
 
 ---
 
@@ -1191,9 +1197,17 @@ only if its bytes changed. The rescue folders written since an unfinished save
 show in the recovery modal when the vault next opens, each with **Show in
 folder**.
 
+**Settings → Recovery** lists every copy by kind (kept versions, rescue
+copies, files that failed to load, partly written files), with **Open**,
+**Show in folder** and **Delete** (to the Recycle Bin; **Delete all** per
+kind asks first). Each copy is announced when it is made, so opening the
+vault no longer lists the copies already there.
+
 **Where:** `keepUnsavedCopies` and the prunes in
 [src/main/services/recoverySnapshot.ts](src/main/services/recoverySnapshot.ts),
-`recovery:keep-unsaved` in [src/main/ipc/recovery.ipc.ts](src/main/ipc/recovery.ipc.ts),
+`recovery:keep-unsaved`, `recovery:open` and `recovery:delete` in [src/main/ipc/recovery.ipc.ts](src/main/ipc/recovery.ipc.ts),
+[src/main/services/recoveryCopies.ts](src/main/services/recoveryCopies.ts),
+[src/renderer/stores/recoveryCopies.svelte.ts](src/renderer/stores/recoveryCopies.svelte.ts),
 [src/renderer/stores/unsavedRescue.ts](src/renderer/stores/unsavedRescue.ts),
 [src/renderer/stores/vaultLeaveGuard.ts](src/renderer/stores/vaultLeaveGuard.ts).
 
@@ -1202,8 +1216,8 @@ automatic deletion could lose it. Rescues only happen after a save failed and
 you chose to leave anyway, so they should be rare and small.
 
 **Impact:**
-- `.filo/recovery/` can grow until you delete old `…-unsaved` / `…-keep` folders by hand
-  (any file manager; Filo doesn't need them).
+- `.filo/recovery/` grows until you delete old copies in Settings → Recovery
+  (or any file manager; Filo doesn't need them).
 - `.filo/` syncs with the vault, so a rescue copy reaches your other machines
   too.
 - A copy isn't written for a change over 25 MB or on a disk error. Filo then

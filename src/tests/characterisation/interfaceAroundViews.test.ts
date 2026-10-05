@@ -145,6 +145,7 @@ describe('the interface around the views', () => {
       'Global Defaults': 'No changes. Changes here wait for Apply.',
       Themes: 'Picking a theme applies it at once. The theme editor saves when you click Save.',
       Trash: 'Restore and Empty trash act at once.',
+      Recovery: 'Open, Show in folder and Delete act at once.',
     });
     await closeModal();
   });

@@ -101,6 +101,7 @@ import { awaitConfirm } from './awaitConfirm';
 import { exclusiveVaultLifecycle, vaultLifecycleBusy } from './vaultLifecycleGuard.svelte';
 import { enqueueRenameQueueWork, resetRenameQueue } from './vaultRenameQueue';
 import { awaitHistoryWithNotice } from '../lib/vault/historySettleNotice';
+import { announceNewLoadFailureSnapshots, type OpenRecoveryContext } from '../lib/vault/recoveryCopies';
 
 /**
  * Vault store — owns the open vault's lifecycle (open/close/save), the
@@ -406,7 +407,7 @@ function runPostCommitTasks(candidate: VaultCandidate): void {
   const pendingRenames = readPendingRenameCascades(newVaultPath);
   const recovered = pendingRenames
     .catch(() => undefined)
-    .then(() => runRecoverySequencer(newVaultPath))
+    .then(() => runRecoverySequencer(newVaultPath, { openedAt: candidate.openedAt, announcedSnapshots: candidate.announcedSnapshots }))
     .catch((err) => {
       reportError('vault.recovery', err, 'Failed to check for unfinished work from the last session');
     });
@@ -514,7 +515,7 @@ async function revertToOutgoingVault(
  * The vault may swap during any `await`, so every step re-checks the captured
  * identity and short-circuits rather than surface against the wrong vault.
  */
-async function runRecoverySequencer(newVaultPath: string): Promise<void> {
+async function runRecoverySequencer(newVaultPath: string, opened?: OpenRecoveryContext): Promise<void> {
   // Generation-aware `{ path, generation }` — a path-only compare would pass
   // across a close+reopen of the SAME path and let the outgoing session's
   // prompts / mutations land in the new one.
@@ -720,48 +721,10 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
     );
   }
 
-  // ── 4. `.filo/recovery/` — preserved-snapshot listing ─────
-  // When Filo couldn't load a vault file but its bytes were intact, it
-  // snapshots the originals into `.filo/recovery/<ts>/<basename>` before its
-  // write pipeline can clobber them. Surface them once on open so the user
-  // knows the backup exists and can recover or delete it; nothing is pruned here.
-  try {
-    const snapshots = await window.filo.invoke('recovery:list', newVaultPath);
-    if (!isStillSameVault(captured)) return;
-    if (snapshots.length > 0) {
-      const shown = snapshots.slice(0, 8);
-      const lines = shown.map((s) => `• ${s.basename} (${s.timestamp})`).join('\n');
-      const more =
-        snapshots.length > shown.length
-          ? `\n…and ${snapshots.length - shown.length} more.`
-          : '';
-      const firstAbs = `${newVaultPath.replace(/[\\/]$/, '')}/${snapshots[0]?.relPath ?? ''}`;
-      uiStore.pushToast({
-        text:
-          `Filo preserved ${snapshots.length} file snapshot${snapshots.length === 1 ? '' : 's'} in ` +
-          `.filo/recovery/ from a previous failed-load window. Review or delete them when ` +
-          `convenient:\n${lines}${more}`,
-        type: 'warning',
-        duration: 0,
-        actions: [
-          {
-            label: 'Reveal',
-            handler: () => {
-              void window.filo.invoke('shell:show-item-in-folder', firstAbs);
-            },
-          },
-        ],
-      });
-    }
-  } catch (err) {
-    // `recovery:list` re-throws a real scan failure (EACCES/EBUSY on a locked
-    // share) rather than returning an empty list.
-    reportError(
-      'vault.recovery-snapshots',
-      err,
-      "Couldn't scan .filo/recovery for preserved snapshots — the folder may be locked. Check it manually if recent edits are missing.",
-    );
-  }
+  // ── 4. `.filo/recovery/` — load-failure snapshots this open made ──
+  // Only the new ones no other notice named: every older copy (kept versions,
+  // rescue copies) was announced when made, and Settings → Recovery lists them.
+  if (opened) await announceNewLoadFailureSnapshots(newVaultPath, captured, opened);
 }
 
 /**
@@ -769,8 +732,8 @@ async function runRecoverySequencer(newVaultPath: string): Promise<void> {
  * directly so the rename-cascade Retry / Discard handlers can be exercised
  * without the full openVault path. Not referenced in production code.
  */
-export function __runRecoverySequencerForTests(p: string): Promise<void> {
-  return runRecoverySequencer(p);
+export function __runRecoverySequencerForTests(p: string, opened?: OpenRecoveryContext): Promise<void> {
+  return runRecoverySequencer(p, opened);
 }
 
 export const vaultStore = {
@@ -1221,6 +1184,10 @@ export const vaultStore = {
     // nothing below finds it missing.
     for (const move of vaultPath ? takeFolderMoves(fileTree, vaultPath) : []) {
       await this.handleExternalRename(move.oldFolder, move.newFolder);
+      if (!isStillSameVault(captured)) return;
+      // The watcher's walk still records the files at the old folder; once
+      // they move with it, its next walk doesn't report each one as moved.
+      await window.filo.invoke('vault:followed-move', captured.path, move.oldFolder, move.newFolder).catch(() => undefined);
       if (!isStillSameVault(captured)) return;
     }
     // A pinned folder deleted by another program: clear the pin.

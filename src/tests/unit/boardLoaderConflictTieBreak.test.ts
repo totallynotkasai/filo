@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { loadAllBoards } from '@renderer/lib/boards/boardLoader';
-import { scanBoardConflicts, scanBoardFiles } from '../../main/vault/boardFileOps';
+import { scanSyncConflicts, scanBoardFiles } from '../../main/vault/boardFileOps';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
@@ -102,8 +102,20 @@ describe('board:list-conflicts scan (Audit-19 EXT-7)', () => {
     await fs.writeFile(join(vault, 'Plan.board-DESKTOP-1A2B3C4.json'), '{}');
     await fs.writeFile(join(vault, 'Other.board (2).json'), '{}'); // weak, no sibling → ignored
     expect(await scanBoardFiles(vault)).toEqual(['Plan.board.json']);
-    expect(await scanBoardConflicts(vault, [])).toEqual([
+    expect(await scanSyncConflicts(vault, [])).toEqual([
       { copyPath: 'Plan.board-DESKTOP-1A2B3C4.json', canonicalPath: 'Plan.board.json', client: 'onedrive' },
+    ]);
+  });
+
+  it("lists a note's strong conflict copy beside its note, and no numbered note", async () => {
+    await fs.mkdir(join(vault, 'Book'));
+    await fs.writeFile(join(vault, 'Book', 'Chapter.md'), 'PC');
+    await fs.writeFile(join(vault, 'Book', 'Chapter.sync-conflict-20261004-120000-ABCDEFG.md'), 'Phone');
+    await fs.writeFile(join(vault, 'Part.md'), 'one');
+    await fs.writeFile(join(vault, 'Part 2.md'), 'two');
+    await fs.writeFile(join(vault, 'Lost.sync-conflict-20261004-120000-ABCDEFG.md'), 'no original');
+    expect(await scanSyncConflicts(vault, [])).toEqual([
+      { copyPath: 'Book/Chapter.sync-conflict-20261004-120000-ABCDEFG.md', canonicalPath: 'Book/Chapter.md', client: 'syncthing' },
     ]);
   });
 
@@ -111,7 +123,7 @@ describe('board:list-conflicts scan (Audit-19 EXT-7)', () => {
     await fs.mkdir(join(vault, 'Work'));
     await fs.writeFile(join(vault, 'Work', 'Plan.board.json'), '{}');
     await fs.writeFile(join(vault, 'Work', "Plan.board (Andrew's conflicted copy 2026-09-23).json"), '{}');
-    const res = await scanBoardConflicts(vault, []);
+    const res = await scanSyncConflicts(vault, []);
     expect(res).toEqual([
       expect.objectContaining({ canonicalPath: 'Work/Plan.board.json', client: 'dropbox' }),
     ]);

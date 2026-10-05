@@ -9,7 +9,7 @@
  * test queued in `folderPicks`), and a message box is recorded and
  * takes the next scripted answer (its first button when none is scripted).
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { TEST_MACHINE_IDENTITY } from '../../helpers/testMachine';
@@ -42,6 +42,8 @@ export const clipboardWrites: Array<{ text: string; html?: string }> = [];
 export const messageBoxes: { shown: MessageBoxCall[]; answers: string[] } = { shown: [], answers: [] };
 /** Every path the app asked the OS to select in a file manager window (Show in folder). */
 export const shownInFolder: string[] = [];
+/** Every path the app sent to the Recycle Bin, in order. Like a real one, it takes the file away. */
+export const recycled: string[] = [];
 
 const userData = mkdtempSync(join(tmpdir(), 'filo-char-userdata-'));
 // This machine is the one the renderer-side test setup pins, so main and the
@@ -124,7 +126,10 @@ export const electronFake = {
     openExternal: async () => {},
     openPath: async () => '',
     showItemInFolder: (fullPath: string) => { shownInFolder.push(fullPath); },
-    trashItem: async () => {},
+    trashItem: async (fullPath: string) => {
+      recycled.push(fullPath);
+      rmSync(fullPath, { recursive: true, force: true });
+    },
   },
   screen: {
     getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }),

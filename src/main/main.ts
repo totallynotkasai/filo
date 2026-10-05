@@ -15,7 +15,7 @@ import {
 } from './services/windowState';
 import { flushSidebarStateNow } from './services/sidebarState';
 import { logMainError } from './utils/mainLogger';
-import { stopActiveWatcher } from './ipc/vault.ipc';
+import { releaseActiveVault, stopActiveWatcher } from './ipc/vault.ipc';
 import { vaultRegistry } from './services/vaultRegistry';
 import { writeQuitFailureBreadcrumb } from './services/quitFailureBreadcrumb';
 import { attachRendererCrashHandlers, isRendererGone } from './services/rendererCrashHandler';
@@ -250,6 +250,7 @@ async function createWindow(): Promise<void> {
   attachRendererCrashHandlers(mainWindow, {
     writeBreadcrumb: () => writeQuitFailureBreadcrumb(vaultRegistry.currentVaultPath),
     isQuitting: () => isFlushingForQuit,
+    releaseVault: releaseActiveVault,
   });
 
   if (savedState.maximized) mainWindow.maximize();

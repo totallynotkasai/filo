@@ -162,3 +162,28 @@ describe('Settings dialog', () => {
     expect(pendingSettingsStore.hasGlobalChanges()).toBe(false);
   });
 });
+
+describe("Settings opened on a tab (a notice's Open Recovery)", () => {
+  it('switches an open dialog to the tab asked for', async () => {
+    const { openSettingsAt } = await import('@renderer/lib/settings/settingsTabRequest.svelte');
+    openSettingsAt('recovery');
+    await settle();
+    expect(document.getElementById('settings-tab-recovery')?.getAttribute('aria-selected')).toBe('true');
+    expect(document.querySelector('.recovery-settings')).not.toBeNull();
+  });
+
+  it('opens on the tab asked for, and on General the next time', async () => {
+    const { openSettingsAt } = await import('@renderer/lib/settings/settingsTabRequest.svelte');
+    if (component) await unmount(component);
+    openSettingsAt('trash');
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(ProjectSettings, { target });
+    await settle();
+    expect(document.getElementById('settings-tab-trash')?.getAttribute('aria-selected')).toBe('true');
+    await unmount(component);
+    component = mount(ProjectSettings, { target });
+    await settle();
+    expect(document.getElementById('settings-tab-general')?.getAttribute('aria-selected')).toBe('true');
+  });
+});

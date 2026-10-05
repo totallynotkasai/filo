@@ -105,7 +105,7 @@ filo/
 │   │   │   ├── index.ts               # Aggregated registration entry point
 │   │   │   ├── ipcErrorCode.ts        # errorEnvelope / errorResult: every write failure carries a code
 │   │   │   ├── vault.ipc.ts           # File CRUD, directory ops
-│   │   │   ├── vaultCopy.ipc.ts       # vault:copy-file (approved sources only)
+│   │   │   ├── vaultCopy.ipc.ts       # vault:copy-file (approved sources only; from `.filo/`, only a file the user chose in `.filo/recovery` or `.filo/trash`)
 │   │   │   ├── vaultEncoding.ipc.ts   # vault:convert-to-utf8 for a non-UTF-8 note
 │   │   │   ├── vaultTrash.ipc.ts      # .filo/trash move / restore / list / purge
 │   │   │   ├── machine.ipc.ts         # Machine identity + per-machine sentinel listing
@@ -117,9 +117,9 @@ filo/
 │   │   │   ├── tags.ipc.ts            # .filo/tags.json load/save
 │   │   │   ├── templates.ipc.ts       # .filo/templates/ CRUD
 │   │   │   ├── sidebar.ipc.ts         # Sidebar geometry (userData)
-│   │   │   └── recovery.ipc.ts        # recovery:keep-unsaved (rescue copies; `keep`: a version a note just replaced) / recovery:preserved-tmp
+│   │   │   └── recovery.ipc.ts        # recovery:keep-unsaved (rescue copies, item by item; `keep`: a version a note just replaced) / recovery:preserved-tmp / recovery:open + recovery:delete (Settings → Recovery)
 │   │   ├── services/                  # Main-process-only services
-│   │   │   ├── fileWatcher.ts         # fs.watch wrapper, debounced events
+│   │   │   ├── fileWatcher.ts         # fs.watch wrapper, debounced events; an overflow (no file name) walks at once; knows where files are (`presence`), so a rename over an existing file isn't a move; a folder move the renderer followed (`vault:followed-move`) moves its walk records
 │   │   │   ├── fileWatcherTypes.ts    # Shared watcher types
 │   │   │   ├── fileWatcherClassify.ts # Path classification + ignore rules for watcher events (hidden segments like .stversions/ ignored; any other file with an extension is an attachment)
 │   │   │   ├── fileWatcherHash.ts     # Content hash (with a size ceiling) for echo and rename matching
@@ -127,7 +127,7 @@ filo/
 │   │   │   ├── fileWatcherOwnMoves.ts # Filo's own renames and trash moves move the walk's record with the files, so the next walk doesn't report them
 │   │   │   ├── watcherSupervisor.ts   # Reopens the fs.watch handle after it dies
 │   │   │   ├── watcherSuppression.ts  # Own-echo windows: suppress / suppressWrite / suppressTree
-│   │   │   ├── syncConflictNotifier.ts # Live notices for sync-client conflict copies
+│   │   │   ├── syncConflictNotifier.ts # Live notices for sync-client conflict copies (board forks, notes' strong-named copies, refused renames)
 │   │   │   ├── nonUtf8Registry.ts     # Notes whose bytes aren't valid UTF-8 (opened read-only)
 │   │   │   ├── machineIdentity.ts     # userData/machine-id.json: keeps sentinels per machine
 │   │   │   ├── approvedSources.ts     # Which source paths vault:copy-file may copy
@@ -137,8 +137,9 @@ filo/
 │   │   │   ├── sessionEnd.ts          # Windows shutdown / restart / sign-out: hold the session only while the renderer saves and keeps rescue copies, then exit
 │   │   │   ├── vaultRegistry.ts       # Active vault tracker (gates IPC); armedAt: when the open began
 │   │   │   ├── recoverySnapshot.ts    # `.filo/recovery/` snapshots; `<ts>-unsaved/` rescue copies and `<ts>-keep/` kept versions (never pruned)
-│   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames
-│   │   │   ├── rendererCrashHandler.ts # Renderer crash → breadcrumb + Reload/Quit dialog
+│   │   │   ├── recoveryCopies.ts      # Settings → Recovery: open a copy, delete copies to the Recycle Bin (only paths inside `.filo/recovery/`)
+│   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames (never onto a path that already held a file: that is a replace)
+│   │   │   ├── rendererCrashHandler.ts # Renderer crash → breadcrumb + Reload/Quit dialog; Reload releases the vault first (`releaseActiveVault`)
 │   │   │   ├── recentVaults.ts        # Persisted recent vault list
 │   │   │   ├── textMenuQuery.ts       # As the text menu opens, asks the renderer whether a link can go at the caret (`app:text-menu-query` / `-reply`; no answer in 300 ms: no link item)
 │   │   │   ├── windowState.ts         # Window size/position (userData)
@@ -228,6 +229,7 @@ filo/
 │   │   │   ├── vaultFolderOps.ts      # In-app rename/move
 │   │   │   ├── vaultDeleteOps.ts      # Sidebar delete → .filo/trash + tile cascade; its undo from Ctrl+Z, the toast or Settings → Trash (boards that went with the item get their camera and toolbar place back)
 │   │   │   ├── trash.svelte.ts        # Settings → Trash list, restore (through the delete's undo while it lasts, tiles too), empty, 30-day purge
+│   │   │   ├── recoveryCopies.svelte.ts # Settings → Recovery list: Open, Show in folder, Delete / Delete all (Recycle Bin; "Delete permanently?" only when it refuses)
 │   │   │   ├── vaultStoreTypes.ts     # Shared store types
 │   │   │   ├── vaultTree.ts           # File-tree projection helpers
 │   │   │   ├── vaultProject.ts        # Per-vault virtual project bootstrap
@@ -368,7 +370,8 @@ filo/
 │   │   │   │   ├── vaultOpenFailure.ts # Why a vault didn't open (Home drops a recent only when the folder is gone)
 │   │   │   │   ├── loadVersionedFile.ts # Migrate-then-validate for every versioned `.filo/` config (refuses from-future)
 │   │   │   │   ├── convertToUtf8.ts   # "Convert to UTF-8…" on a non-UTF-8 note (backup, then decode as Windows-1252)
-│   │   │   │   ├── syncConflictNotices.ts # One sticky notice per sync-client conflict copy (at open and live)
+│   │   │   │   ├── syncConflictNotices.ts # One sticky notice per sync-client conflict copy, of a board or a note, at open and live (a note's offers Open the copy)
+│   │   │   │   ├── recoveryCopies.ts  # The copies in `.filo/recovery/` as Settings → Recovery and the open notice show them; the open notice names only new load-failure snapshots no other notice named
 │   │   │   │   ├── nonUtf8Paths.svelte.ts # Read-only note paths: non-UTF-8 bytes, and symbolic links (isLinkedNote)
 │   │   │   │   ├── recoveryLocations.ts # Rescue folders + moved-aside files the recovery modal points at
 │   │   │   │   ├── vaultCandidate.ts  # Vault open as a transaction: every fallible read before the swap
@@ -378,7 +381,7 @@ filo/
 │   │   │   │   ├── handleSessionEnding.ts # Windows ending the session: save, rescue copies (unapplied Settings too), no dialog
 │   │   │   │   ├── unsavedStateReport.ts # Tells main whether leaving now could lose work (`app:unsaved-state`); a title being typed counts, a note editor (`data-note-editor`) only through the note store
 │   │   │   │   ├── conventionPaths.ts # Default folders + free-name helpers for new files
-│   │   │   │   ├── droppedFiles.ts    # classifyDroppedFile: a file dropped from Explorer is in the vault (link it, by `toVaultRelative`) or outside (copy it); isInsideVault
+│   │   │   │   ├── droppedFiles.ts    # classifyDroppedFile: a file dropped from Explorer is in the vault (link it, by `toVaultRelative`) or outside (copy it; a hidden folder such as `.filo/recovery` or `.stversions` counts as outside); isInsideVault
 │   │   │   │   ├── pickedFile.ts      # bringPickedFileIn: a file picked for a cover, File tile or background is linked when in the vault (not in a hidden folder), else copied in
 │   │   │   │   ├── extension.ts
 │   │   │   │   ├── moveIntoFolder.ts
@@ -586,7 +589,8 @@ filo/
 │   │   │   │   ├── numberInput.ts     # Number fields: clamp to the schema range, blank = inherit
 │   │   │   │   ├── unappliedEditsPrompt.ts # settleUnappliedEdits: Apply / Discard / Cancel before a bulk action
 │   │   │   │   ├── settleOpenSettings.ts # Close / open another vault / quit ask about unapplied Settings and theme-editor edits first
-│   │   │   │   └── confirmDiscardSettings.ts # Closing Settings with unapplied edits asks first
+│   │   │   │   ├── confirmDiscardSettings.ts # Closing Settings with unapplied edits asks first
+│   │   │   │   └── settingsTabRequest.svelte.ts # openSettingsAt(tab): Settings opens on, or switches to, a tab (a notice's Open Recovery)
 │   │   │   ├── fonts/
 │   │   │   │   └── importedFonts.ts   # `.filo/fonts/` registered with the page on every vault open
 │   │   │   ├── styles/                # Override-cascade resolver
@@ -760,6 +764,7 @@ filo/
 │   │       │   ├── ThemeManager.svelte # Settings → Themes: pick, New / Import, Edit / Duplicate / Delete
 │   │       │   ├── ThemeEditor.svelte # Grouped colour pickers with a live preview; Save / Save as new / Cancel
 │   │       │   ├── TrashSettings.svelte # Settings → Trash: Restore / Empty trash
+│   │       │   ├── RecoverySettings.svelte # Settings → Recovery: the copies in `.filo/recovery/` by kind (Open, Show in folder, Delete, Delete all)
 │   │       │   ├── VaultSidebarSettings.svelte # General → Vault Sidebar: name, colour, sort / group, extensions, Root Directory
 │   │       │   └── KeyboardShortcuts.svelte
 │   │       ├── modals/                # Other modal dialogs
@@ -914,7 +919,7 @@ The only state that lives in Electron `userData` (i.e. outside any vault) is the
 
 Anything else — including overlay positions (Kanban side toolbar etc.), open tabs, viewports, themes, defaults — goes in `.filo/`.
 
-**Close, open-another-vault and quit never drop unsaved work silently.** `closeVault` / `openVault` call `saveBeforeLeaving` (`stores/vaultLeaveGuard.ts`). It takes focus off a text field (`releaseFocusedField`, so a field that saves on blur hands its text over), freezes the editors (`closeDrainGate`, held until the swap has unmounted them), saves, waits for the watcher reconciles already queued (`settleRenameQueue`), and saves once more if anything was handed over meanwhile (`saveUntilSettled`). The window-close quit runs the same save with the editors frozen and makes the same `unsavedWork()` check before it quits. `save()` first runs every **component flush** (`lib/boards/componentFlush.ts`): a title typed but not committed, a Kanban / Task List filter or a camera move inside its debounce, a running timer. Views unmount later, in the swap, where their teardown saves would be cancelled. It goes ahead with no dialog when `unsavedWork()` (`lib/boards/writeStateTracking.ts`: pending, failed, in-flight, plus note bodies from the note store's registered source, keys an editor hasn't serialised yet, and text in an open raw view, `lib/notes/rawViews.ts`) is then empty. From that point the outgoing vault's generation is retired (`retireVaultGeneration`), so suspended work reads as stale and queued reconciles are skipped. As a last line, anything still unsaved when the vault is let go as saved (a note, or a board / `.filo/` write the swap would cancel) is copied to `.filo/recovery/` and the sentinel stays set (the `leftBehind` pre-swap handler), never reset away. `noteStore.flushAll` saves raw views first, since quit never unmounts them. Otherwise it asks *"N changes couldn't be saved"*, naming each file and its cause, with **Close anyway** / **Open anyway** and **Cancel** (the default). There is no "Don't Save". Before any of this, unapplied Settings edits (a Settings tab, the theme editor) are asked about with the Settings dialog's own prompts (`lib/settings/settleOpenSettings.ts`; Cancel stays), since no writer holds them. When all quit is waiting on is a held decision, its dialog reads *"Waiting for your decision"* and offers **Show decisions** instead of **Retry now**. Leaving anyway, and the quit dialog's **Quit anyway**, first write **rescue copies** (`stores/unsavedRescue.ts` → IPC `recovery:keep-unsaved`) to `.filo/recovery/<timestamp>-unsaved/<flattened path>`: each unsaved note as its last frontmatter plus the local body, each raw view's text as typed, each unsaved board as JSON, and Filo's own unsaved `.filo/` state (tags, settings, layout…) as `_filo__<name>.json`. The notice naming the folder outlives the vault switch and offers **Show in folder**. The `-unsaved` suffix makes the snapshot prunes skip these folders, so only the user deletes them (KNOWN_LIMITATIONS #33). A copy that can't be written triggers a second confirm ("… and lose them"); cancelling it lets every raw view save its text again. Leaving anyway keeps `.filo/.dirty.<machineId>`, naming each file as it is spelled on disk, so reopening the vault offers recovery. All the wording lives in `lib/vault/unsavedMessages.ts`. Gates `close-keeps-rescue-copy`, `leave-settles-unapplied-settings`. **Windows ending the session** (shutdown, restart, sign-out) runs neither path: the renderer keeps main told whether leaving could lose work (`lib/vault/unsavedStateReport.ts`), and only then does main hold the session back (`main/services/sessionEnd.ts`, about 4 s at most) while the renderer saves and keeps rescue copies with no dialog, unapplied Settings included (`lib/vault/handleSessionEnding.ts`); then Filo exits (KNOWN_LIMITATIONS #4).
+**Close, open-another-vault and quit never drop unsaved work silently.** `closeVault` / `openVault` call `saveBeforeLeaving` (`stores/vaultLeaveGuard.ts`). It takes focus off a text field (`releaseFocusedField`, so a field that saves on blur hands its text over), freezes the editors (`closeDrainGate`, held until the swap has unmounted them), saves, waits for the watcher reconciles already queued (`settleRenameQueue`), and saves once more if anything was handed over meanwhile (`saveUntilSettled`). The window-close quit runs the same save with the editors frozen and makes the same `unsavedWork()` check before it quits. `save()` first runs every **component flush** (`lib/boards/componentFlush.ts`): a title typed but not committed, a Kanban / Task List filter or a camera move inside its debounce, a running timer. Views unmount later, in the swap, where their teardown saves would be cancelled. It goes ahead with no dialog when `unsavedWork()` (`lib/boards/writeStateTracking.ts`: pending, failed, in-flight, plus note bodies from the note store's registered source, keys an editor hasn't serialised yet, and text in an open raw view, `lib/notes/rawViews.ts`) is then empty. From that point the outgoing vault's generation is retired (`retireVaultGeneration`), so suspended work reads as stale and queued reconciles are skipped. As a last line, anything still unsaved when the vault is let go as saved (a note, or a board / `.filo/` write the swap would cancel) is copied to `.filo/recovery/` and the sentinel stays set (the `leftBehind` pre-swap handler), never reset away. `noteStore.flushAll` saves raw views first, since quit never unmounts them. Otherwise it asks *"N changes couldn't be saved"*, naming each file and its cause, with **Close anyway** / **Open anyway** and **Cancel** (the default). There is no "Don't Save". Before any of this, unapplied Settings edits (a Settings tab, the theme editor) are asked about with the Settings dialog's own prompts (`lib/settings/settleOpenSettings.ts`; Cancel stays), since no writer holds them. When all quit is waiting on is a held decision, its dialog reads *"Waiting for your decision"* and offers **Show decisions** instead of **Retry now**. Leaving anyway, and the quit dialog's **Quit anyway**, first write **rescue copies** (`stores/unsavedRescue.ts` → IPC `recovery:keep-unsaved`) to `.filo/recovery/<timestamp>-unsaved/<flattened path>`: each unsaved note as its last frontmatter plus the local body, each raw view's text as typed, each unsaved board as JSON, and Filo's own unsaved `.filo/` state (tags, settings, layout…) as `_filo__<name>.json`. The notice naming the folder outlives the vault switch and offers **Show in folder**. The `-unsaved` suffix makes the snapshot prunes skip these folders, so only the user deletes them, in Settings → Recovery (KNOWN_LIMITATIONS #33). A copy that can't be written triggers a second confirm ("… and lose them"); cancelling it lets every raw view save its text again. Leaving anyway keeps `.filo/.dirty.<machineId>`, naming each file as it is spelled on disk, so reopening the vault offers recovery. All the wording lives in `lib/vault/unsavedMessages.ts`. Gates `close-keeps-rescue-copy`, `leave-settles-unapplied-settings`. **Windows ending the session** (shutdown, restart, sign-out) runs neither path: the renderer keeps main told whether leaving could lose work (`lib/vault/unsavedStateReport.ts`), and only then does main hold the session back (`main/services/sessionEnd.ts`, about 4 s at most) while the renderer saves and keeps rescue copies with no dialog, unapplied Settings included (`lib/vault/handleSessionEnding.ts`); then Filo exits (KNOWN_LIMITATIONS #4).
 
 **Tag persistence — note for attachments.** A note's tags live only in its YAML frontmatter (`tags: [...]`). Attachment tags (image / video / audio / generic file) have nowhere to write into the file itself, so they live only in `.filo/tags.json:fileTags[mediaPath]`. The trade-off: tags on attachments are **vault-local** — copying or moving an attachment outside the vault without `.filo/` will lose its tags, whereas text-tile tags travel with the `.md` file. This is a deliberate consequence of the open-format principle (no sidecar files next to media). Don't add a sidecar without a separate design discussion.
 

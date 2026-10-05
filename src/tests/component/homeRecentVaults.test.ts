@@ -95,3 +95,41 @@ describe('why a vault did not open', () => {
     expect(openVaultFailureOf(new Error('boom'))).toBe('failed');
   });
 });
+
+describe('"Open last vault on launch"', () => {
+  // Two reads of recent-vaults.json race at startup. When the preference came
+  // back first, Home chose from an empty list and stayed on Home.
+  it('opens the last vault even when the list arrives after the preference', async () => {
+    const recent = { name: 'Books', path: 'E:/Books', lastOpened: 5, pinned: false };
+    installFiloMock({
+      'vault:list-recents': () => new Promise((resolve) => setTimeout(() => resolve([recent]), 30)),
+      'vault:get-launch-preference': () => ({ openOnLaunch: true }),
+      'vault:add-recent': () => [recent],
+    });
+    const opened: string[] = [];
+    vi.spyOn(vaultStore, 'openVault').mockImplementation(async (path: string) => {
+      opened.push(path);
+      return false;
+    });
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    app = mount(HomeScreen, { target: host, props: {} });
+    await new Promise((r) => setTimeout(r, 80));
+    await settle();
+    expect(opened).toEqual(['E:/Books']);
+  });
+
+  it('with the preference off, opens nothing', async () => {
+    const recent = { name: 'Books', path: 'E:/Books', lastOpened: 5, pinned: false };
+    installFiloMock({
+      'vault:list-recents': () => [recent],
+      'vault:get-launch-preference': () => ({ openOnLaunch: false }),
+    });
+    const openVault = vi.spyOn(vaultStore, 'openVault').mockResolvedValue(false);
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    app = mount(HomeScreen, { target: host, props: {} });
+    await settle();
+    expect(openVault).not.toHaveBeenCalled();
+  });
+});

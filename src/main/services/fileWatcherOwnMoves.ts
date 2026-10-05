@@ -24,6 +24,8 @@ export interface WalkPathCaches {
   knownDirs: Set<VaultPath>;
   lastKnownSizes: Map<VaultPath, number>;
   lastKnownHashes: Map<VaultPath, string>;
+  /** Whether each path held a file when last seen. */
+  presence: Map<VaultPath, boolean>;
 }
 
 /**
@@ -84,6 +86,7 @@ export function moveCaches(caches: WalkPathCaches, oldRel: string, newRel: strin
   };
   rekey(caches.lastKnownSizes);
   rekey(caches.lastKnownHashes);
+  rekey(caches.presence);
   for (const key of [...caches.knownDirs]) {
     if (key !== base && !key.startsWith(`${base}/`)) continue;
     caches.knownDirs.delete(key);

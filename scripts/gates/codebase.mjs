@@ -71,6 +71,7 @@ const CHARACTERISATION_SPECS = {
   'makingAndFindingNotes.test.ts': 16,
   'listsAndBoards.test.ts': 9,
   'interfaceAroundViews.test.ts': 12,
+  'syncAndRecovery.test.ts': 10,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

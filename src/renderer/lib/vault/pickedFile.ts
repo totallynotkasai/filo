@@ -11,19 +11,16 @@
  */
 import { copyFileIntoVault } from './vaultOperations';
 import { toVaultRelative } from '../utils/path';
+import { isInHiddenFolder } from './droppedFiles';
 
 export type PickedFileResult =
   | { success: true; relPath: string; linked: boolean }
   | { success: false; error: string };
 
-function inHiddenFolder(relPath: string): boolean {
-  return relPath.split('/').slice(0, -1).some((part) => part.startsWith('.'));
-}
-
 /** Links `sourcePath` when it is in the vault, else copies it into `folder`. */
 export async function bringPickedFileIn(sourcePath: string, vaultRoot: string, folder: string): Promise<PickedFileResult> {
   const rel = toVaultRelative(sourcePath, vaultRoot);
-  if (rel && !inHiddenFolder(rel)) return { success: true, relPath: rel, linked: true };
+  if (rel && !isInHiddenFolder(rel)) return { success: true, relPath: rel, linked: true };
   const res = await copyFileIntoVault(sourcePath, vaultRoot, folder);
   if (!res.success) return { success: false, error: res.error ?? 'unknown error' };
   const stored = res.relativePath || res.path || '';

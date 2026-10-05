@@ -111,6 +111,8 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'vault:pin-recent': z.tuple([unknownArg, unknownArg]),
   'vault:clear-recents': z.tuple([]),
   'vault:reconcile': z.tuple([]),
+  // (vaultRoot, old folder, new folder): a folder move the renderer followed.
+  'vault:followed-move': z.tuple([nonEmptyString, nonEmptyString, nonEmptyString]),
 
   // ── Boards ────────────────────────────────────────────────────────────
   'board:list': z.tuple([nonEmptyString]),
@@ -138,6 +140,13 @@ export const IPC_PAYLOAD_SCHEMAS = {
     z.tuple([nonEmptyString, keepUnsavedItems, z.literal('keep')]),
   ]),
   'recovery:preserved-tmp': z.tuple([nonEmptyString]),
+  // (vaultRoot, a copy's path in .filo/recovery, as recovery:list gives it).
+  'recovery:open': z.tuple([nonEmptyString, nonEmptyString]),
+  // (vaultRoot, copies' paths, permanently?): to the Recycle Bin, or for good.
+  'recovery:delete': z.union([
+    z.tuple([nonEmptyString, z.array(nonEmptyString).min(1).max(10_000)]),
+    z.tuple([nonEmptyString, z.array(nonEmptyString).min(1).max(10_000), z.boolean()]),
+  ]),
   'app:machine-identity': z.tuple([]),
   'vault:convert-to-utf8': z.tuple([nonEmptyString, nonEmptyString]),
   'vault:sweep-orphan-tmp': z.tuple([nonEmptyString]),

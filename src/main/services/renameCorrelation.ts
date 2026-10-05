@@ -181,6 +181,15 @@ export async function correlateRenames(
    * `os.hostname()` + the `.filo/machines` registry.
    */
   knownHosts: readonly string[] = [],
+  /**
+   * Whether a path held a file before this batch. A move can't land on an
+   * existing file without replacing it, so a "present" path that was already
+   * a file is that file changed, not the missing one moved: pairing them
+   * would hand the replaced note's views, queued typing and tiles to the
+   * moved one, and its typing would be written over the moved text. A
+   * case-only rename (the same path, spelled otherwise) still pairs.
+   */
+  wasPresentBefore?: (relPath: string) => boolean,
 ): Promise<{
   filtered: FileChangeEvent[];
   renames: Array<{ oldPath: string; newPath: string }>;
@@ -202,6 +211,11 @@ export async function correlateRenames(
     const hit = detectConflictCopyPath(present, { knownHosts, exists: (c) => samePathFold(c, missing) });
     return hit && samePathFold(hit.canonicalName, missing) ? { client: hit.client } : null;
   };
+  // A replace of an existing file, not a move onto a free name (see `wasPresentBefore`).
+  const replacesFile = (present: string, missing: string): boolean =>
+    wasPresentBefore !== undefined
+    && present.toLowerCase() !== missing.toLowerCase()
+    && wasPresentBefore(present);
   const suppressedKeys = new Set<string>();
   const byBase: Map<string, FileChangeEvent[]> = new Map();
   const correlatable: FileChangeEvent[] = [];
@@ -242,7 +256,7 @@ export async function correlateRenames(
         const cc = conflictCopyOf(pres.filename, miss.filename);
         if (cc) {
           conflicts.push({ copyPath: pres.filename, canonicalPath: miss.filename, client: cc.client });
-        } else if (await sameBasenameBytesPreserved(miss, pres, relPathSize, relPathHash)) {
+        } else if (!replacesFile(pres.filename, miss.filename) && await sameBasenameBytesPreserved(miss, pres, relPathSize, relPathHash)) {
           renames.push({ oldPath: miss.filename, newPath: pres.filename });
           suppressedKeys.add(`${miss.type}:${miss.filename}`);
           suppressedKeys.add(`${pres.type}:${pres.filename}`);
@@ -319,6 +333,7 @@ export async function correlateRenames(
       // length checks above guarantee both are defined; narrow for the type-checker.
       if (m === undefined || p === undefined) continue;
       if (m.type !== p.type) continue;
+      if (replacesFile(p.filename, m.filename)) continue;
       // Exact same-extension OR both sides text-like (see
       // TEXT_LIKE_EXTENSIONS), so a `.txt` → `.md` retype still pairs.
       const mExt = extname(m.filename).toLowerCase();

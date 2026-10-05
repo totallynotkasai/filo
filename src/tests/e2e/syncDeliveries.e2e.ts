@@ -119,6 +119,14 @@ test('a conflict copy shows in the sidebar; `.stversions` and sync temp files do
   await launched.win.keyboard.press('Escape');
 });
 
+test("that conflict copy is named in a notice, which opens it", async () => {
+  const notice = launched.win.locator('.toast', { hasText: 'Syncthing kept two versions of the note "Closed note.md"' });
+  await expect(notice).toBeVisible({ timeout: 15_000 });
+  await expect(notice).toContainText('the other is Closed note.sync-conflict-20260929-101010-ABCDEFG.md');
+  await notice.locator('button', { hasText: 'Open the copy' }).evaluate((b: HTMLElement) => b.click());
+  await expect(launched.win.locator('.document-board .ProseMirror:visible').first()).toContainText('Closed CONFLICT', { timeout: 10_000 });
+});
+
 test('an open board replaced by a delivery (no local changes) shows the delivered version', async () => {
   await newBoard(launched.win, 'Kanban');
   await expect(launched.win.locator('.kanban-board').first()).toBeVisible({ timeout: 20_000 });

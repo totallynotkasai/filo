@@ -193,6 +193,9 @@ const VAULT_DELETE_ALLOWED = new Set(['src/renderer/lib/vault/machineSentinels.t
 const TRASH_OPS = 'src/main/vault/trashOps.ts';
 const TRASH_IPC = 'src/main/ipc/vaultTrash.ipc.ts';
 const TRASH_STORE = 'src/renderer/stores/trash.svelte.ts';
+// The confirmed fallbacks that may say "permanent": Settings → Trash's and
+// Settings → Recovery's, each asked only for items the Recycle Bin refused.
+const PERMANENT_DELETE_FALLBACKS = [TRASH_STORE, 'src/renderer/stores/recoveryCopies.svelte.ts'];
 
 // ── keep-local-backup ─────────────────────────────────────────────────────
 // A note's Keep mine backs up inside `resolveConflict`, through
@@ -1032,7 +1035,7 @@ export const checks = [
         // Confirm and hint text: "permanent" only in the fallback dialog.
         for (const m of code.matchAll(/\b(?:body|hint|title|confirmLabel|text)\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g)) {
           if (!/permanent/i.test(m[2])) continue;
-          const fnBody = rel === TRASH_STORE ? functionBody(blank(raw), 'offerPermanentDelete', { fnKeyword: true }) : null;
+          const fnBody = PERMANENT_DELETE_FALLBACKS.includes(rel) ? functionBody(blank(raw), 'offerPermanentDelete', { fnKeyword: true }) : null;
           if (fnBody && m.index > fnBody.start && m.index < fnBody.end) continue;
           out.push(fail(rel, lineAt(raw, m.index), 'user-facing delete text says "permanent"; deletes go to Filo\'s trash'));
         }

@@ -131,6 +131,24 @@ describe('classifyDroppedFile', () => {
     expect(classifyDroppedFile(file, 'C:\\Vault')?.kind).toBe('outside');
   });
 
+  // Filo neither shows nor saves inside these, and what they hold is pruned or
+  // emptied without asking: a link there would be a tile whose edits are lost.
+  it('a file in a hidden folder of the vault (.filo/recovery, .filo/trash, .stversions) is copied in, not linked', () => {
+    for (const p of [
+      'C:/Vault/.filo/recovery/2026-10-01T10-00-00.000-unsaved/Notes__Draft.md',
+      'C:/Vault/.filo/trash/abc/files/Old.md',
+      'C:/Vault/Book/.stversions/Chapter~20261001-100000.md',
+    ]) {
+      const file = dropped(p);
+      expect(classifyDroppedFile(file, 'C:/Vault')).toEqual({ kind: 'outside', file, sourcePath: p });
+    }
+  });
+
+  it('a file whose own name starts with a dot, in a shown folder, is still linked', () => {
+    const file = dropped('C:/Vault/Notes/.draft.md');
+    expect(classifyDroppedFile(file, 'C:/Vault')).toEqual({ kind: 'in-vault', file, relPath: 'Notes/.draft.md' });
+  });
+
   it('no path for the file, or the vault folder itself, is neither', () => {
     expect(classifyDroppedFile(dropped(''), 'C:\\Vault')).toBeNull();
     expect(classifyDroppedFile(dropped('C:\\Vault\\'), 'C:\\Vault')).toBeNull();

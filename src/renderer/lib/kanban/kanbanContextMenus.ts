@@ -8,11 +8,15 @@ interface CardMenuOpts {
   onStyle: () => void;
   /** Drops the card's placement; the note stays in the vault. */
   onRemove: () => void;
+  /** The board's other columns: the card can move to any of them. */
+  moveTargets?: ReadonlyArray<{ id: string; title: string }>;
+  onMoveTo?: (columnId: string) => void;
 }
 
 /**
  * One card's menu. Tags and Lock live on the card's own header, so the menu
- * keeps to what the header doesn't offer.
+ * keeps to what the header doesn't offer. "Move to column" moves the card
+ * without a drag (from the keyboard too: the menu key on a selected card).
  */
 export function buildCardContextMenu(opts: CardMenuOpts): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
@@ -26,6 +30,14 @@ export function buildCardContextMenu(opts: CardMenuOpts): ContextMenuItem[] {
     { id: 'style', label: MENU_LABEL.style, icon: STYLE_ICON_PATH, action: opts.onStyle },
     { id: 'remove', label: MENU_LABEL.removeFromBoard, icon: MENU_ICON.remove, danger: true, action: opts.onRemove },
   );
+  const onMoveTo = opts.onMoveTo;
+  if (onMoveTo && opts.moveTargets && opts.moveTargets.length > 0) {
+    items.push(
+      { id: 'div-move', label: '', divider: true },
+      { id: 'move-heading', label: 'Move to column', heading: true },
+      ...opts.moveTargets.map((c) => ({ id: `move-to-${c.id}`, label: c.title, icon: MENU_ICON.moveTo, action: () => onMoveTo(c.id) })),
+    );
+  }
   return items;
 }
 

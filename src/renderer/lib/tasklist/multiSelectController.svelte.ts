@@ -37,7 +37,8 @@ import type { TaskRow } from '../tasks/taskListModel';
 import { moveTaskBlock } from '../tasks/taskMove';
 import { sectionIdForPlacementIndex } from './sectionMath';
 import { resolveDragBlockIds } from './blockMove';
-import { completionPatchForRow } from './frontmatterWriter';
+import { completionPatchForRow, warnUnreadableRules } from './frontmatterWriter';
+import { parseRecurrence } from '../tasks/recurrence';
 import { orderForBatchDelete } from './taskDeletion';
 
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
@@ -45,7 +46,8 @@ import { vaultPath, type VaultPath } from '@shared/vaultPath';
 export interface MultiSelectControllerDeps {
   getBoard: () => TaskListBoardType | null;
   getRows: () => TaskRow[];
-  getFilteredRows: () => TaskRow[];
+  /** The rows on screen, top to bottom (`TaskListViewModel.renderedRows`). */
+  getRenderedRows: () => TaskRow[];
   /** Live placements for the active board, in render order. */
   getPlacements: () => TaskPlacement[];
   /** Live persisted sections (excluding the synthetic leading + default). */
@@ -86,8 +88,12 @@ export class MultiSelectController {
 
   constructor(private deps: MultiSelectControllerDeps) {}
 
+  /**
+   * A row click. Shift extends from the anchor over the rows between the two
+   * on screen, so the range is what the user sees highlighted between them.
+   */
   handleRowSelect(tileId: string, mods: { shift: boolean; ctrl: boolean }): void {
-    const ids = this.deps.getFilteredRows().map((r) => r.tile.id);
+    const ids = this.deps.getRenderedRows().map((r) => r.tile.id);
     if (mods.shift && this.lastSelectedTaskId) {
       const anchorIdx = ids.indexOf(this.lastSelectedTaskId);
       const targetIdx = ids.indexOf(tileId);
@@ -182,7 +188,7 @@ export class MultiSelectController {
     sel: TaskRow[],
     perRowPatch: (r: TaskRow) => Record<string, unknown> | null,
     description: string,
-  ): { touched: number; settled: Promise<boolean> } {
+  ): { touched: number; settled: Promise<boolean>; command?: BatchCommand } {
     const board = this.deps.getBoard();
     if (!board || sel.length === 0) return { touched: 0, settled: Promise.resolve(true) };
     const cmds: UpdateTaskFieldCommand[] = [];
@@ -212,11 +218,12 @@ export class MultiSelectController {
     // Keep the settle promise so callers gate their success toast on the chain
     // resolving. `.then(() => true, () => false)` also CATCHES the rejection
     // (execute() rethrows after rollback), avoiding an unhandled rejection.
+    const command = new BatchCommand(description, cmds);
     const settled = historyStore
-      .execute(new BatchCommand(description, cmds))
+      .execute(command)
       .then(() => true, () => false);
     this.deps.bumpCacheVersion();
-    return { touched: cmds.length, settled };
+    return { touched: cmds.length, settled, command };
   }
 
   /**
@@ -277,7 +284,10 @@ export class MultiSelectController {
 
   bulkMarkComplete(): void {
     const sel = this.selectedRows();
-    const { touched, settled } = this.bulkApplyFieldPatch(
+    const boardId = this.deps.getBoard()?.id ?? null;
+    // Rules Filo can't read can't roll forward: those tasks end up done for good.
+    const unreadable = sel.filter((r) => !r.completed && r.recurrence && !parseRecurrence(r.recurrence));
+    const { touched, settled, command } = this.bulkApplyFieldPatch(
       sel,
       // Route completion through the shared helper so recurring tasks roll
       // forward ({completed:false, dueDate:next}) instead of being stamped
@@ -298,6 +308,11 @@ export class MultiSelectController {
       `Marked ${touched} task${touched === 1 ? '' : 's'} complete`,
       'Marking tasks complete failed — see the error notification',
     );
+    if (command && unreadable.length > 0) {
+      void settled.then((ok) => {
+        if (ok) warnUnreadableRules(unreadable.length, unreadable[0]?.recurrence ?? '', () => historyStore.undoIfLatest(command, boardId));
+      });
+    }
   }
 
   bulkMarkIncomplete(): void {
@@ -352,10 +367,13 @@ export class MultiSelectController {
     });
   }
 
-  /** Selects every visible row (post-filter). Bound to Ctrl+A. */
+  /**
+   * Selects every row on screen (Ctrl+A). A folded section's or parent's rows
+   * are left out, so a bulk Delete after it can't remove rows the user can't see.
+   */
   selectAllVisible(): void {
     const next = new SvelteSet<string>();
-    for (const r of this.deps.getFilteredRows()) next.add(r.tile.id);
+    for (const r of this.deps.getRenderedRows()) next.add(r.tile.id);
     this.selectedTaskIds = next;
   }
 

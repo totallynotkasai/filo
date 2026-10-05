@@ -23,7 +23,7 @@ function baseDeps(rows: TaskRow[]): MultiSelectControllerDeps {
   return {
     getBoard: () => ({ id: 'b' } as unknown as TaskListBoard),
     getRows: () => rows,
-    getFilteredRows: () => rows,
+    getRenderedRows: () => rows,
     getPlacements: () => [],
     getSections: () => [],
     buildTaskFieldCommand: () => null,
@@ -143,7 +143,7 @@ describe('MultiSelectController.bulkMarkComplete (BULK-1 wiring)', () => {
     const deps: MultiSelectControllerDeps = {
       getBoard: () => ({ id: 'b' } as unknown as TaskListBoard),
       getRows: () => rows,
-      getFilteredRows: () => rows,
+      getRenderedRows: () => rows,
       getPlacements: () => [],
       getSections: () => [],
       // Capture the per-row patch and return null so bulkApplyFieldPatch

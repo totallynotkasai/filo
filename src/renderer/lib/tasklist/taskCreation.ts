@@ -56,6 +56,10 @@ export interface TaskCreationDeps {
   tickAndPersist: () => void;
   announce: (message: string) => void;
   defaultSectionId: string;
+  /** Opens a folded section (an undo step of its own), so a task added there shows. */
+  expandSection?: (sectionId: string) => void;
+  /** Whether a task's row is on screen (no filter hides it). */
+  isShown?: (tileId: string) => boolean;
 }
 
 export interface TaskCreator {
@@ -64,7 +68,8 @@ export interface TaskCreator {
   endOfSectionIndex(sectionId: string | null): number;
   addTask(): Promise<void>;
   addTaskToSection(sectionId: string | null): Promise<void>;
-  addTaskFromQuickAdd(parsed: QuickAddParsed, targetSectionId?: string | null): Promise<void>;
+  /** Resolves the new task's tile id once it is on the board (null when nothing was added). */
+  addTaskFromQuickAdd(parsed: QuickAddParsed, targetSectionId?: string | null): Promise<string | null>;
   addSubtaskFor(parentTileId: string): Promise<void>;
 }
 
@@ -233,31 +238,33 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     if (realTargetId) setLastTargetedSectionId(realTargetId);
   }
 
+  /**
+   * Where a task added from the board (Add Task, Ctrl+N, quick add) goes: the
+   * section last added to (footer "Add task", a move), while it exists, else
+   * the FIRST section. Most users expect a new task at the top of the list,
+   * not in the last section (often "Done", and often folded).
+   */
+  function defaultTargetSection(): string {
+    const sections = getSections();
+    const last = getLastTargetedSectionId();
+    if (last && sections.some((s) => s.id === last)) return last;
+    const sortedLive = [...sections].sort((a, b) => a.position - b.position);
+    return sortedLive[0]?.id ?? defaultSectionId;
+  }
+
   async function addTask(): Promise<void> {
     if (!getBoard()) return;
-    const sections = getSections();
-    // `lastTargetedSectionId` is set only by an explicit add-to-section
-    // gesture (footer "Add task", bulk move). When that's still valid, use
-    // it. Otherwise fall back to the FIRST persisted section — most users
-    // expect quick-add buttons to land at the top of the list, not the
-    // bottom.
-    let target: string | null = getLastTargetedSectionId();
-    if (target && !sections.some((s) => s.id === target)) target = null;
-    if (!target) {
-      const sortedLive = [...sections].sort((a, b) => a.position - b.position);
-      target = sortedLive[0]?.id ?? defaultSectionId;
-    }
-    await addTaskToSection(target);
+    await addTaskToSection(defaultTargetSection());
   }
 
   async function addTaskFromQuickAdd(
     parsed: QuickAddParsed,
     targetSectionId: string | null = null,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const board = getBoard();
-    if (!board) return;
+    if (!board) return null;
     const title = parsed.title.trim();
-    if (!title) return;
+    if (!title) return null;
 
     const folder = getActiveContentFolder(board);
     const { def, relPath } = buildTaskDef({ title, folder });
@@ -268,6 +275,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     if (parsed.dueTime) fm.dueTime = parsed.dueTime;
     if (parsed.startDate) fm.startDate = parsed.startDate;
     if (parsed.status) fm.status = parsed.status;
+    if (parsed.recurrence) fm.recurrence = parsed.recurrence;
     if (parsed.tags.length > 0) fm.tags = [...parsed.tags];
     // Registered as the tag row registers what it adds, so the Tags browser
     // (and a rename's merge check) knows them before the index reads the note.
@@ -275,13 +283,14 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
 
     // Materialise the default section *before* the await so we carry a real
     // section id across the seed; the index itself is recomputed afterwards
-    // (same TOCTOU fix as createTaskInSection).
-    let resolvedTargetId: string | null = null;
-    if (targetSectionId) {
-      resolvedTargetId = targetSectionId === defaultSectionId
-        ? ensureDefaultSectionMaterialized()
-        : targetSectionId;
-    }
+    // (same TOCTOU fix as createTaskInSection). With no section named, the
+    // rule Add Task uses.
+    const wanted = targetSectionId ?? defaultTargetSection();
+    const resolvedTargetId = wanted === defaultSectionId ? ensureDefaultSectionMaterialized() : wanted;
+    // A folded section opens first (its own undo step, undone after the add),
+    // so the task doesn't vanish into it.
+    const target = getSections().find((s) => s.id === resolvedTargetId);
+    if (target?.collapsed) deps.expandSection?.(target.id);
 
     // Compute the insert slot here, then fold the `.md` seed INTO
     // AddTaskCommand.execute() so placement and seed both run on the history
@@ -304,8 +313,19 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     const ok = await historyStore.execute(cmd).then(() => true, () => false);
     tickAndPersist();
     if (resolvedTargetId) setLastTargetedSectionId(resolvedTargetId);
-    if (ok) announce(`Task added from quick add: ${cmd.currentTitle}`);
-    else announce(`Adding task failed: ${title} — see the error notification`);
+    if (!ok) {
+      announce(`Adding task failed: ${title} — see the error notification`);
+      return null;
+    }
+    const sectionTitle = getSections().find((s) => s.id === resolvedTargetId)?.title;
+    const where = sectionTitle ? ` to "${sectionTitle}"` : '';
+    announce(`Task added${where}: ${cmd.currentTitle}`);
+    // A filter (a smart list, a tag or status chip) can hide the new row: say
+    // where it went rather than let it vanish.
+    if (deps.isShown && !deps.isShown(def.id)) {
+      uiStore.toast(`"${cmd.currentTitle}" was added${where}, but the filters hide it.`, 'info', 4000);
+    }
+    return def.id;
   }
 
   async function addSubtaskFor(parentTileId: string): Promise<void> {

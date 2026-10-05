@@ -53,6 +53,8 @@ function makeVm(opts: {
     getSortBy: () => opts.sortBy ?? 'manual',
     getGroupBy: () => 'none',
     getDefaultSectionId: () => 'default',
+    getCollapsedSubtasks: () => new Set(),
+    getLeadingSectionId: () => '__leading__',
   };
   return new TaskListViewModel(deps);
 }

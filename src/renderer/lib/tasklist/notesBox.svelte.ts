@@ -3,11 +3,11 @@
  * and when that draft may be written.
  *
  * The box copies the note's body into a draft when it opens. The body can
- * change after that (a Document tab, another program), so "the draft differs
- * from the body" doesn't mean the user typed anything; writing on that test
- * alone put a stale draft back over the newer edit. So the box writes only
- * what the user typed, and only onto the body the draft was taken from; a
- * body that changed meanwhile gets the note conflict question instead.
+ * change after that (a Document tab, another program): until the user types
+ * in the box it follows the note (`follow`), so it never shows, or writes, an
+ * older version. Once they type, it writes only what they typed, and only
+ * onto the body the draft was taken from; a body that changed meanwhile gets
+ * the note conflict question instead.
  *
  * A write the note store refuses (the note isn't UTF-8, can't be read, or
  * another vault opened) keeps the box open with the draft in it and says why.
@@ -214,6 +214,18 @@ export class NotesBox {
     this.openedBody = body;
     this.touched = false;
     this.expanded = true;
+  }
+
+  /**
+   * Keeps an open box the user hasn't typed in showing the note as it is now:
+   * the row's `$effect` calls this, so it re-runs when the note's body
+   * changes. A box with typing in it keeps the typing; its save asks.
+   */
+  follow(): void {
+    const body = this.body();
+    if (!this.expanded || this.touched || this.conflictOpen || sameBody(body, this.openedBody)) return;
+    this.draft = bodyToBoxText(body);
+    this.openedBody = body;
   }
 
   /** The user typed in the box: it saves once typing pauses. */

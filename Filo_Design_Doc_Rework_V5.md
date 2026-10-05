@@ -228,7 +228,7 @@ Kanban columns contain tiles from the same tile system used by Mind Map boards. 
   "settings": {
     "background": "#1a1a2e",
     "accentColour": "#3a86ff",
-    "groupBy": "status",
+    "groupBy": "none",
     "sortBy": "priority"
   },
   "tasks": [
@@ -250,7 +250,7 @@ Kanban columns contain tiles from the same tile system used by Mind Map boards. 
 
 Task list items reference `.md` files in the vault. Unlike Mind Map and Kanban boards, the Task List does not use the tile UI system — tasks are displayed as flat list rows rather than spatial tile containers. However, each task's content is still a full Markdown document with metadata (status, priority, due date, assignee) stored in YAML frontmatter. The board JSON holds only the task's `filePath`, its position and its style; `completed` and every other field are read from the note's frontmatter (see the **Frontmatter Source-of-Truth Rule** above). Grouping and sorting is driven by frontmatter property values.
 
-**Recurring tasks.** A recurring task stores its rule in frontmatter (`recurrence`, with a mode). In schedule mode, a monthly task due on the 29th–31st, or a yearly task due on 29 February, also gets an optional `recurrenceAnchor: YYYY-MM-DD` key. The next due date is then stepped from that anchor in whole periods, so Jan 31 → Feb 28 → Mar 31 → Apr 30 rather than drifting to the 28th. The key is written only in those cases. It is removed when the recurrence changes or is cleared, and when it no longer matches the due date (the date was moved by hand).
+**Recurring tasks.** A recurring task stores its rule in frontmatter (`recurrence`, with a mode). The Repeat menu (the repeat chip, or the date chips' right-click menu) offers None, Daily, Weekdays, Weekly, Every 2 weeks, Monthly, Yearly and **Every…** (any number of days, weeks, months or years), and, once a rule is set, what the next date counts from: **the due date** (schedule mode, the default) or **the day it is done** (`recurrenceMode: completion`). A rule Filo can't read (written by hand or by another app) is named at the top of the menu and shown in the danger colour on its chip; completing such a task marks it done and says it won't repeat, with Undo. Quick add reads a repeat too: "every friday", "every 2 weeks", "every other day", "every month", "every weekday"; without a date typed with it, the first due date is the repeat's first day. In schedule mode, a monthly task due on the 29th–31st, or a yearly task due on 29 February, also gets an optional `recurrenceAnchor: YYYY-MM-DD` key. The next due date is then stepped from that anchor in whole periods, so Jan 31 → Feb 28 → Mar 31 → Apr 30 rather than drifting to the 28th. The key is written only in those cases. It is removed when the recurrence changes or is cleared, and when it no longer matches the due date (the date was moved by hand).
 
 #### Document Board
 
@@ -752,7 +752,8 @@ Capabilities present in the V7 build that aren't part of the original V5 spec bu
 * **Per-column width override** — Width in px settable from the Manage Columns modal. `null` inherits the cascade (board defaults → global defaults → KANBAN_COLUMN_DEFAULTS.width). Stored on `column.style.width`.
 * **Cover image (placement-level)** — Text cards expose an "Add cover image" affordance that copies an image into the vault and stamps the relative path onto the placement's `coverImage`. Lives on the placement (not the tile def) so the same `.md` can appear on multiple boards with independent cover art. Path is sanitised (rejects absolute, traversal, and URL-scheme inputs).
 * **Find bar** — `/` opens an in-board search that filters visible placements across all columns by title, tag, and body text. Search query is treated as an additional filter alongside the toolbar Filter/Sort state.
-* **Bulk multi-select** — Ctrl-click / Shift-click selects multiple cards. The bulk context menu offers Move to Column, Add Tag, and Delete with confirmation. Selection clears on Escape or board click.
+* **Bulk multi-select** — Ctrl-click / Shift-click selects multiple cards. The bulk context menu offers Move to Column, Add Tag, and Delete with confirmation. Selection clears on Escape or board click. One card's own menu offers Move to column too, and the arrow keys scroll the card they select into view.
+* **Due date** — A card's due chip opens the Task List's date picker (keyboard and all), so a date is chosen whole.
 * **Last view restored** — Filter chips + sort mode survive tab switch and vault reload (persisted to `board.settings.lastView`). Saved Views are still available for named snapshots; lastView is the "where I was when I closed the tab" memory.
 * **Keyboard shortcuts** — `n` opens the Add Tile picker for the current column; `Shift+N` adds a new column; both act only while focus is in the board (its empty space, a card or a button on it), so typing in the sidebar or a title never adds a card. A new card opens with its title selected for typing, and an empty card shows "Start typing..." where its text goes. `/` opens the find bar. Both `n`/`Shift+N` are user-rebindable via Keyboard Shortcuts settings (commandIds `kanban:add-tile` and `kanban:add-column`).
 * **Open as Document** — Right-click a text card → "Open as Document" opens the backing `.md` in a Document tab. Also wired to double-click the card body.
@@ -760,13 +761,13 @@ Capabilities present in the V7 build that aren't part of the original V5 spec bu
 
 ### Side Toolbar — Task List
 
-* **+ New Task (Button)** — Creates a new task at the end of the list. The task is backed by a new `.md` file in the vault.
-* **Group By (Dropdown)** — Changes how tasks are grouped: by status, priority, tag, due date, or none.
+* **+ New Task (Button)** — Creates a new task at the end of the section last added to, else the first section. The task is backed by a new `.md` file in the vault.
+* **Group By (Dropdown)** — Groups the tasks inside each section: by status, priority, tag, due date, category, or none (a new list starts with none). Each group's first row carries its heading and count; a subtask stays under its parent. The button is never greyed out.
 * **Sort By (Dropdown)** — Changes task sort order: by title, date created, due date, priority, or manual.
 * **Filter (Dropdown)**
     * **Filter by Tag** — Shows only tasks matching selected tags.
-    * **Filter by Status** — Shows only tasks with a specific status (e.g., open, in progress, complete).
-    * **Filter by Priority** — Shows only tasks with a specific priority level.
+    * **Filter by Status** — Shows only tasks in one status, by the rule Group by Status uses: a task with no `status:` (every task made in Filo) is To Do, a completed one is Done, `doing` / `in_progress` are In Progress. It lists the statuses the board's tasks are in.
+    * **Filter by Priority** — Shows only tasks with a specific priority level (Urgent, High, Medium, Low, No priority: the words every view uses).
     * **Show Completed (Toggle)** — Toggles visibility of completed tasks.
 * **View (Dropdown)** — Shared View dropdown (Tags Browser). See Mind Map Side Toolbar > View for full description.
 
@@ -796,7 +797,13 @@ The sidebar shows **filenames**, not note titles (see **Note titles** in the Dat
 
 * **Mind Map** — An "infinite" canvas that the user can navigate by clicking and dragging their mouse. The user can also zoom in and out of the board by scrolling on their mouse wheel. The user can make selections by holding Ctrl and clicking on tiles or by dragging a selection box around tiles.
 * **Kanban** — A column-based board for managing workflows. The board displays a horizontal row of columns (e.g., Backlog, In Progress, Review, Done). Each column contains vertically stacked tiles that can be dragged between columns. Kanban boards support Text, Audio, Image, File, and Link tile types. Users can add, rename, reorder, and delete columns. Text tiles display their title, tags, and a content preview. Tiles can be opened as a Document board for full editing.
-* **Task List** — A structured list view for tracking tasks. Unlike Mind Map and Kanban boards, the Task List does not use the spatial tile UI — tasks are displayed as flat rows in a list. Each task row shows a checkbox, title, tags, due date, and priority. Tasks can be grouped by frontmatter properties (status, priority, category) and sorted by any property or date. Clicking a task opens it as a Document board for full Markdown editing. Tasks are backed by `.md` files with metadata stored in YAML frontmatter.
+* **Task List** — A structured list view for tracking tasks. Unlike Mind Map and Kanban boards, the Task List does not use the spatial tile UI — tasks are displayed as flat rows in a list. Each task row shows a checkbox, title, tags, due date, and priority. Tasks can be grouped by frontmatter properties (status, priority, category) inside their sections and sorted by any property or date. Clicking a task opens it as a Document board for full Markdown editing. Tasks are backed by `.md` files with metadata stored in YAML frontmatter.
+    * **Keys and ranges follow the screen.** The arrow keys, Tab (indent under the row above), Shift-click ranges and Ctrl+A follow the rows as drawn (the sort, the groups, sections in order), and leave out a folded section's rows and a folded parent's subtasks.
+    * **Quick add** files a task where Add Task does (the section last added to, else the first), opening a folded section first; when a filter hides the new task, a notice says where it went. It reads `today`, `tomorrow`, `next fri` (a weekday's name or its usual short name only: "next month" is text), `in 3d`, an ISO date, and `5/12` as the title's last word ("act 2/3 of the book" keeps its fraction), with a time after the date ("tomorrow 5pm", "fri at 9:30am"), repeats (above), `!priority`, `#tag` (a tag needs a letter: "Chapter #3" keeps its number) and `=status`.
+    * **The date picker** opens with focus on the task's day (else today): the arrows move a day or a week, Home / End to the week's ends, Page Up / Page Down a month, Enter picks, Escape closes, and focus goes back to the row. The week starts on the OS regional format's first day, and each day is read out in full. Its time box saves once (Enter, leaving it, or closing the picker). D on a row opens it.
+    * **Dates read the same everywhere**: every chip, menu and message shows a day in the OS regional format (`12 Oct`, with the year when it isn't this year's).
+    * **Folding a section** is an undo step, as folding a Kanban column, a frame or a task's subtasks is.
+    * **An open notes box** follows its note while the user hasn't typed in it, so it never shows, or saves, an older version.
 * **Document** — The Document board is a maximised view of a single `.md` file using the same Tiptap editor as text tiles. It provides a distraction-free writing environment with the full formatting toolbar and seperates text with a purely visual page layout. See the **Text Tile / Document Board Relationship** section in the Data Model.
     * **Tag row** — At the top of the note, above the text, the note's tags show as chips with an input for adding more (comma-separated, with autocomplete). See **Tag System** in the Data Model.
     * **Raw view** — A **Raw** toggle shows the whole file as plain text, frontmatter included, for editing exactly what is on disk; **Formatted** switches back. The text box colours the Markdown, numbers the lines, shows invisible characters (a zero-width space, a stray BOM, a control character) and finds inside the note (Ctrl+F); it never changes the text by itself, and Tab leaves it. It saves 1.5 s after typing stops, when the text box loses focus, on Ctrl+S, when switching back and when the tab closes. While it has no unsaved changes it follows changes made elsewhere; text it loads from disk clears its undo history, so Ctrl+Z never mixes the two versions. A save lands only if the file hasn't changed since the raw view loaded it; otherwise nothing is written and a banner offers **Use the new version (discard mine)**, which first keeps a copy of the typed text in `.filo/recovery/`, or **Keep mine** (which first backs the other version up there). The file's BOM and line endings are kept. The raw view is read-only for a non-UTF-8 note. It stays editable for a note the rich editor opens read-only because it can't reproduce its formatting, since raw text never passes through the rich editor.
@@ -943,7 +950,7 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 | N | New tile beside the selected tile, or in the middle of the view (Mind Map) |
 | C | Start a connection from the selected tile (Mind Map) |
 | Enter | Rename the selected tile (Mind Map) |
-| Backspace | Remove the selected tiles from the board, after a confirm (Mind Map) |
+| Backspace | Remove the selected tiles from the board (Mind Map): the same confirm as Delete, which also offers to move their notes to Filo's trash |
 | Arrow | Select the nearest tile in that direction (Mind Map) |
 | Ctrl + Shift + Arrow | Add the nearest tile in that direction to the selection (Mind Map) |
 | Ctrl + Arrow | Move the selected tiles (Mind Map) |
@@ -1123,6 +1130,8 @@ Right-clicking on a **text tile within a Kanban column**:
 | Open as Document | `icon-expand` | Opens the tile's `.md` file as a Document board in a new tab (also wired to double-click on the card body) |
 | ─── | Divider | |
 | Remove from Column | `icon-trash` | Drops the placement from this column (danger action; the underlying `.md` and any other placements are preserved) |
+| ─── | Divider | |
+| Move to column | heading | The board's other columns, one item each: moves the card to the end of that column (undoable) |
 
 Non-text tiles (image / audio / file / link) get a single "Remove from Column" item — they don't back to a `.md` file so "Open as Document" doesn't apply.
 

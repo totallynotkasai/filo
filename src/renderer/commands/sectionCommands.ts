@@ -264,6 +264,39 @@ export class RenameSectionCommand extends Command {
 }
 
 /**
+ * Folds or opens a Task List section. An undo step, as folding a Kanban
+ * column, a frame or a task's subtasks is: a fold saved in the board is one
+ * policy everywhere. Applied to the live section by id, so a section added or
+ * renamed between execute and undo is left as it is.
+ */
+export class SetSectionCollapsedCommand extends Command {
+  description: string;
+  readonly targetBoardId: string;
+  private boardId: string;
+  private sectionId: string;
+  private collapsed: boolean;
+
+  constructor(boardId: string, sectionId: string, collapsed: boolean) {
+    super();
+    this.targetBoardId = boardId;
+    this.boardId = boardId;
+    this.sectionId = sectionId;
+    this.collapsed = collapsed;
+    this.description = collapsed ? 'Collapse section' : 'Expand section';
+  }
+
+  private apply(collapsed: boolean) {
+    const board = boardCacheStore.cache[this.boardId]?.board as { sections?: TaskListSection[] } | undefined;
+    if (!board?.sections?.some((s) => s.id === this.sectionId && s.collapsed !== collapsed)) return;
+    const next = board.sections.map((s) => (s.id === this.sectionId ? { ...s, collapsed } : s));
+    boardCacheStore.persistTaskListStructure(this.boardId, next);
+  }
+
+  execute() { this.apply(this.collapsed); }
+  undo() { this.apply(!this.collapsed); }
+}
+
+/**
  * Apply a target section ORDER to the LIVE Task List cache.
  *
  * Section `position` values are absolute indices into the flat `tasks` array,

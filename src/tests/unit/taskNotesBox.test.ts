@@ -210,3 +210,58 @@ describe('NotesBox saves by itself once typing pauses', () => {
     expect(writes).toEqual(['typed']);
   });
 });
+
+describe('an open notes box follows its note until the user types (A-06)', () => {
+  afterEach(() => {
+    for (const x of [...uiStore.toasts]) uiStore.dismissToast(x.id);
+  });
+
+  function box(initial: string) {
+    let body = initial;
+    const writes: string[] = [];
+    const b = new NotesBox({ path: () => 'Task.md', body: () => body, write: async (x) => { writes.push(x); return 'queued'; } });
+    return { b, writes, setBody: (next: string) => { body = next; } };
+  }
+
+  it('shows the note as it is now, and writes nothing for it', async () => {
+    const { b, writes, setBody } = box('first\n');
+    b.open();
+    setBody('changed in the Document tab\n');
+    b.follow();
+    expect(b.draft).toBe('changed in the Document tab\n');
+    await b.save(true);
+    expect(writes).toEqual([]);
+  });
+
+  it('typing after it followed writes onto the newer note, with no conflict', async () => {
+    const { b, writes, setBody } = box('first\n');
+    b.open();
+    setBody('second\n');
+    b.follow();
+    b.draft = 'second, and mine';
+    b.typed();
+    await b.save(true);
+    expect(writes).toEqual(['second, and mine']);
+    expect(b.inConflict).toBe(false);
+  });
+
+  it('a box with typing in it keeps the typing, and its save asks', async () => {
+    const { b, writes, setBody } = box('first\n');
+    b.open();
+    b.draft = 'mine';
+    b.typed();
+    setBody('theirs\n');
+    b.follow();
+    expect(b.draft).toBe('mine');
+    await b.save(false);
+    expect(writes).toEqual([]);
+    expect(b.inConflict).toBe(true);
+  });
+
+  it('a closed box does nothing', () => {
+    const { b, setBody } = box('first\n');
+    setBody('second\n');
+    b.follow();
+    expect(b.draft).toBe('');
+  });
+});

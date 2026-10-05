@@ -9,10 +9,9 @@
  *   - `addSection`, `renameSection`, `toggleSectionCollapsed`,
  *     `deleteSection` (`keep-tasks` / `delete-tasks` modes), `moveSection`
  *
- * Each undoable mutation dispatches an `historyStore.execute(...)` of the
- * appropriate structural Command. Collapse toggling is intentionally
- * non-undoable (transient UI preference) and goes straight to
- * `persistSections`.
+ * Each mutation dispatches an `historyStore.execute(...)` of the appropriate
+ * structural Command. Folding a section is an undo step too, as folding a
+ * Kanban column, a frame or a task's subtasks is.
  *
  * Why a factory:
  *   These operations need live reads of `board` / `sections` / `placements`.
@@ -33,6 +32,7 @@ import {
   DeleteSectionCommand,
   RenameSectionCommand,
   ReorderSectionCommand,
+  SetSectionCollapsedCommand,
 } from '../../commands/index';
 
 /**
@@ -60,6 +60,8 @@ export interface SectionOps {
   addSection(title?: string): void;
   renameSection(id: string, title: string): void;
   toggleSectionCollapsed(id: string): void;
+  /** Opens a folded section (an undo step); a no-op when it is open. */
+  expandSection(id: string): void;
   deleteSection(id: string, mode: 'keep-tasks' | 'delete-tasks'): void;
   moveSection(id: string, direction: -1 | 1): void;
 }
@@ -136,22 +138,23 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
     deps.tickAndPersist();
   }
 
+  function setSectionCollapsed(id: string, collapsed: boolean): void {
+    const board = deps.getBoard();
+    if (!board) return;
+    const real = id === deps.defaultSectionId ? ensureDefaultSectionMaterialized() : id;
+    const target = real ? deps.getSections().find((s) => s.id === real) : undefined;
+    if (!target || target.collapsed === collapsed) return;
+    historyStore.execute(new SetSectionCollapsedCommand(board.id, target.id, collapsed));
+    deps.tickAndPersist();
+  }
+
   function toggleSectionCollapsed(id: string): void {
-    if (id === deps.defaultSectionId) {
-      const real = ensureDefaultSectionMaterialized();
-      if (!real) return;
-      const next = deps
-        .getSections()
-        .map((s) => (s.id === real ? { ...s, collapsed: !s.collapsed } : s));
-      // Toggling collapse is a transient UI preference; we persist it but
-      // don't pollute history with it (no Command).
-      persistSections(next);
-      return;
-    }
-    const next = deps
-      .getSections()
-      .map((s) => (s.id === id ? { ...s, collapsed: !s.collapsed } : s));
-    persistSections(next);
+    const current = id === deps.defaultSectionId ? false : deps.getSections().find((s) => s.id === id)?.collapsed;
+    if (current !== undefined) setSectionCollapsed(id, !current);
+  }
+
+  function expandSection(id: string): void {
+    setSectionCollapsed(id, false);
   }
 
   function deleteSection(id: string, mode: 'keep-tasks' | 'delete-tasks'): void {
@@ -258,6 +261,7 @@ export function makeSectionOps(deps: SectionOpsDeps): SectionOps {
     addSection,
     renameSection,
     toggleSectionCollapsed,
+    expandSection,
     deleteSection,
     moveSection,
   };

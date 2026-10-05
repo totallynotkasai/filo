@@ -10,12 +10,21 @@
    * Optional `withTime` exposes an HH:MM input below the grid so the
    * caller can replace both the date and time in one round trip — the
    * dueDate popover uses this for combined edits.
+   *
+   * Keyboard: it opens with focus on the chosen day (else today); the arrows
+   * move a day or a week, Home / End to the week's ends, Page Up / Page Down
+   * a month, Enter or Space picks, Escape closes. Focus stays inside while it
+   * is open and goes back where it was when it closes. The week starts on the
+   * OS regional format's first day, and each day is read out in full.
    */
   import { portal } from '../../lib/utils/portal';
-  import { tick } from 'svelte';
-  import { SvelteDate } from 'svelte/reactivity';
-  import { localIsoDate, localIsoDateInDays } from '../../lib/utils/dateFormat';
+  import { tick, untrack } from 'svelte';
+  import { createFocusTrap, type FocusTrap } from 'focus-trap';
+  import { safeDeactivateTrap } from '../../lib/utils/focusTrapSafe';
+  import { displayLocale, formatDayLong, localIsoDate, localIsoDateInDays } from '../../lib/utils/dateFormat';
   import { DatePickerViewState } from '../../lib/tasklist/datePickerViewState.svelte';
+  import { dateKeyMove, weekdayLabels, weekStartDay } from '../../lib/tasklist/calendarGrid';
+  import { clockStore } from '../../stores/clock.svelte';
   let {
     value,
     time = '',
@@ -51,11 +60,12 @@
     view.syncToValue(value);
   });
 
+  const locale = displayLocale();
+  const weekStart = weekStartDay(locale);
+  const WEEKDAY_LABELS = weekdayLabels(weekStart, locale);
+
   let monthLabel = $derived(
-    new Date(view.viewYear, view.viewMonth, 1).toLocaleDateString(undefined, {
-      month: 'long',
-      year: 'numeric',
-    }),
+    new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(new Date(view.viewYear, view.viewMonth, 1)),
   );
 
   interface GridCell {
@@ -64,64 +74,126 @@
     inMonth: boolean;
     isToday: boolean;
     isSelected: boolean;
+    /** The day in full, for a screen reader ("Monday, 12 October 2026, today"). */
+    label: string;
   }
 
-  // Calendar grid: 6 rows × 7 columns, padded so the first cell is the
-  // Sunday on or before the 1st of the visible month.
+  // Calendar grid: 6 weeks × 7 days from the locale's first weekday on or
+  // before the 1st of the visible month.
   let grid = $derived.by<GridCell[]>(() => {
-    const first = new Date(view.viewYear, view.viewMonth, 1);
-    const startOffset = first.getDay(); // 0 = Sun
-    const start = new Date(view.viewYear, view.viewMonth, 1 - startOffset);
-    const today = localIsoDate();
-    const cells: GridCell[] = [];
-    for (let i = 0; i < 42; i++) {
-      const d = new SvelteDate(start);
-      d.setDate(start.getDate() + i);
-      const iso = localIsoDate(d);
-      cells.push({
-        iso,
-        day: d.getDate(),
-        inMonth: d.getMonth() === view.viewMonth,
-        isToday: iso === today,
-        isSelected: iso === value,
-      });
-    }
-    return cells;
+    const today = localIsoDate(clockStore.todayDate());
+    const monthPrefix = `${view.viewYear}-${String(view.viewMonth + 1).padStart(2, '0')}-`;
+    return view.cells(weekStart).map((iso) => ({
+      iso,
+      day: Number(iso.slice(8)),
+      inMonth: iso.startsWith(monthPrefix),
+      isToday: iso === today,
+      isSelected: iso === value,
+      label: `${formatDayLong(iso, { locale })}${iso === today ? ', today' : ''}`,
+    }));
   });
 
-  const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  let gridEl: HTMLDivElement | undefined = $state();
+
+  function focusDay(): void {
+    gridEl?.querySelector<HTMLButtonElement>(`[data-iso="${view.focusedIso}"]`)?.focus();
+  }
+
+  function onGridKeydown(e: KeyboardEvent): void {
+    const move = dateKeyMove(e.key, view.focusedIso, weekStart);
+    if (!move) return;
+    e.preventDefault();
+    view.move(move);
+    void tick().then(focusDay);
+  }
 
   function handlePick(iso: string) {
     onPick(iso);
-    onClose();
+    close();
   }
 
   function handleClear() {
+    timeDraft = null;
     onClear();
-    onClose();
+    close();
   }
 
-  function handleTimeInput(e: Event) {
-    const t = (e.currentTarget as HTMLInputElement).value;
+  // The time box holds what is typed and saves it once (Enter, leaving the
+  // box, or closing the picker): Chromium fires a change at every part of a
+  // time typed, which was an undo step per keystroke.
+  let timeDraft = $state<string | null>(null);
+
+  function commitTime(): void {
+    const t = timeDraft;
+    timeDraft = null;
     // Refuse an orphan time (a dueTime with no dueDate is invisible:
     // the chip only renders inside `{#if dueDate}`). The input is also disabled
     // when there's no date, so this is a belt-and-suspenders guard.
-    if (!value) return;
+    if (t === null || t === time || !value) return;
     onPickTime?.(t);
+  }
+
+  function onTimeKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitTime();
+    }
+  }
+
+  function close(): void {
+    commitTime();
+    onClose();
   }
 
   let popoverEl: HTMLDivElement | undefined = $state();
 
   function onPopoverKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
+      // Kept from the row (and the app's Escape) behind it.
       e.preventDefault();
-      onClose();
+      e.stopPropagation();
+      close();
     }
   }
 
+  // Focus moves in on the keyboard's day and stays inside while the picker is
+  // open; closing hands it back to what had it (the row, or the date chip).
+  $effect(() => {
+    const el = popoverEl;
+    if (!el) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const trap: FocusTrap = createFocusTrap(el, {
+      escapeDeactivates: false,
+      clickOutsideDeactivates: false,
+      allowOutsideClick: true,
+      returnFocusOnDeactivate: false,
+      initialFocus: () => gridEl?.querySelector<HTMLButtonElement>('[tabindex="0"]') ?? el,
+      fallbackFocus: el,
+      preventScroll: true,
+    });
+    untrack(() => {
+      try {
+        trap.activate();
+      } catch {
+        // No tabbable node yet: the day is focused below all the same.
+      }
+      // The trap's own first focus skips a node it judges hidden (before
+      // layout); the keyboard's day is where focus belongs.
+      focusDay();
+    });
+    return () => {
+      safeDeactivateTrap(trap, { name: 'TaskDatePicker' });
+      if (previouslyFocused?.isConnected) {
+        queueMicrotask(() => {
+          if (previouslyFocused.isConnected) previouslyFocused.focus();
+        });
+      }
+    };
+  });
+
   function onBackdropClick(e: MouseEvent) {
     if (popoverEl && !popoverEl.contains(e.target as Node)) {
-      onClose();
+      close();
     }
   }
 
@@ -192,19 +264,25 @@
 
     <div class="weekday-row" aria-hidden="true">
       {#each WEEKDAY_LABELS as wd, i (i)}
-        <span class="weekday">{wd}</span>
+        <span class="weekday" title={wd.long}>{wd.narrow}</span>
       {/each}
     </div>
 
-    <div class="day-grid" role="grid" aria-label="Calendar">
+    <!-- One Tab stop: the keyboard's day; the arrows move between days. -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="day-grid" role="group" aria-label={monthLabel} bind:this={gridEl} onkeydown={onGridKeydown}>
       {#each grid as cell (cell.iso)}
         <button
           class="day-cell"
           class:out-of-month={!cell.inMonth}
           class:is-today={cell.isToday}
           class:is-selected={cell.isSelected}
+          data-iso={cell.iso}
+          tabindex={cell.iso === view.focusedIso ? 0 : -1}
           onclick={() => handlePick(cell.iso)}
-          aria-label={cell.iso}
+          onfocus={() => (view.focusedIso = cell.iso)}
+          aria-label={cell.label}
+          aria-current={cell.isToday ? 'date' : undefined}
           aria-pressed={cell.isSelected}
         >
           {cell.day}
@@ -219,15 +297,18 @@
           id="task-due-time-input"
           type="time"
           class="time-input"
-          value={time}
+          value={timeDraft ?? time}
           disabled={!value}
           title={value ? '' : 'Pick a date first'}
-          onchange={handleTimeInput}
+          oninput={(e) => (timeDraft = (e.currentTarget as HTMLInputElement).value)}
+          onchange={(e) => (timeDraft = (e.currentTarget as HTMLInputElement).value)}
+          onblur={commitTime}
+          onkeydown={onTimeKeydown}
         />
         {#if time}
           <button
             class="time-clear"
-            onclick={() => onPickTime?.('')}
+            onclick={() => { timeDraft = null; onPickTime?.(''); }}
             aria-label="Clear time"
           ><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
         {/if}
@@ -238,7 +319,7 @@
       {#if value}
         <button class="clear-btn" onclick={handleClear}>Clear</button>
       {/if}
-      <button class="close-btn" onclick={onClose}>Done</button>
+      <button class="close-btn" onclick={close}>Done</button>
     </div>
   </div>
 </div>
@@ -352,6 +433,11 @@
 
   .day-cell:hover {
     background: var(--ui-surface-hover);
+  }
+
+  .day-cell:focus-visible {
+    outline: 2px solid var(--ui-border-focus, var(--accent-primary));
+    outline-offset: -2px;
   }
 
   .day-cell.out-of-month {

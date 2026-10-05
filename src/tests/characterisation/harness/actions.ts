@@ -579,13 +579,26 @@ export async function typeTileTitle(tileRoot: HTMLElement, title: string): Promi
   await settle();
 }
 
-/** Card due-date button → date input. */
+/**
+ * Card due-date button → the date picker → ‹ / › to the day's month → the
+ * day. (The picker is the Task List's, portalled to the page.)
+ */
 export async function setCardDueDate(card: HTMLElement, isoDate: string): Promise<void> {
   click($(card, '.card-due, .card-due-btn'));
-  await settle();
-  const input = $(card, '.due-popover input[type="date"]') as HTMLInputElement;
-  typeInto(input, isoDate);
+  await waitFor(() => document.querySelector('.date-popover .day-cell') !== null, 'the date picker');
+  const day = `.date-popover .day-cell[data-iso="${isoDate}"]`;
+  for (let step = 0; step < 240 && !document.querySelector(day); step++) {
+    const shown = (document.querySelector('.date-popover .day-cell[tabindex="0"]') as HTMLElement | null)?.dataset.iso ?? '';
+    click($(document, `.date-popover .nav-btn[aria-label="${shown.slice(0, 7) < isoDate.slice(0, 7) ? 'Next' : 'Previous'} month"]`));
+    await settle();
+  }
+  click($(document, day));
   await quiesce(600);
+}
+
+/** The Task List's date picker is open (from a row's due chip, or D on a row). */
+export function datePickerOpen(): boolean {
+  return document.querySelector('.date-popover') !== null;
 }
 
 /** Card priority button → priority menu entry ("High", "Low", …). */

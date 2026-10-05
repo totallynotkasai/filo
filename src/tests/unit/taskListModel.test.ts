@@ -248,14 +248,14 @@ describe('groupKey — all 6 groupBys including category', () => {
     });
   });
 
-  it('groupBy "priority" — uses raw priority key, "No Priority" label for none', () => {
+  it('groupBy "priority" — uses raw priority key, the shared "No priority" label for none', () => {
     expect(groupKey(makeRow({ priority: 'urgent' }), 'priority', TODAY)).toEqual({
       key: 'urgent',
       label: 'Urgent',
     });
     expect(groupKey(makeRow({ priority: 'none' }), 'priority', TODAY)).toEqual({
       key: 'none',
-      label: 'No Priority',
+      label: 'No priority',
     });
   });
 

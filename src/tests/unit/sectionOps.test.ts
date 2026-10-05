@@ -40,6 +40,7 @@ vi.mock('@renderer/commands/index', () => {
     DeleteSectionCommand: class DeleteSectionCommand extends Cmd {},
     RenameSectionCommand: class RenameSectionCommand extends Cmd {},
     ReorderSectionCommand: class ReorderSectionCommand extends Cmd {},
+    SetSectionCollapsedCommand: class SetSectionCollapsedCommand extends Cmd {},
   };
 });
 
@@ -191,30 +192,49 @@ describe('renameSection', () => {
   });
 });
 
-describe('toggleSectionCollapsed', () => {
-  it('flips a real section without a command', () => {
+describe('toggleSectionCollapsed: an undo step, as every saved fold is', () => {
+  it('folds a real section through a command', () => {
     const { deps } = harness([section('a', 0), section('b', 1)]);
     makeSectionOps(deps).toggleSectionCollapsed('b');
-    expect(h.execute).not.toHaveBeenCalled();
-    const next = h.persistTaskListStructure.mock.calls[0]?.[1] as TaskListSection[];
-    expect(next.map((s) => s.collapsed)).toEqual([false, true]);
+    expect(lastCommand()).toEqual(['SetSectionCollapsedCommand', ['b1', 'b', true]]);
+    expect(h.persistTaskListStructure).not.toHaveBeenCalled();
   });
 
-  it('materialises then collapses the virtual default', () => {
+  it('opens a folded one', () => {
+    const { deps } = harness([section('a', 0, { collapsed: true })]);
+    makeSectionOps(deps).toggleSectionCollapsed('a');
+    expect(lastCommand()).toEqual(['SetSectionCollapsedCommand', ['b1', 'a', false]]);
+  });
+
+  it('materialises then folds the virtual default', () => {
     const { deps, state } = harness();
     // The materialise write lands in the cache; reflect it in the live read.
     h.persistTaskListStructure.mockImplementation((_id: string, next: TaskListSection[]) => {
       state.sections = next;
     });
     makeSectionOps(deps).toggleSectionCollapsed(DEFAULT_ID);
-    expect(h.persistTaskListStructure).toHaveBeenCalledTimes(2);
-    expect(state.sections).toEqual([{ id: 'sec_id1', title: 'Task List', position: 0, collapsed: true }]);
+    expect(state.sections).toEqual([{ id: 'sec_id1', title: 'Task List', position: 0, collapsed: false }]);
+    expect(lastCommand()).toEqual(['SetSectionCollapsedCommand', ['b1', 'sec_id1', true]]);
   });
 
   it('does nothing for the virtual default when a real section already exists', () => {
     const { deps } = harness([section('a', 0)]);
     makeSectionOps(deps).toggleSectionCollapsed(DEFAULT_ID);
     expect(h.persistTaskListStructure).not.toHaveBeenCalled();
+  });
+});
+
+describe('expandSection', () => {
+  it('opens a folded section as one undo step', () => {
+    const { deps } = harness([section('a', 0, { collapsed: true })]);
+    makeSectionOps(deps).expandSection('a');
+    expect(lastCommand()).toEqual(['SetSectionCollapsedCommand', ['b1', 'a', false]]);
+  });
+
+  it('adds no step for an open section', () => {
+    const { deps } = harness([section('a', 0)]);
+    makeSectionOps(deps).expandSection('a');
+    expect(h.execute).not.toHaveBeenCalled();
   });
 });
 

@@ -17,7 +17,8 @@
 
   type GroupBy = 'status' | 'priority' | 'tag' | 'dueDate' | 'category' | 'none';
   type SortBy = 'title' | 'created' | 'dueDate' | 'priority' | 'manual';
-  type Priority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
+  import type { Priority } from '../../lib/tasks/frontmatterReaders';
+  import { PRIORITIES, PRIORITY_LABEL } from '../../constants/taskPriorities';
   type SmartListId = 'all' | 'today' | 'upcoming' | 'overdue' | 'no-date' | 'completed';
 
   type SavedView = {
@@ -38,7 +39,7 @@
     onGroupByChange,
     activeSortBy,
     onSortByChange,
-    knownStatuses,
+    statusOptions,
     activeFilterTags,
     onFilterTagsChange,
     activeFilterStatus,
@@ -54,14 +55,14 @@
     onApplyView,
     onSaveView,
     onDeleteView,
-    groupByDisabled = false,
   }: {
     onAddTask: () => void;
     activeGroupBy: GroupBy;
     onGroupByChange: (g: GroupBy) => void;
     activeSortBy: SortBy;
     onSortByChange: (s: SortBy) => void;
-    knownStatuses: string[];
+    /** The statuses the board's tasks are in (`statusFilterOptions`). */
+    statusOptions: Array<{ key: string; label: string }>;
     activeFilterTags: string[];
     onFilterTagsChange: (tags: string[]) => void;
     activeFilterStatus: string | null;
@@ -77,13 +78,6 @@
     onApplyView?: (view: SavedView) => void;
     onSaveView?: (name: string) => void;
     onDeleteView?: (id: string) => void;
-    /**
-     * True when the board has at least one user-defined section. Sections
-     * take over as the top-level grouping, so the GroupBy menu is disabled
-     * with a tooltip explaining why — disabling matches the user's
-     * decision to keep the two hierarchies mutually exclusive.
-     */
-    groupByDisabled?: boolean;
   } = $props();
 
   let groupMenuOpen = $state(false);
@@ -180,7 +174,6 @@
     onShowCompletedChange(true);
   }
 
-  const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 
   function groupLabel(g: GroupBy): string {
     return (
@@ -249,9 +242,8 @@
     <button
       class="toolbar-btn"
       class:active={activeGroupBy !== 'none'}
-      disabled={groupByDisabled}
       onclick={() => { const o = !groupMenuOpen; closeAll(); groupMenuOpen = o; }}
-      title={groupByDisabled ? 'Group By is disabled while the board uses sections' : `Group By: ${groupLabel(activeGroupBy)}`}
+      title={`Group By: ${groupLabel(activeGroupBy)}`}
       aria-label="Group by"
     >
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -262,7 +254,7 @@
     </button>
     {#if groupMenuOpen}
       <div class="toolbar-menu" role="menu">
-        <div class="toolbar-menu-section-title">Group Tasks By</div>
+        <div class="toolbar-menu-section-title">Group Tasks By (in each section)</div>
         <button class="toolbar-menu-item" class:active={activeGroupBy === 'status'} onclick={() => { groupMenuOpen = false; onGroupByChange('status'); }}>Status</button>
         <button class="toolbar-menu-item" class:active={activeGroupBy === 'priority'} onclick={() => { groupMenuOpen = false; onGroupByChange('priority'); }}>Priority</button>
         <button class="toolbar-menu-item" class:active={activeGroupBy === 'tag'} onclick={() => { groupMenuOpen = false; onGroupByChange('tag'); }}>Tag</button>
@@ -330,7 +322,7 @@
             {/each}
             {#if activeFilterStatus}
               <span class="toolbar-active-chip">
-                status: {activeFilterStatus}
+                status: {statusOptions.find((s) => s.key === activeFilterStatus)?.label ?? activeFilterStatus}
                 <button
                   class="toolbar-active-chip-x"
                   aria-label="Remove status filter"
@@ -340,7 +332,7 @@
             {/if}
             {#if activeFilterPriority}
               <span class="toolbar-active-chip">
-                priority: {activeFilterPriority}
+                priority: {PRIORITY_LABEL[activeFilterPriority]}
                 <button
                   class="toolbar-active-chip-x"
                   aria-label="Remove priority filter"
@@ -387,12 +379,12 @@
             class:active={activeFilterStatus === null}
             onclick={() => onFilterStatusChange(null)}
           >Any</button>
-          {#each knownStatuses as st (st)}
+          {#each statusOptions as st (st.key)}
             <button
               class="filter-chip"
-              class:active={activeFilterStatus === st}
-              onclick={() => onFilterStatusChange(activeFilterStatus === st ? null : st)}
-            >{st}</button>
+              class:active={activeFilterStatus === st.key}
+              onclick={() => onFilterStatusChange(activeFilterStatus === st.key ? null : st.key)}
+            >{st.label}</button>
           {/each}
         </div>
 
@@ -410,7 +402,7 @@
               class="filter-chip"
               class:active={activeFilterPriority === p}
               onclick={() => onFilterPriorityChange(activeFilterPriority === p ? null : p)}
-            >{p}</button>
+            >{PRIORITY_LABEL[p]}</button>
           {/each}
         </div>
 

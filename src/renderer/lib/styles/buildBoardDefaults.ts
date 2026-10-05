@@ -50,7 +50,8 @@ export function buildBoardSettingsFromGlobal(
     case 'kanban':
       return { ...style, accentColor: '' };
     case 'tasklist':
-      return { ...style, accentColor: '', groupBy: 'status', sortBy: 'priority' };
+      // A new list shows its tasks ungrouped; Group By groups inside each section.
+      return { ...style, accentColor: '', groupBy: 'none', sortBy: 'priority' };
     case 'document':
       return { ...style, accentColor: '' };
   }
@@ -96,7 +97,7 @@ function bakeBoardSettings(type: Board['type'], src: ProjectSettings): BoardSett
         backgroundColor: tl.backgroundColor,
         backgroundPattern: tl.backgroundPattern,
         accentColor: tl.accentColor,
-        groupBy: 'status',
+        groupBy: 'none',
         sortBy: 'priority',
         defaults: {
           task: { ...tl.task },

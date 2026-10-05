@@ -312,7 +312,7 @@ filo/
 │   │   │   ├── tileTagCommands.ts     # tile/path tag add/remove
 │   │   │   ├── connectionCommands.ts  # connection add/delete/update
 │   │   │   ├── frameCommands.ts       # frame add/update/move/delete
-│   │   │   ├── sectionCommands.ts     # Task List section add/delete/rename/reorder
+│   │   │   ├── sectionCommands.ts     # Task List section add/delete/rename/reorder/fold (a fold is an undo step, as a column's, a frame's or a subtask list's is)
 │   │   │   ├── taskCommands.ts        # Task List add/delete/move/field/lock/style
 │   │   │   ├── kanbanCommands.ts      # Kanban card + column add/delete/move/rename
 │   │   │   ├── waypointCommands.ts    # Mind Map waypoint add/remove/rename/move/icon/lock
@@ -330,7 +330,7 @@ filo/
 │   │   │   ├── boardIcons.ts          # Each board type's icon path (New-board menu, sidebar file tree)
 │   │   │   ├── styleOptions.ts        # Style option lists, read from the `schema/styleEnums.ts` enums
 │   │   │   ├── menuVocabulary.ts      # Context-menu labels, icons, plural headings; order Open, Style, Tags, Lock, Remove, Delete
-│   │   │   ├── taskPriorities.ts      # Task / Kanban priority display metadata (color + label)
+│   │   │   ├── taskPriorities.ts      # Task / Kanban priority words and colours: the one vocabulary (Urgent, High, Medium, Low, No priority) for chips, menus, filters, groups and quick add
 │   │   │   └── vaultSidebarOptions.ts # Sidebar Sort By / Group By choices (sidebar menus + settings)
 │   │   │
 │   │   ├── lib/                       # Pure logic, no UI
@@ -464,6 +464,7 @@ filo/
 │   │   │   │   ├── orphanCatcher.ts
 │   │   │   │   ├── floatingToolbarDrag.ts # Shared toolbar drag: background only, pin blocks it, cancel reverts, clamp to window
 │   │   │   │   ├── minimapBounds.ts   # Minimap window math: a local window around the viewport, tiles AABB apart
+│   │   │   │   ├── revealRect.ts      # revealOffset: how far the view moves to show a tile the arrow keys selected (none when it is in view)
 │   │   │   │   └── smartGuides.ts     # Alignment guide calculations
 │   │   │   ├── connections/           # Connection path routing
 │   │   │   │   ├── pathRouter.ts      # Curved, Straight, Elbow, Smart routing
@@ -534,30 +535,36 @@ filo/
 │   │   │   │   ├── kanbanFiltersAndSort.svelte.ts, kanbanSavedViews.svelte.ts
 │   │   │   │   ├── checklistProgress.ts # The card checklist badge: task items only (`- [ ]` / `- [x]`), not a `[x]` in text or code
 │   │   │   │   ├── kanbanShortcuts.ts # The board's N / Shift+N / Ctrl+N commands; bare N and Shift+N only while focus is in the board
+│   │   │   │   ├── kanbanKeyboardNav.ts # Arrow keys over the cards as drawn; the card landed on is scrolled into view
 │   │   │   │   └── kanbanTileCreation.ts, kanbanFileDropHandler.ts, kanbanInsertPosition.ts
 │   │   │   ├── tasklist/              # Task List logic
-│   │   │   │   ├── notesBox.svelte.ts # The row notes box draft; an unsaved draft counts for leave / quit (rescue copy, held conflict); saves 1.5 s after typing stops, and Escape saves and closes it
+│   │   │   │   ├── notesBox.svelte.ts # The row notes box draft; follows its note until the user types; an unsaved draft counts for leave / quit (rescue copy, held conflict); saves 1.5 s after typing stops, and Escape saves and closes it
 │   │   │   │   ├── taskTitleEdit.svelte.ts # A row's title while typed: Enter / click-away / a save commit it (registerComponentFlush), Escape drops it
 │   │   │   │   ├── taskParent.ts      # A subtask's parent: the placement's `parentTileId`, else an older note's `parent:` (read, never written)
 │   │   │   │   ├── notesBoxMarkdown.ts # The notes box writes what was typed (a newline stays a plain newline, a soft break); a `\` line break shows back as a newline
 │   │   │   │   ├── taskContextMenus.ts
+│   │   │   │   ├── taskDateMenus.ts   # A row's date chips' menu and the Repeat menu (presets, Every…, what the next date counts from; a rule Filo can't read named)
 │   │   │   │   ├── frontmatterWriter.ts # Task field edits → note frontmatter deltas
 │   │   │   │   ├── indentRules.ts     # indentProblem: one indent rule for drag and Tab (section, cycle, 3 levels)
 │   │   │   │   ├── manualSortSwitch.ts # Reorder under a non-manual sort: one undo step, a toast whose Undo undoes only that step
 │   │   │   │   ├── tocPlacement.ts    # Where the Table of Contents first opens (beside the list when there is room)
 │   │   │   │   ├── fileDropHandler.ts # OS / sidebar file drop onto a Task List → tasks (a note already in the vault by its path)
-│   │   │   │   ├── datePickerViewState.svelte.ts # TaskDatePicker's shown month (re-seeds only when the value changes)
+│   │   │   │   ├── datePickerViewState.svelte.ts # TaskDatePicker's shown month and keyboard day (re-seeds only when the value changes)
+│   │   │   │   ├── calendarGrid.ts    # The date picker's arithmetic: the locale's first weekday, the six-week grid, where a key moves the day
 │   │   │   │   ├── clearStaleDndStyles.ts # Action clearing svelte-dnd-action's leftover inline styles on a section
 │   │   │   │   ├── sectionMembership.ts # A Task List as section + order per task: undo moves only the tasks a step moved, starts recomputed live
 │   │   │   │   ├── taskRename.ts      # renameTaskTitle: a row's new title (+ the placeholder rename)
 │   │   │   │   ├── taskCreation.ts, taskDeletion.ts, sectionOps.ts, sectionMath.ts, blockMove.ts
 │   │   │   │   ├── taskDragController.svelte.ts, multiSelectController.svelte.ts, indentGesture.ts
-│   │   │   │   └── filtersAndViews.svelte.ts, taskListViewModel.svelte.ts, taskListKeyboardNav.svelte.ts
+│   │   │   │   ├── taskListViewModel.svelte.ts # Rows → sections (a Group By groups inside each) → `flatSections` (the rows as drawn) → `renderedRows`, the order the keys, Tab, Shift-click and Ctrl+A follow
+│   │   │   │   └── filtersAndViews.svelte.ts, taskListKeyboardNav.svelte.ts
 │   │   │   ├── tasks/                 # Task helpers shared by Kanban and Task List
 │   │   │   │   ├── frontmatterReaders.ts # Task fields read from a note's frontmatter
 │   │   │   │   ├── taskBodyText.ts    # A task's notes text (the body under the frontmatter)
-│   │   │   │   ├── quickAddParser.ts  # Natural-language quick add
-│   │   │   │   └── recurrence.ts, dateMath.ts, dateOrder.ts, dueDateFormat.ts, taskListModel.ts, taskMove.ts
+│   │   │   │   ├── quickAddParser.ts  # Natural-language quick add: weekday names only, a fraction mid-title stays text, a time after the date, repeats ("every friday")
+│   │   │   │   ├── taskListModel.ts   # Filter / sort / group; statusBucket: the one status rule Group by Status and Filter by Status share
+│   │   │   │   ├── dueDateFormat.ts   # The time chip and the overdue check (a day is `utils/dateFormat.ts`)
+│   │   │   │   └── recurrence.ts, dateMath.ts, dateOrder.ts, taskMove.ts
 │   │   │   ├── mindmap/               # Mind-map keyboard + selection
 │   │   │   │   ├── mindMapContextMenus.ts # Tile / frame / canvas menus ("N tiles selected" group)
 │   │   │   │   ├── mindMapKeyboard.ts # Arrow-key neighbour tile, and when the canvas leaves keys alone (a dialog, a menu, a focused control, the vault sidebar)
@@ -612,7 +619,7 @@ filo/
 │   │   │       ├── keyedReactivity.svelte.ts # KeyedVersions: a reader tracks one key, so adding an entry doesn't re-run every other key's readers
 │   │   │       ├── progressiveCount.svelte.ts # Renders a long list's first rows at once, the rest in idle time (a large sidebar folder)
 │   │   │       ├── forEachLimited.ts  # Runs async work over a list, a few at a time (the tag sweep's reads and writes)
-│   │   │       ├── dateFormat.ts      # localIsoDate: the one `YYYY-MM-DD` formatter (local calendar date, never UTC)
+│   │   │       ├── dateFormat.ts      # Calendar days: localIsoDate (the one writer, local, never UTC), parseLocalIsoDate (the one parser; Feb 30 is no day), formatDay / formatDayLong (how every chip, menu and message shows a day, in the OS regional format)
 │   │   │       ├── lineEnding.ts      # fileLineEnding (majority) / frontmatterLineEnding: note writer + tag rewriter
 │   │   │       ├── color.ts           # Colour manipulation helpers
 │   │   │       ├── cloneTile.ts
@@ -694,7 +701,8 @@ filo/
 │   │       │   ├── TaskListRow.svelte # Wraps TaskItem for a row (dnd key, depth, section context)
 │   │       │   ├── taskListRowProps.ts # Prop bundles for TaskListRow / TaskListSection
 │   │       │   ├── TaskItem.svelte
-│   │       │   ├── TaskDatePicker.svelte # Floating date (and optional time) picker
+│   │       │   ├── TaskDatePicker.svelte # The date (and optional time) picker for tasks and Kanban cards: keyboard grid, focus in and back, the locale's week; the time saves once
+│   │       │   ├── RepeatPopup.svelte # The Repeat menu's "Every…": every N days, weeks, months or years
 │   │       │   ├── TaskBulkActionBar.svelte # Bulk verbs for the selected tasks
 │   │       │   ├── TaskListToc.svelte # Table of Contents body: section jump links, active header highlight
 │   │       │   ├── FloatingTocPanel.svelte # The Task List's draggable, resizable Table of Contents panel
@@ -803,7 +811,7 @@ filo/
 
 ### Structure Rules
 
-1. **One concern per file.** Aim for new files under ~300 lines, and split a file when a second concern moves in (many existing files are longer; size alone isn't a reason to split one). The hard limit is the gate's 1000 lines of code (blank and comment-only lines don't count, so a comment explaining a hazard never forces a split). The files over it (TaskListBoard, TaskItem, KanbanBoard, KanbanSideToolbar) are allowlisted at their current size and may only shrink; new code should not exceed the threshold.
+1. **One concern per file.** Aim for new files under ~300 lines, and split a file when a second concern moves in (many existing files are longer; size alone isn't a reason to split one). The hard limit is the gate's 1000 lines of code (blank and comment-only lines don't count, so a comment explaining a hazard never forces a split). The files over it (TaskListBoard, TaskItem, KanbanSideToolbar) are allowlisted at their current size and may only shrink; new code should not exceed the threshold.
 2. **`lib/` holds non-UI logic.** It may use DOM globals and import from `stores/`, but must NOT contain Svelte component definitions (`.svelte` files) or import from `components/`. Must be testable with Vitest + jsdom alone.
 3. **`components/` is UI only.** Components read from stores and call into `lib/`. Minimal logic in `<script>` blocks.
 4. **`stores/` bridges the two.** Stores import from `lib/` for heavy logic and expose reactive state to components.

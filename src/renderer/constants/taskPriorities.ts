@@ -1,7 +1,7 @@
 /**
- * Shared display metadata for task / Kanban-card priority values. Both
- * TaskItem and KanbanCard render priority pills; importing from here keeps the
- * two boards visually consistent.
+ * Shared display metadata for task / Kanban-card priority values: the one
+ * set of words and colours for a priority, so a chip, a menu, a filter, a
+ * group heading and the quick-add preview all call it the same thing.
  *
  * The colours resolve to theme tokens (`--priority-*`) so themes can re-skin
  * priority pills without touching the components.
@@ -18,9 +18,16 @@ export const PRIORITY_COLOR: Record<Priority, string> = {
 };
 
 export const PRIORITY_LABEL: Record<Priority, string> = {
-  none: '',
+  none: 'No priority',
   low: 'Low',
-  medium: 'Med',
+  medium: 'Medium',
   high: 'High',
-  urgent: '!!!',
+  urgent: 'Urgent',
 };
+
+/** Highest first, as every menu and filter lists them. */
+export const PRIORITIES: readonly Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
+
+/** The priority menus' and pickers' options, highest first. */
+export const PRIORITY_OPTIONS: ReadonlyArray<{ key: Priority; label: string; color: string }> =
+  PRIORITIES.map((key) => ({ key, label: PRIORITY_LABEL[key], color: PRIORITY_COLOR[key] }));

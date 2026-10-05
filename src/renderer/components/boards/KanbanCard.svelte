@@ -37,11 +37,10 @@
   import TagsPopupMenu from '../tags/TagsPopupMenu.svelte';
   import { portal } from '../../lib/utils/portal';
   import { FIELD_READERS, type Priority } from '../../lib/tasks/frontmatterReaders';
-  import { PRIORITY_COLOR, PRIORITY_LABEL } from '../../constants/taskPriorities';
-  import {
-    formatDueDateAbsolute,
-    isOverdue as isOverdueLib,
-  } from '../../lib/tasks/dueDateFormat';
+  import { PRIORITY_COLOR, PRIORITY_LABEL, PRIORITY_OPTIONS } from '../../constants/taskPriorities';
+  import { isOverdue as isOverdueLib } from '../../lib/tasks/dueDateFormat';
+  import { formatDay, formatDayLong } from '../../lib/utils/dateFormat';
+  import TaskDatePicker from './TaskDatePicker.svelte';
   import { clockStore } from '../../stores/clock.svelte';
   import { checklistProgress as countChecklist } from '../../lib/kanban/checklistProgress';
 
@@ -182,42 +181,24 @@
   // The shared chip helpers (as TaskList). `now` is the clock store's day, so a
   // chip turns overdue (and gains its year) at midnight.
   function formatDueDate(iso: string): string {
-    return formatDueDateAbsolute(iso, { now: clockStore.todayDate() });
+    return formatDay(iso, { now: clockStore.todayDate() });
   }
 
-  // ── Due date popover ──
-  let dueDateInput: HTMLInputElement | null = $state(null);
-  let showDuePopover = $state(false);
+  // ── Due date picker ──
+  // The Task List's picker: a day is chosen whole (a native date box saved a
+  // wrong date at the first digit typed), from the keyboard too.
+  let duePickerAnchor = $state<{ x: number; y: number } | null>(null);
 
   function toggleDuePopover(e: MouseEvent) {
     if (isEditableTextTarget(e.target)) return;
     e.stopPropagation();
-    showDuePopover = !showDuePopover;
-    if (showDuePopover) {
-      queueMicrotask(() => dueDateInput?.focus());
-    }
-  }
-
-  function closeDuePopover() {
-    showDuePopover = false;
-  }
-
-  function commitDueDate(value: string) {
-    onSetDueDate(value);
-    showDuePopover = false;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    duePickerAnchor = duePickerAnchor ? null : { x: rect.left, y: rect.bottom + 4 };
   }
 
   // ── Priority popover ──
-  // Colours pull from `--priority-*` CSS vars so themes can override the
-  // palette without component edits. The literal-string defaults that used
-  // to live here drifted from theme-by-theme to "always look like dark-mode".
-  const PRIORITY_OPTIONS: Array<{ key: Priority; label: string; color: string }> = [
-    { key: 'urgent', label: 'Urgent', color: 'var(--priority-urgent)' },
-    { key: 'high', label: 'High', color: 'var(--priority-high)' },
-    { key: 'medium', label: 'Medium', color: 'var(--priority-medium)' },
-    { key: 'low', label: 'Low', color: 'var(--priority-low)' },
-    { key: 'none', label: 'No priority', color: 'var(--text-tertiary)' },
-  ];
+  // The options' words and `--priority-*` colours are the shared ones
+  // (`constants/taskPriorities.ts`), so the menu says what the chips say.
 
   function openPriorityMenu(e: MouseEvent) {
     if (isEditableTextTarget(e.target)) return;
@@ -379,7 +360,7 @@
             class:overdue={isOverdue()}
             onclick={toggleDuePopover}
             title="Change due date"
-            aria-label="Change due date"
+            aria-label={`Due ${formatDayLong(dueDate)}: change due date`}
           >
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -405,25 +386,15 @@
           </button>
         {/if}
 
-        {#if showDuePopover}
-          <div
-            class="due-popover"
-            role="dialog"
-            tabindex="-1"
-            aria-label="Set due date"
-            onclick={(e) => e.stopPropagation()}
-            onkeydown={(e) => { if (e.key === 'Escape') closeDuePopover(); }}
-          >
-            <input
-              bind:this={dueDateInput}
-              type="date"
-              value={dueDate}
-              onchange={(e) => commitDueDate((e.currentTarget as HTMLInputElement).value)}
-            />
-            {#if dueDate}
-              <button class="due-clear" onclick={() => commitDueDate('')}>Clear</button>
-            {/if}
-          </div>
+        {#if duePickerAnchor}
+          <TaskDatePicker
+            value={dueDate}
+            anchor={duePickerAnchor}
+            label="Due date"
+            onPick={(iso) => onSetDueDate(iso)}
+            onClear={() => onSetDueDate('')}
+            onClose={() => { duePickerAnchor = null; }}
+          />
         {/if}
       </div>
 
@@ -436,7 +407,7 @@
         <button
           class="card-priority"
           onclick={openPriorityMenu}
-          title="Priority: {priority}"
+          title="Priority: {PRIORITY_LABEL[priority]}"
           style:color={PRIORITY_COLOR[priority]}
         >
           {PRIORITY_LABEL[priority]}
@@ -477,10 +448,6 @@
     </div>
   {/if}
 </div>
-
-<svelte:window
-  onclick={() => { if (showDuePopover) showDuePopover = false; }}
-/>
 
 <style>
   .kanban-card-shell {
@@ -722,44 +689,4 @@
     opacity: 1;
   }
 
-  .due-popover {
-    position: absolute;
-    top: 100%;
-    right: 0;
-    margin-top: 4px;
-    background: var(--menu-bg);
-    border: 1px solid var(--menu-border);
-    border-radius: 6px;
-    box-shadow: var(--ui-shadow-lg);
-    padding: 8px;
-    z-index: 20;
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    min-width: 160px;
-  }
-
-  .due-popover input[type='date'] {
-    flex: 1;
-    padding: 4px 6px;
-    border-radius: 4px;
-    border: 1px solid var(--ui-border);
-    background: var(--ui-surface);
-    color: var(--text-primary);
-    font-size: 12px;
-  }
-
-  .due-clear {
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: 1px solid var(--ui-border);
-    background: var(--ui-surface);
-    color: var(--accent-danger);
-    font-size: 11px;
-    cursor: pointer;
-  }
-
-  .due-clear:hover {
-    background: var(--menu-danger-bg);
-  }
 </style>

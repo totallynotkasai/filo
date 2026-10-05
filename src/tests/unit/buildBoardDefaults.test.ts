@@ -40,7 +40,8 @@ describe('buildBoardSettingsFromGlobal', () => {
     const mm = buildBoardSettingsFromGlobal('mindmap', makeGlobals());
     expect(mm).toMatchObject({ semanticZoom: true, snapToGrid: false, connectionsVisible: true, labelsVisible: true });
     const tl = buildBoardSettingsFromGlobal('tasklist', makeGlobals());
-    expect(tl).toMatchObject({ groupBy: 'status', sortBy: 'priority' });
+    // Ungrouped: Group By groups inside each section, and a new list starts plain.
+    expect(tl).toMatchObject({ groupBy: 'none', sortBy: 'priority' });
   });
 
   it('gives a new Task List no title size of its own, so the General size reaches it', () => {

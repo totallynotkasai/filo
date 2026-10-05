@@ -11,8 +11,9 @@
  * `SectionView`-keyed view) used by the extracted <TaskListSection>.
  */
 import type { TaskRow } from '../../lib/tasks/taskListModel';
+import type { RecurrenceMode } from '../../lib/tasks/recurrence';
 import type { SetBodyStatus } from '../../stores/notes.svelte';
-import type { SectionView } from '../../lib/tasklist/taskListViewModel.svelte';
+import type { FlatRowEntry, SectionView } from '../../lib/tasklist/taskListViewModel.svelte';
 import type { DndEvent } from 'svelte-dnd-action';
 import type {
   TaskListSection,
@@ -65,6 +66,7 @@ export interface TaskListRowControllers {
     setDueTime: (row: TaskRow, hhmm: string) => void;
     setStartDate: (row: TaskRow, iso: string) => void;
     setRecurrence: (row: TaskRow, rule: string) => void;
+    setRecurrenceMode: (row: TaskRow, mode: RecurrenceMode) => void;
     setNotesBody: (row: TaskRow, body: string) => Promise<SetBodyStatus>;
   };
 }
@@ -100,16 +102,6 @@ export interface TaskListRowBoardCtx {
 // Section-level prop bundles
 // ---------------------------------------------------------------------------
 
-/**
- * O(1) lookup from `tileId` → row + depth. Built by the host in a
- * `$derived` over `flatSections`; passed through to the section so its
- * inner dndzone `{#each rowItems}` can resolve each item without re-walking
- * the row tree.
- */
-export interface FlatRowEntry {
-  row: TaskRow;
-  depth: number;
-}
 
 /**
  * Drag-controller surface the section needs. Wider than the row's
@@ -178,4 +170,4 @@ export interface TaskListSectionCallbacks {
   ) => Promise<void> | void;
 }
 
-export type { SectionView };
+export type { FlatRowEntry, SectionView };

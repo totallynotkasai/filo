@@ -44,6 +44,7 @@
   let {
     row,
     depth,
+    group,
     sectionId,
     collapsedSubtasks,
     accentColor = ACCENT_COLOR,
@@ -55,6 +56,8 @@
   }: {
     row: TaskRow;
     depth: number;
+    /** On the first row of a group (with a Group By): the heading above it. */
+    group?: { label: string; count: number };
     sectionId: string;
     collapsedSubtasks: Set<string>;
     accentColor?: string;
@@ -117,6 +120,12 @@
   class="tasklist-row-wrap"
   data-task-id={row.tile.id}
 >
+  {#if group}
+    <!-- Inside the row's own element: each dndzone item stays one row. -->
+    <div class="task-group-heading" role="heading" aria-level="4">
+      <span>{group.label}</span><span class="task-group-count">{group.count}</span>
+    </div>
+  {/if}
   <TaskItem
     tile={row.tile}
     completed={row.completed}
@@ -126,6 +135,7 @@
     dueTime={row.dueTime}
     startDate={row.startDate}
     recurrence={row.recurrence}
+    recurrenceMode={row.recurrenceMode}
     selected={isSelected}
     selectionSize={controllers.multiSelect.selectedTaskIds.size}
     {accentColor}
@@ -142,6 +152,7 @@
     onSetDueTime={(t: string) => controllers.writers.setDueTime(row, t)}
     onSetStartDate={(d: string) => controllers.writers.setStartDate(row, d)}
     onSetRecurrence={(r: string) => controllers.writers.setRecurrence(row, r)}
+    onSetRecurrenceMode={(m) => controllers.writers.setRecurrenceMode(row, m)}
     onSetNotes={(b: string) => controllers.writers.setNotesBody(row, b)}
     onRename={(t: string) => callbacks.onRenameTask(row, t)}
     onDelete={(anchor?: { x: number; y: number }) => callbacks.onDeleteTask(row.tile.id, anchor)}
@@ -183,5 +194,26 @@
   .tasklist-row-wrap {
     position: relative;
     border-radius: 4px;
+  }
+
+  .task-group-heading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 4px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+
+  .tasklist-row-wrap:not(:first-child) .task-group-heading {
+    margin-top: 6px;
+  }
+
+  .task-group-count {
+    font-weight: 500;
+    color: var(--text-tertiary);
   }
 </style>

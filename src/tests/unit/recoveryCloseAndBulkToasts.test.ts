@@ -202,7 +202,7 @@ describe('Audit-18 4.6 — Task List bulk ops gate the success toast on the chai
     return new MultiSelectController({
       getBoard: () => ({ id: 'b' } as unknown as TaskListBoard),
       getRows: () => rows,
-      getFilteredRows: () => rows,
+      getRenderedRows: () => rows,
       getPlacements: () => [],
       getSections: () => [],
       buildTaskFieldCommand: () => new NoopCommand() as never,

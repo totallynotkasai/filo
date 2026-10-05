@@ -135,7 +135,7 @@ function bulkDelete(ids: string[]): Command {
   const ctrl = new MultiSelectController({
     getBoard: () => board(),
     getRows: () => rows(),
-    getFilteredRows: () => rows(),
+    getRenderedRows: () => rows(),
     getPlacements: () => (board().tasks ?? []) as TaskPlacement[],
     getSections: () => (board().sections ?? []) as TaskListSection[],
     buildTaskFieldCommand: () => null,

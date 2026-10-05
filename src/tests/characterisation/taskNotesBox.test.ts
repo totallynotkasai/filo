@@ -3,10 +3,11 @@
  * and only onto the body it was opened on.
  *
  * Opening the box and leaving it without typing writes nothing, even after the
- * note changed elsewhere. Typing after such a change asks (Keep mine backs the
- * other version up first) instead of writing the stale draft over it. A body
- * that opens with a rule block keeps it. A note that isn't UTF-8 gets a
- * read-only box.
+ * note changed elsewhere. Until the user types, an open box shows the note as
+ * it is now, so typing after a change elsewhere writes onto that change. A
+ * change elsewhere after the user typed asks (Keep mine backs the other
+ * version up first) instead of writing the draft over it. A body that opens
+ * with a rule block keeps it. A note that isn't UTF-8 gets a read-only box.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, waitFor, quiesce, recoveryCopies, closeVault } from './harness/app';
@@ -65,16 +66,31 @@ describe('task notes box', () => {
     expect(app.read(rel)).toBe(theirs);
   });
 
-  it('typing after a change elsewhere asks first; Keep mine backs the other version up', async () => {
+  it('an open box shows a change made elsewhere until the user types, and typing then writes onto it', async () => {
     const { app, rel } = await taskWithBody('First version\n');
     const row = rowOf(app, 'Water plants');
     await openTaskNotes(row);
 
     const theirs = app.read(rel).replace('First version', 'Edited elsewhere');
     app.writeExternally(rel, theirs);
+    await waitFor(() => taskNotesText(row) === 'Edited elsewhere\n', 'the box showing the change');
+
+    await typeTaskNotes(row, 'Edited elsewhere, and mine\n');
+    await leaveTaskNotes(row);
+    await waitFor(() => app.read(rel).includes('Edited elsewhere, and mine'), 'the notes on disk');
+    expect(toastTexts().some((t) => t.includes('while its task notes were open'))).toBe(false);
+  });
+
+  it('a change elsewhere after typing asks first; Keep mine backs the other version up', async () => {
+    const { app, rel } = await taskWithBody('First version\n');
+    const row = rowOf(app, 'Water plants');
+    await openTaskNotes(row);
+    await typeTaskNotes(row, 'My notes');
+
+    const theirs = app.read(rel).replace('First version', 'Edited elsewhere');
+    app.writeExternally(rel, theirs);
     await quiesce(1200);
 
-    await typeTaskNotes(row, 'My notes');
     await leaveTaskNotes(row);
     await waitFor(() => toastTexts().some((t) => t.includes('while its task notes were open')), 'the notes conflict prompt');
     expect(app.read(rel)).toBe(theirs);
@@ -133,12 +149,12 @@ describe('task notes box', () => {
     const { app, rel } = await taskWithBody('First version\n');
     const row = rowOf(app, 'Water plants');
     await openTaskNotes(row);
+    await typeTaskNotes(row, 'My unsaved notes');
 
     const theirs = app.read(rel).replace('First version', 'Edited elsewhere');
     app.writeExternally(rel, theirs);
     await quiesce(1200);
 
-    await typeTaskNotes(row, 'My unsaved notes');
     await leaveTaskNotes(row);
     await waitFor(() => toastTexts().some((t) => t.includes('while its task notes were open')), 'the notes conflict prompt');
 

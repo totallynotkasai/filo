@@ -1,22 +1,30 @@
 /**
  * quickAddParser — parses a single-line task input into a title plus
- * structured metadata (date, time, priority, tags, status).
+ * structured metadata (date, time, repeat, priority, tags, status).
  *
  * Pure: deterministic when given a fixed `now`. No DOM, no I/O, no Date.now().
  *
  * Supported tokens (anywhere in the input, separated by whitespace):
  *
  *   tomorrow, today                        → dueDate
- *   next mon | next tue | next wed | ...   → dueDate (next occurrence)
+ *   next mon | next monday | next tues …   → dueDate (next occurrence); only a
+ *                                            weekday's name or its usual
+ *                                            abbreviation ("next month" is text)
  *   in 3d | in 2w | in 1m                  → dueDate (relative offset)
  *   2026-05-20                             → dueDate (ISO)
  *   5/12                                   → dueDate (M/D, or D/M with `dayFirst`;
- *                                            current or next year)
+ *                                            current or next year), only as the
+ *                                            title's last word: "act 2/3 of the
+ *                                            book" keeps its fraction
+ *   <date> 5pm | <date> at 17:30           → dueTime, after a due date
+ *   every friday | every 2 weeks | every   → recurrence (and, without a date,
+ *     other day | every weekday …            the first due date)
  *   ^<date>                                → startDate (defer until)
  *   @5pm | @17:30 | @9:00am                → dueTime (24h HH:MM)
  *   !low | !med | !medium | !high | !urgent → priority
  *   !!                                     → priority: urgent (shorthand)
- *   #tag-name, #area/sub-tag (any number)  → tags
+ *   #tag-name, #area/sub-tag (any number)  → tags; a tag needs a letter, so
+ *                                            "Chapter #3" keeps its number
  *   =status-name                           → status
  *
  * Tokens are removed from the title. Whitespace is normalised. The first
@@ -29,7 +37,8 @@
  */
 
 import { addMonthsClamped } from './dateMath';
-import { localIsoDate } from '../utils/dateFormat';
+import { everyRule } from './recurrence';
+import { localDate, localIsoDate, parseLocalIsoDate } from '../utils/dateFormat';
 
 export type QuickAddPriority = 'low' | 'medium' | 'high' | 'urgent';
 
@@ -38,31 +47,29 @@ export interface QuickAddParsed {
   dueDate?: string;
   dueTime?: string;
   startDate?: string;
+  /** A rule `recurrence.ts` reads (`weekly`, `every 2 weeks` …). */
+  recurrence?: string;
   priority?: QuickAddPriority;
   tags: string[];
   status?: string;
 }
 
-const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-
 /**
- * Validates a (year, month, day) triple and returns the constructed local
- * midnight Date, or `null` when the triple is out of range or silently rolls
- * over (e.g. Feb 30 → Mar 2). Mirrors `recurrence.ts parseIsoDate` so quick-add
- * and the recurrence engine agree on what counts as a real calendar date —
- * without this round-trip check an impossible date is written verbatim to
- * frontmatter and then displayed/treated as a *different* day.
+ * Each weekday's name and the abbreviations people write for it. Anything
+ * else that merely starts like one ("month", "wedding", "friend", "sunrise")
+ * is an ordinary word.
  */
-function validDateOrNull(y: number, mo: number, d: number): Date | null {
-  if (!Number.isInteger(y) || !Number.isInteger(mo) || !Number.isInteger(d)) return null;
-  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  const out = new Date(y, mo - 1, d);
-  out.setHours(0, 0, 0, 0);
-  if (out.getFullYear() !== y || out.getMonth() !== mo - 1 || out.getDate() !== d) {
-    return null;
-  }
-  return out;
-}
+const WEEKDAY_WORDS: Record<string, number> = {
+  sun: 0, sunday: 0,
+  mon: 1, monday: 1,
+  tue: 2, tues: 2, tuesday: 2,
+  wed: 3, weds: 3, wednesday: 3,
+  thu: 4, thur: 4, thurs: 4, thursday: 4,
+  fri: 5, friday: 5,
+  sat: 6, saturday: 6,
+};
+/** The weekday words as a regex alternation, longest first. */
+const WEEKDAY_ALT = Object.keys(WEEKDAY_WORDS).sort((a, b) => b.length - a.length).join('|');
 
 /** `localIsoDate` that yields `undefined` for an Invalid Date so an overflowed
  *  offset can't write the literal string "NaN-NaN-NaN" as a due date. */
@@ -76,21 +83,29 @@ function startOfDay(d: Date): Date {
   return out;
 }
 
+function addDays(d: Date, days: number): Date {
+  const out = new Date(d);
+  out.setDate(d.getDate() + days);
+  return out;
+}
+
 function nextWeekday(today: Date, dayIdx: number): Date {
-  const out = new Date(today);
   // DECISION — "next <weekday>" uniformly means the SOONEST occurrence of
   // that weekday STRICTLY AFTER today — one rule, applied to every weekday. So
   // from a Friday, "next mon" is +3 and "next fri" is +7 (today is excluded, so
   // the same weekday lands a week out). The `|| 7` encodes only that exclusion;
   // it is not a special case for the same weekday. Matches common task apps and
   // is pinned by the quickAddParser tests.
-  const diff = (dayIdx - today.getDay() + 7) % 7 || 7;
-  out.setDate(today.getDate() + diff);
-  return out;
+  return addDays(today, (dayIdx - today.getDay() + 7) % 7 || 7);
+}
+
+/** The first day on or after `today` that is weekday `dayIdx` (a repeat's first due day). */
+function weekdayOnOrAfter(today: Date, dayIdx: number): Date {
+  return addDays(today, (dayIdx - today.getDay() + 7) % 7);
 }
 
 function parseClockTime(s: string): string | null {
-  const m = /^(\d{1,2})(?::(\d{2}))?(am|pm)?$/i.exec(s);
+  const m = /^(\d{1,2})(?::(\d{2}))?\s?(am|pm)?$/i.exec(s);
   if (!m) return null;
   let h = parseInt(m[1] ?? '', 10);
   const min = m[2] ? parseInt(m[2], 10) : 0;
@@ -114,6 +129,43 @@ function normalizePriority(word: string): QuickAddPriority {
   return 'medium';
 }
 
+/**
+ * A clock time right after a due date ("tomorrow 5pm", "fri at 9:30am",
+ * "6/1 17:30"). A bare number isn't one: it needs am/pm or a colon.
+ */
+const TIME_AFTER_DATE = /^\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s?(?:am|pm)|\d{1,2}:\d{2})(?=\s)/i;
+
+/** A repeat: "every <weekday>", "every [N|other] <unit>", "every weekday". */
+const REPEAT = new RegExp(
+  `\\severy\\s+(?:(other)\\s+|(\\d{1,3})\\s+)?(weekdays?|days?|weeks?|months?|years?|${WEEKDAY_ALT})(?=\\s)`,
+  'i',
+);
+
+interface RepeatToken {
+  recurrence: string;
+  /** The first due day when the input names no date. */
+  firstDue: Date;
+}
+
+function readRepeat(m: RegExpExecArray, today: Date): RepeatToken | null {
+  const other = !!m[1];
+  const count = other ? 2 : m[2] ? parseInt(m[2], 10) : 1;
+  if (!Number.isInteger(count) || count < 1) return null;
+  const word = (m[3] ?? '').toLowerCase();
+  const weekdayIdx = WEEKDAY_WORDS[word];
+  if (weekdayIdx !== undefined) {
+    if (m[2]) return null; // "every 2 fridays" isn't a rule Filo keeps
+    return { recurrence: everyRule(count, 'w'), firstDue: weekdayOnOrAfter(today, weekdayIdx) };
+  }
+  if (word.startsWith('weekday')) {
+    if (other || m[2]) return null;
+    const day = today.getDay();
+    return { recurrence: 'weekday', firstDue: day === 0 ? addDays(today, 1) : day === 6 ? addDays(today, 2) : today };
+  }
+  const unit = word[0] as 'd' | 'w' | 'm' | 'y';
+  return { recurrence: everyRule(count, unit), firstDue: today };
+}
+
 export function parseQuickAdd(
   input: string,
   options: { now?: Date; dayFirst?: boolean } = {},
@@ -126,13 +178,15 @@ export function parseQuickAdd(
   let dueDate: string | undefined;
   let dueTime: string | undefined;
   let startDate: string | undefined;
+  let recurrence: string | undefined;
   let priority: QuickAddPriority | undefined;
   let status: string | undefined;
 
   // Tags (multiple, global). Any letters or digits, in any script, plus `_`
-  // and `-`; `/` nests (`#work/filo`). A spaced tag can't be typed as one
-  // word, so it goes through the tag row instead.
-  working = working.replace(/\s#([\p{L}\p{M}\p{N}_-]+(?:\/[\p{L}\p{M}\p{N}_-]+)*)(?=\s)/gu, (_full, tag: string) => {
+  // and `-`; `/` nests (`#work/filo`). A tag needs at least one letter, so
+  // "Chapter #3" and "Issue #123" keep their numbers. A spaced tag can't be
+  // typed as one word, so it goes through the tag row instead.
+  working = working.replace(/\s#((?=[\p{L}\p{M}\p{N}_/-]*\p{L})[\p{L}\p{M}\p{N}_-]+(?:\/[\p{L}\p{M}\p{N}_-]+)*)(?=\s)/gu, (_full, tag: string) => {
     tags.push(tag);
     return ' ';
   });
@@ -173,34 +227,41 @@ export function parseQuickAdd(
     return ' ';
   });
 
+  // Repeat. The first one wins and leaves the title; a later one stays.
+  let repeatFirstDue: Date | undefined;
+  const repeatMatch = REPEAT.exec(working);
+  if (repeatMatch) {
+    const repeat = readRepeat(repeatMatch, today);
+    if (repeat?.recurrence) {
+      recurrence = repeat.recurrence;
+      repeatFirstDue = repeat.firstDue;
+      working = working.slice(0, repeatMatch.index) + ' ' + working.slice(repeatMatch.index + repeatMatch[0].length);
+    }
+  }
+
   // Date — leftmost token wins so the user's typing order is respected.
   // Each pattern returns the YYYY-MM-DD it would set, or undefined if the
   // match was malformed (kept in title). The leading-whitespace anchor lets
   // an optional `^` prefix (start-date marker) precede the token.
   const datePatterns: Array<{
     re: RegExp;
-    handler: (m: RegExpExecArray) => string | undefined;
+    handler: (m: RegExpExecArray, end: number) => string | undefined;
   }> = [
     {
+      // Reject an impossible ISO date (2026-02-30, 2026-13-01) so it stays in
+      // the title instead of persisting verbatim and rendering as a
+      // rolled-over day.
       re: /\s\^?(\d{4}-\d{2}-\d{2})(?=\s)/,
-      handler: (m) => {
-        const iso = m[1] ?? '';
-        const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-        if (!parts) return undefined;
-        // Reject an impossible ISO date (2026-02-30, 2026-13-01) so it
-        // stays in the title instead of persisting verbatim and rendering as a
-        // rolled-over day.
-        const valid = validDateOrNull(
-          parseInt(parts[1] ?? '', 10),
-          parseInt(parts[2] ?? '', 10),
-          parseInt(parts[3] ?? '', 10),
-        );
-        return valid ? iso : undefined;
-      },
+      handler: (m) => (parseLocalIsoDate(m[1] ?? '') ? m[1] : undefined),
     },
     {
       re: /\s\^?(\d{1,2})\/(\d{1,2})(?=\s)/,
-      handler: (m) => {
+      handler: (m, end) => {
+        // A fraction with a title word after it ("act 2/3 of the book") is
+        // part of the title; a date goes last (its time may follow it).
+        const rest = working.slice(end);
+        const time = TIME_AFTER_DATE.exec(rest);
+        if ((time ? rest.slice(time[0].length) : rest).trim() !== '') return undefined;
         const a = parseInt(m[1] ?? '', 10);
         const b = parseInt(m[2] ?? '', 10);
         const [month, day] = options.dayFirst ? [b, a] : [a, b];
@@ -208,12 +269,12 @@ export function parseQuickAdd(
         // round-trip check, `2/30` constructs Mar 2 (rolled over), which is
         // then < today so the +1-year branch silently shoves it to Mar 2 of
         // NEXT year. Reject the impossible date so the token stays in the title.
-        const candidate = validDateOrNull(today.getFullYear(), month, day);
+        const candidate = localDate(today.getFullYear(), month, day);
         if (!candidate) return undefined;
         if (candidate < today) {
           // The same M/D one year out can be invalid (Feb 29 this leap year,
           // not next) — re-validate rather than letting Date roll it to Mar 1.
-          const rolled = validDateOrNull(today.getFullYear() + 1, month, day);
+          const rolled = localDate(today.getFullYear() + 1, month, day);
           return rolled ? localIsoDate(rolled) : undefined;
         }
         return localIsoDate(candidate);
@@ -225,18 +286,13 @@ export function parseQuickAdd(
     },
     {
       re: /\s\^?tomorrow(?=\s)/i,
-      handler: () => {
-        const t = new Date(today);
-        t.setDate(t.getDate() + 1);
-        return localIsoDate(t);
-      },
+      handler: () => localIsoDate(addDays(today, 1)),
     },
     {
-      re: /\s\^?next\s+(sun|mon|tue|wed|thu|fri|sat)[a-z]*(?=\s)/i,
+      re: new RegExp(`\\s\\^?next\\s+(${WEEKDAY_ALT})(?=\\s)`, 'i'),
       handler: (m) => {
-        const idx = WEEKDAYS.indexOf((m[1] ?? '').toLowerCase());
-        if (idx < 0) return undefined;
-        return localIsoDate(nextWeekday(today, idx));
+        const idx = WEEKDAY_WORDS[(m[1] ?? '').toLowerCase()];
+        return idx === undefined ? undefined : localIsoDate(nextWeekday(today, idx));
       },
     },
     {
@@ -248,13 +304,11 @@ export function parseQuickAdd(
         // writes to frontmatter. ~10 years is well past any quick-add horizon.
         if (!Number.isFinite(count) || count > 3650) return undefined;
         const u = (m[2] ?? '').toLowerCase()[0];
-        const t = new Date(today);
-        if (u === 'd') t.setDate(t.getDate() + count);
-        else if (u === 'w') t.setDate(t.getDate() + count * 7);
+        if (u === 'd') return fmtDateOrNull(addDays(today, count));
+        if (u === 'w') return fmtDateOrNull(addDays(today, count * 7));
         // Clamp month-end (Jan 31 + 1m → Feb 28) via the shared
         // helper instead of raw setMonth, which overflows to Mar 3.
-        else if (u === 'm') return fmtDateOrNull(addMonthsClamped(today, count));
-        return fmtDateOrNull(t);
+        return fmtDateOrNull(addMonthsClamped(today, count));
       },
     },
   ];
@@ -274,7 +328,7 @@ export function parseQuickAdd(
     const globalRe = new RegExp(re.source, re.flags + (re.flags.includes('g') ? '' : 'g'));
     let m: RegExpExecArray | null;
     while ((m = globalRe.exec(working)) !== null) {
-      const date = handler(m);
+      const date = handler(m, m.index + m[0].length);
       if (!date) continue;
       // The leading space is part of the match; check the next char for `^`.
       const isStart = working.charAt(m.index + 1) === '^';
@@ -286,17 +340,25 @@ export function parseQuickAdd(
   matches.sort((a, b) => a.index - b.index);
 
   // First leftmost due token wins; first leftmost start token wins. Strip
-  // both spans from the working string so the title doesn't keep `^`.
+  // both spans from the working string so the title doesn't keep `^`. A
+  // clock time right after the due date is its time, unless an @time set one.
   const stripped = new Set<number>();
   for (const m of matches) {
+    let length = m.length;
     if (m.isStart) {
       if (startDate) continue;
       startDate = m.date;
     } else {
       if (dueDate) continue;
       dueDate = m.date;
+      const time = TIME_AFTER_DATE.exec(working.slice(m.index + m.length));
+      const clock = time ? parseClockTime(time[1] ?? '') : null;
+      if (time && clock) {
+        dueTime ??= clock;
+        length += time[0].length;
+      }
     }
-    for (let i = m.index; i < m.index + m.length; i++) stripped.add(i);
+    for (let i = m.index; i < m.index + length; i++) stripped.add(i);
   }
   if (stripped.size > 0) {
     let cleaned = '';
@@ -305,10 +367,13 @@ export function parseQuickAdd(
     }
     working = cleaned;
   }
+  if (recurrence && !dueDate && repeatFirstDue) dueDate = localIsoDate(repeatFirstDue);
 
   const title = working.replace(/\s+/g, ' ').trim();
   // Dedupe tags while preserving first-occurrence order.
   const dedupedTags = Array.from(new Set(tags));
 
-  return { title, dueDate, dueTime, startDate, priority, tags: dedupedTags, status };
+  const out: QuickAddParsed = { title, dueDate, dueTime, startDate, priority, tags: dedupedTags, status };
+  if (recurrence) out.recurrence = recurrence;
+  return out;
 }

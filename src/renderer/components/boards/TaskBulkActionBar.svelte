@@ -8,7 +8,8 @@
 
   import { localIsoDateInDays } from '../../lib/utils/dateFormat';
 
-  type Priority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
+  import type { Priority } from '../../lib/tasks/frontmatterReaders';
+  import { PRIORITY_OPTIONS } from '../../constants/taskPriorities';
 
   let {
     count,
@@ -48,13 +49,6 @@
     sectionMenuOpen = false;
   }
 
-  const PRIORITIES: Array<{ id: Priority; label: string; color: string }> = [
-    { id: 'urgent', label: 'Urgent', color: 'var(--priority-urgent)' },
-    { id: 'high', label: 'High', color: 'var(--priority-high)' },
-    { id: 'medium', label: 'Medium', color: 'var(--priority-medium)' },
-    { id: 'low', label: 'Low', color: 'var(--priority-low)' },
-    { id: 'none', label: 'None', color: 'var(--text-tertiary)' },
-  ];
 </script>
 
 <div class="bulk-bar" role="toolbar" aria-label="Bulk task actions">
@@ -73,10 +67,10 @@
     </button>
     {#if priorityMenuOpen}
       <div class="bar-menu" role="menu">
-        {#each PRIORITIES as p (p.id)}
+        {#each PRIORITY_OPTIONS as p (p.key)}
           <button
             class="bar-menu-item"
-            onclick={() => { priorityMenuOpen = false; onSetPriority(p.id); }}
+            onclick={() => { priorityMenuOpen = false; onSetPriority(p.key); }}
             style:color={p.color}
           >
             {p.label}

@@ -125,6 +125,8 @@
     onDelete,
     onAddTile,
     onDeleteTile,
+    moveTargets = [],
+    onMoveTile,
     onCardPointerDown,
     onConsiderCards,
     onFinalizeCards,
@@ -197,6 +199,9 @@
     onDelete: () => void;
     onAddTile: () => void;
     onDeleteTile: (tileId: string) => void;
+    /** The board's other columns, for a card's "Move to column" items. */
+    moveTargets?: ReadonlyArray<{ id: string; title: string }>;
+    onMoveTile?: (tileId: string, columnId: string) => void;
     /** Pointerdown on a card wrapper — arms `cardDragDisabled = false` if the
      *  target isn't editable / a button (so TipTap text selection still works). */
     onCardPointerDown: (e: PointerEvent, tileId: string, locked: boolean) => void;
@@ -427,6 +432,8 @@
       onOpenAsDocument: tilesById[tileId]?.type === 'text' ? () => onOpenAsDocument(tileId) : undefined,
       onStyle: () => onOpenCardStyle?.(tileId, menuX, menuY),
       onRemove: () => onDeleteTile(tileId),
+      moveTargets,
+      onMoveTo: onMoveTile ? (columnId) => onMoveTile(tileId, columnId) : undefined,
     }), tileId);
   }
 

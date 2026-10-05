@@ -26,7 +26,6 @@
     Tile,
     PartialTaskStyle,
   } from '../../schema/index';
-  import TaskListRow from './TaskListRow.svelte';
   import TaskListSectionComponent from './TaskListSection.svelte';
   import BoardBackground from '../canvas/BoardBackground.svelte';
   import type {
@@ -46,11 +45,7 @@
   import TaskQuickAddInput from './TaskQuickAddInput.svelte';
   import SmartListTabs from './SmartListTabs.svelte';
   import TaskBulkActionBar from './TaskBulkActionBar.svelte';
-  import type {
-    TaskRow,
-    GroupBy,
-    SortBy,
-  } from '../../lib/tasks/taskListModel';
+  import { statusFilterOptions, type TaskRow, type GroupBy, type SortBy } from '../../lib/tasks/taskListModel';
   import {
     TaskListFiltersAndViews,
     type LastViewSlice,
@@ -100,6 +95,7 @@
   // `dndSectionsTrigger` prop so the action re-runs after every reorder.
   import {
     TaskListViewModel,
+    type FlatRowEntry,
     type SectionView,
   } from '../../lib/tasklist/taskListViewModel.svelte';
   import { MultiSelectController } from '../../lib/tasklist/multiSelectController.svelte';
@@ -109,9 +105,8 @@
 
   let board = $derived(boardStore.current as TaskListBoardType | null);
   let placements = $derived<TaskPlacement[]>(((board?.tasks ?? []) as TaskPlacement[]));
-  // User-defined sections. When non-empty, sections become the top-level
-  // structure and the runtime forces `groupBy='none'` in the render path so
-  // the screen never shows two competing hierarchies at once.
+  // User-defined sections, the top-level structure; a Group By groups the
+  // rows inside each section.
   let sections = $derived<TaskListSection[]>(
     (((board as TaskListBoardType & { sections?: TaskListSection[] } | null)?.sections) ?? []) as TaskListSection[],
   );
@@ -122,6 +117,9 @@
   // section via `ensureDefaultSectionMaterialized()` before applying the
   // change, so disk state catches up on first interaction.
   const DEFAULT_SECTION_ID = '__default__';
+  // Keys the drawn leading bucket (rows before the first persisted section);
+  // distinct from the synthetic default above.
+  const LEADING_SECTION_ID = '__leading__';
   let displaySections = $derived<TaskListSection[]>(
     sections.length > 0
       ? sections
@@ -150,13 +148,10 @@
     })(),
   );
   let sortBy = $derived<SortBy>(((settings as { sortBy?: SortBy }).sortBy ?? 'priority'));
-  // Sections view wins when the user has persisted any section OR explicitly
-  // chose `groupBy='none'`; otherwise the grouped view renders.
-  let sectionsActive = $derived(sections.length > 0 || groupBy === 'none');
 
   // Per-row cascade resolver. Walks placement.style (per-element layer) →
   // board.settings.defaults.task (board layer) → settings.tasklist.task
-  // (global layer). Used by `renderRow` and `renderSection` snippets and
+  // (global layer). Used by the `renderSection` snippet and
   // forwarded into <TaskListSection> so the per-section row loop can
   // resolve each row's style against its own placement.style.
   function resolveTaskStyle(
@@ -281,14 +276,9 @@
     getSortBy: () => sortBy,
     getGroupBy: () => groupBy,
     getDefaultSectionId: () => DEFAULT_SECTION_ID,
+    getCollapsedSubtasks: () => collapsedSubtasks,
+    getLeadingSectionId: () => LEADING_SECTION_ID,
   });
-
-  // ── Group collapse state (UI-only, non-persistent) ──
-  const collapsedGroups = new SvelteSet<string>();
-  function toggleGroupCollapsed(key: string) {
-    if (collapsedGroups.has(key)) collapsedGroups.delete(key);
-    else collapsedGroups.add(key);
-  }
 
   // ── Section CRUD ──
   //
@@ -561,7 +551,7 @@
   const multiSelect = new MultiSelectController({
     getBoard: () => board,
     getRows: () => viewModel.rows,
-    getFilteredRows: () => viewModel.filteredRows,
+    getRenderedRows: () => viewModel.renderedRows,
     getPlacements: () => placements,
     getSections: () => sections,
     buildTaskFieldCommand: (r, p, d) => buildTaskFieldCommand(r, p, d),
@@ -611,7 +601,7 @@
   $effect(() => {
     const id = board?.id;
     untrack(() => {
-      if (id) { lastTargetedSectionId = null; collapsedGroups.clear(); } // group-collapse is per-board
+      if (id) lastTargetedSectionId = null;
     });
     void id;
   });
@@ -648,6 +638,8 @@
     tickAndPersist,
     announce,
     defaultSectionId: DEFAULT_SECTION_ID,
+    expandSection: (id) => sectionOps.expandSection(id),
+    isShown: (id) => viewModel.renderedRows.some((r) => r.tile.id === id),
   });
   const addTask = taskCreator.addTask;
   const addTaskToSection = taskCreator.addTaskToSection;
@@ -710,46 +702,15 @@
   // the dndzone's own FLIP feedback, not this flag.
   let dragOverSectionId = $state<string | null>(null);
 
-  // Sentinel id used by the renderer to key the synthetic *leading* bucket
-  // (rows that live before the first persisted section). Distinct from
-  // `DEFAULT_SECTION_ID` — that one targets the synthetic "Task List"
-  // default when no persisted sections exist.
-  const LEADING_SECTION_ID = '__leading__';
-
-  interface FlatRowEntry { row: TaskRow; depth: number }
-
   /**
-   * Walk a section's top-level rows and emit a flat list of `{ row, depth }`
-   * entries in render order — top-level row first, then its visible kids
-   * (recursively). The dndzone needs the items as flat siblings so each
-   * `.tasklist-row-wrap` maps 1:1 to one entry in the `items` array.
+   * O(1) row + depth lookup for the dndzone's `{#each items}` body. The
+   * view model draws each section's rows flat (`flatSections`: a row, then
+   * its shown subtasks), so each `.tasklist-row-wrap` maps 1:1 to one entry
+   * in the zone's `items`.
    */
-  function flattenSectionRows(topRows: TaskRow[]): FlatRowEntry[] {
-    const out: FlatRowEntry[] = [];
-    const walk = (row: TaskRow, depth: number) => {
-      out.push({ row, depth });
-      if (collapsedSubtasks.has(row.tile.id)) return;
-      const kids = viewModel.childrenByParent.get(row.tile.id) ?? [];
-      for (const kid of kids) walk(kid, depth + 1);
-    };
-    for (const row of topRows) walk(row, 0);
-    return out;
-  }
-
-  /** Per-section flattened row list, in section render order. */
-  let flatSections = $derived.by(() => {
-    const out: Array<{ sectionId: string; entries: FlatRowEntry[] }> = [];
-    for (const s of viewModel.sectionedView) {
-      const sid = s.id ?? LEADING_SECTION_ID;
-      out.push({ sectionId: sid, entries: flattenSectionRows(s.rows) });
-    }
-    return out;
-  });
-
-  /** O(1) row + depth lookup for the dndzone's `{#each items}` body. */
   let flatEntryByTileId = $derived.by(() => {
     const map = new SvelteMap<string, FlatRowEntry>();
-    for (const { entries } of flatSections) {
+    for (const { entries } of viewModel.flatSections) {
       for (const e of entries) map.set(e.row.tile.id, e);
     }
     return map;
@@ -759,7 +720,7 @@
   let dragSnapshot = $derived.by<SectionItemsSnapshot>(() => {
     const itemsBySection: Record<string, RowDndItem[]> = {};
     const displaySectionIds: string[] = [];
-    for (const { sectionId, entries } of flatSections) {
+    for (const { sectionId, entries } of viewModel.flatSections) {
       itemsBySection[sectionId] = entries.map((e) => ({ id: e.row.tile.id }));
       displaySectionIds.push(sectionId);
     }
@@ -1081,7 +1042,7 @@
   const keyboardNav = new TaskListKeyboardNav({
     getBoard: () => board,
     getRows: () => viewModel.rows,
-    getFilteredRows: () => viewModel.filteredRows,
+    getRenderedRows: () => viewModel.renderedRows,
     getPlacements: () => placements,
     getSections: () => sections,
     getSortBy: () => sortBy,
@@ -1222,37 +1183,6 @@
   />
 {/snippet}
 
-{#snippet renderRow(row: TaskRow, depth: number, sectionId: string)}
-  <TaskListRow
-    {row}
-    {depth}
-    {sectionId}
-    {collapsedSubtasks}
-    accentColor={accent}
-    {resolveTaskStyle}
-    viewModel={viewModel}
-    controllers={{
-      drag: dragController,
-      multiSelect,
-      writers: frontmatterWriter,
-    }}
-    callbacks={{
-      onRenameTask: renameTask,
-      onDeleteTask: deleteTask,
-      onDeleteWithFile: deleteTaskWithFile,
-      onOpenTask: openTaskAsDocument,
-      onAddSubtask: addSubtaskFor,
-      onToggleLocked: toggleTaskLocked,
-      onMoveToSection: moveTaskToSection,
-      onToggleSubtaskCollapsed: toggleSubtaskCollapsed,
-      onEditTags: (tileId, anchor) => {
-        tagEditorPopup = { tileId, x: anchor.x, y: anchor.y };
-      },
-    }}
-    boardCtx={{ placements, sections }}
-  />
-{/snippet}
-
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
@@ -1299,7 +1229,6 @@
     </div>
 
     <div class="tasklist-groups">
-      {#if sectionsActive}
         <!-- Leading bucket (tasks before the first persisted section) renders
              outside the dndzone — it's not a draggable section, just a
              carryover from legacy boards. -->
@@ -1337,67 +1266,8 @@
           </svg>
           <span>Add section</span>
         </button>
-      {:else}
-        {#each viewModel.groups as group (group.key)}
-          {@const isCollapsed = collapsedGroups.has(group.key)}
-          <div class="tasklist-group">
-            <div class="group-header">
-              <button
-                class="group-collapse-btn"
-                onclick={() => toggleGroupCollapsed(group.key)}
-                aria-label={isCollapsed ? 'Expand group' : 'Collapse group'}
-              >
-                <svg
-                  width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="2" stroke-linecap="round"
-                  style:transform={isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}
-                  style:transition="transform 0.15s ease"
-                 aria-hidden="true">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
-              <h3
-                class="group-title"
-                style={listTitleSize != null ? `font-size: ${listTitleSize}px;` : ''}
-              >{group.label}</h3>
-              <span class="group-count">{group.rows.length}</span>
-            </div>
 
-            {#if !isCollapsed}
-              <div class="group-rows">
-                {#each group.rows as row (row.tile.id)}
-                  {@render renderRow(row, 0, group.key)}
-                {/each}
-                {#if group.rows.length === 0}
-                  <div class="empty-group">No tasks</div>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {/each}
-
-        <button class="add-section-btn" onclick={() => addSection()} title="Add section">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          <span>Add section</span>
-        </button>
-      {/if}
-
-      {#if viewModel.rows.length === 0 && !sectionsActive}
-        <div class="empty-board" role="status">
-          <svg class="empty-icon" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-            <line x1="9" y1="10" x2="15" y2="10"/>
-            <line x1="9" y1="14" x2="15" y2="14"/>
-            <line x1="9" y1="18" x2="13" y2="18"/>
-          </svg>
-          <p class="empty-title">No tasks yet</p>
-          <p class="empty-hint">Start by creating your first task. You can also drag a Markdown file in.</p>
-          <button class="empty-add-btn" onclick={addTask}>Create first task</button>
-        </div>
-      {:else if viewModel.filteredRows.length === 0 && filters.hasActiveFilter}
+      {#if viewModel.filteredRows.length === 0 && filters.hasActiveFilter}
         <!-- Filtered to empty: distinct from "no tasks" so the CTA pair makes
              sense — primary action is to clear filters (recover the view),
              secondary is to add a task anyway. -->
@@ -1452,10 +1322,9 @@
       onAddTask={addTask}
       activeGroupBy={groupBy}
       onGroupByChange={applyGroupBy}
-      groupByDisabled={sectionsActive}
       activeSortBy={sortBy}
       onSortByChange={applySortBy}
-      knownStatuses={['todo', 'in-progress', 'done']}
+      statusOptions={statusFilterOptions(viewModel.rows, filters.activeFilterStatus)}
       activeFilterTags={filters.activeFilterTags}
       onFilterTagsChange={(tags) => filters.applyFilterTags(tags)}
       activeFilterStatus={filters.activeFilterStatus}
@@ -1676,80 +1545,6 @@
     background: var(--ui-surface-hover);
   }
 
-  /* Section card chrome — single-tone surface that mirrors KanbanColumn.
-     Header/body share `--ui-surface`; a bottom-border on `.group-header`
-     does the visual split. Keep this in sync with TaskListSection.svelte's
-     duplicated rules (Svelte CSS scoping doesn't bridge parent/child). */
-  .tasklist-group {
-    background: var(--ui-surface);
-    border: 1px solid var(--ui-border-light);
-    border-radius: 10px;
-    overflow: hidden;
-    box-shadow: var(--ui-shadow);
-    transition: box-shadow 0.15s ease, border-color 0.15s ease;
-  }
-
-  .tasklist-group:hover {
-    box-shadow: var(--ui-shadow-lg);
-  }
-
-  .group-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 12px 14px 10px;
-    border-bottom: 1px solid var(--ui-border-light);
-    border-top-left-radius: 10px;
-    border-top-right-radius: 10px;
-  }
-
-  .group-collapse-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    color: var(--text-tertiary);
-    flex-shrink: 0;
-    transition: background-color 0.15s ease;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-  }
-
-  .group-collapse-btn:hover {
-    background: var(--ui-surface-hover);
-  }
-
-  .group-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0;
-    flex: 1;
-    cursor: default;
-  }
-
-  /* Count badge — accent-tinted via `--accent` set on the section root;
-     falls back to --text-tertiary for the non-sectioned groupBy path. */
-  .group-count {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--accent, var(--text-tertiary));
-    background: color-mix(in srgb, var(--accent, var(--text-tertiary)) 14%, transparent);
-    padding: 1px 6px;
-    border-radius: 10px;
-    flex-shrink: 0;
-  }
-
-  .group-rows {
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
   /* `.tasklist-row-wrap` styles live in TaskListRow.svelte.
      `.row-dnd-zone` styles live in TaskListSection.svelte. */
 
@@ -1771,23 +1566,6 @@
       transform: none;
       transition: none;
     }
-  }
-
-  .empty-group {
-    text-align: center;
-    padding: 12px;
-    color: var(--text-tertiary);
-    font-size: 13px;
-    /* Give the empty state enough vertical room to be an obvious drop target
-       when moving a task into a section that has no rows. */
-    min-height: 56px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    /* The empty-group label itself must not capture drag events; the
-       drop logic lives on `.group-rows`, and a captured drop on the inner
-       text node would silently no-op. */
-    pointer-events: none;
   }
 
   .empty-board {

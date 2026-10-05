@@ -59,6 +59,7 @@
   import { MarqueeSelectionController } from '../../lib/mindmap/marqueeSelectionController.svelte';
   import { confirmRemoveFrame } from '../../lib/frames/confirmRemoveFrame';
   import { createSelectionActions } from '../../lib/mindmap/selectionActions';
+  import { revealOffset } from '../../lib/canvas/revealRect';
   import { tileIdFromTarget, topmostHitTile } from '../../lib/mindmap/tileHitTest';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
@@ -405,6 +406,17 @@
     }
   }
 
+  /** Selects a tile from the keyboard and brings it into view (it may be off screen). */
+  function selectByKey(id: string, additive = false): void {
+    selectionStore.select(id, additive);
+    const t = boardStore.getTile(id);
+    if (!t) return;
+    const { dx, dy } = revealOffset(canvasStore.viewportRect, {
+      x: t.position.x, y: t.position.y, width: t.renderedWidth ?? t.size.width, height: t.renderedHeight ?? t.size.height,
+    });
+    if (dx || dy) canvasStore.panBy(-dx * canvasStore.scale, -dy * canvasStore.scale);
+  }
+
   // ── Keyboard handler ── (never while typing, or while a dialog or menu is open)
   //   Escape: cancel connection drawing / mode. Arrows: select the nearest
   //   neighbour. Ctrl+Shift+Arrow: extend the selection. Ctrl+Arrow: move the
@@ -444,7 +456,7 @@
 
       if (ids.length === 0) {
         const first = tilesArr[0];
-        if (first) selectionStore.select(first.id);
+        if (first) selectByKey(first.id);
         return;
       }
 
@@ -460,7 +472,7 @@
         excludeIds: new Set(ids),
       });
 
-      if (best) selectionStore.select(best.id, true);
+      if (best) selectByKey(best.id, true);
       return;
     }
 
@@ -501,7 +513,7 @@
       const ids = [...selectionStore.selectedIds];
       if (ids.length === 0) {
         const first = tilesArr[0];
-        if (first) selectionStore.select(first.id);
+        if (first) selectByKey(first.id);
         return;
       }
       const anchor = boardStore.getTile(ids[ids.length - 1] ?? '');
@@ -512,7 +524,7 @@
         candidates: tilesArr,
         excludeIds: new Set([anchor.id]),
       });
-      if (best) selectionStore.select(best.id);
+      if (best) selectByKey(best.id);
       return;
     }
   }
@@ -542,26 +554,11 @@
       const [id] = [...selectionStore.selectedIds];
       if (id) window.dispatchEvent(new CustomEvent('request-rename', { detail: { tileId: id } }));
     },
-    // Delete is the global `tile:delete` (it also removes selected
-    // connections and offers to delete the files); Backspace is this board's
-    // tiles-only alias, not a second global binding that would fire against
-    // Task List / Kanban rows too.
-    removeSelected: () => {
-      const ids = [...selectionStore.selectedIds];
-      if (ids.length === 0) return;
-      uiStore.openConfirm({
-        title: ids.length === 1 ? 'Delete tile?' : `Delete ${ids.length} tiles?`,
-        body: ids.length === 1
-          ? 'The placement is removed from this board. Backing vault files are preserved. You can undo this.'
-          : `${ids.length} placements will be removed from this board. Backing vault files are preserved. You can undo this.`,
-        confirmLabel: 'Delete',
-        danger: true,
-        onConfirm: () => {
-          boardStore.removeTilesWithHistory(ids);
-          selectionStore.clear();
-        },
-      });
-    },
+    // Backspace runs the same Delete as the Delete key and the menus' Remove
+    // (`requestDeleteSelected`): one prompt, which also offers to move the
+    // tiles' notes to Filo's trash. It is this board's own binding, not a
+    // second global one that would fire against Task List / Kanban rows too.
+    removeSelected: () => selectionActions.confirmDelete(),
     // The next click on another tile completes the connection
     // (ConnectionLayer's pointer wiring); Escape leaves the mode.
     connectSelected: () => connectionsStore.setConnectionMode(true),

@@ -6,8 +6,9 @@ import { historyStore, type Command } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { noteStore, type SetBodyStatus } from '../../stores/notes.svelte';
 import { BatchCommand, UpdateTaskFieldCommand } from '../../commands/index';
-import { nextDueDate, recurrenceAnchorToRecord } from '../tasks/recurrence';
+import { nextDueDate, parseRecurrence, recurrenceAnchorToRecord, type RecurrenceMode } from '../tasks/recurrence';
 import { FIELD_READERS, type Priority } from '../tasks/frontmatterReaders';
+import { formatDay } from '../utils/dateFormat';
 import type { TaskRow } from '../tasks/taskListModel';
 
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
@@ -102,6 +103,37 @@ export function recurrenceChangePatch(recurrence: string): Record<string, unknow
   return { recurrence, recurrenceAnchor: '' };
 }
 
+/**
+ * The patch for what a repeat's next date counts from. Schedule (the due
+ * date) is the default, so it is written by removing the key; the anchor
+ * belongs to schedule mode's month steps and goes with a change either way.
+ */
+export function recurrenceModePatch(mode: RecurrenceMode): Record<string, unknown> {
+  return { recurrenceMode: mode === 'completion' ? 'completion' : '', recurrenceAnchor: '' };
+}
+
+/**
+ * The warning a Complete owes when the task's rule can't be read: it is
+ * marked done, and won't come back. Undo (while it is the board's last step)
+ * puts it back.
+ */
+export function warnUnreadableRules(count: number, rule: string, undo: () => boolean): void {
+  if (count === 0) return;
+  uiStore.pushToast({
+    text: count === 1
+      ? `Marked done, and it won't repeat: Filo can't read its repeat rule "${rule}". Pick a rule in Repeat to keep it repeating.`
+      : `Marked done, and ${count} of them won't repeat: Filo can't read their repeat rules.`,
+    type: 'warning',
+    duration: 8000,
+    actions: [{
+      label: 'Undo',
+      handler: () => {
+        if (!undo()) uiStore.toast('Couldn\'t undo: other changes were made since. Use Undo (Ctrl+Z) to step back.', 'info', 5000);
+      },
+    }],
+  });
+}
+
 export interface FrontmatterWriterDeps {
   getBoard: () => TaskListBoardType | null;
   /**
@@ -132,6 +164,7 @@ export interface FrontmatterWriter {
   updateRowField(row: TaskRow, patch: Record<string, unknown>): Promise<void>;
   toggleCompleted(row: TaskRow): Promise<void>;
   setRecurrence(row: TaskRow, recurrence: string): Promise<void>;
+  setRecurrenceMode(row: TaskRow, mode: RecurrenceMode): Promise<void>;
   cyclePriority(row: TaskRow): Promise<void>;
   setDueDate(row: TaskRow, dueDate: string): Promise<void>;
   setDueTime(row: TaskRow, dueTime: string): Promise<void>;
@@ -192,8 +225,11 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     );
   }
 
-  /** Runs the row's field change; returns the change as made (null: none). */
-  async function runRowField(row: TaskRow, patch: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  /** Runs the row's field change; returns the change as made (null: none) and its step. */
+  async function runRowField(
+    row: TaskRow,
+    patch: Record<string, unknown>,
+  ): Promise<{ applied: Record<string, unknown>; cmd: UpdateTaskFieldCommand } | null> {
     const board = getBoard();
     if (!board) return null;
     const cmd = buildTaskFieldCommand(row, patch);
@@ -202,11 +238,16 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     // on this fire-and-forget UI path.
     const ok = cmd ? await historyStore.execute(cmd).then(() => true, () => false) : false;
     bumpCacheVersion();
-    return ok && cmd ? cmd.forwardDelta.set : null;
+    return ok && cmd ? { applied: cmd.forwardDelta.set, cmd } : null;
   }
 
   async function updateRowField(row: TaskRow, patch: Record<string, unknown>): Promise<void> {
     await runRowField(row, patch);
+  }
+
+  function setRecurrenceMode(row: TaskRow, mode: RecurrenceMode): Promise<void> {
+    if (mode === row.recurrenceMode) return Promise.resolve();
+    return updateRowField(row, recurrenceModePatch(mode));
   }
 
   async function toggleCompleted(row: TaskRow): Promise<void> {
@@ -214,12 +255,19 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     // recurrence roll-forward stays identical to the bulk path (the command
     // decides it again from the note). Un-completing is a plain
     // `completed: false`.
-    const applied = await runRowField(row, row.completed ? { completed: false } : completionPatchForRow(row));
+    const boardId = getBoard()?.id ?? null;
+    const ran = await runRowField(row, row.completed ? { completed: false } : completionPatchForRow(row));
+    const applied = ran?.applied;
     // A recurring roll-forward keeps completed:false and advances the due
     // date, so the checkbox just snaps back with no other signal. Announce the new
     // date so the reschedule is visible.
     if (!row.completed && applied?.completed === false && typeof applied.dueDate === 'string') {
-      uiStore.toast(`Recurring task rescheduled to ${applied.dueDate}`, 'info', 2500);
+      uiStore.toast(`Recurring task rescheduled to ${formatDay(applied.dueDate)}`, 'info', 2500);
+    }
+    // A rule Filo can't read can't roll forward: the task is done for good,
+    // which a checkbox alone wouldn't say.
+    if (ran && !row.completed && applied?.completed === true && row.recurrence && !parseRecurrence(row.recurrence)) {
+      warnUnreadableRules(1, row.recurrence, () => historyStore.undoIfLatest(ran.cmd, boardId));
     }
   }
 
@@ -307,6 +355,7 @@ export function makeFrontmatterWriter(deps: FrontmatterWriterDeps): FrontmatterW
     updateRowField,
     toggleCompleted,
     setRecurrence,
+    setRecurrenceMode,
     cyclePriority,
     setDueDate,
     setDueTime,

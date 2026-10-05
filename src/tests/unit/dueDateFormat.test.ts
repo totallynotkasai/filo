@@ -1,42 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  formatDueDateAbsolute,
-  formatTimeChip,
-  isOverdue,
-} from '@renderer/lib/tasks/dueDateFormat';
-
-const US = { locale: 'en-US', now: new Date(2026, 5, 1) };
-
-describe('formatDueDateAbsolute', () => {
-  it('formats YYYY-MM-DD to "MMM D"', () => {
-    expect(formatDueDateAbsolute('2026-05-16', US)).toBe('May 16');
-    expect(formatDueDateAbsolute('2026-08-01', US)).toBe('Aug 1');
-  });
-
-  it('follows the regional format', () => {
-    expect(formatDueDateAbsolute('2026-05-16', { ...US, locale: 'en-GB' })).toBe('16 May');
-  });
-
-  it('shows the year for a date in another year', () => {
-    expect(formatDueDateAbsolute('2027-05-16', US)).toBe('May 16, 2027');
-    expect(formatDueDateAbsolute('2025-12-31', { ...US, locale: 'en-GB' })).toBe('31 Dec 2025');
-  });
-
-  it('returns empty string for empty input', () => {
-    expect(formatDueDateAbsolute('')).toBe('');
-  });
-
-  it('returns the raw input on malformed parses', () => {
-    expect(formatDueDateAbsolute('not-a-date')).toBe('not-a-date');
-  });
-
-  it('parses 2026-01-01 as local Jan 1 (no UTC drift)', () => {
-    // The "toISOString trap" — `new Date('2026-01-01').toISOString().slice(0,10)`
-    // returns `'2025-12-31'` in negative-offset timezones. Our parser must
-    // use local construction.
-    expect(formatDueDateAbsolute('2026-01-01', US)).toBe('Jan 1');
-  });
-});
+import { formatTimeChip, isOverdue } from '@renderer/lib/tasks/dueDateFormat';
 
 describe('formatTimeChip', () => {
   it('formats 24-hour time to compact 12-hour chip', () => {

@@ -16,7 +16,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { sectionIdForPlacementIndex } from '@renderer/lib/tasklist/sectionMath';
-import { AddSectionCommand, DeleteSectionCommand, ReorderSectionCommand } from '@renderer/commands/index';
+import { AddSectionCommand, DeleteSectionCommand, ReorderSectionCommand, SetSectionCollapsedCommand } from '@renderer/commands/index';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, TaskListSection, TileDefinition } from '@renderer/schema/index';
 import type { TaskPlacement } from '@renderer/schema/placement';
@@ -571,5 +571,51 @@ describe('Audit-13 L8 — AddSectionCommand deep-clones the section (nested styl
     cmd.execute();
     const persisted = (board().sections ?? []).find((s) => s.id === 'sec-C');
     expect(persisted?.style?.headerColor).toBe('#abc');
+  });
+});
+
+describe('SetSectionCollapsedCommand: folding a section is an undo step', () => {
+  beforeEach(() => {
+    installFiloMock(() => null);
+    vaultStore.setPath('/vault');
+    boardCacheStore.clear();
+    boardCacheStore.hydrate({ tl: makeBoard() }, { tl: 'tl.board.json' });
+  });
+  afterEach(() => {
+    restoreFiloDefault();
+    vaultStore.setPath('');
+    boardCacheStore.clear();
+  });
+
+  const collapsed = (): Record<string, boolean> =>
+    Object.fromEntries(sections().map((s) => [s.id, s.collapsed]));
+
+  it('execute folds the section, undo opens it again, redo folds it', () => {
+    const cmd = new SetSectionCollapsedCommand('tl', 'sec-B', true);
+    cmd.execute();
+    expect(collapsed()).toEqual({ 'sec-A': false, 'sec-B': true });
+    cmd.undo();
+    expect(collapsed()).toEqual({ 'sec-A': false, 'sec-B': false });
+    cmd.execute();
+    expect(collapsed()['sec-B']).toBe(true);
+    expect(taskIds()).toEqual(['t1', 't2', 't3']);
+  });
+
+  it('a rename and a new task in between survive the undo', () => {
+    const cmd = new SetSectionCollapsedCommand('tl', 'sec-A', true);
+    cmd.execute();
+    boardCacheStore.persistTaskListStructure('tl', sections().map((s) => (s.id === 'sec-B' ? { ...s, title: 'Renamed' } : s)));
+    boardCacheStore.persistAddTaskPlacement('tl', textDef('t4', 'Task 4'), 3);
+    cmd.undo();
+    expect(collapsed()['sec-A']).toBe(false);
+    expect(sections().find((s) => s.id === 'sec-B')?.title).toBe('Renamed');
+    expect(taskIds()).toContain('t4');
+  });
+
+  it('does nothing for a section that is gone', () => {
+    const cmd = new SetSectionCollapsedCommand('tl', 'sec-gone', true);
+    cmd.execute();
+    cmd.undo();
+    expect(collapsed()).toEqual({ 'sec-A': false, 'sec-B': false });
   });
 });

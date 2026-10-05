@@ -61,7 +61,7 @@ describe('Tab on a Task List row', () => {
     const nav = new TaskListKeyboardNav({
       getBoard: () => null,
       getRows: () => rows,
-      getFilteredRows: () => rows,
+      getRenderedRows: () => rows,
       getPlacements: () => rows.map((r, i) => p(r.tile.id, i)),
       getSections: () => sections,
       getSortBy: () => 'manual',

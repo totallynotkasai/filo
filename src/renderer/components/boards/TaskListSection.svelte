@@ -343,6 +343,7 @@
             <TaskListRow
               row={entry.row}
               depth={entry.depth}
+              group={entry.group}
               sectionId={zoneId}
               {collapsedSubtasks}
               {accentColor}
@@ -390,13 +391,9 @@
 </div>
 
 <style>
-  /* Section card chrome — duplicated from TaskListBoard.svelte's non-
-     sectioned `groupBy` path because Svelte's default CSS scoping doesn't
-     bridge parent → child component scopes. The two paths render
-     visually-identical section cards, so both `<style>` blocks carry the
-     same rules; keep them in sync when tuning the card surface. The
-     section-specific add-task affordances, header cursor, rename input,
-     drop-target outline, and row dndzone wrapper rules sit below. */
+  /* Section card chrome, then the section-specific add-task affordances,
+     header cursor, rename input, drop-target outline, and row dndzone
+     wrapper rules. */
 
   .tasklist-group {
     background: var(--ui-surface);

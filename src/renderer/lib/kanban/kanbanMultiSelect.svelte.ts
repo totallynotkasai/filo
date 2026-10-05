@@ -102,10 +102,14 @@ export class KanbanMultiSelect {
   }
 
   moveSelectedTilesToColumn(targetColumnId: string): void {
+    this.moveTilesToColumn(Array.from(this.deps.selection.selectedIds), targetColumnId);
+  }
+
+  /** Moves cards to the end of a column, as one undo step (a card's own menu, or the selection's). */
+  moveTilesToColumn(selected: string[], targetColumnId: string): void {
     const boardId = this.deps.getBoardId();
     if (!boardId) return;
     const columns = this.deps.getColumns();
-    const selected = Array.from(this.deps.selection.selectedIds);
     if (selected.length === 0) return;
     const target = columns.find((c) => c.id === targetColumnId);
     if (!target) return;
@@ -129,7 +133,7 @@ export class KanbanMultiSelect {
     // Ctrl+Z reverses every card at once.
     historyStore.execute(new MoveCardsCommand(boardId, toMove, targetColumnId, toPosition, snapshots));
     this.deps.tickAndPersist();
-    uiStore.toast(`Moved ${toMove.length} card(s) to "${target.title}"`, 'success', 2000);
+    uiStore.toast(`Moved ${toMove.length} card${toMove.length === 1 ? '' : 's'} to "${target.title}"`, 'success', 2000);
   }
 
   deleteSelectedTiles(): void {

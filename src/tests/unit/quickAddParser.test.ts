@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseQuickAdd } from '@renderer/lib/tasks/quickAddParser';
+import { parseRecurrence } from '@renderer/lib/tasks/recurrence';
 
 // Anchor every test to a fixed "now" so weekday math stays deterministic.
 // 2026-05-15 is a Friday (verified: Date.getDay() returns 5).
@@ -47,10 +48,16 @@ describe('parseQuickAdd: tags', () => {
     expect(r.title).toBe('Buy milk');
   });
 
-  it('does not match # mid-word', () => {
+  it('does not match # mid-word, and a tag needs a letter', () => {
     const r = parseQuickAdd('Issue #123 and abc#tag', { now: NOW });
-    expect(r.tags).toEqual(['123']);
-    expect(r.title).toBe('Issue and abc#tag');
+    expect(r.tags).toEqual([]);
+    expect(r.title).toBe('Issue #123 and abc#tag');
+  });
+
+  it('keeps a chapter number in the title, and takes a tag that has a letter (E-05)', () => {
+    const r = parseQuickAdd('Revise Chapter #3 #2026-goals #v2', { now: NOW });
+    expect(r.tags).toEqual(['2026-goals', 'v2']);
+    expect(r.title).toBe('Revise Chapter #3');
   });
 
   it('accepts hyphens and underscores in tag names', () => {
@@ -452,5 +459,156 @@ describe('parseQuickAdd: day-first d/m for day-first locales (BL-8)', () => {
   it('dayFirst: false keeps month/day ("3/4" is 4 March)', () => {
     expect(parseQuickAdd('Dentist 3/4', { now: SEPT_23, dayFirst: false }).dueDate).toBe('2027-03-04');
     expect(parseQuickAdd('Dentist 3/4', { now: SEPT_23 }).dueDate).toBe('2027-03-04');
+  });
+});
+
+describe('parseQuickAdd: only weekday names are weekdays (E-05)', () => {
+  // Sunday 2026-10-04, local noon (the audit's repro day).
+  const SUN = new Date(2026, 9, 4, 12, 0, 0);
+
+  it.each([
+    ['Review plot outline next month'],
+    ['Draft the next wedding scene'],
+    ['Introduce the next friend'],
+    ['Write the next sunrise chapter'],
+    ['Plan the next satire piece'],
+    ['Fix the next thumbnail'],
+  ])('"%s" has no date and keeps its words', (input) => {
+    const r = parseQuickAdd(input, { now: SUN });
+    expect(r.dueDate).toBeUndefined();
+    expect(r.title).toBe(input);
+  });
+
+  it.each([
+    ['next monday', '2026-10-05'],
+    ['next tues', '2026-10-06'],
+    ['next weds', '2026-10-07'],
+    ['next thurs', '2026-10-08'],
+    ['next thur', '2026-10-08'],
+    ['next friday', '2026-10-09'],
+    ['next sat', '2026-10-10'],
+    ['next Sunday', '2026-10-11'],
+  ])('"%s" is a weekday', (words, date) => {
+    const r = parseQuickAdd(`Call mum ${words}`, { now: SUN });
+    expect(r.dueDate).toBe(date);
+    expect(r.title).toBe('Call mum');
+  });
+});
+
+describe('parseQuickAdd: a fraction between words is not a date (E-05)', () => {
+  const SUN = new Date(2026, 9, 4, 12, 0, 0);
+
+  it('"act 2/3 of the book" keeps its fraction', () => {
+    const r = parseQuickAdd('Revise act 2/3 of the book', { now: SUN, dayFirst: true });
+    expect(r.dueDate).toBeUndefined();
+    expect(r.title).toBe('Revise act 2/3 of the book');
+  });
+
+  it('a date as the last word is still a date, with tokens after it', () => {
+    const r = parseQuickAdd('Pay rent 5/12 #home !high', { now: SUN, dayFirst: true });
+    expect(r.dueDate).toBe('2026-12-05');
+    expect(r.title).toBe('Pay rent');
+    expect(r.tags).toEqual(['home']);
+  });
+
+  it('a date followed by its time is still a date', () => {
+    const r = parseQuickAdd('Dentist 5/12 9:30am', { now: SUN, dayFirst: true });
+    expect(r.dueDate).toBe('2026-12-05');
+    expect(r.dueTime).toBe('09:30');
+    expect(r.title).toBe('Dentist');
+  });
+});
+
+describe('parseQuickAdd: a time after the date (E-05)', () => {
+  it('reads "tomorrow 5pm"', () => {
+    const r = parseQuickAdd('Call the printer tomorrow 5pm', { now: NOW });
+    expect(r.dueDate).toBe('2026-05-16');
+    expect(r.dueTime).toBe('17:00');
+    expect(r.title).toBe('Call the printer');
+  });
+
+  it('reads "at", a space before pm, and a 24-hour time', () => {
+    expect(parseQuickAdd('x next mon at 9:15am', { now: NOW })).toMatchObject({ dueDate: '2026-05-18', dueTime: '09:15', title: 'x' });
+    expect(parseQuickAdd('x today 5 pm', { now: NOW })).toMatchObject({ dueDate: '2026-05-15', dueTime: '17:00', title: 'x' });
+    expect(parseQuickAdd('x 2026-06-01 17:30', { now: NOW })).toMatchObject({ dueDate: '2026-06-01', dueTime: '17:30', title: 'x' });
+  });
+
+  it('leaves a bare number after the date in the title', () => {
+    const r = parseQuickAdd('Meet tomorrow 10 people', { now: NOW });
+    expect(r.dueTime).toBeUndefined();
+    expect(r.title).toBe('Meet 10 people');
+  });
+
+  it('an @time wins over a time after the date', () => {
+    const r = parseQuickAdd('x tomorrow 5pm @9am', { now: NOW });
+    expect(r.dueTime).toBe('09:00');
+    expect(r.title).toBe('x');
+  });
+
+  it('a start date takes no time', () => {
+    const r = parseQuickAdd('x ^tomorrow 5pm', { now: NOW });
+    expect(r.startDate).toBe('2026-05-16');
+    expect(r.dueTime).toBeUndefined();
+    expect(r.title).toBe('x 5pm');
+  });
+});
+
+describe('parseQuickAdd: repeats (D8)', () => {
+  // NOW is Friday 2026-05-15.
+  it('"every friday" repeats weekly from the next Friday (today counts)', () => {
+    const r = parseQuickAdd('Water plants every friday', { now: NOW });
+    expect(r.recurrence).toBe('weekly');
+    expect(r.dueDate).toBe('2026-05-15');
+    expect(r.title).toBe('Water plants');
+  });
+
+  it('"every mon" starts on the coming Monday', () => {
+    expect(parseQuickAdd('Standup every mon', { now: NOW })).toMatchObject({ recurrence: 'weekly', dueDate: '2026-05-18', title: 'Standup' });
+  });
+
+  it('"every 2 weeks", "every 3 days", "every 6 months", "every 2 years"', () => {
+    expect(parseQuickAdd('x every 2 weeks', { now: NOW })).toMatchObject({ recurrence: 'every 2 weeks', dueDate: '2026-05-15', title: 'x' });
+    expect(parseQuickAdd('x every 3 days', { now: NOW }).recurrence).toBe('every 3 days');
+    expect(parseQuickAdd('x every 6 months', { now: NOW }).recurrence).toBe('every 6 months');
+    expect(parseQuickAdd('x every 2 years', { now: NOW }).recurrence).toBe('every 2 years');
+  });
+
+  it('"every day / week / month / year" and "every 1 week" use the plain names', () => {
+    expect(parseQuickAdd('x every day', { now: NOW }).recurrence).toBe('daily');
+    expect(parseQuickAdd('x every week', { now: NOW }).recurrence).toBe('weekly');
+    expect(parseQuickAdd('x every month', { now: NOW }).recurrence).toBe('monthly');
+    expect(parseQuickAdd('x every year', { now: NOW }).recurrence).toBe('yearly');
+    expect(parseQuickAdd('x every 1 week', { now: NOW }).recurrence).toBe('weekly');
+  });
+
+  it('"every other week" and "every other friday" are every 2 weeks', () => {
+    expect(parseQuickAdd('x every other week', { now: NOW }).recurrence).toBe('every 2 weeks');
+    expect(parseQuickAdd('x every other tuesday', { now: NOW })).toMatchObject({ recurrence: 'every 2 weeks', dueDate: '2026-05-19' });
+  });
+
+  it('"every weekday" starts today on a weekday, else on Monday', () => {
+    expect(parseQuickAdd('x every weekday', { now: NOW })).toMatchObject({ recurrence: 'weekday', dueDate: '2026-05-15' });
+    const sat = new Date(2026, 4, 16, 9, 0);
+    expect(parseQuickAdd('x every weekday', { now: sat })).toMatchObject({ recurrence: 'weekday', dueDate: '2026-05-18' });
+  });
+
+  it('a date typed with the repeat is its first due date', () => {
+    expect(parseQuickAdd('Pay rent every month 6/1', { now: NOW })).toMatchObject({ recurrence: 'monthly', dueDate: '2026-06-01', title: 'Pay rent' });
+    expect(parseQuickAdd('Report every week next wed 5pm', { now: NOW })).toMatchObject({ recurrence: 'weekly', dueDate: '2026-05-20', dueTime: '17:00', title: 'Report' });
+  });
+
+  it('every repeat it reads is one the recurrence engine reads', () => {
+    for (const text of ['every day', 'every 3 days', 'every week', 'every other week', 'every friday', 'every month', 'every 6 months', 'every year', 'every weekday']) {
+      const r = parseQuickAdd(`x ${text}`, { now: NOW });
+      expect(parseRecurrence(r.recurrence ?? ''), text).not.toBeNull();
+    }
+  });
+
+  it('words that only start like a repeat stay in the title', () => {
+    for (const input of ['Do it every time', "Review every month's budget", 'Visit every daycare', 'every 0 days', 'every 2 fridays']) {
+      const r = parseQuickAdd(input, { now: NOW });
+      expect(r.recurrence, input).toBeUndefined();
+      expect(r.title, input).toBe(input);
+    }
   });
 });

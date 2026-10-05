@@ -15,6 +15,8 @@ import type { Tile, TaskPlacement } from '../../schema/index';
 import type { Priority } from './frontmatterReaders';
 import type { RecurrenceMode } from './recurrence';
 import { naturalCompare } from '../utils/naturalSort';
+import { parseLocalIsoDate } from '../utils/dateFormat';
+import { PRIORITY_LABEL } from '../../constants/taskPriorities';
 
 export type GroupBy = 'status' | 'priority' | 'tag' | 'dueDate' | 'category' | 'none';
 export type SortBy = 'title' | 'created' | 'dueDate' | 'priority' | 'manual';
@@ -83,20 +85,6 @@ export const GROUP_ORDER: Record<GroupBy, string[]> = {
 };
 
 /**
- * Parses a `YYYY-MM-DD` string as a LOCAL-time date (local midnight), not UTC.
- * `new Date('2026-05-20')` parses an ISO date-only string as UTC midnight,
- * which `setHours(0,0,0,0)` then rolls back to the *previous* local day in
- * every UTC-negative zone (all of the Americas) — silently misfiling "today"
- * / "overdue" and the due-date groups. Local construction avoids that drift.
- * Returns `null` for anything that isn't a bare ISO date. Mirrors the inline
- * parsers already used in `dueDateFormat.ts`.
- */
-function parseLocalDate(iso: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  return m ? new Date(+(m[1] ?? ''), +(m[2] ?? '') - 1, +(m[3] ?? '')) : null;
-}
-
-/**
  * A future `startDate` defers a task: it hides from focused smart lists
  * (Today / Upcoming) until the start date arrives, but stays visible in All.
  * Mirrors Things' / OmniFocus' defer-date semantics.
@@ -107,9 +95,8 @@ function parseLocalDate(iso: string): Date | null {
  */
 export function isDeferred(r: TaskRow, today: Date): boolean {
   if (!r.startDate) return false;
-  const start = parseLocalDate(r.startDate);
+  const start = parseLocalIsoDate(r.startDate);
   if (!start) return false;
-  start.setHours(0, 0, 0, 0);
   return start.getTime() > today.getTime();
 }
 
@@ -121,9 +108,8 @@ export function smartListMatch(r: TaskRow, list: SmartListId, today: Date): bool
   if (list === 'completed') return r.completed;
   if (list === 'no-date') return !r.dueDate && !isDeferred(r, today);
   if (!r.dueDate) return false;
-  const due = parseLocalDate(r.dueDate);
+  const due = parseLocalIsoDate(r.dueDate);
   if (!due) return false;
-  due.setHours(0, 0, 0, 0);
   if (list === 'today') {
     return due.getTime() === today.getTime() && !r.completed && !isDeferred(r, today);
   }
@@ -213,7 +199,7 @@ export function filterTaskRows(
     }
     if (!smartListMatch(r, inputs.smartList, today)) return false;
     if (inputs.priority && r.priority !== inputs.priority) return false;
-    if (inputs.status && r.status !== inputs.status) return false;
+    if (inputs.status && statusBucket(r).key !== statusFilterKey(inputs.status)) return false;
     if (wantTags.length > 0) {
       if (!wantTags.every((w) => r.tags.includes(w))) return false;
     }
@@ -221,24 +207,65 @@ export function filterTaskRows(
   });
 }
 
-export function groupKey(r: TaskRow, groupBy: GroupBy, today: Date): GroupKey {
-  if (groupBy === 'status') {
-    if (r.completed) return { key: 'done', label: 'Done' };
-    if (r.status === 'in-progress' || r.status === 'in_progress' || r.status === 'doing') {
-      return { key: 'in-progress', label: 'In Progress' };
-    }
-    if (r.status === 'todo' || r.status === '') return { key: 'todo', label: 'To Do' };
-    return { key: r.status, label: capitalize(r.status) };
+/**
+ * The status a task is in, the one rule Group by Status and Filter by Status
+ * share: a completed task is Done, a task with no `status:` (every task made
+ * in Filo) is To Do, and `doing` / `in_progress` are In Progress.
+ */
+export function statusBucket(r: Pick<TaskRow, 'completed' | 'status'>): GroupKey {
+  if (r.completed) return { key: 'done', label: 'Done' };
+  if (r.status === 'in-progress' || r.status === 'in_progress' || r.status === 'doing') {
+    return { key: 'in-progress', label: 'In Progress' };
   }
+  if (r.status === 'todo' || r.status === '') return { key: 'todo', label: 'To Do' };
+  if (r.status === 'done') return { key: 'done', label: 'Done' };
+  return { key: r.status, label: capitalize(r.status) };
+}
+
+/**
+ * A filter's status (from the menu, a saved view or an older `lastView`) as
+ * the bucket it names: a view saved on `doing` keeps finding In Progress.
+ */
+function statusFilterKey(status: string): string {
+  if (status === 'done') return 'done';
+  return statusBucket({ completed: false, status: status.toLowerCase() }).key;
+}
+
+/**
+ * The statuses Filter by Status offers: the buckets the board's tasks are
+ * in, in the group order (To Do, In Progress, Done), then the rest by name.
+ * The active filter stays listed while no task is in it, so it can be
+ * turned off where it was turned on.
+ */
+export function statusFilterOptions(rows: readonly TaskRow[], active: string | null): GroupKey[] {
+  const found = new Map<string, GroupKey>();
+  for (const r of rows) {
+    if (r.fieldsPending) continue;
+    const b = statusBucket(r);
+    if (!found.has(b.key)) found.set(b.key, b);
+  }
+  if (active) {
+    const key = statusFilterKey(active);
+    if (!found.has(key)) found.set(key, statusBucket({ completed: key === 'done', status: key }));
+  }
+  const order = GROUP_ORDER.status;
+  return [...found.values()].sort((a, b) => {
+    const ia = order.indexOf(a.key);
+    const ib = order.indexOf(b.key);
+    if (ia >= 0 || ib >= 0) return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib);
+    return naturalCompare(a.label, b.label);
+  });
+}
+
+export function groupKey(r: TaskRow, groupBy: GroupBy, today: Date): GroupKey {
+  if (groupBy === 'status') return statusBucket(r);
   if (groupBy === 'priority') {
-    const label = r.priority === 'none' ? 'No Priority' : capitalize(r.priority);
-    return { key: r.priority, label };
+    return { key: r.priority, label: PRIORITY_LABEL[r.priority] };
   }
   if (groupBy === 'dueDate') {
     if (!r.dueDate) return { key: 'no-date', label: 'No Due Date' };
-    const due = parseLocalDate(r.dueDate);
+    const due = parseLocalIsoDate(r.dueDate);
     if (!due) return { key: 'no-date', label: 'No Due Date' };
-    due.setHours(0, 0, 0, 0);
     if (due.getTime() < today.getTime()) return { key: 'overdue', label: 'Overdue' };
     // Whole calendar days: a day with a clock change lasts 23 or 25 hours,
     // so the raw millisecond gap to tomorrow can be under one day.

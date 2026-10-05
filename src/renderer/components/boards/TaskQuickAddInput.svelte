@@ -10,9 +10,13 @@
    * only by the user pressing Enter — the parent decides what to do if title
    * is empty.
    */
-  import { SvelteDate } from 'svelte/reactivity';
   import { parseQuickAdd, type QuickAddParsed } from '../../lib/tasks/quickAddParser';
   import { localeIsDayFirst } from '../../lib/tasks/dateOrder';
+  import { recurrenceLabel } from '../../lib/tasks/recurrence';
+  import { formatDay } from '../../lib/utils/dateFormat';
+  import { formatTimeChip } from '../../lib/tasks/dueDateFormat';
+  import { PRIORITY_COLOR, PRIORITY_LABEL } from '../../constants/taskPriorities';
+  import { clockStore } from '../../stores/clock.svelte';
 
   let {
     accentColor,
@@ -41,8 +45,9 @@
   // `5/12` follows the OS regional date order (day/month for en-GB).
   const dayFirst = localeIsDayFirst(window.filo?.systemLocale || navigator.language);
 
-  // Live parse of the current input. Recomputed every keystroke; cheap.
-  let parsed = $derived(parseQuickAdd(value, { dayFirst }));
+  // Live parse of the current input. Recomputed every keystroke; cheap. The
+  // clock store's day, so a list left open past midnight reads "tomorrow" right.
+  let parsed = $derived(parseQuickAdd(value, { dayFirst, now: clockStore.todayDate() }));
 
   let hasMeta = $derived(
     !!parsed.dueDate
@@ -50,6 +55,7 @@
       || !!parsed.startDate
       || !!parsed.priority
       || !!parsed.status
+      || !!parsed.recurrence
       || parsed.tags.length > 0,
   );
 
@@ -74,34 +80,10 @@
     }
   }
 
+  // The chips show a date and a priority as the task's row will.
   function fmtDateChip(iso: string): string {
-    const [y, m, d] = iso.split('-').map((n) => parseInt(n, 10));
-    if (!y || !m || !d) return iso;
-    const date = new Date(y, m - 1, d);
-    const today = new SvelteDate();
-    today.setHours(0, 0, 0, 0);
-    const diff = Math.round((date.getTime() - today.getTime()) / 86400000);
-    if (diff === 0) return 'Today';
-    if (diff === 1) return 'Tomorrow';
-    if (diff > 1 && diff < 7) {
-      return date.toLocaleDateString(undefined, { weekday: 'short' });
-    }
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return formatDay(iso, { now: clockStore.todayDate() });
   }
-
-  const priorityLabel: Record<string, string> = {
-    urgent: '!!! Urgent',
-    high: '! High',
-    medium: 'Med',
-    low: 'Low',
-  };
-
-  const priorityColor: Record<string, string> = {
-    urgent: 'var(--priority-urgent)',
-    high: 'var(--priority-high)',
-    medium: 'var(--priority-medium)',
-    low: 'var(--priority-low)',
-  };
 
   $effect(() => {
     if (autoFocus && inputEl) inputEl.focus();
@@ -150,20 +132,20 @@
   {#if hasMeta}
     <div class="quick-add-preview">
       {#if parsed.priority}
-        <span class="chip chip-priority" style:color={priorityColor[parsed.priority]}>
-          {priorityLabel[parsed.priority]}
+        <span class="chip chip-priority" style:color={PRIORITY_COLOR[parsed.priority]}>
+          {PRIORITY_LABEL[parsed.priority]}
         </span>
       {/if}
       {#if parsed.dueDate}
         <span class="chip chip-date">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-          <span>{fmtDateChip(parsed.dueDate)}{parsed.dueTime ? ` ${parsed.dueTime}` : ''}</span>
+          <span>{fmtDateChip(parsed.dueDate)}{parsed.dueTime ? ` ${formatTimeChip(parsed.dueTime)}` : ''}</span>
         </span>
       {/if}
       {#if !parsed.dueDate && parsed.dueTime}
         <span class="chip chip-date">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          <span>{parsed.dueTime}</span>
+          <span>{formatTimeChip(parsed.dueTime)}</span>
         </span>
       {/if}
       {#if parsed.startDate}
@@ -171,6 +153,9 @@
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>
           <span>Start {fmtDateChip(parsed.startDate)}</span>
         </span>
+      {/if}
+      {#if parsed.recurrence}
+        <span class="chip chip-repeat">Repeats {recurrenceLabel(parsed.recurrence).toLowerCase()}</span>
       {/if}
       {#if parsed.status}
         <span class="chip chip-status">= {parsed.status}</span>
@@ -186,10 +171,12 @@
       <div class="help-grid">
         <code>today</code><span>set due to today</span>
         <code>tomorrow</code><span>set due to tomorrow</span>
-        <code>next mon</code><span>next Monday (or any weekday)</span>
+        <code>next mon</code><span>next Monday (any weekday's name or short name)</span>
         <code>in 3d</code><span>3 days from today (d/w/m)</span>
         <code>2026-05-20</code><span>explicit ISO date</span>
-        <code>5/12</code><span>{dayFirst ? 'day/month' : 'month/day'} (rolls forward if past)</span>
+        <code>5/12</code><span>{dayFirst ? 'day/month' : 'month/day'} as the last word (rolls forward if past)</span>
+        <code>tomorrow 5pm</code><span>a time after the date</span>
+        <code>every fri</code><span>repeat weekly (also every 2 weeks, every other day, every month, every weekday)</span>
         <code>^next mon</code><span>start (defer) date — caret prefix</span>
         <code>@5pm</code><span>time-of-day (24h or am/pm)</span>
         <code>!high</code><span>priority (low/med/high/urgent)</span>

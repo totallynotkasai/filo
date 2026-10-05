@@ -32,6 +32,7 @@
   import KanbanSideToolbar from './KanbanSideToolbar.svelte';
   import KanbanNewTileModal from './KanbanNewTileModal.svelte';
   import TagPromptPopup from './TagPromptPopup.svelte';
+  import { cardPosition, neighbourCard, revealCard, type KanbanNavColumns } from '../../lib/kanban/kanbanKeyboardNav';
   import BoardBackground from '../canvas/BoardBackground.svelte';
   import {
     effectiveColumnStyle,
@@ -592,21 +593,14 @@
       const ids = [...selectionStore.selectedIds];
       const flat = flatVisibleTileIds;
       if (flat.length === 0) return;
-      if (ids.length === 0) {
-        e.preventDefault();
-        const first = flat[0];
-        if (first) selectionStore.select(first); // flat non-empty (checked above)
-        announce('Card focused');
-        return;
-      }
       const focusedId = ids[ids.length - 1];
-      if (focusedId === undefined) return; // ids non-empty here
-      const focusInfo = findColumnAndIndex(focusedId);
-      if (!focusInfo) return;
-      const target = neighbourTileId(focusInfo, e.key);
+      const from = focusedId === undefined ? null : cardPosition(navColumns, focusedId);
+      // No card selected yet: the first one; else the neighbour (none at an edge).
+      const target = focusedId === undefined ? flat[0] : from ? neighbourCard(navColumns, from, e.key) : null;
       if (target && target !== focusedId) {
         e.preventDefault();
         selectionStore.select(target);
+        revealCard(boardRootEl, target);
         announce('Card focused');
       }
       return;
@@ -633,57 +627,11 @@
     }
   }
 
-  /**
-   * Given a focused tileId, returns the column it sits
-   * in (by columnId) AND the visible-row index within that column. Used
-   * for arrow-key navigation across cards / columns.
-   */
-  function findColumnAndIndex(
-    tileId: string,
-  ): { columnId: string; rowIdx: number } | null {
-    for (const col of columns) {
-      const placements = filtersAndSort.visiblePlacementsForColumn(col.id);
-      for (let i = 0; i < placements.length; i++) {
-        if (placements[i]?.tileId === tileId) {
-          return { columnId: col.id, rowIdx: i };
-        }
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Picks the neighbour tileId in the requested arrow
-   * direction. Returns null at board boundaries (top of first column,
-   * etc.) so the caller can decline to move focus.
-   */
-  function neighbourTileId(
-    from: { columnId: string; rowIdx: number },
-    key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight',
-  ): string | null {
-    const colIdx = columns.findIndex((c) => c.id === from.columnId);
-    if (colIdx < 0) return null;
-    if (key === 'ArrowUp' || key === 'ArrowDown') {
-      const placements = filtersAndSort.visiblePlacementsForColumn(from.columnId);
-      const nextIdx = key === 'ArrowUp' ? from.rowIdx - 1 : from.rowIdx + 1;
-      if (nextIdx < 0 || nextIdx >= placements.length) return null;
-      return placements[nextIdx]?.tileId ?? null;
-    }
-    // Horizontal — walk left/right past empty columns until a visible card
-    // is found. Clamp the row index against each column's visible length.
-    let probe = colIdx + (key === 'ArrowRight' ? 1 : -1);
-    while (probe >= 0 && probe < columns.length) {
-      const col = columns[probe];
-      if (!col) break; // probe bounds-checked by the while condition
-      const placements = filtersAndSort.visiblePlacementsForColumn(col.id);
-      if (placements.length > 0) {
-        const targetIdx = Math.min(from.rowIdx, placements.length - 1);
-        return placements[targetIdx]?.tileId ?? null;
-      }
-      probe += key === 'ArrowRight' ? 1 : -1;
-    }
-    return null;
-  }
+  /** The cards each column shows, for the arrow keys (`kanbanKeyboardNav.ts`). */
+  const navColumns: KanbanNavColumns = {
+    get ids() { return columns.map((c) => c.id); },
+    cardsIn: (columnId) => filtersAndSort.visiblePlacementsForColumn(columnId).map((p) => p.tileId),
+  };
 
   // ── Tag editor event wiring ──
   //
@@ -1028,6 +976,8 @@
             onDelete={() => deleteColumn(column.id)}
             onAddTile={() => openNewTilePicker(column.id)}
             onDeleteTile={(tileId) => deleteTile(tileId)}
+            moveTargets={columns.filter((c) => c.id !== column.id).map((c) => ({ id: c.id, title: c.title }))}
+            onMoveTile={(tileId, columnId) => multiSelect.moveTilesToColumn([tileId], columnId)}
             onCardPointerDown={dragController.onCardPointerDown}
             onConsiderCards={(e) => dragController.onConsiderCards(column.id, e)}
             onFinalizeCards={(e) => dragController.onFinalizeCards(column.id, e)}

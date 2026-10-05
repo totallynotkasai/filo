@@ -79,7 +79,55 @@ export interface SectionView {
   id: string | null;
   title: string;
   collapsed: boolean;
+  /** Top-level rows, group by group when a Group By is on. */
   rows: TaskRow[];
+  /** The section's groups under the board's Group By (none with Group By None). */
+  groups: TaskGroup[];
+}
+
+/** One row as drawn: the row, its subtask depth, and the group heading it opens. */
+export interface FlatRowEntry {
+  row: TaskRow;
+  depth: number;
+  /** Set on the first row of each group (with a Group By): the heading above it. */
+  group?: { label: string; count: number };
+}
+
+/** A section's rows as drawn, in order. */
+export interface FlatSection {
+  /** The section's id, or the leading bucket's sentinel. */
+  sectionId: string;
+  collapsed: boolean;
+  entries: FlatRowEntry[];
+}
+
+/**
+ * Splits `rows` (in display order) into groups by `groupBy`: the known
+ * groups in `GROUP_ORDER`, then the others in the order they first appear.
+ */
+function groupRows(rows: TaskRow[], groupBy: GroupBy, today: Date): TaskGroup[] {
+  if (groupBy === 'none') return [];
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local grouping scratch; reactivity is the enclosing $derived
+  const buckets = new Map<string, TaskGroup>();
+  for (const row of rows) {
+    const { key, label } = groupKey(row, groupBy, today);
+    let g = buckets.get(key);
+    if (!g) {
+      g = { key, label, rows: [] };
+      buckets.set(key, g);
+    }
+    g.rows.push(row);
+  }
+  const ordered: TaskGroup[] = [];
+  for (const k of GROUP_ORDER[groupBy] ?? []) {
+    const g = buckets.get(k);
+    if (g) {
+      ordered.push(g);
+      buckets.delete(k);
+    }
+  }
+  for (const g of buckets.values()) ordered.push(g);
+  return ordered;
 }
 
 export interface TaskListViewModelDeps {
@@ -109,6 +157,10 @@ export interface TaskListViewModelDeps {
   getGroupBy: () => GroupBy;
   /** Sentinel id of the virtual default section so `availableSectionsForMove` can hide it. */
   getDefaultSectionId: () => string;
+  /** Tasks whose subtasks are folded away (the board's `collapsedSubtasks`). */
+  getCollapsedSubtasks: () => ReadonlySet<string>;
+  /** The id the drawn sections give the leading "Unsectioned" bucket. */
+  getLeadingSectionId: () => string;
 }
 
 /** Equal values, one level deep (arrays element by element): a row or a tile. */
@@ -261,40 +313,6 @@ export class TaskListViewModel {
   /** Each task's depth in the subtask hierarchy (0-2), all rows in one pass. */
   taskDepths = $derived(buildTaskDepths(this.rows));
 
-  // ── Grouping ──
-  //
-  // groupKey / capitalize / GROUP_ORDER live in `lib/tasks/taskListModel.ts`.
-  groups = $derived.by<TaskGroup[]>(() => {
-    const groupBy = this.deps.getGroupBy();
-    // Local midnight — mirrors `filteredRows` / `smartListCounts` so due-date
-    // grouping agrees with the smart lists, and is passed explicitly to keep
-    // `groupKey` deterministic rather than reading `new Date()` itself.
-    const today = clockStore.todayDate();
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local grouping scratch; reactivity is the enclosing $derived
-    const buckets = new Map<string, TaskGroup>();
-    for (const row of this.topLevelRows) {
-      const { key, label } = groupKey(row, groupBy, today);
-      let g = buckets.get(key);
-      if (!g) {
-        g = { key, label, rows: [] };
-        buckets.set(key, g);
-      }
-      g.rows.push(row);
-    }
-
-    const ordered: TaskGroup[] = [];
-    const known = GROUP_ORDER[groupBy] ?? [];
-    for (const k of known) {
-      const g = buckets.get(k);
-      if (g) {
-        ordered.push(g);
-        buckets.delete(k);
-      }
-    }
-    for (const g of buckets.values()) ordered.push(g);
-    return ordered;
-  });
-
   // ── Sectioned view ──
   //
   // When sections are active, each section owns the slice of the flat
@@ -310,6 +328,8 @@ export class TaskListViewModel {
   //     sort mode.
   //   • The ORDER of rows WITHIN a section follows `topLevelRows`, i.e. the
   //     active sort — so a non-'manual' sort still sorts inside each section.
+  //     With a Group By, the section's rows go group by group (`groupKey`,
+  //     `GROUP_ORDER`), each group in the sort's order.
   // A drag reorder under a non-'manual' sort therefore can't reliably set a
   // task's position WITHIN a section without flipping to Manual: same-section
   // drags do exactly that, while a cross-section move keeps the sort because
@@ -319,6 +339,13 @@ export class TaskListViewModel {
     const placements = this.deps.getPlacements();
     const displaySections = this.deps.getDisplaySections();
     const topLevelRows = this.topLevelRows;
+    const groupBy = this.deps.getGroupBy();
+    // Local midnight, as the smart lists use, so due-date groups agree with them.
+    const today = clockStore.todayDate();
+    const grouped = (rows: TaskRow[]): { rows: TaskRow[]; groups: TaskGroup[] } => {
+      const groups = groupRows(rows, groupBy, today);
+      return groups.length > 0 ? { rows: groups.flatMap((g) => g.rows), groups } : { rows, groups };
+    };
 
     // Map placement index → top-level row (children render under their
     // parent via childrenByParent, so iterating top-level rows here keeps
@@ -363,15 +390,52 @@ export class TaskListViewModel {
 
     const result: SectionView[] = [];
     if (leadingRows.length > 0) {
-      result.push({ id: null, title: 'Unsectioned', collapsed: false, rows: leadingRows });
+      result.push({ id: null, title: 'Unsectioned', collapsed: false, ...grouped(leadingRows) });
     }
     for (let k = 0; k < sorted.length; k++) {
       const s = sorted[k];
       if (!s) continue; // k < sorted.length; narrow for the type-checker
-      result.push({ id: s.id, title: s.title, collapsed: s.collapsed, rows: sectionRows[k] ?? [] });
+      result.push({ id: s.id, title: s.title, collapsed: s.collapsed, ...grouped(sectionRows[k] ?? []) });
     }
     return result;
   });
+
+  /**
+   * Each section's rows as drawn: every top-level row followed by its shown
+   * subtasks (a folded parent's are left out), each group's first row
+   * carrying its heading. The row dndzones are built from this, one entry
+   * per drawn row.
+   */
+  flatSections = $derived.by<FlatSection[]>(() => {
+    const collapsed = this.deps.getCollapsedSubtasks();
+    const children = this.childrenByParent;
+    const leadingId = this.deps.getLeadingSectionId();
+    return this.sectionedView.map((s) => {
+      const entries: FlatRowEntry[] = [];
+      const walk = (row: TaskRow, depth: number): void => {
+        entries.push({ row, depth });
+        if (collapsed.has(row.tile.id)) return;
+        for (const kid of children.get(row.tile.id) ?? []) walk(kid, depth + 1);
+      };
+      for (const g of s.groups.length > 0 ? s.groups : [{ key: '', label: '', rows: s.rows }]) {
+        const first = entries.length;
+        for (const row of g.rows) walk(row, 0);
+        const head = entries[first];
+        if (head && g.key) head.group = { label: g.label, count: g.rows.length };
+      }
+      return { sectionId: s.id ?? leadingId, collapsed: s.collapsed, entries };
+    });
+  });
+
+  /**
+   * The rows on screen, top to bottom: sections in order, a folded section's
+   * rows and a folded parent's subtasks left out. The arrow keys, Tab,
+   * Shift-click ranges and Select All follow this order, so a key or a range
+   * never reaches a row the user can't see or skips one they can.
+   */
+  renderedRows = $derived.by<TaskRow[]>(() =>
+    this.flatSections.filter((s) => !s.collapsed).flatMap((s) => s.entries.map((e) => e.row)),
+  );
 
   /**
    * Flat list of real sections in display order — feeds the "Move to

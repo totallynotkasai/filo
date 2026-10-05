@@ -28,7 +28,7 @@
  */
 
 import { addMonthsClamped } from './dateMath';
-import { localIsoDate } from '../utils/dateFormat';
+import { localIsoDate, parseLocalIsoDate } from '../utils/dateFormat';
 
 export type RecurrenceMode = 'schedule' | 'completion';
 
@@ -55,25 +55,30 @@ export function parseRecurrence(rec: string): RecurrenceUnit | null {
   return null;
 }
 
+const UNIT_NAME = { d: 'day', w: 'week', m: 'month', y: 'year' } as const;
+const EVERY_ONE = { d: 'Daily', w: 'Weekly', m: 'Monthly', y: 'Yearly' } as const;
+
+/**
+ * How a rule is shown: "Daily", "Weekdays", "Every 2 weeks". A rule Filo
+ * can't read is shown as written, so the user can see what it says.
+ */
+export function recurrenceLabel(rec: string): string {
+  const parsed = parseRecurrence(rec);
+  if (!parsed) return rec.trim();
+  if (parsed.kind === 'weekday') return 'Weekdays';
+  if (parsed.count === 1) return EVERY_ONE[parsed.unit];
+  return `Every ${parsed.count} ${UNIT_NAME[parsed.unit]}s`;
+}
+
+/** The rule for "every `count` `unit`s", in the words `recurrenceLabel` reads back. */
+export function everyRule(count: number, unit: 'd' | 'w' | 'm' | 'y'): string {
+  if (count === 1) return EVERY_ONE[unit].toLowerCase();
+  return `every ${count} ${UNIT_NAME[unit]}s`;
+}
+
 function startOfDay(d: Date): Date {
   const out = new Date(d);
   out.setHours(0, 0, 0, 0);
-  return out;
-}
-
-function parseIsoDate(iso: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!m) return null;
-  const y = parseInt(m[1] ?? '', 10);
-  const mo = parseInt(m[2] ?? '', 10);
-  const d = parseInt(m[3] ?? '', 10);
-  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  const out = new Date(y, mo - 1, d);
-  out.setHours(0, 0, 0, 0);
-  // Reject impossible dates like Feb 30 (Date silently rolls them over).
-  if (out.getFullYear() !== y || out.getMonth() !== mo - 1 || out.getDate() !== d) {
-    return null;
-  }
   return out;
 }
 
@@ -127,7 +132,7 @@ function clampedMonthDate(year: number, monthIdx: number, day: number): Date {
  * the schedule re-anchors on the new date.
  */
 function resolveAnchor(due: Date, unit: 'm' | 'y', anchor: string | undefined): Date {
-  const stored = anchor ? parseIsoDate(anchor) : null;
+  const stored = anchor ? parseLocalIsoDate(anchor) : null;
   if (!stored) return due;
   if (unit === 'y' && stored.getMonth() !== due.getMonth()) return due;
   const expected = clampedMonthDate(due.getFullYear(), due.getMonth(), stored.getDate());
@@ -163,7 +168,7 @@ export function nextDueDate(
   // Advancing by a single interval would leave a long-overdue task still due in
   // the past, so keep stepping the interval until we clear today.
   if (!currentDue) return null;
-  const parsedDue = parseIsoDate(currentDue);
+  const parsedDue = parseLocalIsoDate(currentDue);
   if (!parsedDue) return null;
 
   const today = startOfDay(completedOn);
@@ -207,7 +212,7 @@ export function recurrenceAnchorToRecord(
   if (!parsed || parsed.kind !== 'fixed' || (parsed.unit !== 'm' && parsed.unit !== 'y')) {
     return undefined;
   }
-  const due = parseIsoDate(currentDue);
+  const due = parseLocalIsoDate(currentDue);
   if (!due) return undefined;
   const resolved = resolveAnchor(due, parsed.unit, anchor);
   const canClamp = parsed.unit === 'm'

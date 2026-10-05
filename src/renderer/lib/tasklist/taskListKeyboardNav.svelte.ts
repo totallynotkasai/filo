@@ -17,7 +17,7 @@
  *
  * Why the deps closure pattern:
  *   The nav controller needs live reads of `viewModel.rows`,
- *   `viewModel.filteredRows`, `placements`, `sections`, `sortBy`, plus the
+ *   `viewModel.renderedRows`, `placements`, `sections`, `sortBy`, plus the
  *   host's `snapshotSections` / `commitIndent` / `tickAndPersist`
  *   helpers. Threading them through getters keeps the class free of
  *   cross-store imports.
@@ -42,7 +42,8 @@ import type { SortBy, TaskRow } from '../tasks/taskListModel';
 export interface TaskListKeyboardNavDeps {
   getBoard: () => TaskListBoardType | null;
   getRows: () => TaskRow[];
-  getFilteredRows: () => TaskRow[];
+  /** The rows on screen, top to bottom (`TaskListViewModel.renderedRows`). */
+  getRenderedRows: () => TaskRow[];
   getPlacements: () => TaskPlacement[];
   getSections: () => TaskListSection[];
   getSortBy: () => SortBy;
@@ -88,8 +89,9 @@ export class TaskListKeyboardNav {
     el?.focus();
   }
 
+  /** Arrow keys: the next row on screen (a folded section's or parent's rows aren't on it). */
   moveFocus(delta: 1 | -1): void {
-    const ids = this.deps.getFilteredRows().map((r) => r.tile.id);
+    const ids = this.deps.getRenderedRows().map((r) => r.tile.id);
     if (ids.length === 0) return;
     const focused = this.focusedTaskRow();
     if (!focused) {
@@ -120,9 +122,9 @@ export class TaskListKeyboardNav {
       this.deps.commitOutdent(row.tile.id);
       return true;
     }
-    // Indent under the visible row directly above the focused row, by the
+    // Indent under the row directly above the focused one on screen, by the
     // same rules as a drag: same section, no cycle, three levels at most.
-    const ids = this.deps.getFilteredRows().map((r) => r.tile.id);
+    const ids = this.deps.getRenderedRows().map((r) => r.tile.id);
     const idx = ids.indexOf(row.tile.id);
     if (idx <= 0) return false;
     const newParentId = ids[idx - 1];

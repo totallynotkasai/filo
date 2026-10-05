@@ -22,12 +22,16 @@
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { buildTaskContextMenu } from '../../lib/tasklist/taskContextMenus';
   import TaskDatePicker from './TaskDatePicker.svelte';
+  import RepeatPopup from './RepeatPopup.svelte';
+  import { buildDateContextMenu, buildRepeatMenu, unreadableRule } from '../../lib/tasklist/taskDateMenus';
+  import { recurrenceLabel, type RecurrenceMode } from '../../lib/tasks/recurrence';
   import TagBadge from '../tags/TagBadge.svelte';
   import TagsPopupMenu from '../tags/TagsPopupMenu.svelte';
   import { portal } from '../../lib/utils/portal';
   import type { Priority } from '../../lib/tasks/frontmatterReaders';
   import { PRIORITY_COLOR, PRIORITY_LABEL } from '../../constants/taskPriorities';
-  import { formatDueDateAbsolute, formatTimeChip, isOverdue as isOverdueLib } from '../../lib/tasks/dueDateFormat';
+  import { formatTimeChip, isOverdue as isOverdueLib } from '../../lib/tasks/dueDateFormat';
+  import { formatDay, formatDayLong } from '../../lib/utils/dateFormat';
   import { clockStore } from '../../stores/clock.svelte';
 
   let {
@@ -39,6 +43,7 @@
     dueTime = '',
     startDate = '',
     recurrence = '',
+    recurrenceMode = 'schedule',
     selected = false,
     selectionSize = 0,
     accentColor,
@@ -54,6 +59,7 @@
     onSetDueTime,
     onSetStartDate,
     onSetRecurrence,
+    onSetRecurrenceMode,
     onSetNotes,
     onRename,
     onDelete,
@@ -79,6 +85,7 @@
     dueTime?: string;
     startDate?: string;
     recurrence?: string;
+    recurrenceMode?: RecurrenceMode;
     selected?: boolean;
     /** Total selection size on the host board. When >1 AND `selected` is
      *  true, the row's right-click "Move to…" entries become a bulk verb
@@ -98,6 +105,7 @@
     onSetDueTime?: (dueTime: string) => void;
     onSetStartDate?: (startDate: string) => void;
     onSetRecurrence?: (recurrence: string) => void;
+    onSetRecurrenceMode?: (mode: RecurrenceMode) => void;
     onSetNotes?: (body: string) => Promise<SetBodyStatus>;
     onRename: (title: string) => void;
     onDelete: (anchor?: { x: number; y: number }) => void;
@@ -164,6 +172,7 @@
   let notesPreview = $derived(getBodyPreview(rawBody, 120));
   const notes = new NotesBox({ path: () => backingPath, body: () => rawBody, write: (b) => onSetNotes ? onSetNotes(b) : Promise.resolve('not-open') });
   $effect(() => notes.track());
+  $effect(() => notes.follow());
   let isExpanded = $derived(notes.expanded);
   let notesEl: HTMLTextAreaElement | undefined = $state();
 
@@ -254,8 +263,8 @@
     titleEdit.start();
   }
 
-  // formatTimeChip / formatDueDateAbsolute / isOverdue come from
-  // lib/tasks/dueDateFormat.ts (shared with Kanban). `now` is the clock store's
+  // formatDay (lib/utils/dateFormat.ts), formatTimeChip and isOverdue
+  // (lib/tasks/dueDateFormat.ts) are shared with Kanban. `now` is the clock store's
   // day, so a chip turns overdue (and gains its year) at midnight.
 
   // ── Date picker popover ──
@@ -265,26 +274,18 @@
   let startDatePickerOpen = $state(false);
   let startDatePickerAnchor = $state<{ x: number; y: number } | null>(null);
 
+  // "Every…" in the Repeat menu: any number of days, weeks, months or years.
+  let repeatPopupAnchor = $state<{ x: number; y: number } | null>(null);
+
   function openRepeatMenu(anchor: { x: number; y: number }) {
     if (!onSetRecurrence) return;
-    const presets: Array<{ id: string; label: string; value: string }> = [
-      { id: 'none', label: 'None', value: '' },
-      { id: 'daily', label: 'Daily', value: 'daily' },
-      { id: 'weekly', label: 'Weekly', value: 'weekly' },
-      { id: 'weekday', label: 'Weekdays (Mon–Fri)', value: 'weekday' },
-      { id: 'monthly', label: 'Monthly', value: 'monthly' },
-      { id: 'yearly', label: 'Yearly', value: 'yearly' },
-    ];
-    uiStore.showContextMenu(
-      anchor.x,
-      anchor.y,
-      presets.map((p) => ({
-        id: p.id,
-        label: p.label,
-        checked: recurrence === p.value,
-        action: () => onSetRecurrence?.(p.value),
-      })),
-    );
+    uiStore.showContextMenu(anchor.x, anchor.y, buildRepeatMenu({
+      recurrence,
+      mode: recurrenceMode,
+      onSet: (rule) => onSetRecurrence?.(rule),
+      onSetMode: (mode) => onSetRecurrenceMode?.(mode),
+      onCustom: () => { repeatPopupAnchor = anchor; },
+    }));
   }
 
   function openDueDateMenu(e: MouseEvent) {
@@ -306,43 +307,15 @@
     e.preventDefault();
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const items: Array<{ id: string; label: string; action?: () => void; divider?: boolean; danger?: boolean }> = [
-      {
-        id: 'pick-due',
-        label: 'Pick due date…',
-        action: () => {
-          dueDatePickerAnchor = { x: rect.left, y: rect.bottom + 4 };
-          dueDatePickerOpen = true;
-        },
-      },
-    ];
-    if (onSetStartDate) {
-      items.push({
-        id: 'pick-start',
-        label: startDate ? `Start: ${startDate}` : 'Set start date…',
-        action: () => {
-          startDatePickerAnchor = { x: rect.left, y: rect.bottom + 4 };
-          startDatePickerOpen = true;
-        },
-      });
-    }
-    if (onSetRecurrence) {
-      items.push({
-        id: 'repeat',
-        label: recurrence ? `Repeat: ${recurrence}…` : 'Repeat…',
-        action: () => openRepeatMenu({ x: rect.left, y: rect.bottom + 4 }),
-      });
-    }
-    if (dueDate || startDate || recurrence) {
-      items.push({ id: 'sep', label: '', divider: true });
-      if (dueDate) {
-        items.push({ id: 'clear-due', label: 'Clear due date', danger: true, action: () => onSetDueDate('') });
-      }
-      if (startDate && onSetStartDate) {
-        items.push({ id: 'clear-start', label: 'Clear start date', danger: true, action: () => onSetStartDate?.('') });
-      }
-    }
-    uiStore.showContextMenu(e.clientX, e.clientY, items);
+    const below = { x: rect.left, y: rect.bottom + 4 };
+    uiStore.showContextMenu(e.clientX, e.clientY, buildDateContextMenu({
+      dueDate, startDate, recurrence, now: clockStore.todayDate(),
+      onPickDue: () => { dueDatePickerAnchor = below; dueDatePickerOpen = true; },
+      onPickStart: onSetStartDate ? () => { startDatePickerAnchor = below; startDatePickerOpen = true; } : undefined,
+      onRepeat: onSetRecurrence ? () => openRepeatMenu(below) : undefined,
+      onClearDue: () => onSetDueDate(''),
+      onClearStart: onSetStartDate ? () => onSetStartDate?.('') : undefined,
+    }));
   }
 
   function isOverdue(): boolean {
@@ -690,7 +663,7 @@
     <button
       class="task-priority"
       onclick={(e) => { e.stopPropagation(); onCyclePriority(); }}
-      title="Priority: {priority}"
+      title="Priority: {PRIORITY_LABEL[priority]}"
       style:color={PRIORITY_COLOR[priority]}
     >
       {PRIORITY_LABEL[priority]}
@@ -709,11 +682,13 @@
   {/if}
 
   {#if recurrence}
+    {@const unreadable = unreadableRule(recurrence)}
     <button
       class="task-recurrence"
-      title={`Repeats ${recurrence}`}
-      aria-label={`Repeats ${recurrence}`}
-      onclick={openDueDateMenu}
+      class:unreadable
+      title={unreadable ? `Filo can't read this repeat rule ("${recurrence}"): completing won't repeat the task` : `Repeats: ${recurrenceLabel(recurrence)}`}
+      aria-label={unreadable ? `Repeat rule Filo can't read: ${recurrence}` : `Repeats: ${recurrenceLabel(recurrence)}`}
+      onclick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); openRepeatMenu({ x: r.left, y: r.bottom + 4 }); }}
     >
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <polyline points="23 4 23 10 17 10" />
@@ -726,15 +701,15 @@
   {#if startDate}
     <button
       class="task-start-date"
-      title={`Starts ${startDate}`}
-      aria-label={`Starts ${startDate}`}
+      title={`Starts ${formatDayLong(startDate)}`}
+      aria-label={`Starts ${formatDayLong(startDate)}`}
       onclick={openStartDateMenu}
       oncontextmenu={openDateContextMenu}
     >
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <polyline points="5 12 12 19 19 12" transform="rotate(-90 12 12)" />
       </svg>
-      {formatDueDateAbsolute(startDate, { now: clockStore.todayDate() })}
+      {formatDay(startDate, { now: clockStore.todayDate() })}
     </button>
   {/if}
 
@@ -743,11 +718,11 @@
       class="task-due task-due-clickable"
       class:overdue={isOverdue()}
       title="Change due date"
-      aria-label="Change due date"
+      aria-label={`Due ${formatDayLong(dueDate)}: change due date`}
       onclick={openDueDateMenu}
       oncontextmenu={openDateContextMenu}
     >
-      {formatDueDateAbsolute(dueDate, { now: clockStore.todayDate() })}{dueTime ? ` ${formatTimeChip(dueTime)}` : ''}
+      {formatDay(dueDate, { now: clockStore.todayDate() })}{dueTime ? ` ${formatTimeChip(dueTime)}` : ''}
     </button>
   {:else}
     <button
@@ -833,6 +808,15 @@
     onPickTime={(t) => onSetDueTime?.(t)}
     onClear={() => onSetDueDate('')}
     onClose={() => { dueDatePickerOpen = false; dueDatePickerAnchor = null; }}
+  />
+{/if}
+
+{#if repeatPopupAnchor}
+  <RepeatPopup
+    {recurrence}
+    anchor={repeatPopupAnchor}
+    onSave={(rule) => onSetRecurrence?.(rule)}
+    onClose={() => { repeatPopupAnchor = null; }}
   />
 {/if}
 
@@ -1325,6 +1309,10 @@
     border: none;
     cursor: pointer;
     transition: color 0.15s ease, background-color 0.15s ease;
+  }
+
+  .task-recurrence.unreadable {
+    color: var(--accent-danger);
   }
 
   .task-recurrence:hover {

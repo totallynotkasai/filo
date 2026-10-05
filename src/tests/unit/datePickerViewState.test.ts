@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DatePickerViewState } from '@renderer/lib/tasklist/datePickerViewState.svelte';
+import { calendarCells, dateKeyMove, shiftDay, weekdayLabels, weekStartDay } from '@renderer/lib/tasklist/calendarGrid';
 
 /**
  * DATE-1 (Task List audit 2026-06-08, Phase 1) — the date picker's visible
@@ -64,5 +65,44 @@ describe('DatePickerViewState — seed + navigation (DATE-1)', () => {
     v.nextMonth(); // navigated to June
     v.syncToValue('2026-12-01'); // a different value DOES re-seed
     expect([v.viewYear, v.viewMonth]).toEqual([2026, 11]); // December
+  });
+});
+
+describe('the date picker grid and keys (calendarGrid)', () => {
+  it('starts the week on the locale\'s first day', () => {
+    expect(weekStartDay('en-GB')).toBe(1);
+    expect(weekStartDay('en-US')).toBe(0);
+    expect(weekStartDay('not a locale!')).toBe(0);
+    expect(weekdayLabels(1, 'en-GB').map((d) => d.long)).toEqual(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
+  });
+
+  it('shows six weeks from the week start on or before the 1st', () => {
+    const monday = calendarCells(2026, 9, 1); // October 2026 starts on a Thursday
+    expect(monday).toHaveLength(42);
+    expect(monday[0]).toBe('2026-09-28');
+    expect(calendarCells(2026, 9, 0)[0]).toBe('2026-09-27');
+    expect(calendarCells(2026, 1, 0)[0]).toBe('2026-02-01'); // Feb 2026 starts on a Sunday
+  });
+
+  it('moves a day, a week, to the week\'s ends and by a month', () => {
+    const wed = '2026-10-14';
+    expect(dateKeyMove('ArrowLeft', wed, 1)).toEqual({ days: -1 });
+    expect(dateKeyMove('ArrowDown', wed, 1)).toEqual({ days: 7 });
+    expect(dateKeyMove('Home', wed, 1)).toEqual({ days: -2 });
+    expect(dateKeyMove('End', wed, 1)).toEqual({ days: 4 });
+    expect(dateKeyMove('Home', wed, 0)).toEqual({ days: -3 });
+    expect(dateKeyMove('PageDown', wed, 1)).toEqual({ months: 1 });
+    expect(dateKeyMove('x', wed, 1)).toBeNull();
+    expect(shiftDay('2026-01-31', { months: 1 })).toBe('2026-02-28');
+    expect(shiftDay('2026-12-31', { days: 1 })).toBe('2027-01-01');
+  });
+
+  it('the month buttons move the keyboard\'s day with the month', () => {
+    const v = new DatePickerViewState();
+    v.syncToValue('2026-01-31');
+    v.nextMonth();
+    expect(v.focusedIso).toBe('2026-02-28');
+    v.move({ days: 1 });
+    expect([v.viewYear, v.viewMonth, v.focusedIso]).toEqual([2026, 2, '2026-03-01']);
   });
 });

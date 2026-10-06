@@ -1,7 +1,7 @@
 # Audit-28 implementation plan (draft, 2026-10-04)
 
 - **Source:** [AUDIT28_PRE_DAILY_USE_2026-10-04.md](AUDIT28_PRE_DAILY_USE_2026-10-04.md). Finding IDs (A-01, H-01 …) refer to it.
-- **Status:** Phases 0 and 1 done on 2026-10-04, Phases 2, 3, 4, 5, 6A and 6B on 2026-10-05, Phase 7 on 2026-10-06 (see section 4); Phase 6 was split into 6A and 6B at the owner's request. Phase 8 is not started. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs, Phase 2 D6 and D7 at theirs, Phase 3 D2 at its default, Phase 4 D8 at its default, Phase 5 D9 at its default.
+- **Status:** all phases done. Phases 0 and 1 on 2026-10-04, Phases 2, 3, 4, 5, 6A and 6B on 2026-10-05, Phases 7 and 8 on 2026-10-06 (see section 4); Phase 6 was split into 6A and 6B at the owner's request. Phase 8 archived this plan and the report. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs, Phase 2 D6 and D7 at theirs, Phase 3 D2 at its default, Phase 4 D8 at its default, Phase 5 D9 at its default.
 - **Scores:** out of 10, as in the report. **Hard:** 0/10 = minutes, 5/10 = a few days with tests, 10/10 = weeks.
 
 ## 1. How this plan works
@@ -21,7 +21,7 @@
   - the E2E suite (with `FILO_E2E_SCALE=1`) when the phase touches the shell, startup, quit, file watching or the editor;
   - the corpus check (`corpus:run` + `corpus:compare` against today's baseline) for any phase that touches the editor or Markdown writing;
   - an outcome section in this file: what changed, deviations, new findings.
-- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them, Phase 1 BL-25 and BL-26; Phase 2 added BL-27, fixed there, and BL-28; Phase 3 BL-29 and BL-30, fixed there, and BL-31 and BL-32; Phase 4 added two owner decisions and no numbered item; Phase 5 BL-33 and BL-34, fixed there, and BL-35; Phase 6A BL-36, fixed there; Phase 6B BL-37 and BL-38, fixed there; Phase 7 took BL-04, BL-05 and BL-10 and added BL-39).
+- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them, Phase 1 BL-25 and BL-26; Phase 2 added BL-27, fixed there, and BL-28; Phase 3 BL-29 and BL-30, fixed there, and BL-31 and BL-32; Phase 4 added two owner decisions and no numbered item; Phase 5 BL-33 and BL-34, fixed there, and BL-35; Phase 6A BL-36, fixed there; Phase 6B BL-37 and BL-38, fixed there; Phase 7 took BL-04, BL-05 and BL-10 and added BL-39; Phase 8 added BL-40 and fixed it).
 - **Comments explain why, never history.** Audit IDs go in commit messages.
 
 "Sum of Hard scores" adds up the Hard scores of the phase's tasks. It's a rough guide to size, not a score.
@@ -214,13 +214,15 @@ Each part has its own pass test, below the table.
 
 ### Phase 8: verification and archive
 
-- `ci:verify` on Windows.
-- E2E with `FILO_E2E_SCALE=1`.
-- E2E against a packaged build (`npm run package:dir`, then `FILO_E2E_EXE`).
-- The corpus check against today's baseline.
-- The three hands-on tour scripts on a fresh copy of your book vault: none of the H-findings reproduces.
-- Update `docs/BACKLOG.md`: remove what was taken, add what wasn't (BL-25 onwards). Close `notes-2`; `legacy-8` closes with 7.1.
-- Archive the report and this plan to `docs/archive/`.
+*Done on 2026-10-06; every check passed (section 4).*
+
+- `ci:verify` on Windows. *Passed.*
+- E2E with `FILO_E2E_SCALE=1`. *45 of 45.*
+- E2E against a packaged build (`npm run package:dir`, then `FILO_E2E_EXE`). *42 passed; the 3 scale cases skip without `FILO_E2E_SCALE`.*
+- The corpus check against today's baseline. *0 changed, 0 newly read-only, on both lists (section 4, deviation 2).*
+- The three hands-on tour scripts on a fresh copy of your book vault: none of the H-findings reproduces. *None does; the scripts needed small changes, and a fourth checks H-07 and H-08 (section 4, deviation 1).*
+- Update `docs/BACKLOG.md`: remove what was taken, add what wasn't (BL-25 onwards). Close `notes-2`; `legacy-8` closes with 7.1. *Done; every finding was taken by a phase. The tours found BL-40, fixed in the phase.*
+- Archive the report and this plan to `docs/archive/`. *Done.*
 
 ## 3. Decisions for you (defaults in bold)
 
@@ -899,7 +901,7 @@ Two bugs turned up and were fixed in the phase: BL-33 (the font box blank in a v
 
 ### Phase 6A outcome (2026-10-05)
 
-**Status:** done, not committed (the owner decides when). Phase 6 was split at the owner's request: 6A (tasks 6.1 to 6.8, sync and recovery) here, 6B (6.9 to 6.18, notes and boards) in a later session. No decision from section 3 applied. Six deviations are listed below. The changes you will notice:
+**Status:** done; committed as `0ea3648` at the owner's request. Phase 6 was split at the owner's request: 6A (tasks 6.1 to 6.8, sync and recovery) here, 6B (6.9 to 6.18, notes and boards) in a later session. No decision from section 3 applied. Six deviations are listed below. The changes you will notice:
 - a new **Settings → Recovery** tab lists every copy Filo keeps in `.filo/recovery`, with Open, Show in folder and Delete;
 - the "Filo preserved N file snapshots … failed-load window" warning no longer comes back at every open;
 - a Syncthing (or Dropbox, OneDrive) conflict copy of a note gets a notice naming the note it split from, with **Open the copy**;
@@ -996,7 +998,7 @@ One latent bug from Phase 3 turned up and was fixed here: BL-36 (end of this sec
 
 ### Phase 6B outcome (2026-10-05)
 
-**Status:** done, not committed (the owner decides when). Tasks 6.9 to 6.18 are in, BL-02 with them. No decision from section 3 applied. Nine deviations are listed below. Two bugs turned up while fixing these and were fixed here: BL-37 and BL-38 (end of this section). The changes you will notice:
+**Status:** done; committed on 2026-10-06 as `3195b17`, at the owner's request, before Phase 7's commit. Tasks 6.9 to 6.18 are in, BL-02 with them. No decision from section 3 applied. Nine deviations are listed below. Two bugs turned up while fixing these and were fixed here: BL-37 and BL-38 (end of this section). The changes you will notice:
 - switching to another tab from a Raw view whose text can't be saved now asks, as closing the tab does; and text typed there in the last moments before a switch is no longer lost (BL-37);
 - ticking a task, setting a card's date or priority, or retitling a note no longer rewrites the board's file, and showing a Kanban board or Task List with no saved view writes nothing;
 - undoing a style change or a saved view no longer brings back a font size "Use Default Font Sizes" cleared, or an old tag name a vault-wide rename replaced;
@@ -1085,7 +1087,7 @@ One latent bug from Phase 3 turned up and was fixed here: BL-36 (end of this sec
 
 ### Phase 7 outcome (2026-10-06)
 
-**Status:** done, not committed (the owner decides when). Tasks 7.1 to 7.6 are in. No decision from section 3 applied. Six deviations are listed below. BL-04, BL-05 and BL-10 are taken and fixed; `legacy-8` is closed; B-08's file fields wait for the first board-format step as BL-39. The changes you will notice:
+**Status:** done; committed as `e76ed0b`, after Phase 6B's, at the owner's request. Tasks 7.1 to 7.6 are in. No decision from section 3 applied. Six deviations are listed below. BL-04, BL-05 and BL-10 are taken and fixed; `legacy-8` is closed; B-08's file fields wait for the first board-format step as BL-39. The changes you will notice:
 - a search such as `tag:draft C:\notes` searches for `C:\notes` (the backslash used to be dropped);
 - a Replace that finds the note changed since the search (the "Replace skipped" warning) now stays on that match, read again, so the next Replace tries it on the new text; it no longer moves on, and it leaves no undo step;
 - a note, card, task or board named from a long title in Chinese, Japanese or emoji gets a file name that a phone the vault syncs to can hold; a name typed in the sidebar or for a board that is too long for Windows or a phone is refused inline;
@@ -1132,7 +1134,7 @@ Nothing changes in normal use for the two security fixes (7.1, 7.2): both holes 
 5. **Most docs were already right (7.5).** Earlier phases had fixed CLAUDE.md's conflict-notice line (6A), KL #29 and #30 (1 and 6B), the VS Code comment in `AppShell.svelte` (5), the `FileTile.svelte` comments (3), the snapshot warning's "once" (6A) and the Help text (3 and 5); each was checked against the code. Left were the design-doc list, `frames.svelte.ts` and KL #22 (whose name limit was out of date).
 6. **BL-05 drops the step; BL-10 by a helper (7.6).** A skipped single Replace changed nothing, so its undo step goes too (the rule for a change a note can't take). BL-10's `dispose()` is reached through a test helper rather than an `afterEach` written into each file by hand.
 
-**Tests** (each new case was run against the Phase 6B code, the snapshot `refs/snapshots/phase6b`; see Checks)
+**Tests** (each new case was run against the Phase 6B code, the snapshot `refs/snapshots/phase6b`, now commit `3195b17`; see Checks)
 - **Unit:**
   - New `vaultBoundaryOnDiskSpelling.test.ts` (17, from the finder's `zzA28C_filo83` and `zzA28C_copyJunction`): `.filo` reached by its 8.3 name and by a junction (delete, overwrite, create, a note moved into it, trash, `filo://`); the 8.3 cases skip where the volume keeps no short names (Linux CI); ordinary spellings (a folder named like a short name) still work; `vault:copy-file` never writes out through a junction destination, never reads in through a junction source, copies the same file when the user chose it, and copies an ordinary file.
   - New `publicHttpConnection.test.ts` (10): a private answer never connected to; one private answer among public ones refuses both; a redirect checked at its own hop; an address literal checked on connect; a public page through a redirect, gzip decoded; the body cap; too many redirects; the handler refusing a private name and a redirect to one, and returning a public page's title.
@@ -1163,3 +1165,54 @@ Nothing changes in normal use for the two security fixes (7.1, 7.2): both holes 
 **Found while doing this phase**
 - Within the tasks, fixed here: a board name of 245 to 255 characters passed the name check but its file name, with `.board.json`, didn't fit Windows (7.3); the link preview's 8 s limit ended before the body was read (7.2); `syncTileMembership`'s comment said "innermost frame" (7.5); KNOWN_LIMITATIONS #22 still gave the old 200-character cut (7.5).
 - Added to the backlog: BL-39, the board-file fields B-08 leaves for the first board-format step.
+
+### Phase 8 outcome (2026-10-06)
+
+**Status:** done. Apart from the BL-40 fix the owner asked for afterwards (at the end of this section), no source file changed in this phase: it ran the checks below on the Phase 7 code. At the owner's request Phases 6B, 7 and 8 were then committed apart, each from its own tree: 6B as `3195b17`, 7 as `e76ed0b`, and this phase, with the BL-40 fix, after them. Every check passed, and none of the H-findings reproduces in the built app. The tours found one new small finding (BL-40), since fixed. The report and this plan are now in `docs/archive/`.
+
+**Checks**
+- **`npm run ci:verify` on Windows:** passed at the first run. 869 test files, 8,488 tests passed and 5 skipped (as in Phase 7), 91/91 gates; the test step took 258 s, the whole run 331 s.
+- **E2E with `FILO_E2E_SCALE=1`** on the build `ci:verify` made: 45 of 45 passed, 3.4 min. The scale budgets (BL-07, BL-28) all held this time.
+- **E2E against the packaged app:** `npm run package:dir`, then the suite with `FILO_E2E_EXE` pointing at `release/win-unpacked/Filo.exe`: 42 passed, and the 3 scale cases skipped (they run only with `FILO_E2E_SCALE=1`, and passed on the dist build above), 2.7 min.
+- **Corpus check**, the current code against the audit-day runs (deviation 2):
+  - 741 notes (the repo's notes, the vaults folder and `node_modules` READMEs; the list Phase 1 used): 0 changed, 0 newly read-only, 0 newly failed. 345 open editable in both runs and 390 read-only in both (mostly READMEs). The 6 repo docs edited since the baseline weren't compared.
+  - Your 43 notes (book vault, Test Vault, TEST VAULT V2, the v7 scratch vault): all 43 compared, all editable in both runs, 0 changed.
+- **Hands-on tours** on a fresh copy of the book vault (`Dilletante's in the Interim`, 13 notes, no `.filo`), driving the built app (deviation 1). One line per H-finding:
+  - **H-01 (High):** after Add Card → Text the caret is in the new card's title, and after New Tile → Text in the new tile's title. The three typed card titles and three typed tile titles landed in their titles; the Mind Map has 3 tiles, not 5, and no stray `New Card` or `New Tile` note was made. Typing on a selected Task List row changed nothing.
+  - **H-02:** the three toolbar-made tiles sit side by side at distinct positions.
+  - **H-03:** the book vault, opened for the first time, has Board-specific folders on. Each board's notes went into its own folder: `Kanban 1/Outline chapter 3.md`, `Task List 1/Draft chapter 3.md`, `Mind Map 1/Magic system.md`; the vault's top folder holds only your 13 notes.
+  - **H-04:** at 1,100 px the docked sidebar ends at 240 px and the note's text starts at 337 px, and at 1,366 px at 338 px: nothing covered. No formatting control is off screen at either width (at 1,100 px the toolbar folds into "More formatting").
+  - **H-05:** typing "magic" in the Search panel lists 25 matches in 10 notes under the box, grouped by note, with the board each is on.
+  - **H-06:** the toolbar's gear button opens Settings; the tabs say how they save (AUTO / APPLY).
+  - **H-07:** a new tile, then Escape, then Ctrl+Z: the tile goes and its empty note `Mind Map 1/New Tile 2.md` is in Filo's trash (`.filo/trash/<id>/files/…`), not left in the vault.
+  - **H-08:** Help lists the Mind Map's N, C, Enter and Backspace as commands, under "Click a shortcut to rebind it".
+  - **H-09:** Settings shows "Filo 0.2.0".
+  - **H-10:** with no editor focused, the formatting toolbar is marked inactive and Bold is disabled.
+  - Also: no page errors in any tour, and every quit exited at once (about 150 ms) with nothing left to save. Typing into the empty `Creature lexicon.md` was on disk within 1.5 s. Quick add read "Draft chapter 3 tomorrow" as a date (7 Oct) and "every friday" as a repeat (9 Oct), and left "May the fourth party plan" alone.
+
+**Docs and backlog**
+- Every one of the report's 80 finding ids is in a phase's table; nothing was left untaken. The report's section 6 items were already in the backlog (sections 2 to 4).
+- `notes-2` is closed, in `docs/BACKLOG.md` section 5 and in the Audit-22 report: the audit found it no longer reproduces for notes, and two tests pin it (`noteWritePathEdges.test.ts`, "an older version of ours put back by another program is taken, not ignored as an echo"; `watcherOwnWriteBytes.test.ts`, "once a later write has landed, an earlier write's bytes are someone else's restore"). The Audit-22 report stays in `docs/`: `mindmap-10` (tile copy and paste) is still open there, as an owner decision.
+- BL-40 added, then fixed in this phase (below) and taken off again. The next new item is BL-41.
+- The report and this plan moved to `docs/archive/` (`git mv`); the backlog's links follow them.
+
+**Deviations from the plan**
+1. **The tour scripts needed changes, and a fourth was added.** The audit's scripts assumed the boards and their notes are in the vault's top folder; with H-03 fixed they are in board folders, so tours 2 and 3 now switch boards by their tabs, and tour 3 reads `Task List 1/Chapter 12 outline.md`. Tour 1 gained a logged check for each H-finding (the audit judged them from screenshots). Its H-07 and H-08 steps first pressed the canvas under the docked sidebar, timed out and never reached Undo or Help (which is why that run left a `New Tile.md`); a fourth script (`ux4.pass.ts`) ran both again, pressing the canvas clear of the sidebar. The scripts are in this session's scratchpad (`…\c02bf3ec-…\scratchpad\ux`), with their screenshots and logs.
+2. **"Today's baseline" read as the audit-day runs.** The plan's date is 2026-10-04, so the corpus was compared with the runs made then: the 741-note list against Phase 1's baseline at `40b0e87` (Phase 0's commit, whose editor is the audited `6c5f5a3`'s), and your 43 notes against the audit's own run at `6c5f5a3`. Comparing with the start of the plan, not with Phase 7, covers every phase's editor changes at once.
+3. **The packaged run without the scale budgets.** They ran on the dist build; a packaged run of them would repeat the same code under the asar.
+4. **No installer built.** The plan asked for `package:dir` only. `package.json` still says `0.2.0`, which the installed build (from Phase 0) also says; D10 says to bump the version for every build you install, so bump it (say to `0.3.0`) before `npm run package:win`.
+
+**Found while doing this phase**
+- **BL-40**, found in the tours, then fixed in this phase at the owner's request: a new Mind Map tile could land partly under the docked vault sidebar. Where the window is wide enough that the docked sidebar lies over the canvas (1,340 px and over), the canvas under it counted as in view, so the toolbar's New Tile, Ctrl+N and the template insert centred on the whole canvas and could step a tile to the left, under the sidebar. In the tour, "Antagonist" started 2 px under it at 1,440 px; nearer 1,340 px more of a tile could be hidden.
+
+**BL-40 fix (2026-10-06, at the owner's request)**
+- **What changed:** a new tile or frame made without a pointer (the side toolbar's New Tile and New Frame, Ctrl+N, N, the template insert) goes in the canvas you can see: the view less the strip the vault sidebar covers. It is centred there and steps clear of other tiles only within it.
+  - `lib/utils/sidebarLayout.ts`: `sidebarCoverRight`, how far from the window's left the sidebar lies over the workspace. The docked sidebar covers its width unless it pushes the workspace aside; the floating panel counts only in the window's left half, the rule the Kanban columns' shift already uses.
+  - `lib/canvas/newTilePlacement.ts`: `withoutCoveredLeft` (the view less a covered strip, at the zoom) and `centreIn`.
+  - `lib/canvas/newTileView.ts` (new): `newTileView(canvas)` puts them together from the UI store and the pane's place on screen. A pane that starts right of the sidebar (a split) keeps its whole view.
+  - The canvas scope keeps its element (`setViewportElement`, set by `MindMapBoard`) and reads its left edge when asked (`viewportScreenLeft`), since a pane can move without changing size.
+  - The five callers (`SideToolbar.svelte` tile and frame, `AppShell.svelte` Ctrl+N, `MindMapBoard.svelte` N and its own new tile, `TemplateBrowser.svelte`) use it instead of the whole view.
+- **Deviation:** the fix idea named the docked sidebar only; the floating panel, when it sits in the left half, is taken off too, as the Kanban board already does. New frames from the side toolbar use the same view.
+- **Tests:** `newTilePlacement.test.ts` +6 (the strip at two zooms, nothing or everything covered, a pane right of the sidebar, five tiles dealt clear of the strip, the docked and floating covers); `sideToolbarNewTilePlacement.test.ts` +2 (the real toolbar at 1,440 px: the first tile centred in 240 to 1,200 px and five tiles none left of 240; a pane right of the sidebar keeps its whole view). Bite check: on the Phase 7 side toolbar the 1,440 px case fails (the tile centred at 600, not 720); the split-pane case passes on both, as a control. The unit cases need the new functions, so they don't load on the old code.
+- **Checks:** `ci:verify` on Windows passed (869 files, 8,496 passed and 5 skipped, 91/91 gates, 346 s). Tour 1 again on a fresh copy of the book vault at 1,440 px: the three tiles now start at 358, 682 and 1,006 px, the left one clear of the sidebar (240 px); before the fix it started at 238.
+- The backlog no longer lists BL-40; the next new item is still BL-41.

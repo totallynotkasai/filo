@@ -471,6 +471,7 @@ filo/
 │   │   │   │   ├── markdownTileSeed.ts
 │   │   │   │   ├── layout.ts          # Auto-layout algorithms
 │   │   │   │   ├── newTilePlacement.ts # placeClear: a new tile (side toolbar, Ctrl+N, N) steps to the nearest spot clear of other tiles, one in view first
+│   │   │   │   ├── newTileView.ts     # newTileView: the view a new tile or frame goes in, less what the vault sidebar lies over (a pane right of it keeps its whole view)
 │   │   │   │   ├── orphanCatcher.ts
 │   │   │   │   ├── floatingToolbarDrag.ts # Shared toolbar drag: background only, pin blocks it, cancel reverts, clamp to window
 │   │   │   │   ├── minimapBounds.ts   # Minimap window math: a local window around the viewport, tiles AABB apart
@@ -663,7 +664,7 @@ filo/
 │   │   │       ├── timerCountdown.ts  # A running timer is its wall-clock end (`endsAt`): it counts while its board is closed
 │   │   │       ├── urlSafety.ts
 │   │   │       ├── copyLink.ts        # copyFiloLink / copyText: through main (`shell:copy-text`); a link pastes into a note as a link reading its name
-│   │   │       ├── sidebarLayout.ts   # sidebarPushesWorkspace: the docked sidebar pushes the workspace aside where the 860 px page would start under it
+│   │   │       ├── sidebarLayout.ts   # sidebarPushesWorkspace: the docked sidebar pushes the workspace aside where the 860 px page would start under it; sidebarCoverRight: how far it lies over the workspace otherwise
 │   │   │       ├── toolbarDensity.ts  # fittingDensity: the roomiest formatting toolbar density whose controls fit (measured: the vault name and toolbar scale count)
 │   │   │       └── navigation.svelte.ts # navigateToTile + highlight state
 │   │   │

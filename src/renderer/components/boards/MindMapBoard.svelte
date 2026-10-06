@@ -41,7 +41,8 @@
   import { isContentEditableAware, wantsNativeTextMenu } from '../../lib/utils/editableTarget';
   import { registerMindMapShortcuts } from '../../lib/mindmap/mindMapShortcuts';
   import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
-  import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
+  import { centreIn, placeClear, tileRects } from '../../lib/canvas/newTilePlacement';
+  import { newTileView } from '../../lib/canvas/newTileView';
   import { templatesStore } from '../../stores/templates.svelte';
   import { hitTestFrame } from '../../lib/mindmap/frameHitTest';
   import { framesInPaintOrder } from '../../lib/frames/nestedFrames';
@@ -165,15 +166,7 @@
 
   function createTileAtViewportCenter(): Tile | null {
     if (!boardStore.current) return null;
-    const viewportCenter = {
-      x: canvasStore.viewportWidth / 2,
-      y: canvasStore.viewportHeight / 2,
-    };
-    const canvasPos = screenToCanvas(viewportCenter.x, viewportCenter.y, canvasStore.transform);
-    return addNewTextTile({
-      x: canvasPos.x - TILE_DEFAULTS.width / 2,
-      y: canvasPos.y - TILE_DEFAULTS.height / 2,
-    }, { stepClear: true });
+    return addNewTextTile(centreIn(newTileView(canvasStore), TILE_DEFAULTS), { stepClear: true });
   }
 
   /**
@@ -183,7 +176,7 @@
    */
   function addNewTextTile(position: { x: number; y: number }, opts: { stepClear?: boolean } = {}): Tile {
     const tile = createTile('text', position, boardStore.current?.id ?? '', { title: boardStore.getNextTileName() });
-    if (opts.stepClear) tile.position = { ...tile.position, ...placeClear(position, tile.size, tileRects(boardStore.tiles), viewRect(canvasStore.viewportRect)) };
+    if (opts.stepClear) tile.position = { ...tile.position, ...placeClear(position, tile.size, tileRects(boardStore.tiles), newTileView(canvasStore)) };
     boardStore.addTileWithHistory(tile);
     editTitleWhenShown(tile.id);
     return tile;
@@ -217,8 +210,12 @@
       }
     });
     observer.observe(canvasContainer);
+    canvasStore.setViewportElement(canvasContainer);
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      canvasStore.setViewportElement(null);
+    };
   });
 
   // Tile menu, and canvas menu with 2+ selected.

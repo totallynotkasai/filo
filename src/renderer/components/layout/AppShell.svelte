@@ -38,7 +38,8 @@
   import { createNewNote, folderOfNote } from '../../lib/notes/newNote';
   import { mayLeaveRawView, rawTextUnsaved } from '../../lib/notes/rawViewLeave';
   import { untrack } from 'svelte';
-  import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
+  import { centreIn, placeClear, tileRects } from '../../lib/canvas/newTilePlacement';
+  import { newTileView } from '../../lib/canvas/newTileView';
   import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
   import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
   import { requestDeleteSelected, selectableTileIds, toggleGroupSelection, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
@@ -354,17 +355,12 @@
         enabled: onMindMap,
         execute: () => {
           if (!boardStore.current) return;
-          const vp = canvasStore.viewportRect;
+          const view = newTileView(canvasStore);
           const tile = createTile('text', { x: 0, y: 0 }, boardStore.current.id);
           // In the middle of the view, or stepped clear of the tiles already there.
           tile.position = {
             ...tile.position,
-            ...placeClear(
-              { x: vp.left + vp.width / 2 - tile.size.width / 2, y: vp.top + vp.height / 2 - tile.size.height / 2 },
-              tile.size,
-              tileRects(boardStore.tiles),
-              viewRect(vp),
-            ),
+            ...placeClear(centreIn(view, tile.size), tile.size, tileRects(boardStore.tiles), view),
           };
           boardStore.addTileWithHistory(tile);
           selectionStore.select(tile.id);

@@ -38,6 +38,8 @@ export interface CanvasScope {
   readonly isSemanticZoomActive: boolean;
   readonly lodLevel: 'full' | 'simplified' | 'block';
   readonly viewportRect: ViewportRect;
+  /** The canvas element's left edge in window pixels (0 before one is mounted). */
+  readonly viewportScreenLeft: number;
   setBoard(boardId: string | null): void;
   setTransform(t: CanvasTransform): void;
   panBy(dx: number, dy: number): void;
@@ -45,6 +47,8 @@ export interface CanvasScope {
   zoomBy(factor: number, centerX: number, centerY: number): void;
   centerOn(canvasX: number, canvasY: number): void;
   setViewportSize(width: number, height: number): void;
+  /** The element the canvas is drawn in, read for `viewportScreenLeft`. */
+  setViewportElement(el: HTMLElement | null): void;
   flyTo(target: CanvasTransform, durationMs?: number): void;
   toggleMinimap(): void;
   setSemanticZoomEnabled(v: boolean): void;
@@ -66,6 +70,9 @@ export function createCanvasScope(): CanvasScope {
   let transform = $state<CanvasTransform>({ x: 0, y: 0, scale: 1 });
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
+  // Read when asked, not tracked: a pane can move (a split divider, the
+  // sidebar pushing it aside) without its size changing.
+  let viewportElement: HTMLElement | null = null;
   let semanticZoomEnabled = $state(true);
   let snapEnabled = $state(false);
   // The board the minimap and waypoints toggles belong to: they are
@@ -154,6 +161,10 @@ export function createCanvasScope(): CanvasScope {
       const width = viewportWidth / transform.scale;
       const height = viewportHeight / transform.scale;
       return { left, top, right: left + width, bottom: top + height, width, height };
+    },
+
+    get viewportScreenLeft(): number {
+      return viewportElement?.getBoundingClientRect().left ?? 0;
     },
 
     setBoard(boardId: string | null) {
@@ -247,6 +258,10 @@ export function createCanvasScope(): CanvasScope {
     setViewportSize(width: number, height: number) {
       viewportWidth = width;
       viewportHeight = height;
+    },
+
+    setViewportElement(el: HTMLElement | null) {
+      viewportElement = el;
     },
 
     flyTo(target: CanvasTransform, durationMs = 300) {

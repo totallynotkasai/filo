@@ -88,3 +88,19 @@ export function tileRects(tiles: Readonly<Record<string, { position: Point; size
 export function viewRect(vp: { left: number; top: number; width: number; height: number }): PlacedRect {
   return { x: vp.left, y: vp.top, width: vp.width, height: vp.height };
 }
+
+/**
+ * `view` less a strip `coveredPx` screen pixels wide along its left edge (the
+ * vault sidebar lying over the canvas), at zoom `scale`. A view covered
+ * entirely is left as it is: a tile there is better than none.
+ */
+export function withoutCoveredLeft(view: PlacedRect, coveredPx: number, scale: number): PlacedRect {
+  const cut = coveredPx / (scale > 0 ? scale : 1);
+  if (!(cut > 0) || cut >= view.width) return view;
+  return { ...view, x: view.x + cut, width: view.width - cut };
+}
+
+/** The top-left corner that centres an element of `size` in `view`. */
+export function centreIn(view: PlacedRect, size: Size): Point {
+  return { x: view.x + view.width / 2 - size.width / 2, y: view.y + view.height / 2 - size.height / 2 };
+}

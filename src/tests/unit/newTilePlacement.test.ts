@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { NEW_TILE_GAP, placeClear, tileRects, viewRect, type PlacedRect } from '@renderer/lib/canvas/newTilePlacement';
+import { NEW_TILE_GAP, centreIn, placeClear, tileRects, viewRect, withoutCoveredLeft, type PlacedRect } from '@renderer/lib/canvas/newTilePlacement';
+import { sidebarCoverRight } from '@renderer/lib/utils/sidebarLayout';
 
 const size = { width: 300, height: 200 };
 const stepX = size.width + NEW_TILE_GAP;
@@ -61,5 +62,53 @@ describe('placeClear: a new tile steps clear of the tiles already there', () => 
 
   it("reads a board's tiles as places", () => {
     expect(tileRects({ a: { position: { x: 1, y: 2 }, size: { width: 3, height: 4 } } })).toEqual([{ x: 1, y: 2, width: 3, height: 4 }]);
+  });
+});
+
+describe('the view a new tile goes in, less what the vault sidebar covers', () => {
+  const view = viewRect({ left: 100, top: 50, width: 1200, height: 800 });
+
+  it('takes the covered strip off the left, in canvas units at the zoom', () => {
+    expect(withoutCoveredLeft(view, 240, 1)).toEqual({ x: 340, y: 50, width: 960, height: 800 });
+    // Zoomed in to 200 %, 240 screen pixels are 120 canvas units.
+    expect(withoutCoveredLeft(view, 240, 2)).toEqual({ x: 220, y: 50, width: 1080, height: 800 });
+  });
+
+  it('leaves the view whole when nothing is covered, or everything is', () => {
+    expect(withoutCoveredLeft(view, 0, 1)).toEqual(view);
+    // A pane to the right of the sidebar: the cover ends before the pane starts.
+    expect(withoutCoveredLeft(view, -60, 1)).toEqual(view);
+    expect(withoutCoveredLeft(view, 5000, 1)).toEqual(view);
+    expect(withoutCoveredLeft(view, Number.NaN, 1)).toEqual(view);
+  });
+
+  it('centres an element in a view', () => {
+    expect(centreIn({ x: 240, y: 0, width: 960, height: 800 }, size)).toEqual({ x: 570, y: 300 });
+  });
+
+  it('a tile dealt left of the middle stays clear of the covered strip', () => {
+    const visible = withoutCoveredLeft(viewRect({ left: 0, top: 0, width: 1200, height: 800 }), 240, 1);
+    const taken: PlacedRect[] = [];
+    for (let i = 0; i < 5; i++) {
+      const at = placeClear(centreIn(visible, size), size, taken, visible);
+      expect(at.x, `tile ${i}`).toBeGreaterThanOrEqual(240);
+      taken.push({ ...at, ...size });
+    }
+  });
+});
+
+describe('sidebarCoverRight: how far the vault sidebar lies over the workspace', () => {
+  const base = { open: true, floating: false, pushes: false, width: 240, floatingBounds: { x: 80, width: 320 }, windowWidth: 1440 };
+
+  it('the docked sidebar covers its width, unless it pushes the workspace aside or is hidden', () => {
+    expect(sidebarCoverRight(base)).toBe(240);
+    expect(sidebarCoverRight({ ...base, pushes: true })).toBe(0);
+    expect(sidebarCoverRight({ ...base, open: false })).toBe(0);
+  });
+
+  it('the floating panel covers to its right edge, only in the left half of the window', () => {
+    expect(sidebarCoverRight({ ...base, floating: true })).toBe(400);
+    expect(sidebarCoverRight({ ...base, floating: true, floatingBounds: { x: 900, width: 320 } })).toBe(0);
+    expect(sidebarCoverRight({ ...base, floating: true, open: false })).toBe(0);
   });
 });

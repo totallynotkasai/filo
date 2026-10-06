@@ -22,7 +22,8 @@
   import { historyStore } from '../../stores/history.svelte';
   import { ToggleFadeCommand } from '../../commands/index';
   import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
-  import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
+  import { centreIn, placeClear, tileRects } from '../../lib/canvas/newTilePlacement';
+  import { newTileView } from '../../lib/canvas/newTileView';
   import { toggleGroupSelection } from '../../lib/mindmap/selectionActions';
 
   let showNewTileMenu = $state(false);
@@ -52,28 +53,20 @@
     { type: 'timer', label: 'Timer', icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2' },
   ] as const;
 
-  /** A point near the viewport centre for an element of `size`, jittered so repeats don't stack. */
+  /** A point near the middle of the view for an element of `size`, jittered so repeats don't stack. */
   function nearViewportCentre(size: { width: number; height: number }): { x: number; y: number } {
-    const vp = canvasStore.viewportRect;
-    return {
-      x: vp.left + vp.width / 2 - size.width / 2 + (Math.random() - 0.5) * 100,
-      y: vp.top + vp.height / 2 - size.height / 2 + (Math.random() - 0.5) * 100,
-    };
-  }
-
-  /** The top-left corner that centres an element of `size` in the view. */
-  function viewportCentre(size: { width: number; height: number }): { x: number; y: number } {
-    const vp = canvasStore.viewportRect;
-    return { x: vp.left + vp.width / 2 - size.width / 2, y: vp.top + vp.height / 2 - size.height / 2 };
+    const at = centreIn(newTileView(canvasStore), size);
+    return { x: at.x + (Math.random() - 0.5) * 100, y: at.y + (Math.random() - 0.5) * 100 };
   }
 
   function createTile(tileType: TileType) {
     showNewTileMenu = false;
-    const tile = newTile(tileType, viewportCentre(TILE_DEFAULTS), boardStore.current?.id ?? '', {
+    const view = newTileView(canvasStore);
+    const tile = newTile(tileType, centreIn(view, TILE_DEFAULTS), boardStore.current?.id ?? '', {
       title: boardStore.getNextTileName(),
     });
     // In the middle of the view, or stepped clear of the tiles already there.
-    tile.position = { ...tile.position, ...placeClear(viewportCentre(tile.size), tile.size, tileRects(boardStore.tiles), viewRect(canvasStore.viewportRect)) };
+    tile.position = { ...tile.position, ...placeClear(centreIn(view, tile.size), tile.size, tileRects(boardStore.tiles), view) };
     boardStore.addTileWithHistory(tile);
     // Typing next names the tile, instead of reaching the board's keys.
     editTitleWhenShown(tile.id);

@@ -17,3 +17,29 @@ const CENTRED_VIEW_PX = 860;
 export function sidebarPushesWorkspace(windowWidth: number, sidebarWidth: number): boolean {
   return windowWidth < CENTRED_VIEW_PX + 2 * sidebarWidth;
 }
+
+interface SidebarPlace {
+  open: boolean;
+  floating: boolean;
+  /** Whether the docked sidebar pushes the workspace aside (`sidebarPushesWorkspace`). */
+  pushes: boolean;
+  width: number;
+  floatingBounds: { x: number; width: number };
+  windowWidth: number;
+}
+
+/**
+ * How far from the window's left edge the vault sidebar lies over the
+ * workspace, in pixels; 0 when it covers nothing there. The docked sidebar
+ * covers its width unless it pushes the workspace aside; the floating panel
+ * counts only in the window's left half (as the Kanban columns' shift does),
+ * since one dragged to the right covers no left edge.
+ */
+export function sidebarCoverRight(s: SidebarPlace): number {
+  if (!s.open) return 0;
+  if (s.floating) {
+    if (s.floatingBounds.x >= s.windowWidth / 2) return 0;
+    return Math.max(0, s.floatingBounds.x + s.floatingBounds.width);
+  }
+  return s.pushes ? 0 : s.width;
+}

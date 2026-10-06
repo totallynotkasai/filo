@@ -12,7 +12,8 @@
   import { fileNameSafe, getActiveContentFolder, nextFreeMdPath } from '../../lib/vault/conventionPaths';
   import { createNoteFile } from '../../lib/notes/createNote';
   import { noteMadeForNewItem } from '../../lib/notes/madeForNewItems';
-  import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
+  import { centreIn, placeClear, tileRects } from '../../lib/canvas/newTilePlacement';
+  import { newTileView } from '../../lib/canvas/newTileView';
   import { reportError } from '../../lib/utils/errorBus';
   import { createBoardFromTemplate } from '../../lib/templates/boardFromTemplate';
   import { noteFromTemplate } from '../../lib/templates/templateNote';
@@ -158,11 +159,10 @@
       return;
     }
     noteMadeForNewItem(relPath);
-    const vp = canvasStore.viewportRect;
+    const view = newTileView(canvasStore);
     const tile = createTile('text', { x: 0, y: 0 }, board.id, { title: note.title, filePath: relPath } as never);
-    const wanted = templatesStore.consumePendingInsertAnchor()
-      ?? { x: vp.left + vp.width / 2 - tile.size.width / 2, y: vp.top + vp.height / 2 - tile.size.height / 2 };
-    tile.position = { ...tile.position, ...placeClear(wanted, tile.size, tileRects(boardStore.tiles), viewRect(vp)) };
+    const wanted = templatesStore.consumePendingInsertAnchor() ?? centreIn(view, tile.size);
+    tile.position = { ...tile.position, ...placeClear(wanted, tile.size, tileRects(boardStore.tiles), view) };
     boardStore.addTileWithHistory(tile);
     selectionStore.select(tile.id);
     uiStore.toast(`Inserted template "${ref.name}"`, 'success', 1800);

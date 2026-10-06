@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { tmpdir } from 'os';
 import { copyFileToVault } from '../../main/vault/fileOps';
 
@@ -64,5 +64,16 @@ describe('copyFileToVault — Sprint 37 / 37.4 reserved-name guard', () => {
     const dest = await copyFileToVault(src, vaultDir, 'attachments');
     expect(dest).toContain(join('attachments', 'image.png'));
     await expect(fs.access(dest)).resolves.toBeUndefined();
+  });
+
+  // Windows takes a 90-character Chinese name (270 UTF-8 bytes); a phone the
+  // vault syncs to doesn't, and Filo wouldn't make such a name itself. Linux
+  // can't hold the source name at all, so this runs on Windows.
+  it.skipIf(process.platform !== 'win32')('shortens a name too long for a phone, keeping its extension, instead of refusing it', async () => {
+    const src = join(sourceDir, `${'中'.repeat(90)}.png`);
+    await fs.writeFile(src, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const dest = await copyFileToVault(src, vaultDir);
+    expect(basename(dest)).toBe(`${'中'.repeat(66)}.png`);
+    await expect(fs.readFile(dest)).resolves.toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   });
 });

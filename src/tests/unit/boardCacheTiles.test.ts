@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
+import { noteStore } from '@renderer/stores/notes.svelte';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { Tile, MindMapBoard } from '@renderer/schema/index';
 
@@ -182,6 +183,13 @@ describe('boardCache — persistAddTile stamps filePath on text tiles', () => {
       'vault:write-file-text': async () => undefined,
       'vault:read-tree': async () => ({ ok: true, tree: [] }),
     });
+    // The note is made (the note store's own tests cover how); a tile whose
+    // new note can't be made comes off the board again.
+    vi.spyOn(noteStore, 'createUnique').mockImplementation(async (first, build) => ({
+      relPath: first,
+      stem: first.replace(/\.md$/, ''),
+      text: build(first.replace(/\.md$/, '')),
+    }));
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
   });

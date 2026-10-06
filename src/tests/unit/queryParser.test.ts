@@ -192,4 +192,20 @@ describe('parseQuery — plain text preserves Windows paths', () => {
     // tokeniser's colon escape never applies to it.
     expect(parseQuery('C:\\foo\\bar').freeText).toBe('C:\\foo\\bar');
   });
+
+  // A backslash is an escape only before a colon in an operator value: a
+  // filter in the query used to turn `C:\foo` into `C:foo`, quoted or not.
+  it('keeps the backslashes of a path searched with a filter', () => {
+    expect(parseQuery('tag:x C:\\foo\\bar').freeText).toBe('C:\\foo\\bar');
+    expect(parseQuery('tag:x "C:\\My Notes\\foo"').freeText).toBe('C:\\My Notes\\foo');
+  });
+
+  it('keeps a backslash inside an operator value unless a colon follows it', () => {
+    expect(opsOnly(parseQuery('property:path=C:\\notes'))).toEqual([
+      { kind: 'property', key: 'path', value: 'C:\\notes' },
+    ]);
+    expect(opsOnly(parseQuery('property:status=in\\:progress'))).toEqual([
+      { kind: 'property', key: 'status', value: 'in:progress' },
+    ]);
+  });
 });

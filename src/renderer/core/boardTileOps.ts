@@ -35,6 +35,10 @@ export interface BoardTileOps<B extends Board = Board> {
    * Does NOT insert per-board placement structures that need extra context
    * (Kanban column id, Task List section) — those callers route through
    * `persistAddKanbanPlacement` / `persistAddTaskPlacement` directly.
+   *
+   * Resolves false when the tile was to get a new note and it couldn't be
+   * created (already reported): the caller takes the tile off again, so no
+   * tile is left pointing at a note that doesn't exist.
    */
   addTile(
     ctx: CacheContext,
@@ -42,7 +46,7 @@ export interface BoardTileOps<B extends Board = Board> {
     boardId: string,
     tile: Tile,
     opts?: AddTileOpts,
-  ): Promise<void>;
+  ): Promise<boolean>;
 
   /**
    * Remove a tile (def + placement) from the board and sweep any connection

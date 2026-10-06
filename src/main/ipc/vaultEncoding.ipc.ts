@@ -31,7 +31,7 @@ export function registerVaultEncodingHandlers(): void {
     try {
       assertActiveVault(vaultRoot);
       assertSafeRelativePath(relativePath);
-      assertNotInFiloDir(relativePath);
+      assertNotInFiloDir(vaultRoot, relativePath);
       const fullPath = join(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, fullPath);
       if (await isSymbolicLink(fullPath)) {

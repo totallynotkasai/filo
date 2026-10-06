@@ -78,9 +78,6 @@ const sharedConnectionsBody = {
     conn: Connection,
   ): void {
     cached.connections = { ...cached.connections, [conn.id]: conn };
-    ctx.updateProjectConnectionsFrames(({ connections: projConns }) => {
-      projConns[conn.id] = conn;
-    });
     ctx.markDirty(boardId);
   },
 
@@ -93,9 +90,6 @@ const sharedConnectionsBody = {
     const { [connId]: _removed, ...rest } = cached.connections;
     void _removed;
     cached.connections = rest;
-    ctx.updateProjectConnectionsFrames(({ connections: projConns }) => {
-      delete projConns[connId];
-    });
     ctx.markDirty(boardId);
   },
 
@@ -107,9 +101,6 @@ const sharedConnectionsBody = {
     updated: Connection,
   ): void {
     cached.connections = { ...cached.connections, [connId]: updated };
-    ctx.updateProjectConnectionsFrames(({ connections: projConns }) => {
-      projConns[connId] = updated;
-    });
     ctx.markDirty(boardId);
   },
 };

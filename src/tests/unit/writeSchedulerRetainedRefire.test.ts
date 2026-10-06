@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createScheduler } from '@renderer/lib/boards/writeScheduler';
+import { createScheduler, disposeTestSchedulers } from '../helpers/testSchedulers';
 import { retryAllFailedWrites, __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { RETAINABLE, isRetainableWriteError } from '@renderer/lib/boards/writeSchedulerFailures';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+
+// Retire every scheduler a test made, so nothing it left armed reaches the next test.
+afterEach(disposeTestSchedulers);
 
 /**
  * Audit-19 EXT-5 / ERR-9 — a write that failed on a transient lock used to be

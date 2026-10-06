@@ -747,9 +747,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
     expect(ProjectSchema.parse({ createdAt: T, updatedAt: T })).toMatchInlineSnapshot(`
       {
         "boards": [],
-        "connections": {},
         "createdAt": 1700000000000,
-        "frames": [],
         "name": "",
         "settings": {
           "document": {

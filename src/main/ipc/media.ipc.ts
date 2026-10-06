@@ -14,12 +14,15 @@ import { LOCK_AWARE_SUPPRESS_MS } from '../vault/filenameUtils';
 import { createExclusiveFile } from '../vault/exclusiveCreate';
 import { errorResult } from './ipcErrorCode';
 import { isOpenPathAllowed, launcherExtension } from '../../shared/untrusted';
+import { getPublic, PrivateAddressError, RedirectRefusedError } from '../services/publicHttp';
 
 /**
- * DNS-based SSRF defence. Resolves a hostname to every A/AAAA
- * record and refuses if any resolution lands in a private range. Catches the
- * DNS-rebinding pattern where the same hostname resolves public at validation
- * time and private at fetch time.
+ * Resolves a hostname to every A/AAAA record and says whether any lands in a
+ * private range. For `media:open-external` only: the OS browser resolves the
+ * name again on its own, so this is a best-effort refusal of a name that
+ * points at the user's network now; a name that changes its answer between
+ * the two lookups isn't caught here. Filo's own fetch checks the address it
+ * connects to instead (`services/publicHttp.ts`).
  */
 const dnsLookupAll = promisify(dns.lookup) as (
   hostname: string,
@@ -97,8 +100,9 @@ export function detectCharsetFromContentType(contentType: string): string {
  *   - any other scheme    → ''   (javascript:, file:, blob:, …)
  *
  * Static `isPrivateUrl` (no DNS) is proportionate because these resources are
- * never fetched main-side; if that ever changes, upgrade to the async
- * `isHostnamePrivate` DNS-resolution check the fetch path already uses.
+ * never fetched main-side; if that ever changes, fetch them through
+ * `getPublic` (`services/publicHttp.ts`), which checks the address it
+ * connects to.
  */
 export function sanitizeReturnedResourceUrl(raw: string, baseUrl: string): string {
   if (!raw) return '';
@@ -152,7 +156,7 @@ export function registerMediaHandlers(): void {
 
       // Refuse writes into `.filo/` like every other vault-writing channel;
       // guard the prospective destination (folder + filename) BEFORE mkdir.
-      assertNotInFiloDir(normalisedFolder ? `${normalisedFolder}/${fileName}` : fileName);
+      assertNotInFiloDir(vaultPath, normalisedFolder ? `${normalisedFolder}/${fileName}` : fileName);
 
       const mediaDir = normalisedFolder
         ? path.join(vaultPath, normalisedFolder)
@@ -214,7 +218,7 @@ export function registerMediaHandlers(): void {
       // Refuse reads into `.filo/`. The MIME allowlist below happens to
       // refuse today's `.filo/` files, but this channel must enforce its OWN
       // containment rather than lean on that.
-      assertNotInFiloDir(relativePath);
+      assertNotInFiloDir(vaultRoot, relativePath);
       const fullPath = path.join(vaultRoot, relativePath);
       assertWithinVault(vaultRoot, fullPath);
       const mimeType = getMimeType(fullPath);
@@ -389,10 +393,10 @@ export function registerMediaHandlers(): void {
    * Fetches metadata (title, description, image, favicon) from a URL.
    * Runs in main process to avoid CORS restrictions.
    *
-   * SSRF protection on redirects: `redirect: 'follow'` would let a public
-   * URL 302 to an internal target (e.g. cloud instance metadata) unchecked,
-   * so redirects are walked manually, re-validating every `Location:`
-   * before refetching, capped at 5 hops.
+   * Only public addresses are fetched, checked in the connection itself on
+   * every hop (`getPublic` in `services/publicHttp.ts`): a name that answers
+   * a public address to a check and a private one to the connection can't
+   * reach the user's own network. Redirects are followed by hand, at most 5.
    */
   ipcMain.handle('link:fetch-metadata', async (_event, url: string) => {
     try {
@@ -411,113 +415,48 @@ export function registerMediaHandlers(): void {
       if (isPrivateUrl(url)) {
         return { success: false, error: 'URL not allowed' };
       }
-      // DNS-resolve the initial hostname and reject if
-      // any address falls in a private range. Catches the rebinding
-      // pattern (public-then-private resolution) and the URL-encoded
-      // numeric forms missed by isPrivateUrl's static string check.
-      {
-        const initial = new URL(url);
-        if (await isHostnamePrivate(initial.hostname)) {
-          return { success: false, error: 'URL not allowed (resolves to private address)' };
-        }
-      }
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
-
-      const MAX_REDIRECTS = 5;
-      let currentUrl = url;
-      let response: Response | null = null;
+      let currentUrl: string;
+      let html: string;
       try {
-        for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-          const hopResponse = await fetch(currentUrl, {
-            signal: controller.signal,
-            headers: { 'User-Agent': 'Filo/1.0' },
-            redirect: 'manual',
-          });
-          // 30x with a Location header — re-validate the target before refetching.
-          if (hopResponse.status >= 300 && hopResponse.status < 400) {
-            const location = hopResponse.headers.get('location');
-            if (!location) {
-              response = hopResponse;
-              break;
-            }
-            const next = new URL(location, currentUrl).toString();
-            if (isPrivateUrl(next)) {
-              clearTimeout(timeout);
-              return { success: false, error: 'URL not allowed (redirect to private target)' };
-            }
-            // DNS-resolve every redirect target too,
-            // so a public-then-private rebinding attack via redirect
-            // chain is still caught.
-            const nextUrl = new URL(next);
-            if (await isHostnamePrivate(nextUrl.hostname)) {
-              clearTimeout(timeout);
-              return { success: false, error: 'URL not allowed (redirect resolves to private)' };
-            }
-            if (hop === MAX_REDIRECTS) {
-              clearTimeout(timeout);
-              return { success: false, error: 'Too many redirects' };
-            }
-            currentUrl = next;
-            continue;
-          }
-          response = hopResponse;
-          break;
+        const response = await getPublic(url, {
+          signal: controller.signal,
+          maxRedirects: 5,
+          headers: { 'User-Agent': 'Filo/1.0' },
+        });
+        currentUrl = response.url;
+        if (response.status < 200 || response.status >= 300) {
+          response.discard();
+          return { success: false, error: `HTTP ${response.status}` };
         }
-      } finally {
-        clearTimeout(timeout);
-      }
-
-      if (!response) {
-        return { success: false, error: 'No response' };
-      }
-      if (!response.ok) {
-        return { success: false, error: `HTTP ${response.status}` };
-      }
-
-      // Refuse non-HTML responses. Link-metadata extraction
-      // is meaningful only for HTML pages; anything else is wasted bytes
-      // and may pin a multi-GB binary into memory before we realise.
-      const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
-      const isHtml = contentType.includes('text/html') || contentType.includes('application/xhtml+xml') || contentType === '';
-      if (!isHtml) {
-        return { success: false, error: `Unsupported content-type: ${contentType}` };
-      }
-
-      // Honour the Content-Type `charset=` so non-UTF-8 pages (Shift_JIS,
-      // Windows-1252, GBK) don't mojibake. Falls back to UTF-8.
-      const charset = detectCharsetFromContentType(contentType);
-
-      // Stream-read with a 512 KB cap. `response.text()`
-      // buffers the whole body unbounded; iterating the reader lets us
-      // abort once we hit the cap.
-      let html = '';
-      if (response.body) {
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder(charset);
-        let total = 0;
-        try {
-          for (;;) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            total += value.byteLength;
-            if (total > LINK_METADATA_MAX_BYTES) {
-              try { await reader.cancel(); } catch { /* ignore */ }
-              return { success: false, error: 'Response exceeded 512 KB cap' };
-            }
-            html += decoder.decode(value, { stream: true });
-          }
-          html += decoder.decode();
-        } catch (streamErr) {
-          try { await reader.cancel(); } catch { /* ignore */ }
-          throw streamErr;
+        // Refuse non-HTML responses. Link-metadata extraction is meaningful
+        // only for HTML pages; anything else is wasted bytes.
+        const contentType = response.contentType.toLowerCase();
+        const isHtml = contentType.includes('text/html') || contentType.includes('application/xhtml+xml') || contentType === '';
+        if (!isHtml) {
+          response.discard();
+          return { success: false, error: `Unsupported content-type: ${contentType}` };
         }
-      } else {
-        html = await response.text();
-        if (html.length > LINK_METADATA_MAX_BYTES) {
+        // Read with a 512 KB cap, so a giant response can't fill memory.
+        const body = await response.readBody(LINK_METADATA_MAX_BYTES);
+        if (body === null) {
           return { success: false, error: 'Response exceeded 512 KB cap' };
         }
+        // Honour the Content-Type `charset=` so non-UTF-8 pages (Shift_JIS,
+        // Windows-1252, GBK) don't mojibake. Falls back to UTF-8.
+        html = new TextDecoder(detectCharsetFromContentType(contentType)).decode(body);
+      } catch (err) {
+        if (err instanceof PrivateAddressError) {
+          return { success: false, error: 'URL not allowed (resolves to private address)' };
+        }
+        if (err instanceof RedirectRefusedError) {
+          return { success: false, error: err.message };
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeout);
       }
 
       // Run the metadata regexes only over `<head>` (capped at 64 KB) to

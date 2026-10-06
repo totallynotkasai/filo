@@ -40,7 +40,7 @@ Corpus check:   npm run corpus:list -- <list.txt> --vaults <dir> [--extra <dir>]
 | `writePath` | Only the note writer ([noteWriter.ts](src/renderer/lib/notes/noteWriter.ts)) writes a `.md`, and it applies every change to a **fresh read of the file**; a note is renamed, trashed or restored only while its write queue is held; writes are time-bounded, failed writes are kept and re-fired, and nothing silently aborts; new files are created exclusively (never overwrite an existing note); "Keep mine" / "Keep local" first backs up the other version (for a note, inside `resolveConflict`, so the backup is of the bytes it then overwrites); user deletes move items to `.filo/trash` (only a confirmed fallback deletes for good); a note overwrite names the stat of the read it builds on and the main process refuses it (STALE) if the file changed since; a note or board write hides only its own watcher echo (the bytes it wrote), so another program's save, rename or delete right after it still gets through; the board writer never waits for a drift question (it holds the board and refuses, and the held write is neither re-fired nor retried until Reload / Keep local), and neither do the `.filo/` settings and shortcuts writers (the file is held, its write refused at once and kept for the answer); a board load no stat pinned leaves the board unverified, so its first save reads the file before writing over it; a drift baseline only moves forward, a new board's create counts as Filo's own write, and a board's baseline is stamped only once its loaded data is in the cache (never by a load that failed or was set aside); close, open-another-vault and quit save first and never let unsaved work go without a rescue copy, and first ask about unapplied Settings / theme-editor edits (which no writer holds); a `.filo/` config's baseline is stamped only from a stat that didn't move across its read, and every config write goes through a drift check (`writeConfigs`, or `saveMiscConfig` after `readOutsideVersion`); a board that loads after failing gets the renames made meanwhile before it joins the cache; a write past its timeout keeps its place in its key's order. |
 | `markdownFormat` | Byte fidelity: BOM, UTF-8 validation (non-UTF-8 notes are read-only), EOL re-application, a single YAML parser (no js-yaml / gray-matter anywhere in the app), a single Markdown parser (markdown-it: no marked / micromark / remark / unified / mdast / commonmark / `@tiptap/markdown` in the app or its runtime dependencies) and a single frontmatter-fence parser (`frontmatterFence.ts`), editor load/undo/unmount discipline, a save → reload case for every formatting-toolbar command (`src/tests/helpers/toolbarCases.ts`), a round-trip property test (at least 500 documents generated from the editor schema, none skipped), the note writer refusing any write that would turn a parsing frontmatter block into one that doesn't, and that the frontmatter-invariant and markdown body round-trip suites and the second-parser check (`markdownContentElsewhere.test.ts`) exist and aren't skipped. |
 | `vaultIdentity` | A vault swap mid-`await` can't apply the outgoing vault's data to the new one (`isStillSameVault`); vault-scoped state resets on swap; path-keyed stores use `VaultPath` keys, case-fold compares, and follow renames (path keys in `boardDiscovery` / `vaultDeleteOps` / `folderPins` / `tagsStorage` go through `vaultPath()`, and "the item or inside it" is `isAtOrUnder`); crash sentinels are per-machine; disk-shape IPC goes through `vaultOperations.ts`; one vault open or close runs at a time, and every `vault:close` names the vault it releases (main releases only that one); the pre-swap resets of state a rescue copy reads (board cache, tags, layout, sidebar order, unapplied Settings) declare `runAfter: ['leftBehind']`. |
-| `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; a handler's vault-relative path comes from the root / target pair `assertWithinVault` matched (`vaultRelativeWithin`), never `path.relative` across two spellings of the vault (an 8.3 name, a junction), so the `.filo/` guards can't be walked around; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
+| `ipcSecurity` | Every `ipcMain` channel is in the `IpcChannel` union (and vice versa); envelope usage; untrusted values pass an `asSafe*` validator before a sink; `vault:copy-file` only copies approved sources; a handler's vault-relative path comes from the root / target pair `assertWithinVault` matched (`vaultRelativeWithin`), never `path.relative` across two spellings of the vault (an 8.3 name, a junction), so the `.filo/` guards can't be walked around; `assertNotInFiloDir` (and `vault:trash-move`'s `namesFiloDir`) also checks the path as the disk names it, so `.filo`'s short name `FILO~1` or a junction into it is `.filo` too; renderer reads can't reach `.filo/`, and no renderer write names a `.filo/` path on a `vault:*` channel that refuses it (Filo's own state goes through its config / misc schedulers); every write handler answers a failure through `errorEnvelope` / `errorResult`, so it always carries a code and Retry can re-fire it; config loaders migrate before parsing. |
 | `commands` | Undo/redo: high-value mutations go through Commands, which snapshot their slice, carry a `targetBoardId`, and have an execute→undo round-trip test; no command keeps a copy of a note body; every path a command holds follows renames; a command holding snapshots of boards beyond its own names them in `touchedBoardIds()`, so a board reload drops it; Task List section positions are clamped. |
 | `components` | Component timers are cleared, `flush*` functions are actually called, no dead `$derived`, DocumentEditor / drag-drop are pane-scoped, every pointer capture handles `pointercancel`, z-index tokens, every `var(--x)` without a fallback is defined, every focus trap has a `fallbackFocus` and is released in an effect cleanup even when its host is already detached, views read notes from the note store (nothing keeps its own copy of a note), every global `tile:` shortcut says which board it is for (`enabled`), so it never shadows a Kanban or Task List command, a component that saves on teardown also registers that save with `registerComponentFlush`, so the save before leaving runs it while it still counts, no view, lib or store module reads the vault index's vault-wide `version` or `allMetadata()`, in script or markup (it reads the notes it shows), a Kanban card builds its editor through `LazyTextTileBody` (a static preview, the editor mounted in idle time or on a press), toasts, notices, confirms and `reportError` messages say what happened in the user's words (no `sentinel`, `cascade`, `drain`, `baseline`, `IPC`, `envelope`, `placement`, `backing` (but "backing up"), `out-of-band`, `persist`), and every Enter handler in a component calls `preventDefault` (else its keypress presses the button of a dialog it opens). |
 | `codebase` | No file in `src/main` / `src/renderer` over 1000 lines of code (blank and comment-only lines don't count; [codeLines.mjs](scripts/gates/codeLines.mjs)) except the allowlisted ones, which may only shrink and leave the list once within the limit (**split an over-limit file, don't raise its ceiling**); no `as any` / `as unknown as`; test sources type-check under `tsconfig.tests.json`, with a per-file error baseline (`scripts/gates/testTypecheckBaseline.json`) that may only go down; board tile defs never store a note's title, tags or body; an older board format loads only through migration steps that run one version at a time to the current one, each with its fixtures (an old file and what it loads as) in `src/tests/unit/fixtures/board-migrations/`, loaded by `boardMigrationSteps.test.ts`; a note is named only by its vault path (no `contentId` / `docId`); the characterisation suite stays whole, un-skipped and black-box; E2E specs drive the built app (no `import('/src/…')`, named `*.e2e.ts`); app source and build config carry no audit ids (`Audit-N`, `Sprint B`, `P0-N`, `A25-01`, `Phase N / N.N`, and in comments `E.11`); a note's `tags:` is read only through the tags normaliser (`noteTags` / `*TagsField`), since a note may write them as text (`tags: project`); a board's drop handler copies or imports a file dropped from Explorer only after `classifyDroppedFile` (a file already in the vault is linked by its path, never copied); the package leaves `node_modules` out (`!node_modules/**/*` in `build.files`: Vite bundles every runtime dependency), so main and preload import no runtime `dependency` that electron-vite's `externalizeDeps` would leave a `require` (only its `exclude` list, zod, is bundled in). |
@@ -105,14 +105,14 @@ filo/
 │   │   │   ├── index.ts               # Aggregated registration entry point
 │   │   │   ├── ipcErrorCode.ts        # errorEnvelope / errorResult: every write failure carries a code
 │   │   │   ├── vault.ipc.ts           # File CRUD, directory ops
-│   │   │   ├── vaultCopy.ipc.ts       # vault:copy-file (approved sources only; from `.filo/`, only a file the user chose in `.filo/recovery` or `.filo/trash`)
+│   │   │   ├── vaultCopy.ipc.ts       # vault:copy-file (approved sources only; from `.filo/`, only a file the user chose in `.filo/recovery` or `.filo/trash`; the destination checked inside the vault on disk before anything is written)
 │   │   │   ├── vaultEncoding.ipc.ts   # vault:convert-to-utf8 for a non-UTF-8 note
 │   │   │   ├── vaultTrash.ipc.ts      # .filo/trash move / restore / list / purge
 │   │   │   ├── machine.ipc.ts         # Machine identity + per-machine sentinel listing
 │   │   │   ├── board.ipc.ts           # Board file list/load/save/create, config + theme
 │   │   │   ├── dialog.ipc.ts          # Native open dialogs
 │   │   │   ├── shell.ipc.ts           # Reveal-in-folder; `shell:copy-text` writes the clipboard (text, or a `filo://` link with its name: `clipboardPayload`), since the permission policy denies the page's own writes
-│   │   │   ├── media.ipc.ts           # Media save/copy helpers (a recording is created exclusively, ` (n)` on a taken name)
+│   │   │   ├── media.ipc.ts           # Media save/copy helpers (a recording is created exclusively, ` (n)` on a taken name); `link:fetch-metadata` through `getPublic`
 │   │   │   ├── fonts.ipc.ts           # System font enumeration
 │   │   │   ├── tags.ipc.ts            # .filo/tags.json load/save
 │   │   │   ├── templates.ipc.ts       # .filo/templates/ CRUD
@@ -130,7 +130,7 @@ filo/
 │   │   │   ├── syncConflictNotifier.ts # Live notices for sync-client conflict copies (board forks, notes' strong-named copies, refused renames)
 │   │   │   ├── nonUtf8Registry.ts     # Notes whose bytes aren't valid UTF-8 (opened read-only)
 │   │   │   ├── machineIdentity.ts     # userData/machine-id.json: keeps sentinels per machine
-│   │   │   ├── approvedSources.ts     # Which source paths vault:copy-file may copy
+│   │   │   ├── approvedSources.ts     # Which source paths vault:copy-file may copy (an in-vault one only when it is inside on disk too: no junction out)
 │   │   │   ├── emergencyFileRegistry.ts # Files preserved after a failed write (disk full, locked)
 │   │   │   ├── orphanTmpSweep.ts      # Sweeps orphaned atomic-write temps
 │   │   │   ├── quitFailureBreadcrumb.ts # `.filo/quit-failure.<machineId>.json` when quit preserved files
@@ -141,6 +141,7 @@ filo/
 │   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames (never onto a path that already held a file: that is a replace)
 │   │   │   ├── rendererCrashHandler.ts # Renderer crash → breadcrumb + Reload/Quit dialog; Reload releases the vault first (`releaseActiveVault`)
 │   │   │   ├── recentVaults.ts        # Persisted recent vault list
+│   │   │   ├── publicHttp.ts          # getPublic: the Link tile's page fetch; each hop's connection resolves through `checkedLookup` and its connected address is checked, so only public addresses are reached (no DNS rebinding)
 │   │   │   ├── textMenuQuery.ts       # As the text menu opens, asks the renderer whether a link can go at the caret (`app:text-menu-query` / `-reply`; no answer in 300 ms: no link item)
 │   │   │   ├── windowState.ts         # Window size/position (userData)
 │   │   │   └── sidebarState.ts        # Sidebar width/floating bounds (userData)
@@ -157,7 +158,7 @@ filo/
 │   │   │   ├── exclusiveCreate.ts     # createExclusiveFile: `wx` reserve, write over only our placeholder, unlink only ours
 │   │   │   └── filenameUtils.ts       # atomicWriteFile, tmpSiblingPath
 │   │   └── utils/
-│   │       ├── pathSecurity.ts        # assertWithinVault (returns the root / target pair it matched), vaultRelativeWithin (the relative path from that pair: the `.filo/` guards' input), assertSafeRelativePath (depth/length caps), assertSafeFilename (Windows-only rules only on Windows or at creation)
+│   │       ├── pathSecurity.ts        # assertWithinVault (returns the root / target pair it matched), vaultRelativeWithin (the relative path from that pair: the `.filo/` guards' input), assertNotInFiloDir (the path as written and as the disk names it, `onDiskRelative`), assertSafeRelativePath (depth/length caps), assertSafeFilename (Windows-only rules only on Windows or at creation)
 │   │       ├── pathHelpers.ts         # relativePosix (path.relative, resolves `..`; kept apart from the string-only shared helpers)
 │   │       ├── permissionPolicy.ts    # decidePermission: only app-frame audio capture is allowed
 │   │       ├── activeVaultCheck.ts    # assertActiveVault (gates IPC handlers)
@@ -183,7 +184,7 @@ filo/
 │   │   │   ├── boardRegistry.ts       # Board-type registration; `component` is a lazy () => import() loader so boards code-split out of the Home preload
 │   │   │   ├── boardDefaults.ts       # Per-type default board factories
 │   │   │   ├── boardModules.ts        # A board type's loaded component module (or its one pending import)
-│   │   │   ├── boardTileOps.ts        # BoardTileOps contract + BoardType → ops registry (opsFor)
+│   │   │   ├── boardTileOps.ts        # BoardTileOps contract + BoardType → ops registry (opsFor); addTile resolves false when a new tile's note couldn't be created (the tile comes off again)
 │   │   │   ├── boardTileOps/          # Per-board-type tile-op registries (mindmap/kanban/tasklist/document)
 │   │   │   │   ├── mindmap.ts, kanban.ts, tasklist.ts # Each board type's tile add / remove / update ops (a Mind Map link, embed or timer tile lives only in `inlineTiles`)
 │   │   │   │   ├── document.ts        # Exhaustive no-op (a Document board has no tiles)
@@ -327,7 +328,7 @@ filo/
 │   │   │   ├── keyDelta.ts            # A step on a flat record (a style, a saved view) as the keys it set and removed
 │   │   │   ├── propertiesCommands.ts  # UpdatePropertiesCommand: the Document tab's tag-row frontmatter delta
 │   │   │   ├── attachmentSrcCommand.ts # Image/Video/Audio/File swap
-│   │   │   ├── replaceAllCommand.ts   # Vault-wide find-and-replace (keeps splices + hashes, never whole notes)
+│   │   │   ├── replaceAllCommand.ts   # Vault-wide find-and-replace (keeps splices + hashes, never whole notes); a single Replace the note's change skipped leaves no undo step and stays on its match
 │   │   │   └── savedViewsCommand.ts   # UpdateSavedViewsCommand: the views it added / removed and the keys it changed, applied to the list as it stands
 │   │   │
 │   │   ├── constants/
@@ -434,7 +435,7 @@ filo/
 │   │   │   │   ├── configDrift.ts     # A `.filo/` config changed or deleted outside Filo: rebase, keep layout, ask for settings, recreate
 │   │   │   │   ├── miscWriteScheduler.ts
 │   │   │   │   ├── miscConfigDrift.ts # viewports / sidebar order / hotkeys: another version is read before a write (merged, or Reload / Keep local)
-│   │   │   │   ├── writeScheduler.ts  # createScheduler: the shared debounce/retry/timeout primitive
+│   │   │   │   ├── writeScheduler.ts  # createScheduler: the shared debounce/retry/timeout primitive (`dispose` retires one a test made)
 │   │   │   │   ├── boardDriftHold.ts  # Boards whose write waits for a Reload / Keep local answer (the writer refuses at once; follows renames)
 │   │   │   │   ├── boardMoveHold.ts   # Boards whose .board.json an in-app rename is moving: their writes wait for the move
 │   │   │   │   ├── configDriftHold.ts # `.filo/` settings / hotkeys whose write waits for Reload / Keep local (refused at once; the answer re-fires or drops it)
@@ -447,7 +448,7 @@ filo/
 │   │   │   │   ├── tileMemberships.ts # A deleted Mind Map tile's frames and groups, put back on undo
 │   │   │   │   ├── boardNaming.ts     # A board's name is its .board.json stem: name rules, new-board place, folder-follow rule
 │   │   │   │   ├── newBoardPlace.ts   # Where a new board goes in the open vault, and whether its name is free there
-│   │   │   │   ├── seedTextFileForNewTile.ts # Creates the backing .md for a new text tile
+│   │   │   │   ├── seedTextFileForNewTile.ts # Creates the backing .md for a new text tile (false when a new note couldn't be made: the add takes the tile off, and its undo step goes)
 │   │   │   │   ├── newTileTitle.ts    # editTitleWhenShown / takeTitleEdit: a tile or card the user just made opens its title for typing (dropped if not shown within 2 s)
 │   │   │   │   ├── tileDefBuilder.ts  # Defs and inline tiles from runtime tiles; isStaleInlineCopy (a def beside an inline tile is skipped, and dropped at load)
 │   │   │   │   ├── textTilePath.ts
@@ -584,7 +585,7 @@ filo/
 │   │   │   │   ├── marqueeSelectionController.svelte.ts # Per-pane shift-drag marquee selection
 │   │   │   │   ├── visibleTilesViewModel.svelte.ts # Per-pane viewport culling of tiles
 │   │   │   │   ├── frameHitTest.ts    # Topmost frame under a point (a collapsed frame: its header only)
-│   │   │   │   ├── selectionActions.ts # Lock / Tags / Style / Delete on the selection (the Delete key too); Select All skips tiles in collapsed frames
+│   │   │   │   ├── selectionActions.ts # Lock / Tags / Style / Delete on the selection (the Delete key too); Group / Ungroup (Ctrl+G and the side toolbar); Select All (Ctrl+A and the canvas menu) skips tiles in collapsed frames
 │   │   │   │   └── tileHitTest.ts     # Right-click hits the tile drawn on top (DOM target, else paint order), never one in a collapsed frame
 │   │   │   ├── settings/              # Settings dialog helpers
 │   │   │   │   ├── settingsSalvage.ts # app.json / defaults.json load: a bad field resets alone, unknown keys kept
@@ -620,7 +621,7 @@ filo/
 │   │   │   │   ├── layoutCapture.ts
 │   │   │   │   └── layoutTemplateStore.ts
 │   │   │   ├── search/                # Query parser + search runner (matches over the vault index's bodies)
-│   │   │   │   ├── queryParser.ts     # `tag:` / `board:` / `has:` / `property:` / `type:` operators, /regex/, free text (with no operator: exactly as typed, spaces and quotes included)
+│   │   │   │   ├── queryParser.ts     # `tag:` / `board:` / `has:` / `property:` / `type:` operators, /regex/, free text (with no operator: exactly as typed, spaces and quotes included); a backslash escapes only a colon in an operator value
 │   │   │   │   ├── runSearch.ts       # runVaultSearch: every tile on every board plus notes on no board; Match case / Whole word
 │   │   │   │   ├── matchGroups.ts     # The Search panel's list under the box: matches grouped by note, the matched words marked
 │   │   │   │   ├── searchEscape.ts    # escapeClosesSearchPanel: an Escape nothing above the panel used (no preventDefault, no field, no popup), read once the dispatch is over
@@ -796,7 +797,7 @@ filo/
 │   │   ├── types.ts                   # IpcChannel union, file-tree types
 │   │   ├── vaultPath.ts               # VaultPath: the case-folded key every path-keyed map uses; isAtOrUnder (the item or inside it)
 │   │   ├── sentinelPaths.ts           # Per-machine sentinel names (`.filo/.dirty.<machineId>` …)
-│   │   ├── fileNames.ts               # fileStemFromTitle, fileNameProblem (shared filename rules: no leading or trailing dot, so no note is hidden)
+│   │   ├── fileNames.ts               # fileStemFromTitle, fileNameProblem (shared filename rules: no leading or trailing dot, so no note is hidden; a name at most 255 UTF-8 bytes, which covers Windows' 255 UTF-16 units and Android's 255 bytes, a derived stem 200)
 │   │   ├── conflictCopy.ts            # The one sync-client conflict-copy detector
 │   │   ├── vaultColor.ts              # safeVaultColor: only #rgb / #rrggbb (app.json, recent-vaults.json, inline styles)
 │   │   ├── pathUtils.ts               # toPosix / stripLeadingSlash / normalizePath / toVaultRelative (main + renderer)
@@ -816,7 +817,7 @@ filo/
 │       ├── corpus/
 │       │   └── corpusRun.ts           # The corpus check: every listed note through a real editor (npm run corpus:run; not in ci:verify)
 │       ├── e2e/                       # Playwright on the built app (`*.e2e.ts`; `helpers/app.ts`: launchBuilt, quitLikeUser, openNoteByName, generateVault)
-│       ├── helpers/                   # Shared test helpers (memory vault, window.filo bridge, machine id, fake command, editor loop breaker, toolbar cases)
+│       ├── helpers/                   # Shared test helpers (memory vault, window.filo bridge, machine id, fake command, editor loop breaker, toolbar cases; `testSchedulers.ts`: a test's own write schedulers, retired after each test)
 │       │   └── seedBoard.ts           # Seeds the board cache from runtime tiles, then calls setBoard
 │       └── types/
 │           └── js-yaml.d.ts           # Test-only js-yaml declaration (js-yaml is a test oracle, banned from the app)
@@ -1058,7 +1059,7 @@ Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, U
 
 ## Key Design Decisions — Do Not Deviate
 
-1. **Local-first. No network calls.** No telemetry, analytics, or remote APIs. Everything works offline. The one exception, allowed by the design doc: a Link tile fetches its page's title and preview (`link:fetch-metadata`, in main; http(s) to public addresses only), and only for a link the user added.
+1. **Local-first. No network calls.** No telemetry, analytics, or remote APIs. Everything works offline. The one exception, allowed by the design doc: a Link tile fetches its page's title and preview (`link:fetch-metadata`, in main; http(s) to public addresses only, checked on the address each connection is made to: `services/publicHttp.ts`), and only for a link the user added.
 2. **Open format.** Text is Markdown. Boards are JSON. Media files are stored as-is. A user must be able to read their data with any text editor.
 3. **File-backed tiles.** Text, Image, Video, Audio, and File tiles point to real files in the vault. Link, Iframe, and Timer tiles store data inline in board JSON.
 4. **One `.md` file = one document.** A Text Tile and a Document Board are two views of the same `.md` file. Edits in either view reflect immediately in the other.

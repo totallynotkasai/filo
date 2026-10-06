@@ -20,7 +20,8 @@ import type { BoardContext } from './boardStoreTypes';
  */
 export function makeTilesSlice(ctx: BoardContext) {
   return {
-    async addTile(tile: Tile, options?: { skipEmptySeed?: boolean }): Promise<void> {
+    /** Resolves false when the tile wasn't added, or came off again because its new note couldn't be created. */
+    async addTile(tile: Tile, options?: { skipEmptySeed?: boolean }): Promise<boolean> {
       // Stamp boardId from the active board when the caller left it empty.
       // Tiles built during a board transition (drag-drop in flight, template
       // insertion racing with a tab switch) can land here with boardId: '' —
@@ -37,16 +38,18 @@ export function makeTilesSlice(ctx: BoardContext) {
         // reject-and-warn rather than persisting the bad tile anyway.
         console.warn('[boardStore.addTile] Rejecting invalid tile:', parsed.error.issues);
         uiStore.toast('Could not add tile — invalid data (see console)', 'error', 4000);
-        return;
+        return false;
       }
       const validTile = parsed.data as Tile;
       const w = validTile.renderedWidth ?? validTile.size.width;
       const h = validTile.renderedHeight ?? validTile.size.height;
       ctx.spatial.insert(validTile.id, validTile.position.x, validTile.position.y, w, h);
-      await boardCacheStore.persistAddTile(validTile, options);
+      const added = await boardCacheStore.persistAddTile(validTile, options);
+      if (!added) ctx.spatial.remove(validTile.id);
+      return added;
     },
 
-    async persistAddTile(tile: Tile, options?: { skipEmptySeed?: boolean }): Promise<void> {
+    async persistAddTile(tile: Tile, options?: { skipEmptySeed?: boolean }): Promise<boolean> {
       return boardCacheStore.persistAddTile(tile, options);
     },
 

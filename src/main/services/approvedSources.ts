@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { vaultRegistry } from './vaultRegistry';
+import { assertWithinVault } from '../utils/pathSecurity';
 
 /**
  * Approved-source registry for `vault:copy-file`.
@@ -110,9 +111,7 @@ export function clearApprovedSources(): void {
 
 /**
  * Lexical (case-folded on Windows) containment check: is `candidate` the vault
- * root itself or a descendant? Purely lexical — symlink escapes through the
- * vault are handled separately by the copy-file handler's `lstat` (which rejects
- * any non-regular-file, including symlinks) before the copy runs.
+ * root itself or a descendant? It touches nothing on disk.
  */
 function isWithinVaultLexical(vaultRoot: string, candidate: string): boolean {
   const root = path.resolve(vaultRoot);
@@ -124,18 +123,36 @@ function isWithinVaultLexical(vaultRoot: string, candidate: string): boolean {
 }
 
 /**
+ * Is `candidate`, already lexically inside the vault, inside it on disk too?
+ * A folder in the vault can be a junction (or a link) to anywhere: the
+ * handler's `lstat` sees only the last segment, so `vault/out/secret.txt`
+ * through a junction `out` reads as an ordinary file. `assertWithinVault`
+ * resolves the real path of the deepest existing ancestor.
+ */
+function isWithinVaultOnDisk(vaultRoot: string, candidate: string): boolean {
+  try {
+    assertWithinVault(vaultRoot, candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * True iff `sourcePath` is an approved `vault:copy-file` source for the given
- * active vault: inside the vault, or previously registered via a trusted
- * dialog/drop AND bound to the currently-active vault. The copy-file handler
- * calls this BEFORE it stats or opens the path, so an unapproved path is never
- * even touched on disk.
+ * active vault: inside the vault (as written and on disk), or previously
+ * registered via a trusted dialog/drop AND bound to the currently-active
+ * vault. A path outside the vault as written is never touched on disk here
+ * (a UNC path would reach the network), so an unapproved path is never
+ * opened or stat'd.
  */
 export function isApprovedCopySource(vaultRoot: string, sourcePath: string): boolean {
   if (typeof sourcePath !== 'string' || sourcePath.length === 0) return false;
   if (
     typeof vaultRoot === 'string' &&
     vaultRoot.length > 0 &&
-    isWithinVaultLexical(vaultRoot, sourcePath)
+    isWithinVaultLexical(vaultRoot, sourcePath) &&
+    isWithinVaultOnDisk(vaultRoot, sourcePath)
   ) {
     return true;
   }

@@ -16,6 +16,8 @@ const { getMachineIdentity, __setMachineIdentityForTests, registerMachineInVault
   '../../main/services/machineIdentity'
 );
 const { assertNotInFiloDir, FiloDirForbiddenError } = await import('../../main/utils/pathSecurity');
+/** A vault root that doesn't exist: the guard's on-disk spelling of a path under it is the path itself. */
+const VAULT = join(tmpdir(), 'filo-sentinel-guard-vault');
 const { initVaultConfig } = await import('../../main/vault/configOps');
 
 describe('machine identity (userData/machine-id.json)', () => {
@@ -63,20 +65,20 @@ describe('assertNotInFiloDir — per-machine sentinel ownership', () => {
   afterEach(() => __setMachineIdentityForTests(null));
 
   it('a write/delete of ANOTHER machine\'s sentinel is refused (bite: any sentinel name passed before)', () => {
-    expect(() => assertNotInFiloDir('.filo/.dirty.bbbbbbbbbbbb')).toThrow(FiloDirForbiddenError);
-    expect(() => assertNotInFiloDir('.filo/tag-rewrite-pending.bbbbbbbbbbbb.json')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/.dirty.bbbbbbbbbbbb')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/tag-rewrite-pending.bbbbbbbbbbbb.json')).toThrow(FiloDirForbiddenError);
   });
 
   it("this machine's own sentinels are allowed; a bare name with no machine id is refused", () => {
-    expect(() => assertNotInFiloDir('.filo/.dirty.aaaaaaaaaaaa')).not.toThrow();
-    expect(() => assertNotInFiloDir('.filo/quit-failure.aaaaaaaaaaaa.json')).not.toThrow();
-    expect(() => assertNotInFiloDir('.filo/.dirty')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/.dirty.aaaaaaaaaaaa')).not.toThrow();
+    expect(() => assertNotInFiloDir(VAULT, '.filo/quit-failure.aaaaaaaaaaaa.json')).not.toThrow();
+    expect(() => assertNotInFiloDir(VAULT, '.filo/.dirty')).toThrow(FiloDirForbiddenError);
   });
 
   it('read access may name any machine; other .filo files stay forbidden', () => {
-    expect(() => assertNotInFiloDir('.filo/.dirty.bbbbbbbbbbbb', { access: 'read' })).not.toThrow();
-    expect(() => assertNotInFiloDir('.filo/app.json')).toThrow(FiloDirForbiddenError);
-    expect(() => assertNotInFiloDir('.filo/app.json', { access: 'read' })).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/.dirty.bbbbbbbbbbbb', { access: 'read' })).not.toThrow();
+    expect(() => assertNotInFiloDir(VAULT, '.filo/app.json')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/app.json', { access: 'read' })).toThrow(FiloDirForbiddenError);
   });
 });
 

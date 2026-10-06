@@ -20,10 +20,12 @@ export const documentTileOps: BoardTileOps<DocumentBoard> = {
     boardId: string,
     tile: Tile,
     _opts?: AddTileOpts,
-  ): Promise<void> {
+  ): Promise<boolean> {
     console.warn(
       `[boardTileOps.document] addTile is a no-op (board=${boardId}, tile=${tile.id}); document boards have no tile registry`,
     );
+    // No note was to be made, so none failed: there is nothing to take off.
+    return true;
   },
 
   removeTile(

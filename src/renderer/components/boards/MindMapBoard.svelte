@@ -61,7 +61,7 @@
   import { VisibleTilesViewModel } from '../../lib/mindmap/visibleTilesViewModel.svelte';
   import { MarqueeSelectionController } from '../../lib/mindmap/marqueeSelectionController.svelte';
   import { confirmRemoveFrame } from '../../lib/frames/confirmRemoveFrame';
-  import { createSelectionActions } from '../../lib/mindmap/selectionActions';
+  import { createSelectionActions, selectableTileIds } from '../../lib/mindmap/selectionActions';
   import { revealOffset } from '../../lib/canvas/revealRect';
   import { tileIdFromTarget, topmostHitTile } from '../../lib/mindmap/tileHitTest';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
@@ -331,10 +331,7 @@
         canvasStore.setWaypointsVisible(true);
         uiStore.toast(`Waypoint "${name}" saved`, 'success', 1500);
       },
-      onSelectAll: () => {
-        const hidden = viewModel.hiddenByFrame;
-        selectionStore.selectMultiple(Object.keys(boardStore.tiles).filter((id) => !hidden.has(id)));
-      },
+      onSelectAll: () => selectionStore.selectMultiple(selectableTileIds(boardStore.tiles, viewModel.hiddenByFrame)),
       onOrphanCatcher: () => uiStore.openModal('orphan-catcher'),
       onRemoveBroken: brokenCount > 0 ? () => {
         const boardId = boardStore.current?.id;

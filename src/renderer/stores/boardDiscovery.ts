@@ -149,8 +149,6 @@ async function adoptOnce(relPath: string, captured: VaultIdentity, opts: AdoptOp
   const project = vaultStore.getProject();
   if (project) {
     project.boards = [...project.boards.filter((b) => b.id !== id), data.board];
-    Object.assign(project.connections, data.connections);
-    project.frames.push(...data.frames);
   }
   // Mirror commitVaultCandidate: loader repairs (and caught-up renames) are
   // persisted on the next write.

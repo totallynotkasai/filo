@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { valuesEqual } from '@renderer/lib/vault/frontmatterEngine';
 import { subtractWrittenDelta } from '@renderer/lib/vault/frontmatterDelta';
 import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstModel';
-import { createScheduler } from '@renderer/lib/boards/writeScheduler';
+import { createScheduler, disposeTestSchedulers } from '../helpers/testSchedulers';
 import { writeBoardFile, setBoardExternalEditHandler } from '@renderer/lib/boards/boardWriteScheduler';
 import {
   noteBaseline,
@@ -11,6 +11,9 @@ import {
 } from '@renderer/lib/vault/fileBaselineRegistry';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+
+// Retire every scheduler a test made, so nothing it left armed reaches the next test.
+afterEach(disposeTestSchedulers);
 
 /**
  * Audit-17 Phase 5 — narrow-window hardening + engine edges.

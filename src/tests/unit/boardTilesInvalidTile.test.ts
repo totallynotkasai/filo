@@ -70,7 +70,7 @@ describe('boardTiles — invalid tiles are never persisted (audit 1.2)', () => {
   });
 
   it('addTile drops a Zod-invalid tile: no persist, no spatial insert, warns once', async () => {
-    const addSpy = vi.spyOn(boardCacheStore, 'persistAddTile').mockResolvedValue(undefined);
+    const addSpy = vi.spyOn(boardCacheStore, 'persistAddTile').mockResolvedValue(true);
     const toastSpy = vi.spyOn(uiStore, 'toast').mockImplementation(() => undefined as never);
     const { ctx, spatial } = makeCtx();
     await makeTilesSlice(ctx).addTile(makeInvalidTile());
@@ -80,7 +80,7 @@ describe('boardTiles — invalid tiles are never persisted (audit 1.2)', () => {
   });
 
   it('addTile persists a valid tile', async () => {
-    const addSpy = vi.spyOn(boardCacheStore, 'persistAddTile').mockResolvedValue(undefined);
+    const addSpy = vi.spyOn(boardCacheStore, 'persistAddTile').mockResolvedValue(true);
     const { ctx } = makeCtx();
     await makeTilesSlice(ctx).addTile(makeValidTile());
     expect(addSpy).toHaveBeenCalledTimes(1);

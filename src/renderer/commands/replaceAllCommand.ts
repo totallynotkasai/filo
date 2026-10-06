@@ -193,6 +193,8 @@ export class ReplaceAllCommand extends Command {
   readonly targetBoardId: string;
   private readonly vaultRoot: string;
   private readonly plans: FilePlan[];
+  /** How many files the last execute left alone (changed since the search). */
+  private skippedOnExecute = 0;
 
   constructor(vaultRoot: string, plans: FilePlan[]) {
     super();
@@ -209,7 +211,13 @@ export class ReplaceAllCommand extends Command {
     // blind write would clobber the intervening edit) and named in the
     // aggregate toast.
     const skipped = await this.swapAll(true);
+    this.skippedOnExecute = skipped.length;
     this.toastSkipped(skipped, 'Replace skipped', 'changed since the search');
+  }
+
+  /** Whether the last execute changed no file: every one had changed since the search. */
+  replacedNothing(): boolean {
+    return this.skippedOnExecute === this.plans.length;
   }
 
   async undo(): Promise<void> {
@@ -425,5 +433,14 @@ export async function replaceCurrentMatch(): Promise<ReplacedMatch | null> {
 
   const command = new ReplaceAllCommand(vaultRoot, result.plans);
   await historyStore.execute(command);
+  if (command.replacedNothing()) {
+    // The note changed between the read and the write, so nothing was
+    // replaced (the step's toast says so): no undo step for it, and the panel
+    // stays on this match, read again, so the next Replace tries it on the
+    // note's new text.
+    historyStore.forget(command);
+    searchStore.refreshNow();
+    return null;
+  }
   return { match: current, index, replacement };
 }

@@ -4,6 +4,8 @@ import {
   FiloDirForbiddenError,
 } from '../../main/utils/pathSecurity';
 import { __setMachineIdentityForTests } from '../../main/services/machineIdentity';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 /**
  * Phase 1 / 1.2 — every generic `vault:*` IPC handler that mutates the
@@ -18,70 +20,73 @@ import { __setMachineIdentityForTests } from '../../main/services/machineIdentit
  * inside the helper because `dirtyFlagRecovery` / `renameCascadeSentinel`
  * / `tagRewriteSentinel` legitimately go through `vault:write-file-text`.
  */
+/** A vault root that doesn't exist: the guard's on-disk spelling of a path under it is the path itself. */
+const VAULT = join(tmpdir(), 'filo-guard-vault');
+
 describe('vault IPC `.filo/` guard — assertNotInFiloDir', () => {
   it('throws FORBIDDEN for vault:write-file-text → ".filo/app.json"', () => {
-    expect(() => assertNotInFiloDir('.filo/app.json')).toThrow(FiloDirForbiddenError);
-    expect(() => assertNotInFiloDir('.filo/app.json')).toThrow(/FORBIDDEN/);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/app.json')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/app.json')).toThrow(/FORBIDDEN/);
   });
 
   it('throws FORBIDDEN for vault:write-existing-file-text → ".filo/defaults.json"', () => {
-    expect(() => assertNotInFiloDir('.filo/defaults.json')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/defaults.json')).toThrow(FiloDirForbiddenError);
   });
 
   it('throws FORBIDDEN for vault:delete → ".filo/tags.json"', () => {
     // delete handler computes `relative(vaultRoot, itemPath)` and feeds
     // it to assertNotInFiloDir; the rel path here mimics that result.
-    expect(() => assertNotInFiloDir('.filo/tags.json')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/tags.json')).toThrow(FiloDirForbiddenError);
   });
 
   it('throws FORBIDDEN for vault:rename source → ".filo/old.json"', () => {
-    expect(() => assertNotInFiloDir('.filo/old.json')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/old.json')).toThrow(FiloDirForbiddenError);
   });
 
   it('throws FORBIDDEN for vault:rename dest → ".filo/new.json"', () => {
-    expect(() => assertNotInFiloDir('.filo/new.json')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/new.json')).toThrow(FiloDirForbiddenError);
   });
 
   it('throws FORBIDDEN for vault:copy-file source → ".filo/cfg.json"', () => {
     // copy-file's source-inside-vault check feeds `relative(vault, src)`
     // when the source happens to live inside the vault — paths inside
     // `.filo/` are refused.
-    expect(() => assertNotInFiloDir('.filo/cfg.json')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/cfg.json')).toThrow(FiloDirForbiddenError);
   });
 
   it('throws FORBIDDEN for vault:copy-file dest → ".filo/copy.png"', () => {
     // copy-file's destination check feeds `{subfolder}/{basename(src)}`.
-    expect(() => assertNotInFiloDir('.filo/copy.png')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/copy.png')).toThrow(FiloDirForbiddenError);
   });
 
   it('throws FORBIDDEN for vault:create-folder → ".filo/subdir"', () => {
-    expect(() => assertNotInFiloDir('.filo/subdir')).toThrow(FiloDirForbiddenError);
+    expect(() => assertNotInFiloDir(VAULT, '.filo/subdir')).toThrow(FiloDirForbiddenError);
   });
 
   // ── Non-`.filo` paths pass through ──────────────────────────────────
   describe('legitimate vault paths are permitted', () => {
     it('permits a plain markdown file at vault root', () => {
-      expect(() => assertNotInFiloDir('Notes.md')).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, 'Notes.md')).not.toThrow();
     });
 
     it('permits a nested attachment path', () => {
-      expect(() => assertNotInFiloDir('attachments/2026/photo.png')).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, 'attachments/2026/photo.png')).not.toThrow();
     });
 
     it('permits a board file path', () => {
-      expect(() => assertNotInFiloDir('Kanban/MyBoard/foo.board.json')).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, 'Kanban/MyBoard/foo.board.json')).not.toThrow();
     });
 
     it('permits a folder name that merely STARTS with .filo (not equal)', () => {
       // First-segment EQUALITY check — a folder called `.filosophy` is
       // not the same as `.filo` and must pass.
-      expect(() => assertNotInFiloDir('.filosophy/Notes.md')).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, '.filosophy/Notes.md')).not.toThrow();
     });
 
     it('permits an empty / null input (upstream validators handle those)', () => {
-      expect(() => assertNotInFiloDir('')).not.toThrow();
-      expect(() => assertNotInFiloDir(null as unknown as string)).not.toThrow();
-      expect(() => assertNotInFiloDir(undefined as unknown as string)).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, '')).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, null as unknown as string)).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, undefined as unknown as string)).not.toThrow();
     });
   });
 
@@ -94,24 +99,24 @@ describe('vault IPC `.filo/` guard — assertNotInFiloDir', () => {
     afterEach(() => __setMachineIdentityForTests(null));
 
     it('permits .filo/.dirty.<id> (dirty-flag sentinel)', () => {
-      expect(() => assertNotInFiloDir(`.filo/.dirty.${ME}`)).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, `.filo/.dirty.${ME}`)).not.toThrow();
     });
 
     it('permits .filo/rename-cascade-pending.<id>.json (rename sentinel)', () => {
-      expect(() => assertNotInFiloDir(`.filo/rename-cascade-pending.${ME}.json`)).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, `.filo/rename-cascade-pending.${ME}.json`)).not.toThrow();
     });
 
     it('permits .filo/tag-rewrite-pending.<id>.json (tag-rewrite sentinel)', () => {
-      expect(() => assertNotInFiloDir(`.filo/tag-rewrite-pending.${ME}.json`)).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, `.filo/tag-rewrite-pending.${ME}.json`)).not.toThrow();
     });
 
     it('permits .filo/quit-failure.<id>.json (quit-failure breadcrumb)', () => {
-      expect(() => assertNotInFiloDir(`.filo/quit-failure.${ME}.json`)).not.toThrow();
+      expect(() => assertNotInFiloDir(VAULT, `.filo/quit-failure.${ME}.json`)).not.toThrow();
     });
 
     it('refuses the bare shared names', () => {
       for (const bare of ['.filo/.dirty', '.filo/rename-cascade-pending.json', '.filo/tag-rewrite-pending.json', '.filo/quit-failure.json']) {
-        expect(() => assertNotInFiloDir(bare)).toThrow(FiloDirForbiddenError);
+        expect(() => assertNotInFiloDir(VAULT, bare)).toThrow(FiloDirForbiddenError);
       }
     });
   });
@@ -119,15 +124,15 @@ describe('vault IPC `.filo/` guard — assertNotInFiloDir', () => {
   // ── Normalisation: separators + case ────────────────────────────────
   describe('path normalisation', () => {
     it('rejects backslash-separated .filo paths (Windows-style)', () => {
-      expect(() => assertNotInFiloDir('.filo\\app.json')).toThrow(FiloDirForbiddenError);
+      expect(() => assertNotInFiloDir(VAULT, '.filo\\app.json')).toThrow(FiloDirForbiddenError);
     });
 
     it('rejects mixed-separator .filo paths', () => {
-      expect(() => assertNotInFiloDir('.filo\\sub/app.json')).toThrow(FiloDirForbiddenError);
+      expect(() => assertNotInFiloDir(VAULT, '.filo\\sub/app.json')).toThrow(FiloDirForbiddenError);
     });
 
     it('rejects .FILO case variant (case-insensitive first-segment match)', () => {
-      expect(() => assertNotInFiloDir('.FILO/app.json')).toThrow(FiloDirForbiddenError);
+      expect(() => assertNotInFiloDir(VAULT, '.FILO/app.json')).toThrow(FiloDirForbiddenError);
     });
   });
 });

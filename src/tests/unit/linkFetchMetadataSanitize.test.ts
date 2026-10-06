@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vite
  *
  * Two layers of coverage:
  *   1. `sanitizeReturnedResourceUrl` exercised in isolation (fast, exhaustive).
- *   2. The full `link:fetch-metadata` handler driven with a mocked fetch + dns,
+ *   2. The full `link:fetch-metadata` handler driven with a mocked page fetch,
  *      proving the sanitiser is actually WIRED into the returned envelope.
  *
  * Bite-verify: revert either `sanitizeReturnedResourceUrl(...)` call site in
@@ -50,6 +50,19 @@ vi.mock('dns', () => ({
     ) => void;
     cb(null, mockState.dnsResult);
   },
+}));
+
+// The page fetch itself (its connection checks are `publicHttpConnection.test.ts`'s):
+// every page is the HTML in `mockState.fetchHtml`, served from the URL asked for.
+vi.mock('../../main/services/publicHttp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../main/services/publicHttp')>()),
+  getPublic: async (url: string) => ({
+    status: 200,
+    url,
+    contentType: 'text/html; charset=utf-8',
+    readBody: async () => Buffer.from(mockState.fetchHtml, 'utf8'),
+    discard: () => {},
+  }),
 }));
 
 vi.mock('../../main/ipc/vault.ipc', () => ({
@@ -120,29 +133,6 @@ describe('sanitizeReturnedResourceUrl — Audit-15 P3.2', () => {
 describe('link:fetch-metadata — image/favicon sanitised end-to-end (Audit-15 P3.2)', () => {
   let fetchHandler: (...a: unknown[]) => Promise<unknown>;
 
-  function htmlResponse(html: string) {
-    const bytes = new TextEncoder().encode(html);
-    let done = false;
-    return {
-      status: 200,
-      ok: true,
-      headers: {
-        get: (name: string) =>
-          name.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null,
-      },
-      body: {
-        getReader: () => ({
-          read: async () => {
-            if (done) return { value: undefined, done: true };
-            done = true;
-            return { value: bytes, done: false };
-          },
-          cancel: async () => {},
-        }),
-      },
-    };
-  }
-
   beforeAll(() => {
     registerMediaHandlers();
     const h = mockState.handlers.get('link:fetch-metadata');
@@ -154,14 +144,9 @@ describe('link:fetch-metadata — image/favicon sanitised end-to-end (Audit-15 P
     // Page host resolves to a public IP so the page itself passes the SSRF gate.
     mockState.dnsResult = [{ address: '93.184.216.34', family: 4 }];
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => htmlResponse(mockState.fetchHtml) as unknown as Response),
-    );
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 

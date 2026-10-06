@@ -4,8 +4,6 @@ import type {
   KanbanBoard,
   TaskListBoard,
   TileDefinition,
-  Connection,
-  Frame,
 } from '../schema/index';
 import { vaultStore } from './vault.svelte';
 import {
@@ -261,14 +259,6 @@ function tasklistBoardOrWarn(boardId: string, method: string): TaskListBoard | n
   return null;
 }
 
-function updateProjectConnectionsFrames(
-  mutator: (project: { connections: Record<string, Connection>; frames: Frame[] }) => void,
-) {
-  const project = vaultStore.getProject();
-  if (!project) return;
-  mutator({ connections: project.connections, frames: project.frames });
-}
-
 /**
  * The boards whose `.board.json` is `oldPath` or sits under it (a folder),
  * compared case-INSENSITIVELY (Windows/macOS aren't case-sensitive) so a path
@@ -320,7 +310,6 @@ const cacheCtx: CacheContext = {
   warnUnresolved,
   kanbanBoardOrWarn,
   tasklistBoardOrWarn,
-  updateProjectConnectionsFrames,
 };
 
 const connectionsFramesSlice = makeConnectionsFramesSlice(cacheCtx);

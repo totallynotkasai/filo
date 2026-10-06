@@ -401,13 +401,12 @@ const BaseBoardSchema = z.object({
 export const MindMapBoardSchema = BaseBoardSchema.extend({
   type: z.literal('mindmap'),
   settings: MindMapSettingsSchema.prefault({}),
-  // Note: per-board pan/zoom now lives in `.filo/viewports.json` keyed by
-  // boardId. Older `.board.json` files with an inline `viewport` field are
-  // still accepted (the schema is .passthrough()) but the field is ignored
-  // and stripped on the next save.
+  // A board's pan and zoom live in `.filo/viewports.json`, keyed by board id.
+  // An inline `viewport` an older file carries is kept as it is (the schema
+  // is .passthrough()) and nothing reads it.
   /**
    * Vault-backed tile placements: maps tileId -> placement (position, size, locked, faded).
-   * The tile's content and style are stored separately in the vault's tiles.json.
+   * The tile's def (its note path and style) is in the file's `tileDefs`.
    *
    * Record keys are validated against the nanoid pattern
    * via `idString`. A hand-edited `.board.json` with an empty or
@@ -416,14 +415,13 @@ export const MindMapBoardSchema = BaseBoardSchema.extend({
    */
   placements: z.record(idString, TilePlacementSchema).default(() => ({})),
   /**
-   * Inline tiles (Link, Embed, Timer) — stored fully in project.json.
-   * These tile types are not vault-backed and have no entry in tiles.json.
+   * Inline tiles (Link, Embed, Timer): stored whole here, the one copy, since
+   * no file backs them; they have no entry in `tileDefs`.
    */
   inlineTiles: z.record(idString, InlineTileSchema).default(() => ({})),
-  // `.min(1)` + uniqueness check on the flat ID arrays.
-  // The connections record at the envelope level is the source of truth;
-  // this array is the per-mindmap render-order list. A duplicate id here
-  // double-renders a connection and confuses every selection / delete op.
+  // Id lists nothing reads: the file's own `connections` record and `frames`
+  // list (beside `board`) hold a board's connections and frames. Still
+  // defaulted and checked so a v8 file keeps parsing as it did.
   connections: z.array(z.string().min(1)).default(() => []).refine(...uniqueStrings('MindMapBoard.connections')),
   frames: z.array(z.string().min(1)).default(() => []).refine(...uniqueStrings('MindMapBoard.frames')),
   waypoints: z

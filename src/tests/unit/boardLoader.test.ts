@@ -409,7 +409,7 @@ describe('boardLoader', () => {
   });
 
   describe('loadAllBoards', () => {
-    it('aggregates boards, cache, paths, connections, frames', async () => {
+    it("aggregates boards, cache and paths; each board's connections stay in its own cache entry", async () => {
       const fileA = validBoardFile('m-a');
       const fileB = validBoardFile('m-b');
       // The connection points at the seeded tile_a so the orphan-ref prune
@@ -438,7 +438,8 @@ describe('boardLoader', () => {
       expect(Object.keys(result.cache).sort()).toEqual(['m-a', 'm-b']);
       expect(result.paths['m-a']).toBe('a.board.json');
       expect(result.paths['m-b']).toBe('b.board.json');
-      expect(Object.keys(result.connections)).toEqual(['c1']);
+      expect(Object.keys(result.cache['m-b']!.connections)).toEqual(['c1']);
+      expect(result.cache['m-a']!.connections).toEqual({});
     });
 
     it('skips boards that fail to load', async () => {
@@ -509,7 +510,7 @@ describe('boardLoader', () => {
       expect(result.failedBoards[0].errorKind).toBe('duplicate-board-id');
 
       // The loser's connections must NOT have polluted the survivor.
-      expect(result.connections.intruder).toBeUndefined();
+      expect(result.cache['dup-id']!.connections.intruder).toBeUndefined();
     });
   });
 });

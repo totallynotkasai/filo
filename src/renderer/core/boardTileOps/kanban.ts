@@ -46,7 +46,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
     boardId: string,
     tile: Tile,
     opts?: AddTileOpts,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Stamp filePath synchronously so the cache def reflects the
     // resolved path immediately; defer the disk seed.
     stampTextTileSeedPath(tile, boardId);
@@ -54,7 +54,7 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
     const updatedDefs = { ...cached.tileDefs, [tile.id]: def };
     ctx.updateEntry(boardId, { tileDefs: updatedDefs });
     ctx.markDirty(boardId);
-    await seedTextFileForNewTile(tile, boardId, opts);
+    return seedTextFileForNewTile(tile, boardId, opts);
   },
 
   removeTile(
@@ -93,14 +93,6 @@ export const kanbanTileOps: BoardTileOps<KanbanBoard> = {
     // Refresh the board identity alongside the in-place
     // `columns` rewrite above (cache-identity convention).
     ctx.updateEntry(boardId, { board: { ...kb }, tileDefs: restDefs, connections: updatedConns });
-
-    ctx.updateProjectConnectionsFrames(({ connections: projConns }) => {
-      for (const [key, c] of Object.entries(projConns)) {
-        if (c.fromTileId === tileId || c.toTileId === tileId) {
-          delete projConns[key];
-        }
-      }
-    });
 
     ctx.markDirty(boardId);
   },

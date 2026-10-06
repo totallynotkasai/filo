@@ -6,6 +6,7 @@ import {
   assertSafeRelativePath,
   assertWithinVault,
   FiloDirForbiddenError,
+  namesFiloDir,
 } from '../utils/pathSecurity';
 import { assertActiveVault } from '../utils/activeVaultCheck';
 import { getMachineIdentity } from '../services/machineIdentity';
@@ -63,8 +64,8 @@ export function registerVaultTrashHandlers(): void {
       assertSafeRelativePath(relPath);
       const rel = toPosix(relPath);
       // Filo's own files are never user content, and trashing the trash
-      // would nest it.
-      if (rel.split('/')[0]?.toLowerCase() === '.filo') {
+      // would nest it. Checked on the disk's spelling too (`FILO~1`).
+      if (namesFiloDir(vaultRoot, rel)) {
         throw new FiloDirForbiddenError(`FORBIDDEN: ${rel} is inside .filo`);
       }
       assertWithinVault(vaultRoot, join(vaultRoot, ...rel.split('/')));

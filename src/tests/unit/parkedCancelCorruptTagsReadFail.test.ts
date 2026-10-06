@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createScheduler } from '@renderer/lib/boards/writeScheduler';
+import { createScheduler, disposeTestSchedulers } from '../helpers/testSchedulers';
 import { loadTagsFile, emptyTagsFile } from '@renderer/lib/vault/tagsStorage';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
@@ -18,6 +18,9 @@ import type { Tile } from '@renderer/schema/index';
 import type { KanbanBoard as KanbanBoardType } from '@renderer/schema/index';
 import type { SelectionScope } from '@renderer/stores/selection.svelte';
 import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
+
+// Retire every scheduler a test made, so nothing it left armed reaches the next test.
+afterEach(disposeTestSchedulers);
 
 /**
  * Audit-18 Phase 1 — the dogfood-unblock fix set (3 HIGH + 3 small MEDIUMs).

@@ -146,7 +146,7 @@ export function createScheduler<TArgs>(
 
   // A write of the path armed here keeps it pending when an earlier one lands
   // (see `registerArmedPathSource`).
-  registerArmedPathSource((path) => {
+  const unregisterArmed = registerArmedPathSource((path) => {
     for (const entry of pending.values()) {
       if (entry.schedulePath && vaultPath(entry.schedulePath) === path) return true;
     }
@@ -997,6 +997,10 @@ export function createScheduler<TArgs>(
     hasPendingTimer,
     hasParked,
     hasWork,
+    dispose: () => {
+      cancelAll();
+      unregisterArmed();
+    },
     __failuresSizeForTests,
     __writeGenSizeForTests,
     __parkForTests,

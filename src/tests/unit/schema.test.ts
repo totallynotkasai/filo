@@ -15,8 +15,9 @@ describe('Zod Schema Validation', () => {
       expect(result.name).toBe('');
       expect(result.theme).toBe('light');
       expect(result.boards).toEqual([]);
-      expect(result.connections).toEqual({});
-      expect(result.frames).toEqual([]);
+      // A board's connections and frames live only in its own cache entry.
+      expect('connections' in result).toBe(false);
+      expect('frames' in result).toBe(false);
     });
 
     it('accepts valid theme values', () => {

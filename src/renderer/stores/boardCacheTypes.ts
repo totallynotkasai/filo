@@ -1,5 +1,5 @@
 import type { BoardFileData } from '../lib/boards/boardSaver';
-import type { Connection, Frame, KanbanBoard, TaskListBoard } from '../schema/index';
+import type { KanbanBoard, TaskListBoard } from '../schema/index';
 
 export type { BoardFileData };
 
@@ -22,7 +22,4 @@ export interface CacheContext {
   warnUnresolved(kind: string, id: string): void;
   kanbanBoardOrWarn(boardId: string, method: string): KanbanBoard | null;
   tasklistBoardOrWarn(boardId: string, method: string): TaskListBoard | null;
-  updateProjectConnectionsFrames(
-    mutator: (project: { connections: Record<string, Connection>; frames: Frame[] }) => void,
-  ): void;
 }

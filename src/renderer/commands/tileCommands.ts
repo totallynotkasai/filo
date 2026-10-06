@@ -5,6 +5,7 @@ import { boardCacheStore } from '../stores/boardCache.svelte';
 import { vaultStore } from '../stores/vault.svelte';
 import { uiStore } from '../stores/ui.svelte';
 import { framesStore } from '../stores/frames.svelte';
+import { historyStore } from '../stores/history.svelte';
 import type { Tile, Connection, TimerMode } from '../schema/index';
 import { cloneTile } from '../lib/utils/cloneTile';
 import { samePath } from '../lib/utils/path';
@@ -48,9 +49,13 @@ export class AddTileCommand extends Command {
   }
 
   execute(): void | Promise<void> {
-    // The first run adds the tile at once (its caller selects it and opens its title).
+    // The first run adds the tile at once (its caller selects it and opens its
+    // title). If its new note can't be created, the tile comes off again and
+    // this step goes with it: there is nothing left to undo.
     if (!this.newNote.trashedNote) {
-      boardStore.addTile(this.tile);
+      void boardStore.addTile(this.tile).then((added) => {
+        if (!added) historyStore.forget(this);
+      });
       return;
     }
     return (async () => {

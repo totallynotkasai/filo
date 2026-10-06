@@ -1,7 +1,5 @@
 import { z } from 'zod';
 import { BoardSchema } from './board';
-import { ConnectionSchema } from './connection';
-import { FrameSchema } from './frame';
 import { ProjectSettingsSchema } from './settings';
 import { uniqueBy } from './schemaUtils';
 
@@ -56,8 +54,6 @@ export const ProjectSchema = z.object({
   theme: z.string().trim().min(1).default('light'),
   settings: ProjectSettingsSchema.prefault({}),
   boards: z.array(BoardSchema).default(() => []).refine(...uniqueBy('id', 'boards')),
-  connections: z.record(z.string(), ConnectionSchema).default(() => ({})),
-  frames: z.array(FrameSchema).default(() => []).refine(...uniqueBy('id', 'frames')),
   /** Open tabs + active tab, captured at save time. */
   workspace: WorkspaceStateSchema.prefault({}),
   // .finite() rejects NaN / ±Infinity from hand-edited files.

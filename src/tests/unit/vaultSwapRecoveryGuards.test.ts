@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { createScheduler } from '@renderer/lib/boards/writeScheduler';
+import { createScheduler, disposeTestSchedulers } from '../helpers/testSchedulers';
 import {
   hasFailedWrites,
   __resetDirtyTrackingForTests,
@@ -19,6 +19,9 @@ import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/rename
 import { __resetTagRewriteSentinelForTests } from '@renderer/lib/vault/tagRewriteSentinel';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { testSentinelPath } from '../helpers/testMachine';
+
+// Retire every scheduler a test made, so nothing it left armed reaches the next test.
+afterEach(disposeTestSchedulers);
 
 /**
  * Audit-16 Phase 3 — cross-vault contamination & lifecycle races

@@ -69,7 +69,7 @@ export function makeTilesSlice(ctx: CacheContext) {
       // in any board's cache yet, so the findBoardIdForTile scan can't resolve
       // it and the re-add would be dropped. tile.boardId and the scan are fallbacks.
       boardId?: string,
-    ): Promise<void> {
+    ): Promise<boolean> {
       // Resolve boardId once at the top. Prefer the explicit arg, then the
       // tile's own field, then a cache scan for re-adds. Brand-new tiles
       // created when boardStore.current is null must be stamped at the caller
@@ -78,16 +78,23 @@ export function makeTilesSlice(ctx: CacheContext) {
       const resolvedBoardId = boardId || tile.boardId || ctx.findBoardIdForTile(tile.id) || '';
       if (!resolvedBoardId) {
         ctx.warnUnresolved('persistAddTile', `tile ${tile.id}`);
-        return;
+        return false;
       }
       const enrichedTile: Tile = tile.boardId === resolvedBoardId
         ? tile
         : ({ ...tile, boardId: resolvedBoardId } as Tile);
 
       const cached = ctx.getCache()[resolvedBoardId];
-      if (!cached) return;
+      if (!cached) return false;
 
-      await opsFor(cached.board).addTile(ctx, cached, resolvedBoardId, enrichedTile, options);
+      const added = await opsFor(cached.board).addTile(ctx, cached, resolvedBoardId, enrichedTile, options);
+      if (!added) {
+        // Its new note couldn't be created (already reported): the tile comes
+        // off again rather than pointing at a note that doesn't exist.
+        const now = ctx.getCache()[resolvedBoardId];
+        if (now) opsFor(now.board).removeTile(ctx, now, resolvedBoardId, tile.id);
+      }
+      return added;
     },
 
     persistRemoveTile(tileId: string): void {

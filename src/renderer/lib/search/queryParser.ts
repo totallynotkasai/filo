@@ -18,8 +18,9 @@
  * hyphen, and two spaces find a double space. With an operator, whitespace
  * separates tokens and a quoted value (`"…"`) preserves embedded whitespace.
  * A backslash escape lets a literal colon survive inside an operator value, so
- * `tag:#has\:colon` parses as a single tag `#has:colon`. Outside operator values,
- * backslashes are not interpreted (so plain text `C:\foo` remains intact).
+ * `tag:#has\:colon` parses as a single tag `#has:colon`. A backslash before any
+ * other character is text, in an operator value or not, quoted or not, so
+ * `tag:x C:\foo` searches for `C:\foo`.
  *
  * Regex syntax: a token starting AND ending with `/` (or `/<flags>`) is parsed
  * as a JavaScript regex. Invalid regexes degrade to free text so the user
@@ -83,12 +84,12 @@ function tokenise(raw: string): string[] {
       continue;
     }
     if (ch === '\\') {
-      // Only honour the escape when it follows a colon-operator prefix so
-      // plain-text `C:\foo` keeps the backslash literal. Heuristic: look back
-      // for a colon since the last whitespace token.
+      // An escape only for a colon inside an operator value (the token so far
+      // holds the operator's colon): every other backslash is text, so a path
+      // such as `C:\foo` keeps its backslash after a filter too.
       const lastWs = buf.lastIndexOf(' ');
       const fragment = lastWs >= 0 ? buf.slice(lastWs + 1) : buf;
-      if (fragment.includes(':')) {
+      if (raw[i + 1] === ':' && fragment.includes(':')) {
         escape = true;
         continue;
       }

@@ -50,27 +50,34 @@ export function stampTextTileSeedPath(tile: Tile, resolvedBoardId: string): stri
  * `options.skipEmptySeed` is the cascade-delete-undo flag: an absent file is
  * left absent (the broken-ref UX surfaces it) instead of being silently
  * materialised as a blank document.
+ *
+ * Resolves false when the tile's new note couldn't be created (reported
+ * here), so the caller takes the tile off its board again: a new tile never
+ * stays pointing at a note that doesn't exist. Every other outcome is true.
  */
 export async function seedTextFileForNewTile(
   tile: Tile,
   resolvedBoardId: string,
   options?: { skipEmptySeed?: boolean },
-): Promise<void> {
-  if (tile.type !== 'text') return;
+): Promise<boolean> {
+  if (tile.type !== 'text') return true;
   const vaultRoot = vaultStore.path;
-  if (!vaultRoot) return;
+  if (!vaultRoot) return true;
 
   const title = tile.title || 'Untitled';
   // A new tile may bring its first body (a Markdown template's text).
   const body = tile.content || '';
   let filename = stampTextTileSeedPath(tile, resolvedBoardId);
-  if (!filename) return;
+  if (!filename) return true;
   const fresh = freshNotes.has(tile);
   freshNotes.delete(tile);
+  /** Set once the new note exists: a later step failing leaves the tile its note. */
+  let created = false;
 
   try {
     if (fresh) {
       const result = await noteStore.createUnique(filename, () => newNoteText({ title }, body));
+      created = true;
       noteMadeForNewItem(result.relPath);
       if (result.relPath !== filename) {
         filename = result.relPath;
@@ -93,8 +100,12 @@ export async function seedTextFileForNewTile(
     reportError(
       'boardCache.create-text-md',
       err,
-      `Couldn't create the note "${filename}" for the new tile`,
+      fresh && !created
+        ? `Couldn't create the note "${filename}" for the new tile, so the tile wasn't added`
+        : `Couldn't create the note "${filename}" for the new tile`,
       filename,
     );
+    return !(fresh && !created);
   }
+  return true;
 }

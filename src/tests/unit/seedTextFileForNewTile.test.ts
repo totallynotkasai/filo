@@ -7,7 +7,8 @@
  *  - a note the tile already names (a drop, a restore) is adopted untouched
  *    when it exists, and never materialised as a blank file on a
  *    cascade-delete undo;
- *  - a failure is reported, never thrown into the add.
+ *  - a failure is reported, never thrown into the add; a brand-new note that
+ *    couldn't be created resolves false, so the add takes its tile off again.
  */
 import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { stampTextTileSeedPath, seedTextFileForNewTile } from '@renderer/lib/boards/seedTextFileForNewTile';
@@ -163,12 +164,12 @@ describe('seedTextFileForNewTile: a brand-new note', () => {
     expect(createExclusive).not.toHaveBeenCalled();
   });
 
-  it('reports a failed create instead of throwing, naming the file', async () => {
+  it('reports a failed create instead of throwing, naming the file, and resolves false', async () => {
     const err = new Error('disk full');
     createUnique.mockRejectedValue(err);
     const t = tile({ title: 'Idea' });
 
-    await expect(seedTextFileForNewTile(t, 'mm')).resolves.toBeUndefined();
+    await expect(seedTextFileForNewTile(t, 'mm')).resolves.toBe(false);
 
     expect(reported).toHaveLength(1);
     expect(reported[0].error).toBe(err);
@@ -189,6 +190,12 @@ describe('seedTextFileForNewTile: a note the tile already names', () => {
     expect(createUnique).not.toHaveBeenCalled();
     expect(refreshTree).not.toHaveBeenCalled();
     expect(filePathOf(t)).toBe('Dropped.md');
+  });
+
+  it('resolves true when a named note fails to be created: the tile keeps its path (a broken link to fix)', async () => {
+    createExclusive.mockRejectedValue(new Error('disk full'));
+    await expect(seedTextFileForNewTile(tile({ filePath: 'Sub/Named.md', title: 'Named' }), 'mm')).resolves.toBe(true);
+    expect(reported).toHaveLength(1);
   });
 
   it('creates a missing one with its title and refreshes the tree', async () => {

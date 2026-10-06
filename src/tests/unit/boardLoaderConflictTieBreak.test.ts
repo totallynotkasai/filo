@@ -84,7 +84,7 @@ describe('duplicate board ids — tie-break (Audit-19 ERR-3)', () => {
       'Plan.board.json': { data: envelope('b1', 'Plan', 'winnerFrame'), mtimeMs: 100 },
     });
     const res = await loadAllBoards('/vault');
-    expect(res.frames.map((f) => f.id)).toEqual(['winnerFrame']);
+    expect(res.cache.b1!.frames.map((f) => f.id)).toEqual(['winnerFrame']);
   });
 });
 

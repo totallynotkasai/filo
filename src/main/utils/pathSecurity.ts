@@ -4,7 +4,7 @@ import { toPosix } from '../../shared/pathUtils';
 import { relativePosix } from './pathHelpers';
 import { parseSentinelPath } from '../../shared/sentinelPaths';
 import { getMachineIdentity } from '../services/machineIdentity';
-import { RESERVED_WINDOWS_NAMES } from '../../shared/fileNames';
+import { RESERVED_WINDOWS_NAMES, nameTooLong } from '../../shared/fileNames';
 
 /**
  * `p` (already resolved) with its deepest existing ancestor canonicalised by
@@ -284,6 +284,11 @@ export function assertSafeFilename(
   if (fileName.length > 255) {
     throw new Error('Unsafe filename rejected — exceeds 255 chars');
   }
+  // A new name must also fit Android's 255 UTF-8 bytes, so a vault synced to
+  // a phone can hold it there (an existing longer name stays reachable).
+  if (options.forCreation === true && nameTooLong(fileName)) {
+    throw new Error('Unsafe filename rejected — exceeds 255 UTF-8 bytes');
+  }
   // Win32 strips a trailing dot / space, so on Windows `Draft.` would alias
   // `Draft`. On macOS / Linux the name is ordinary, and a folder synced from
   // there must stay readable, so the rule is gated with the other Win rules.
@@ -416,6 +421,38 @@ function isPermittedSentinel(normalised: string, access: 'read' | 'write'): bool
 }
 
 /**
+ * `relativePath` (vault-relative) as the disk names it: every existing folder
+ * on the way by its long name, a junction followed, from the vault root's own
+ * canonical spelling. Null when that can't be worked out or leads out of the
+ * vault (containment is `assertWithinVault`'s job, not this helper's).
+ *
+ * `.filo` has an 8.3 short name (`FILO~1`) on a volume that keeps them, and a
+ * junction can lead into it: either spelling reads as an ordinary folder to a
+ * check on the path as written.
+ */
+function onDiskRelative(vaultRoot: string, relativePath: string): string | null {
+  if (typeof vaultRoot !== 'string' || vaultRoot.length === 0) return null;
+  const root = canonicalPath(path.resolve(vaultRoot));
+  // `join`, not `resolve`: a leading separator must not reach the drive root.
+  const target = canonicalPath(path.resolve(path.join(vaultRoot, relativePath)));
+  if (root === null || target === null) return null;
+  const rel = relativePosix(root, target);
+  if (rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) return null;
+  return rel;
+}
+
+/**
+ * Whether `relativePath` is in `.filo/`, as written or as the disk names it
+ * under `vaultRoot` (`onDiskRelative`). For a channel that refuses all of
+ * `.filo/`, the sentinels included.
+ */
+export function namesFiloDir(vaultRoot: string, relativePath: string): boolean {
+  return [relativePath, onDiskRelative(vaultRoot, relativePath)].some(
+    (spelling) => spelling !== null && toPosix(spelling).split('/').filter(Boolean)[0]?.toLowerCase() === '.filo',
+  );
+}
+
+/**
  * Rejects any vault-relative path whose first segment
  * normalises to `.filo`. Applied at the entry of every generic
  * `vault:write-file-text` / `vault:write-existing-file-text` /
@@ -425,6 +462,9 @@ function isPermittedSentinel(normalised: string, access: 'read' | 'write'): bool
  * `templates:write` / `theme:save` channels and clobber `.filo/` state with
  * arbitrary text.
  *
+ * The path is checked as written and as the disk names it under `vaultRoot`
+ * (`onDiskRelative`), so `FILO~1/app.json` is `.filo/app.json` here too.
+ *
  * Empty / non-string inputs are tolerated — upstream callers
  * (`assertSafeRelativePath`, `assertWithinVault`) already reject those with
  * a more specific error. This helper is strictly the `.filo/` guard.
@@ -433,21 +473,24 @@ function isPermittedSentinel(normalised: string, access: 'read' | 'write'): bool
  * (a WRITE may only target this machine's own sentinel).
  */
 export function assertNotInFiloDir(
+  vaultRoot: string,
   relativePath: string,
   opts: { access?: 'read' | 'write' } = {},
 ): void {
   if (typeof relativePath !== 'string' || relativePath.length === 0) return;
-  const segments = toPosix(relativePath).split('/').filter(Boolean);
-  if (segments.length === 0) return;
-  if (segments[0]?.toLowerCase() !== '.filo') return;
-  const normalised = segments.join('/');
   const access = opts.access ?? 'write';
-  if (isPermittedSentinel(normalised, access)) return;
-  throw new FiloDirForbiddenError(
-    access === 'write' && parseSentinelPath(normalised)
-      ? `FORBIDDEN: ${normalised} is another machine's crash-recovery sentinel — only its owner may write or delete it`
-      : `FORBIDDEN: generic vault channel cannot touch ${normalised} — use the dedicated config/tags/templates/theme/font channels`,
-  );
+  for (const spelling of [relativePath, onDiskRelative(vaultRoot, relativePath)]) {
+    if (spelling === null) continue;
+    const segments = toPosix(spelling).split('/').filter(Boolean);
+    if (segments[0]?.toLowerCase() !== '.filo') continue;
+    const normalised = segments.join('/');
+    if (isPermittedSentinel(normalised, access)) continue;
+    throw new FiloDirForbiddenError(
+      access === 'write' && parseSentinelPath(normalised)
+        ? `FORBIDDEN: ${normalised} is another machine's crash-recovery sentinel — only its owner may write or delete it`
+        : `FORBIDDEN: generic vault channel cannot touch ${normalised} — use the dedicated config/tags/templates/theme/font channels`,
+    );
+  }
 }
 
 /**

@@ -2,9 +2,9 @@ import type { Project } from '../schema/index';
 import type { VaultContext } from './vaultStoreTypes';
 
 /**
- * Vault slice — project-level metadata accessors and mutators. The project
- * is the virtual aggregator that other stores (boardStore) lookup their
- * cached connections/frames against; `setName` / `setTheme` are persisted
+ * Vault slice — project-level metadata accessors and mutators: the vault's
+ * name, theme, settings and board list. A board's connections and frames
+ * live only in its cache entry. `setName` / `setTheme` are persisted
  * through `markMetaDirty`.
  */
 export function makeProjectSlice(ctx: VaultContext) {

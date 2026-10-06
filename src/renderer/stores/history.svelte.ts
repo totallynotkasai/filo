@@ -558,6 +558,15 @@ export const historyStore = {
     return offStackHeld.includes(command);
   },
 
+  /**
+   * Takes `command` off every stack without undoing it: for a step whose
+   * change came to nothing after it ran (a new tile taken off again because
+   * its note couldn't be created), so Ctrl+Z doesn't spend a press on it.
+   */
+  forget(command: Command): void {
+    dropCommand(command);
+  },
+
   /** Whether `command` is still in the history: on any undo or redo stack, or held off-stack. */
   holds(command: Command): boolean {
     return offStackHeld.includes(command)

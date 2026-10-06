@@ -18,9 +18,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createScheduler } from '@renderer/lib/boards/writeScheduler';
+import { createScheduler, disposeTestSchedulers } from '../helpers/testSchedulers';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import { restoreFiloDefault } from '../helpers/filoBridge';
+
+// Retire every scheduler a test made, so nothing it left armed reaches the next test.
+afterEach(disposeTestSchedulers);
 
 interface TArgs {
   vaultRoot: string;

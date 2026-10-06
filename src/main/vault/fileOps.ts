@@ -4,6 +4,7 @@ import type { FileHandle } from 'fs/promises';
 import { randomBytes } from 'crypto';
 import { join, extname, basename, dirname, resolve, sep } from 'path';
 import { assertSafeFilename } from '../utils/pathSecurity';
+import { nameTooLong, safeFileName } from '../../shared/fileNames';
 import {
   recordPreservedEmergencyFile,
   clearPreservedEmergencyFilesForTarget,
@@ -421,6 +422,17 @@ const MAX_CANDIDATE_ATTEMPTS = 1000;
 const COPY_CHUNK_BYTES = 64 * 1024;
 
 /**
+ * A copied file's name, shortened (its extension kept) when it is longer than
+ * a new name may be (`nameTooLong`: a long Chinese or emoji name Windows
+ * allows but a phone the vault syncs to doesn't), instead of refusing the copy.
+ */
+function fittedCopyName(name: string): string {
+  if (!nameTooLong(name)) return name;
+  const ext = extname(name);
+  return `${safeFileName(name.slice(0, name.length - ext.length), '')}${ext}`;
+}
+
+/**
  * Opens a copy SOURCE while defeating a regular-file→SYMLINK swap
  * that lands between the handler's pre-flight `lstat` and this open.
  * `copyFileToVault`'s fstat `.isFile()` re-check catches a swap to a
@@ -486,7 +498,7 @@ export async function copyFileToVault(
   const targetDir = subfolder ? join(vaultPath, subfolder) : vaultPath;
   await fs.mkdir(targetDir, { recursive: true });
 
-  const fileName = basename(sourcePath);
+  const fileName = fittedCopyName(basename(sourcePath));
   // Creates a NEW file, so creation rules apply on every platform: a POSIX
   // `weird:name.png` would otherwise break the same vault on Windows.
   assertSafeFilename(fileName, { forCreation: true });

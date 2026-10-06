@@ -62,7 +62,6 @@ export const boardDefaults: Record<BoardType, BoardDefaultFactory> = {
       createdAt: now,
       updatedAt: now,
       settings: snapshotSettings('mindmap', settings),
-      viewport: { x: 0, y: 0, scale: 1 },
       placements: {},
       inlineTiles: {},
       connections: [],

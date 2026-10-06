@@ -126,12 +126,10 @@ img, svg {
      bindings both read these (Svelte: `style="z-index: var(--z-modal)"`).
      The ci:no-zindex-literals gate enforces no new numeric z-index in
      .svelte files outside the documented exceptions. */
-  --z-canvas-background: 0;
   --z-frame: 100;
   --z-connection-path: 200;
   --z-tile: 300;
   --z-tile-selected: 400;
-  --z-tile-dragging: 500;
   /* Pane split-drop edges — overlays the target pane during a tab drag. */
   --z-pane-drop-overlay: 500;
   --z-connection-label: 600;
@@ -142,7 +140,6 @@ img, svg {
   --z-canvas-hud: 900;
   --z-sidebar: 1000;
   --z-toolbar: 1100;
-  --z-tab-bar: 1100;
   --z-side-toolbar: 1200;
   /* Floating, non-modal panels the user opens over the workspace (Search,
      Find All): above the docked sidebar, the toolbars and the side toolbars,
@@ -845,28 +842,6 @@ img, svg {
   }
 }
 
-/* Search match pulse */
-@keyframes pulse {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.02);
-  }
-}
-
-/* Minimap radar pulse for active media */
-@keyframes radar-pulse {
-  0%, 100% {
-    transform: scale(1);
-    filter: drop-shadow(0 0 2px var(--accent-primary));
-  }
-  50% {
-    transform: scale(1.15);
-    filter: drop-shadow(0 0 8px var(--accent-primary));
-  }
-}
-
 /* Minimap active pip expanding ripple */
 @keyframes mm-pulse-anim {
   0% {
@@ -876,18 +851,6 @@ img, svg {
   100% {
     transform: scale(3);
     opacity: 0;
-  }
-}
-
-/* Voice recording indicator */
-@keyframes pulse-red {
-  0%, 100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(239, 83, 80, 0.4);
-  }
-  50% {
-    transform: scale(1.05);
-    box-shadow: 0 0 0 12px rgba(239, 83, 80, 0);
   }
 }
 

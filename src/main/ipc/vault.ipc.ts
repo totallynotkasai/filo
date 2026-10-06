@@ -207,7 +207,7 @@ export function registerVaultHandlers(): void {
       assertSafeRelativePath(relPath, { forCreation: true });
       // Refuse mkdir inside `.filo/` via the generic
       // channel; dedicated config/tags/templates handlers own that dir.
-      assertNotInFiloDir(relPath);
+      assertNotInFiloDir(vaultRoot, relPath);
       await createFolder(folderPath);
       return { success: true };
     } catch (err) {
@@ -249,8 +249,8 @@ export function registerVaultHandlers(): void {
       const newRel = vaultRelativeWithin(vaultRoot, newPath);
       // Refuse both src and dest inside `.filo/`: renaming out would let the
       // renderer exfiltrate config; renaming in would let it overwrite.
-      assertNotInFiloDir(oldRel);
-      assertNotInFiloDir(newRel);
+      assertNotInFiloDir(vaultRoot, oldRel);
+      assertNotInFiloDir(vaultRoot, newRel);
       // Validate the NEW basename (portable on every platform). The OLD
       // basename intentionally isn't — a POSIX file legitimately named
       // `2025:01:15.md` must still rename.
@@ -350,7 +350,7 @@ export function registerVaultHandlers(): void {
       const rel = vaultRelativeWithin(vaultRoot, itemPath);
       // Block generic deletes inside `.filo/` except the allowlisted
       // crash-recovery sentinels, whose cleanup flows through this channel.
-      assertNotInFiloDir(rel);
+      assertNotInFiloDir(vaultRoot, rel);
       // Pre-stat the path so we know whether to suppress as a single
       // entry (file) or a tree prefix (folder). Suppression has to
       // happen BEFORE the unlink so events that fire during the delete
@@ -532,8 +532,8 @@ export function registerVaultHandlers(): void {
       assertActiveVault(vaultRoot);
       assertSafeRelativePath(oldRel);
       assertSafeRelativePath(newRel);
-      assertNotInFiloDir(oldRel, { access: 'read' });
-      assertNotInFiloDir(newRel, { access: 'read' });
+      assertNotInFiloDir(vaultRoot, oldRel, { access: 'read' });
+      assertNotInFiloDir(vaultRoot, newRel, { access: 'read' });
       return { success: true, moved: activeWatcher?.noteFollowedMove(oldRel, newRel) ?? false };
     } catch (err) {
       logMainError('vault:followed-move', err);
@@ -721,7 +721,7 @@ export function registerVaultHandlers(): void {
       try {
         assertActiveVault(vaultRoot);
         assertSafeRelativePath(relativePath, { forCreation: true });
-        assertNotInFiloDir(relativePath);
+        assertNotInFiloDir(vaultRoot, relativePath);
         assertPayloadByteSize(
           Buffer.byteLength(content, 'utf-8'),
           PAYLOAD_LIMITS.MARKDOWN,
@@ -779,7 +779,7 @@ export function registerVaultHandlers(): void {
         assertActiveVault(vaultRoot);
         assertSafeRelativePath(relativePath);
         // Same `.filo/` guard as `vault:write-file-text`.
-        assertNotInFiloDir(relativePath);
+        assertNotInFiloDir(vaultRoot, relativePath);
         assertPayloadByteSize(
           Buffer.byteLength(content, 'utf-8'),
           PAYLOAD_LIMITS.MARKDOWN,

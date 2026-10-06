@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { basename } from 'path';
+import { basename, join } from 'path';
 import { promises as fsPromises } from 'fs';
 import { toPosix } from '../../shared/pathUtils';
 import { copyFileToVault } from '../vault/fileOps';
@@ -8,6 +8,7 @@ import {
   vaultRelativeWithin,
   assertSafeRelativePath,
   assertNotInFiloDir,
+  assertWithinVault,
 } from '../utils/pathSecurity';
 import { assertActiveVault } from '../utils/activeVaultCheck';
 import { isApprovedCopySource, isChosenCopySource } from '../services/approvedSources';
@@ -116,14 +117,20 @@ export function registerVaultCopyHandlers(): void {
         //    version, a trashed note.
         if (subfolder) {
           const destRel = `${subfolder}/${basename(sourcePath)}`;
-          assertNotInFiloDir(destRel);
+          assertNotInFiloDir(vaultPath, destRel);
         } else {
-          assertNotInFiloDir(basename(sourcePath));
+          assertNotInFiloDir(vaultPath, basename(sourcePath));
         }
         // Decided on the spelling containment matched, so a source named
         // through an 8.3 or junction spelling of the vault is still seen inside.
         const sourceRel = vaultRelativeIfInside(vaultPath, sourcePath);
-        if (sourceRel && !(inFiloUserFileDir(sourceRel) && isChosenCopySource(sourcePath))) assertNotInFiloDir(sourceRel);
+        if (sourceRel && !(inFiloUserFileDir(sourceRel) && isChosenCopySource(sourcePath))) assertNotInFiloDir(vaultPath, sourceRel);
+
+        // The destination is checked before anything is created or written: a
+        // folder in the vault that is a junction (or a link) to somewhere else
+        // would otherwise take the copy outside the vault, and the check after
+        // the copy would come too late.
+        assertWithinVault(vaultPath, join(subfolder ? join(vaultPath, subfolder) : vaultPath, basename(sourcePath)));
 
         const destPath = await copyFileToVault(sourcePath, vaultPath, subfolder, VAULT_COPY_MAX_SIZE_BYTES, true); // final `true` = noFollowSource (O_NOFOLLOW/lstat-reject; see openSourceForCopy)
         const relativePath = vaultRelativeWithin(vaultPath, destPath);

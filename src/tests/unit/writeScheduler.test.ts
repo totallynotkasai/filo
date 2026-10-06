@@ -23,12 +23,16 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createScheduler } from '@renderer/lib/boards/writeScheduler';
+import { createScheduler, disposeTestSchedulers } from '../helpers/testSchedulers';
 import {
   __resetDirtyTrackingForTests,
   setWriteStateListener,
+  unsavedWork,
 } from '@renderer/lib/boards/writeStateTracking';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+
+// Retire every scheduler a test made, so nothing it left armed reaches the next test.
+afterEach(disposeTestSchedulers);
 
 interface TArgs {
   vaultRoot: string;
@@ -787,5 +791,39 @@ describe('createScheduler — failures Set pruned on later success (Audit-7 L12)
     await new Promise((r) => setTimeout(r, 0));
 
     expect(scheduler.__failuresSizeForTests()).toBe(0);
+  });
+});
+
+describe('createScheduler — dispose', () => {
+  beforeEach(() => {
+    __resetDirtyTrackingForTests();
+    restoreFiloDefault();
+  });
+  afterEach(() => {
+    __resetDirtyTrackingForTests();
+  });
+
+  const quiet = (name: string, debounceMs: number): ReturnType<typeof createScheduler<TArgs>> =>
+    createScheduler<TArgs>({
+      name,
+      debounceMs,
+      performWrite: async () => {},
+      getSentinelInfo: (a) => ({ vaultRoot: a.vaultRoot, path: a.path }),
+    });
+
+  it("lets go of a path its armed write held pending, so another write's landing clears it", async () => {
+    const left = quiet('left behind', 60_000);
+    left.schedule('k', () => makeArgs('a.md'));
+    const other = quiet('other', 10);
+
+    other.schedule('k', () => makeArgs('a.md'));
+    await other.flush('k');
+    // The write left armed still owes a.md.
+    expect(unsavedWork().pending).toContain('a.md');
+
+    left.dispose();
+    other.schedule('k', () => makeArgs('a.md'));
+    await other.flush('k');
+    expect(unsavedWork().pending).not.toContain('a.md');
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { createScheduler } from '@renderer/lib/boards/writeScheduler';
+import { createScheduler, disposeTestSchedulers } from '../helpers/testSchedulers';
 import {
   trackComponentWrite,
   hasFailedWrites,
@@ -40,6 +40,9 @@ import {
 import { atomicWriteFile } from '../../main/vault/filenameUtils';
 import { writeQuitFailureBreadcrumb } from '../../main/services/quitFailureBreadcrumb';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+
+// Retire every scheduler a test made, so nothing it left armed reaches the next test.
+afterEach(disposeTestSchedulers);
 
 /**
  * Audit-16 Phase 4 — write-tracking & recovery honesty.

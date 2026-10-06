@@ -4,11 +4,9 @@ import { framesOpsFor } from '../core/boardFramesOps';
 import type { CacheContext } from './boardCacheTypes';
 
 /**
- * Cache slice — connection and frame CRUD that mirrors mutations into both
- * the per-board cache entry and the virtual Project store. Always paired:
- * the cache write is the source of truth for the on-disk `.board.json`; the
- * project mirror is the source of truth for the live `connectionsStore` /
- * `framesStore` derivations.
+ * Cache slice — connection and frame CRUD on the per-board cache entry, the
+ * one copy: it is what the board file is written from, and what the live
+ * `boardStore.connections` / `frames` derive from on the active board.
  *
  * Every mutator dispatches to the
  * per-board-type implementation via `connectionsOpsFor(cached.board)` /
@@ -18,19 +16,6 @@ import type { CacheContext } from './boardCacheTypes';
  * registry until per-type ops ship. This slice retains only the boardId
  * resolution (cache scan + warn-and-drop fallbacks) and the cache lookup
  * before dispatching — the actual mutation body lives in the per-type ops.
- *
- * Active-proxy reactivity contract
- * --------------------------------
- * Unlike the Kanban / Task List slices, **every per-type op mirrors the
- * write through `ctx.updateProjectConnectionsFrames`** in addition to the
- * direct cache-entry write. The project-side mirror is what the live
- * `connectionsStore` / `framesStore` derivations read from on the active
- * board, so the active side observes the same shared collections regardless
- * of which proxy boundary the write started on. Callers therefore do NOT
- * need to invoke `tickAndPersist()` after a connection or frame mutator.
- *
- * If a future refactor splits the project-side and cache-side collections,
- * this contract will break — `updateProjectConnectionsFrames` is the bridge.
  */
 export function makeConnectionsFramesSlice(ctx: CacheContext) {
   function resolveConnectionBoardId(

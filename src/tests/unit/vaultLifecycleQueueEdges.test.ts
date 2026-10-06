@@ -22,7 +22,7 @@ import {
 import { enqueueRenameQueueWork, settleRenameQueue } from '@renderer/stores/vaultRenameQueue';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
-import { createScheduler } from '@renderer/lib/boards/writeScheduler';
+import { createScheduler, disposeTestSchedulers } from '../helpers/testSchedulers';
 import { saveBeforeLeaving } from '@renderer/stores/vaultLeaveGuard';
 import {
   dropPendingPath,
@@ -37,6 +37,9 @@ import { handleFlushAndQuit, __resetQuitDrainingForTests } from '@renderer/lib/v
 import { uiStore } from '@renderer/stores/ui.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { FileTreeNode } from '../../shared/types';
+
+// Retire every scheduler a test made, so nothing it left armed reaches the next test.
+afterEach(disposeTestSchedulers);
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 

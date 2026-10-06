@@ -33,7 +33,7 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
     boardId: string,
     tile: Tile,
     opts?: AddTileOpts,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Stamp the backing-file path synchronously so the cache write
     // below reflects the resolved `filePath` immediately. The deferred disk
     // write (file existence check, `.md` seed, doc registration) still goes
@@ -81,7 +81,7 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
     // synchronous assertions) already see the new tile via the cache write
     // above; this runs in the background to write the backing `.md` and
     // register the document state.
-    await seedTextFileForNewTile(tile, boardId, opts);
+    return seedTextFileForNewTile(tile, boardId, opts);
   },
 
   removeTile(
@@ -123,17 +123,6 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
     // Fresh `board` ref alongside the in-place `delete` above
     // (cache-identity convention).
     ctx.updateEntry(boardId, { board: { ...mm, groups }, tileDefs: restDefs, connections: updatedConns, frames });
-
-    ctx.updateProjectConnectionsFrames(({ connections: projConns, frames: projFrames }) => {
-      for (const [key, c] of Object.entries(projConns)) {
-        if (c.fromTileId === tileId || c.toTileId === tileId) {
-          delete projConns[key];
-        }
-      }
-      for (const [i, f] of projFrames.entries()) {
-        if (f.tileIds.includes(tileId)) projFrames[i] = { ...f, tileIds: f.tileIds.filter((id) => id !== tileId) };
-      }
-    });
 
     ctx.markDirty(boardId);
   },

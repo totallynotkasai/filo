@@ -4,7 +4,7 @@
  * and the Delete key. Each applies to every selected tile that is still on
  * the board.
  */
-import type { Tile } from '../../schema/index';
+import type { Tile, TileGroup } from '../../schema/index';
 import { uiStore } from '../../stores/ui.svelte';
 import { textTileNotePaths, type DeleteTilesOptions } from '../../commands/index';
 import { PendingWritesFailedError, withDrainedWrites } from '../vault/vaultOperations';
@@ -33,10 +33,39 @@ export interface DeleteSelectionDeps {
   hiddenTileIds?(): ReadonlySet<string>;
 }
 
+export interface GroupableBoard {
+  readonly groups: TileGroup[];
+  getGroupForTile(tileId: string): TileGroup | undefined;
+  groupTilesWithHistory(tileIds: string[], groupsBefore: TileGroup[]): void;
+  ungroupTilesWithHistory(tileIds: string[], groupsBefore: TileGroup[]): void;
+}
+
 /**
- * The tiles Select All picks: every tile the canvas draws. A tile inside a
- * collapsed frame is left out, so a Delete after Ctrl+A can't remove tiles
- * the user can't see.
+ * Group / Ungroup for the selection, the one flow behind Ctrl+G and the side
+ * toolbar's Arrange menu: tiles that are all in one group are ungrouped,
+ * any other two or more are grouped, each as one undo step.
+ */
+export function toggleGroupSelection(board: GroupableBoard, tileIds: string[]): void {
+  if (tileIds.length < 2) {
+    uiStore.toast('Select 2+ tiles to group', 'info', 1500);
+    return;
+  }
+  const group = board.getGroupForTile(tileIds[0] ?? '');
+  const allInSameGroup = group !== undefined && tileIds.every((id) => board.getGroupForTile(id)?.id === group.id);
+  const groupsBefore = [...board.groups];
+  if (allInSameGroup) {
+    board.ungroupTilesWithHistory(tileIds, groupsBefore);
+    uiStore.toast('Tiles ungrouped', 'info', 1500);
+  } else {
+    board.groupTilesWithHistory(tileIds, groupsBefore);
+    uiStore.toast('Tiles grouped', 'info', 1500);
+  }
+}
+
+/**
+ * The tiles Select All picks (Ctrl+A and the canvas menu): every tile the
+ * canvas draws. A tile inside a collapsed frame is left out, so a Delete
+ * after Ctrl+A can't remove tiles the user can't see.
  */
 export function selectableTileIds(
   tiles: Readonly<Record<string, Tile>>,

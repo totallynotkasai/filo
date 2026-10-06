@@ -529,7 +529,7 @@ export function registerBoardHandlers(): void {
       // state. The dedicated tags/templates/theme channels own those files.
       // The one exception: the other version of a Filo config file that Keep
       // local is about to overwrite, copied within `.filo/`.
-      if (!(purpose === 'keep' && isBackupableConfigPath(relativePath))) assertNotInFiloDir(relativePath);
+      if (!(purpose === 'keep' && isBackupableConfigPath(relativePath))) assertNotInFiloDir(vaultRoot, relativePath);
       const destAbs = await snapshotForRecovery(vaultRoot, relativePath, purpose);
       return { ok: true, path: destAbs };
     } catch (err) {

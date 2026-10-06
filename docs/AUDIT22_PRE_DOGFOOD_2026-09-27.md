@@ -488,7 +488,7 @@ All Phase 6 items are done. Two flaky tests turned out to be real product races,
 - **ci-5.** The E2E and a11y jobs have never run on a GitHub runner automatically. The first scheduled run is their first unattended run, so it may need fixes. I chose a weekly run over running the smoke test on every push to `main`, so a problem with the Linux runner can't turn every push red.
 - **ci-6.** `updatePath` (a one-line pass-through to `pendingSettingsStore.updateBoard`) and the other indirectly covered modules (`renameGrace`, `leftBehind`, `viewportCache`) got no new direct tests.
 - **lifecycle-7.** No visible Close Vault entry was added. Removing it was your decision in f315ccc; only the stale comments were wrong.
-- **Still open:** `legacy-8` (8.3 short names), `notes-2` (an older copy restored within ~10 s) and `mindmap-10` (tile copy / paste, which needs a decision on whether a duplicate shares the note). So this plan stays in `docs/`, not `docs/archive/`.
+- **Still open:** `notes-2` (an older copy restored within ~10 s) and `mindmap-10` (tile copy / paste, which needs a decision on whether a duplicate shares the note). So this plan stays in `docs/`, not `docs/archive/`. `legacy-8` (8.3 short names) was closed by Audit-28 Phase 7, task 7.1 (2026-10-06): the `.filo/` guards check the path as the disk names it.
 
 ## Also checked and found sound
 

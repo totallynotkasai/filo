@@ -41,7 +41,7 @@
   import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
   import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
   import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
-  import { requestDeleteSelected, selectableTileIds, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
+  import { requestDeleteSelected, selectableTileIds, toggleGroupSelection, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
   import { framesStore } from '../../stores/frames.svelte';
   import { isCanvasKeyBlocked } from '../../lib/mindmap/mindMapKeyboard';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
@@ -334,20 +334,7 @@
         name: 'tile:group', label: 'Group / Ungroup', description: 'Group / Ungroup',
         binding: { key: 'g', ctrl: true },
         enabled: onMindMap,
-        execute: () => {
-          const ids = [...selectionStore.selectedIds];
-          if (ids.length < 2) return;
-          const group = boardStore.getGroupForTile(ids[0] ?? '');
-          const allInSameGroup = group && ids.every(id => boardStore.getGroupForTile(id)?.id === group.id);
-          const groupsBefore = [...boardStore.groups];
-          if (allInSameGroup) {
-            boardStore.ungroupTilesWithHistory(ids, groupsBefore);
-            uiStore.toast('Tiles ungrouped', 'info', 1500);
-          } else {
-            boardStore.groupTilesWithHistory(ids, groupsBefore);
-            uiStore.toast('Tiles grouped', 'info', 1500);
-          }
-        },
+        execute: () => toggleGroupSelection(boardStore, [...selectionStore.selectedIds]),
       }),
       registerCommandWithShortcut({
         name: 'app:cancel', label: 'Cancel / Close', description: 'Cancel / Close',

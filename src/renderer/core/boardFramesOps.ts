@@ -75,9 +75,6 @@ const sharedFramesBody = {
     frame: Frame,
   ): void {
     cached.frames = [...cached.frames, frame];
-    ctx.updateProjectConnectionsFrames(({ frames: projFrames }) => {
-      projFrames.push(frame);
-    });
     ctx.markDirty(boardId);
   },
 
@@ -88,10 +85,6 @@ const sharedFramesBody = {
     frameId: string,
   ): void {
     cached.frames = cached.frames.filter((f) => f.id !== frameId);
-    ctx.updateProjectConnectionsFrames(({ frames: projFrames }) => {
-      const idx = projFrames.findIndex((f) => f.id === frameId);
-      if (idx >= 0) projFrames.splice(idx, 1);
-    });
     ctx.markDirty(boardId);
   },
 
@@ -103,10 +96,6 @@ const sharedFramesBody = {
     updated: Frame,
   ): void {
     cached.frames = cached.frames.map((f) => (f.id === frameId ? updated : f));
-    ctx.updateProjectConnectionsFrames(({ frames: projFrames }) => {
-      const idx = projFrames.findIndex((f) => f.id === frameId);
-      if (idx >= 0) projFrames[idx] = updated;
-    });
     ctx.markDirty(boardId);
   },
 };

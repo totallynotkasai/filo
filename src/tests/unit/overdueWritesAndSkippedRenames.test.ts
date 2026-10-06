@@ -9,7 +9,7 @@
  *   that vault (still open until `vault:close`), so the next open replays it.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createScheduler } from '@renderer/lib/boards/writeScheduler';
+import { createScheduler, disposeTestSchedulers } from '../helpers/testSchedulers';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
 import {
   beginVaultGeneration,
@@ -20,6 +20,9 @@ import { enqueueRenameQueueWork, resetRenameQueue } from '@renderer/stores/vault
 import { keepSkippedRenameBreadcrumb } from '@renderer/stores/vaultExternalChanges';
 import { __resetRenameCascadeSentinelForTests } from '@renderer/lib/vault/renameCascadeSentinel';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
+
+// Retire every scheduler a test made, so nothing it left armed reaches the next test.
+afterEach(disposeTestSchedulers);
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 

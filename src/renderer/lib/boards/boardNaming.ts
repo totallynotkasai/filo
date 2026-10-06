@@ -3,7 +3,7 @@
  * is the name, and `board.name` in the JSON is only a copy of it. These are
  * the pure rules for that name and for where a new board's file goes.
  */
-import { fileNameProblem } from '@shared/fileNames';
+import { fileNameProblem, nameTooLong } from '@shared/fileNames';
 import { normalizeVaultRelative, normalizePath, stripLeadingSlash, toPosix } from '../utils/path';
 
 export const BOARD_FILE_SUFFIX = '.board.json';
@@ -38,7 +38,9 @@ function joinRel(folder: string, name: string): string {
  * user typed.
  */
 export function boardNameProblem(name: string): string | null {
-  return fileNameProblem(name.trim());
+  const trimmed = name.trim();
+  // The file is the name plus `.board.json`, and that whole name has to fit.
+  return fileNameProblem(trimmed) ?? (nameTooLong(`${trimmed}${BOARD_FILE_SUFFIX}`) ? 'That name is too long.' : null);
 }
 
 /** The vault-relative path of the board file named `name` in `folder`. */

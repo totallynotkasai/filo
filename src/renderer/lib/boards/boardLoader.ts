@@ -8,7 +8,7 @@
  * shipping a `fileExists` callback into every caller.
  */
 
-import type { Board, Connection, Frame } from '../../schema/index';
+import type { Board, Frame } from '../../schema/index';
 import { BoardFileDataSchema, migrateBoardFile, CURRENT_BOARD_FILE_VERSION } from '../../schema/index';
 import { TILE_TYPES } from '../../schema/tile';
 import type { BoardFileData } from './boardSaver';
@@ -862,8 +862,6 @@ export async function loadAllBoards(
   boards: Board[];
   cache: Record<string, BoardFileData>;
   paths: Record<string, string>;
-  connections: Record<string, Connection>;
-  frames: Frame[];
   failedBoards: FailedBoardEntry[];
   /**
    * Board IDs that had orphan refs / duplicate placements
@@ -893,8 +891,6 @@ export async function loadAllBoards(
   const boards: Board[] = [];
   const cache: Record<string, BoardFileData> = {};
   const paths: Record<string, string> = {};
-  const connections: Record<string, Connection> = {};
-  const frames: Frame[] = [];
   const failedBoards: FailedBoardEntry[] = [];
   const prunedBoardIds: string[] = [];
   const normalizedBoardIds: string[] = [];
@@ -961,8 +957,6 @@ export async function loadAllBoards(
     boards.push(data.board);
     cache[data.board.id] = data;
     paths[data.board.id] = relPath;
-    Object.assign(connections, data.connections);
-    frames.push(...data.frames);
     if (result.orphansPruned) prunedBoardIds.push(data.board.id);
     if (result.boardIdsNormalized) normalizedBoardIds.push(data.board.id);
     loadedBaselines.push({ path: relPath, baseline: result.baseline });
@@ -973,8 +967,6 @@ export async function loadAllBoards(
     boards,
     cache,
     paths,
-    connections,
-    frames,
     failedBoards,
     prunedBoardIds,
     normalizedBoardIds,

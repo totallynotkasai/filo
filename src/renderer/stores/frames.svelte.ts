@@ -77,9 +77,9 @@ export const framesStore = {
   },
 
   /**
-   * Recomputes frame membership for a single tile. Adds it to the innermost
-   * frame whose bounds contain the tile's centre, and removes it from any
-   * frame that no longer contains it.
+   * Recomputes frame membership for a single tile. Adds it to every frame
+   * whose bounds contain the tile's centre (a frame and the frames nested in
+   * it alike), and removes it from any frame that no longer contains it.
    */
   syncTileMembership(tileId: string) {
     const tile = boardStore.getTile(tileId);

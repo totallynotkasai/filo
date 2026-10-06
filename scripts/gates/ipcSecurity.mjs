@@ -305,6 +305,15 @@ export const checks = [
         if (!/isPermittedSentinel\s*\([^)]*\baccess\b/.test(guardFn.text)) {
           out.push(fail(SEC, undefined, 'assertNotInFiloDir must route .filo/ sentinels through isPermittedSentinel(…, access)'));
         }
+        // `.filo` has an 8.3 short name (`FILO~1`) and a junction can lead
+        // into it: the guard checks the path as the disk names it too.
+        if (!/\bonDiskRelative\s*\(\s*vaultRoot\s*,/.test(guardFn.text)) {
+          out.push(fail(SEC, undefined, 'assertNotInFiloDir must also check the path as the disk names it (onDiskRelative(vaultRoot, …)): FILO~1 is .filo'));
+        }
+        const trashMove = handlerSegments(ctx.read('src/main/ipc/vaultTrash.ipc.ts') ?? '').find((s) => s.channel === 'vault:trash-move');
+        if (!trashMove || !/\bnamesFiloDir\s*\(\s*vaultRoot\s*,/.test(trashMove.body)) {
+          out.push(fail('src/main/ipc/vaultTrash.ipc.ts', undefined, 'vault:trash-move must refuse .filo/ by namesFiloDir(vaultRoot, …), which checks the on-disk spelling too'));
+        }
       }
       return out;
     },

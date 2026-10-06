@@ -26,7 +26,7 @@ import {
  */
 export function resolveServableMediaPath(vaultRoot: string, relPath: string): string {
   assertSafeRelativePath(relPath);
-  assertNotInFiloDir(relPath);
+  assertNotInFiloDir(vaultRoot, relPath);
   const absPath = path.join(vaultRoot, relPath);
   assertWithinVault(vaultRoot, absPath);
   return absPath;

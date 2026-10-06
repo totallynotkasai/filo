@@ -236,6 +236,40 @@ describe('Search panel: single Replace shows the match it will change next', () 
     expect(files['c.md']).toBe('frodo');
   });
 
+  // The note changes between Replace's read and its write, so the write is
+  // skipped. The panel used to move on to the next note as if it had been
+  // replaced, and left an undo step that had changed nothing.
+  it('a Replace skipped because the note changed stays on that match, leaves no undo step, and the next Replace changes it', async () => {
+    seed({ 'a.md': 'frodo', 'b.md': 'frodo', 'c.md': 'frodo' });
+    openPanel('frodo', 'sam');
+    const filo = (window as unknown as { filo: { invoke: (...args: unknown[]) => Promise<unknown> } }).filo;
+    const invoke = filo.invoke;
+    let reads = 0;
+    filo.invoke = async (channel: unknown, root: unknown, rel: unknown, content?: unknown) => {
+      const result = await invoke(channel, root, rel, content);
+      // Another program edits a.md right after Replace has read it (after the match).
+      if (channel === 'vault:read-file-text' && rel === 'a.md' && ++reads === 1) {
+        files['a.md'] = 'frodo, edited';
+        vaultIndexStore.restoreMetadata('a.md', parseMarkdown('a.md', 'frodo, edited'));
+      }
+      return result;
+    };
+
+    clickReplace();
+    await vi.waitFor(() => expect(warnings().some((w) => w.startsWith('Replace skipped 1 file(s)'))).toBe(true));
+    await pause(50);
+    flushSync();
+    expect(files['a.md']).toBe('frodo, edited');
+    expect(jumps()).toEqual([]);
+    expect(historyStore.canUndo).toBe(false);
+    expect(current()).toBe('a.md@0');
+    expect(counter()).toBe('1 / 3');
+
+    clickReplace();
+    await vi.waitFor(() => expect(files['a.md']).toBe('sam, edited'));
+    expect(files['b.md']).toBe('frodo');
+  });
+
   it('replacing the last match goes back to the first', async () => {
     seed({ 'a.md': 'frodo', 'b.md': 'frodo', 'c.md': 'frodo' });
     openPanel('frodo', 'sam');

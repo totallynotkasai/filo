@@ -23,6 +23,7 @@
   import { ToggleFadeCommand } from '../../commands/index';
   import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
   import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
+  import { toggleGroupSelection } from '../../lib/mindmap/selectionActions';
 
   let showNewTileMenu = $state(false);
   let showManageMenu = $state(false);
@@ -169,19 +170,7 @@
   // ── Group / Ungroup selected tiles ──
   function toggleGroupSelected() {
     closeAllMenus();
-    const ids = [...selectionStore.selectedIds];
-    if (ids.length < 2) { uiStore.toast('Select 2+ tiles to group', 'info', 1500); return; }
-    // If all selected are in the same group, ungroup; otherwise group
-    const group = boardStore.getGroupForTile(ids[0] ?? '');
-    const allInSameGroup = group && ids.every(id => boardStore.getGroupForTile(id)?.id === group.id);
-    const groupsBefore = [...boardStore.groups];
-    if (allInSameGroup) {
-      boardStore.ungroupTilesWithHistory(ids, groupsBefore);
-      uiStore.toast('Tiles ungrouped', 'info', 1500);
-    } else {
-      boardStore.groupTilesWithHistory(ids, groupsBefore);
-      uiStore.toast('Tiles grouped', 'info', 1500);
-    }
+    toggleGroupSelection(boardStore, [...selectionStore.selectedIds]);
   }
 
   // ── Fade / Unfade selected tiles ──

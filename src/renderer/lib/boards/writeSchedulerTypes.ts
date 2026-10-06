@@ -316,6 +316,13 @@ export interface Scheduler<TArgs> {
   /** True while `key` has a pending, parked, in-flight or retained write. */
   hasWork(key: string): boolean;
   /**
+   * Retires this scheduler: cancels its timers (as `cancelAll`) and stops its
+   * writes counting as armed in `writeStateTracking`. For a scheduler made
+   * for one test, so nothing it left armed keeps a path pending in the next;
+   * the app's own schedulers live as long as the page.
+   */
+  dispose(): void;
+  /**
    * Vault-swap nuclear option — clears pending timers, in-flight tracker
    * entries, and failure attribution Set. Late `.then`/`.catch` callbacks
    * against cleared entries no-op via the `trackerIsCurrent` guard.

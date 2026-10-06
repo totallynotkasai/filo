@@ -254,18 +254,7 @@ Task list items reference `.md` files in the vault. Unlike Mind Map and Kanban b
 
 #### Document Board
 
-```json
-{
-  "type": "document",
-  "settings": {
-    "background": "#ffffff",
-    "accentColour": "#3a86ff"
-  },
-  "filePath": "Project Overview.md"
-}
-```
-
-A Document board is the simplest board type — it is a full-page view of a single `.md` file. The board JSON simply points to the file. All content lives in the Markdown file. See the **Text Tile / Document Board Relationship** section above.
+A Document board is the simplest board type — it is a full-page view of a single `.md` file, shown in a Document tab. Filo makes no board file for it: the tab names the note's path (kept with the open tabs in `.filo/workspace.json`), and all content lives in the Markdown file. The `document` type stays in the board format for files older builds made. See the **Text Tile / Document Board Relationship** section above.
 
 ### Vault Configuration (.filo/)
 
@@ -334,7 +323,7 @@ Tags are global to the vault (their colour definitions live in `.filo/tags.json:
 
 **Editing a note's tags.** A note's tags can be edited from the tile header's Tags popup, a card or task row, or the **tag row** at the top of the note in its Document tab. The tag row shows the tags as chips (click a chip for the tag menu, × to remove it) followed by an input that takes comma-separated tags with autocomplete from the tag registry; Enter, a comma or leaving the field adds them, and Backspace in the empty input removes the last tag. Every one of these writes the note's frontmatter `tags:` and is one board-undo step; removing the last tag removes the `tags:` key.
 
-**Vault-wide delete and rename (Tags Browser).** Deleting a tag removes it from every note, attachment, board-only tile and saved filter; renaming rewrites it everywhere. Both are confirmed first, and both can be undone from the **Undo** button on the toast that reports them (15 seconds). They are not on a board's Ctrl+Z stack, because they touch many files and belong to no board. Undoing a delete puts the tag back in exactly the places it was removed from, re-reading each note first so edits made in between are kept (in a note it comes back at the end of the list). Undoing a rename renames it back, unless a tag with the old name exists again. Renaming a tag into one that already exists **merges** them; the confirm warns that a merge can't be undone, and no Undo is offered.
+**Vault-wide delete and rename (Tags Browser).** Deleting a tag removes it from every note, attachment, board-only tile and saved filter; renaming rewrites it everywhere. Both are confirmed first, and both can be undone from the **Undo** button on the toast that reports them, which stays until it is dismissed or the next tag action's toast replaces it. They are not on a board's Ctrl+Z stack, because they touch many files and belong to no board. Undoing a delete puts the tag back in exactly the places it was removed from, re-reading each note first so edits made in between are kept (in a note it comes back at the end of the list). Undoing a rename renames it back, unless a tag with the old name exists again. Renaming a tag into one that already exists **merges** them; the confirm warns that a merge can't be undone, and no Undo is offered.
 
 ## Architecture
 
@@ -720,7 +709,7 @@ Typing in a note: `# `, `- `, `* `, `1. `, `> ` and `[ ] ` start a heading, list
     * **Align Radial** — Moves all tiles in order of their connections, the tile with the most connections on its bubbles will be in the centre, with each tile being moved around it corresponding to the location of the connection on the main tile. There needs to be a fixed distance between these tiles.
 
 * **View (Dropdown)** — The View dropdown provides access to board management features. The Tags Browser is shared across all board-type side toolbars. Mind Map boards include additional toggle items specific to the canvas.
-    * **Tags Browser (Button)** — Opens Tag Browser pop-up window. Where the user can see all the tags they have created and how many tiles have each tag. The user can also fade tiles of associated tags, rename, change the colour of tags or delete tags from here. Tags are sourced from both inline `#tags` and frontmatter properties.
+    * **Tags Browser (Button)** — Opens Tag Browser pop-up window. Where the user can see all the tags they have created and how many tiles have each tag. The user can also rename tags, change their colour or delete them from here. The tags listed are notes' frontmatter `tags:`, attachments' tags (`.filo/tags.json`) and board-only tiles' tags; a `#tag` written in a note's text is decorative and isn't listed (see **Tag System**).
     * **Hide All Connection Paths (Toggle)** — Hides all connection paths by switching their opacity to 0. *(Mind Map only)*
     * **Hide All Connection Labels (Toggle)** — Hides all connection labels by switching their opacity to 0. *(Mind Map only)*
     * **Hide Waypoints (Toggle)** — Hides all waypoints by switching their opacity to 0. Remembered for each board (`.filo/workspace.json`), like the minimap. *(Mind Map only)*
@@ -750,7 +739,7 @@ Typing in a note: `# `, `- `, `* `, `1. `, `> ` and `[ ] ` start a heading, list
     * **Sort Tiles By** — Sorts tiles within each column by manual, title, date created, due date, or priority. Switching off manual sort surfaces an info toast on next within-column drag so the user knows the drag order was saved but is hidden by the active sort.
 * **Saved Views (Dropdown)** — Named snapshots of the current sort + filter state, applied or deleted from the list. Same-name saves replace the existing view. Stored on `board.settings.savedViews`.
 
-The side toolbar is draggable — pointer-drag the toolbar background to reposition; right-click the background to reset to the docked position. Position persists in `.filo/app.json` per vault.
+The side toolbar is draggable — pointer-drag the toolbar background to reposition; right-click the background to reset to the docked position. Its position and pin are kept per board in `.filo/workspace.json`.
 
 ### Kanban Board — Implemented Extras
 
@@ -933,11 +922,12 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 * **Dynamic Contrast Text** — When enabled, Filo automatically calculates the perceived brightness of a tile's (or column's, task's, event's) background colour using relative luminance and swaps the text colour to white (for dark backgrounds) or black (for light backgrounds). This ensures WCAG AA contrast compliance without manual intervention. The setting is toggleable at three levels following the override cascade: Global Defaults, Current Board Settings, and per-element Tile Style popup. Defaults to on.
 * **Smart Guides** — When the user drags a tile on the Mind Map canvas, real-time visual alignment guides appear showing when the tile's edges or centre align with other tiles' edges or centres. Guide lines are rendered as thin coloured lines spanning the relevant axis. When a tile is within a configurable snap distance (default: 8px at current zoom) of an alignment, it snaps to the guide position. Smart guides make it easy to create visually tidy layouts without enabling snap-to-grid. *(Mind Map only)*
 * **Orphan Catcher / Canvas Cleanup** — See Side Toolbar — Mind Map > Orphan Catcher for full description. Also accessible from the canvas right-click menu. *(Mind Map only)*
-* **Toast Notifications** — Non-blocking notification messages used for confirmations (e.g. save), errors, and user prompts (e.g., external edit conflicts). Toasts display at the top centre of the board workspace, directly below the Global Toolbar. Every toast closes on its own after **at most 15 seconds** (a shorter duration can be set; a longer one is capped), with two exceptions that stay until the user acts:
+* **Toast Notifications** — Non-blocking notification messages used for confirmations (e.g. save), errors, and user prompts (e.g., external edit conflicts). Toasts display at the top centre of the board workspace, directly below the Global Toolbar. Every toast closes on its own after **at most 15 seconds** (a shorter duration can be set; a longer one is capped), with three exceptions that stay until the user acts:
     * **Sticky decision prompts** that aren't holding up a write — the note prompts ("Reload" / "Keep mine" on a changed note, "Keep mine" / "Discard" on a deleted one). A newer prompt for the same file replaces the older one, so they can't stack.
     * **Error toasts** without an explicit duration (e.g. a failed save, or where a recovery copy was put), because the failure outlasts any timer.
+    * **The Undo of a vault-wide tag delete or rename**, which touches many files and is on no board's Ctrl+Z: it stays until dismissed or until the next tag action's toast replaces it.
 
-  A **promise-backed** decision — one a pending write is waiting on, such as the board "Reload" / "Keep local" prompt — can never be sticky. It closes after 15 seconds and resolves as "defer": nothing is written, and it asks again on the next save. Toasts that offer **Undo** use the cap too: 15 seconds for tag delete or rename, 10 seconds for "moved to Filo's trash" (which Settings → Trash backs up). Toasts stack vertically in a column — newer toasts appear below existing ones. A maximum of 8 toasts are visible at once; if the limit is reached, the oldest plain notification is dismissed first. See the **Animations** section for entrance/exit transitions.
+  A **promise-backed** decision — one a pending write is waiting on, such as the board "Reload" / "Keep local" prompt — can never be sticky. It closes after 15 seconds and resolves as "defer": nothing is written, and it asks again on the next save. Other toasts that offer **Undo** use the cap too: 10 seconds for "moved to Filo's trash" (which Settings → Trash backs up). Toasts stack vertically in a column — newer toasts appear below existing ones. A maximum of 8 toasts are visible at once; if the limit is reached, the oldest plain notification is dismissed first. See the **Animations** section for entrance/exit transitions.
 
 ## Keyboard Shortcuts
 
@@ -993,15 +983,10 @@ All animations use CSS keyframes and CSS transitions. Animations prioritize GPU-
 - **Effect:** Opacity 0→1 + translateY(16px→0)
 - **Trigger:** When a toast message appears (save confirmation, error, etc.)
 
-#### Search Match Pulse (`pulse`)
-- **Duration:** 1s infinite
-- **Effect:** Scale 1→1.02→1
-- **Trigger:** Applied to tiles matching the current search query
-
-#### Radar Pulse (`radar-pulse`)
-- **Duration:** 1.5s infinite ease-in-out
-- **Effect:** Scale 1→1.15 with drop-shadow glow
-- **Trigger:** Minimap indicators for active media (playing video, running timer)
+#### Tile Highlight (`tile-nav-pulse`)
+- **Duration:** 0.8s ease-in-out, twice
+- **Effect:** An accent ring that grows out from the tile and fades
+- **Trigger:** A tile navigated to (Find, a search result, a link to a tile, a waypoint), within its 2 s highlight
 
 #### Minimap Active Pip (`mm-pulse-anim`)
 - **Duration:** 1.5s infinite ease-out
@@ -1123,7 +1108,7 @@ Right-clicking on a **Kanban column header**:
 
 | Item | Icon | Action |
 |---|---|---|
-| Add Tile | `icon-plus` | Creates a new tile at the top of this column |
+| Add card | `icon-plus` | Adds a new card at the bottom of this column, its title ready to type |
 | Rename Column | `icon-edit` | Focuses the column title for inline editing |
 | Collapse / Expand | `icon-chevron-down` / `icon-chevron-right` | Toggles column collapse state |
 | Set WIP Limit… | — | Opens an inline editor to cap the column at N cards (clearing the cap removes the limit) |
@@ -1134,7 +1119,7 @@ Column reordering is performed by drag (pointer) or **Alt+ArrowLeft / Alt+ArrowR
 
 ### Menu Items — Kanban Board (Tile)
 
-The Kanban tile right-click menu is intentionally minimal in the V7 implementation. Style, Tags and lock live on the tile's own TileHeader (visible on hover/focus) — duplicating them in the right-click menu would just be noise. The Mind Map context menu is richer because canvas tiles support actions (auto-layout, copy/paste, connection mode) that don't apply to a column-bound flow layout.
+The Kanban tile right-click menu is intentionally minimal in the V7 implementation. Style, Tags and lock live on the tile's own TileHeader (visible on hover/focus) — duplicating them in the right-click menu would just be noise. The Mind Map context menu is richer because canvas tiles support actions (auto-layout, grouping, connection mode) that don't apply to a column-bound flow layout.
 
 Right-clicking on a **text tile within a Kanban column**:
 

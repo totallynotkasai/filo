@@ -828,13 +828,19 @@ on every read, write and rename.
 
 **Why accepted:** it is a bound on pathological payloads, set far beyond any
 real folder structure. Windows MAX_PATH (260) does not apply, because Node uses
-`\?\` paths for its own file IO. Separately, a single name is limited to 255
-characters: long names still save, because the temporary file of an atomic
-write shortens its base name to fit, within 255 UTF-16 units and 255 UTF-8
-bytes (`tmpSiblingPath` in
-[src/main/vault/filenameUtils.ts](src/main/vault/filenameUtils.ts)). Names that
-main generates itself (new board files, new folders, imported fonts) are
-trimmed to 200 characters (`sanitizeFilename`).
+`\?\` paths for its own file IO. Separately, a single name is limited:
+Windows allows 255 UTF-16 units and Android 255 UTF-8 bytes, so a name Filo
+makes (a note named from its title, a board, a folder, a font, a sidebar
+rename) is at most 255 UTF-8 bytes, which covers both. A name Filo derives is
+cut to 200 bytes between characters (`safeFileName` in
+[src/shared/fileNames.ts](src/shared/fileNames.ts)): 200 English letters, 66
+Chinese characters or 50 emoji; a typed name over the limit is refused inline,
+and a file copied in with a longer name is shortened, its extension kept. An
+existing longer name (made by another program on Windows) still opens and
+saves, because the temporary file of an atomic write shortens its base name to
+fit (`tmpSiblingPath` in
+[src/main/vault/filenameUtils.ts](src/main/vault/filenameUtils.ts)), but it
+won't sync to a phone.
 
 **Impact:** none for normal vaults. A tree nested more than 64 levels deep
 shows in the sidebar but can't be opened from Filo.

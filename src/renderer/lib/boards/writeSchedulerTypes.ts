@@ -112,6 +112,13 @@ export interface CreateSchedulerOptions<TArgs> {
    */
   missingSourceMessage?: (key: string) => string | undefined;
   /**
+   * A key's write succeeded after earlier writes of it failed under another
+   * failure id (the file was moved in between): each such id is no longer
+   * owed. The board scheduler clears the failed mark left at the old path, or
+   * the save indicator would report it for the rest of the session.
+   */
+  onEarlierFailureHealed?: (failureId: string, sentinel: SchedulerSentinelInfo) => void;
+  /**
    * How the primitive keeps the `.filo/.dirty` sentinel and the
    * `pendingVaultPaths` ledger in sync across the debounce → write window:
    *  - `'full'` (default): `beginWrite` at schedule, `endWrite` at outcome —
@@ -298,6 +305,14 @@ export interface Scheduler<TArgs> {
   retryFailed(key?: string): Promise<{ failed: string[] }>;
   /** Drops `key`'s retained failed write: the change it held is no longer owed (the file was reloaded). */
   discardRetained(key: string): void;
+  /**
+   * The file at `oldPath` (or a folder above it) moved while a full save
+   * holds a copy of a key's write made for that path, not yet sent: each such
+   * copy is replaced by a new write of the key, which reads its path when it
+   * fires. `isUnder(path)` says whether a copy's path is at or under the
+   * moved one.
+   */
+  replaceCapturesUnder(isUnder: (path: string) => boolean): void;
   /** True while `key` has a pending, parked, in-flight or retained write. */
   hasWork(key: string): boolean;
   /**

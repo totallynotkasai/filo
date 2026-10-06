@@ -21,6 +21,7 @@ import { vaultStore } from '../../stores/vault.svelte';
 import type {
   Board,
   KanbanBoard,
+  MindMapBoard,
   TaskListBoard,
   TileDefinition,
 } from '../../schema/index';
@@ -81,6 +82,11 @@ export function clearFontSizesOnAllExisting(): {
     // or a task made before sizes stopped being copied carries them too.
     const tileDefs = (cacheEntry as { tileDefs?: Record<string, TileDefinition> } | undefined)?.tileDefs ?? {};
     for (const def of Object.values(tileDefs)) count(dropSizes(styleOf(def), TITLE_AND_BODY));
+
+    // A Mind Map's link, embed and timer tiles keep their style on the board itself.
+    if (cached.type === 'mindmap') {
+      for (const tile of Object.values((cached as MindMapBoard).inlineTiles ?? {})) count(dropSizes(styleOf(tile), TITLE_AND_BODY));
+    }
 
     if (cached.type === 'kanban') {
       for (const col of (cached as KanbanBoard).columns ?? []) {

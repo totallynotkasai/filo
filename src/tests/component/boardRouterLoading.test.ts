@@ -31,10 +31,16 @@ vi.mock('@renderer/core/boardRegistry', () => ({
 const { default: BoardRouter } = await import('@renderer/components/boards/BoardRouter.svelte');
 const { tabStore } = await import('@renderer/stores/tabs.svelte');
 const { BOARD_SCOPE_KEY } = await import('@renderer/lib/boards/boardScope.svelte');
+const { boardCacheStore } = await import('@renderer/stores/boardCache.svelte');
 
 let component: ReturnType<typeof mount> | null = null;
 
 function mountRouter(): HTMLElement {
+  // The board is loaded (in the cache), as any board with a tab is.
+  boardCacheStore.hydrate(
+    { b1: { board: { id: 'b1', type: 'kanban', name: 'Board', emoji: '', createdAt: 0, updatedAt: 0, settings: {}, columns: [] }, tileDefs: {}, connections: {}, frames: [] } as never },
+    { b1: 'Board.board.json' },
+  );
   const tab = tabStore.open('b1', 'Board', 'kanban');
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -51,6 +57,7 @@ afterEach(() => {
   if (component) unmount(component);
   component = null;
   tabStore.closeAll();
+  boardCacheStore.clear();
   document.body.innerHTML = '';
 });
 

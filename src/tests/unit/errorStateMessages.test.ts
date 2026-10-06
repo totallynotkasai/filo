@@ -34,12 +34,15 @@ describe('boardLoadFailedToast', () => {
     expect(t.text).toContain('a value in it isn\'t one Filo understands (board.placements.a.x: expected number)');
   });
 
-  it('a newer version says to update Filo; an older one gets the same next step as broken JSON', () => {
+  it('a newer version says to update Filo; an older one names the copy and no text-editor fix', () => {
     expect(boardLoadFailedToast('/v', entry('from-future', 'Saved by a newer version of Filo.'), '/v/c').text).toMatch(
       /Saved by a newer version of Filo\. A copy is in \.filo\/recovery\. Update Filo, then reopen the vault\.$/,
     );
     expect(boardLoadFailedToast('/v', entry('no-migration-path', 'Made by an older Filo.'), '/v/c').text).toMatch(
-      /Made by an older Filo\. A copy is in \.filo\/recovery\. Fix the file in a text editor, then reopen the vault\.$/,
+      /Made by an older Filo\. A copy is in \.filo\/recovery\.$/,
+    );
+    expect(boardLoadFailedToast('/v', entry('no-migration-path', 'Made by an older Filo.'), null).text).toMatch(
+      /Made by an older Filo\.$/,
     );
   });
 

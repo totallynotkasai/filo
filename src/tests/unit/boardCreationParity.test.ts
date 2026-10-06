@@ -17,7 +17,7 @@
  * 1. The canonical shape per the Phase 5 DECISIONS (Kanban: `columns: []`;
  *    Tasklist: one default `Task List` section + `collapsedSubtasks: []`).
  * 2. `boardCacheStore.createBoard` — which BoardBrowser, TabBar, the template
- *    flow, and BoardRouter all now route through — produces structurally
+ *    flow all route through — produces structurally
  *    identical JSON (modulo id/timestamps).
  * 3. Schema round-trip: every factory output re-parses cleanly under
  *    `BoardSchema`.

@@ -1,7 +1,7 @@
 # Audit-28 implementation plan (draft, 2026-10-04)
 
 - **Source:** [AUDIT28_PRE_DAILY_USE_2026-10-04.md](AUDIT28_PRE_DAILY_USE_2026-10-04.md). Finding IDs (A-01, H-01 …) refer to it.
-- **Status:** Phases 0 and 1 done on 2026-10-04, Phases 2, 3, 4, 5 and 6A on 2026-10-05 (see section 4); Phase 6 was split into 6A and 6B at the owner's request, and 6B, 7 and 8 are not started. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs, Phase 2 D6 and D7 at theirs, Phase 3 D2 at its default, Phase 4 D8 at its default, Phase 5 D9 at its default.
+- **Status:** Phases 0 and 1 done on 2026-10-04, Phases 2, 3, 4, 5, 6A and 6B on 2026-10-05 (see section 4); Phase 6 was split into 6A and 6B at the owner's request. Phases 7 and 8 are not started. Decisions D1 to D10 have defaults (section 3); Phase 0 used D3 and D10 at their defaults, Phase 1 used D1, D4 and D5 at theirs, Phase 2 D6 and D7 at theirs, Phase 3 D2 at its default, Phase 4 D8 at its default, Phase 5 D9 at its default.
 - **Scores:** out of 10, as in the report. **Hard:** 0/10 = minutes, 5/10 = a few days with tests, 10/10 = weeks.
 
 ## 1. How this plan works
@@ -21,7 +21,7 @@
   - the E2E suite (with `FILO_E2E_SCALE=1`) when the phase touches the shell, startup, quit, file watching or the editor;
   - the corpus check (`corpus:run` + `corpus:compare` against today's baseline) for any phase that touches the editor or Markdown writing;
   - an outcome section in this file: what changed, deviations, new findings.
-- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them, Phase 1 BL-25 and BL-26; Phase 2 added BL-27, fixed there, and BL-28; Phase 3 BL-29 and BL-30, fixed there, and BL-31 and BL-32; Phase 4 added two owner decisions and no numbered item; Phase 5 BL-33 and BL-34, fixed there, and BL-35; Phase 6A BL-36, fixed there).
+- **Findings a phase doesn't fix go to `docs/BACKLOG.md`** as BL-25 onwards (Phase 0 used BL-22 to BL-24 and fixed them, Phase 1 BL-25 and BL-26; Phase 2 added BL-27, fixed there, and BL-28; Phase 3 BL-29 and BL-30, fixed there, and BL-31 and BL-32; Phase 4 added two owner decisions and no numbered item; Phase 5 BL-33 and BL-34, fixed there, and BL-35; Phase 6A BL-36, fixed there; Phase 6B BL-37 and BL-38, fixed there).
 - **Comments explain why, never history.** Audit IDs go in commit messages.
 
 "Sum of Hard scores" adds up the Hard scores of the phase's tasks. It's a rough guide to size, not a score.
@@ -163,7 +163,7 @@ Phases 2 to 7 can be reordered or split to suit you; each stands on its own. Pha
 
 The owner asked for this phase in two parts, each its own session and commit. The split follows the subsystems:
 - **6A, sync and recovery** (6.1 to 6.8): the watcher, the vault-open checks, rescue copies, crash Reload and Home. Done on 2026-10-05 (section 4).
-- **6B, notes and boards** (6.9 to 6.18): the Raw view and Convert to UTF-8, then the board writer, drift, undo steps and the older-board notice. Not started.
+- **6B, notes and boards** (6.9 to 6.18): the Raw view and Convert to UTF-8, then the board writer, drift, undo steps and the older-board notice. Done on 2026-10-05 (section 4).
 
 Each part has its own pass test, below the table.
 
@@ -179,16 +179,16 @@ Each part has its own pass test, below the table.
 | 6.7 | A crash Reload releases the vault registry and the watcher first. *Done as planned (section 4).* | C-09 | 1/10 |
 | 6.8 | Home waits for the recent-vaults list before auto-opening. *Done as planned (section 4).* | C-11 | 1/10 |
 | **6B** | | | |
-| 6.9 | Switching tabs away from a conflicted Raw view asks, as closing does. | A-07 | 3/10 |
-| 6.10 | A forced reload with a queued body goes through the conflict check. Convert to UTF-8 unfreezes only after its reload. | A-04 | 2/10 |
-| 6.11 | Link, embed and timer tiles are stored once. Readers skip a stale copy; the tag-delete Undo puts back what it changed. | B-01 | 2/10 |
-| 6.12 | A board moved during a full save is re-scheduled, so its frozen copy is replaced, and stale failure marks are cleared. | B-02 | 3/10 |
-| 6.13 | The board drift answer follows a rename. | B-03 | 1/10 |
-| 6.14 | Note-only edits don't rewrite the board file. Opening a Kanban board writes no default view (BL-02, which must be fixed before the first real board-format step). | B-04, BL-02 | 2/10 |
-| 6.15 | The Global Defaults frame image follows renames and deletes. | B-05 | 2/10 |
-| 6.16 | Remove BoardRouter's default-board auto-create. | B-07 | 1/10 |
-| 6.17 | The saved-views and style undo steps record per-key changes. | B-09 | 2/10 |
-| 6.18 | The older-board notice says "rebuild the board; its notes are safe", and a string version is called invalid, not old. | B-06 | 1/10 |
+| 6.9 | Switching tabs away from a conflicted Raw view asks, as closing does. *Done; the switch saves the text first, and the view now saves under its own note when torn down (BL-37, section 4, deviation 1).* | A-07 | 3/10 |
+| 6.10 | A forced reload with a queued body goes through the conflict check. Convert to UTF-8 unfreezes only after its reload. *Done, with a read-only hold (section 4, deviation 2).* | A-04 | 2/10 |
+| 6.11 | Link, embed and timer tiles are stored once. Readers skip a stale copy; the tag-delete Undo puts back what it changed. *Done; the load drops a stale copy too, and two readers that needed it were fixed (BL-38, section 4, deviation 3).* | B-01 | 2/10 |
+| 6.12 | A board moved during a full save is re-scheduled, so its frozen copy is replaced, and stale failure marks are cleared. *Done (section 4, deviation 4).* | B-02 | 3/10 |
+| 6.13 | The board drift answer follows a rename. *Done, and a stale prompt left by a rename is gone (section 4, deviation 5).* | B-03 | 1/10 |
+| 6.14 | Note-only edits don't rewrite the board file. Opening a Kanban board writes no default view (BL-02, which must be fixed before the first real board-format step). *Done: steps say whether they change the board; the Task List too (section 4, deviation 6).* | B-04, BL-02 | 2/10 |
+| 6.15 | The Global Defaults frame image follows renames and deletes. *Done (section 4, deviation 7).* | B-05 | 2/10 |
+| 6.16 | Remove BoardRouter's default-board auto-create. *Done, with an empty state (section 4).* | B-07 | 1/10 |
+| 6.17 | The saved-views and style undo steps record per-key changes. *Done, every style popup and connection labels included (section 4, deviation 8).* | B-09 | 2/10 |
+| 6.18 | The older-board notice says "rebuild the board; its notes are safe", and a string version is called invalid, not old. *Done (section 4, deviation 9).* | B-06 | 1/10 |
 
 **Pass, 6A:**
 - The finder repros for C-01, C-03, C-04 and C-05 pass.
@@ -993,3 +993,92 @@ One latent bug from Phase 3 turned up and was fixed here: BL-36 (end of this sec
 - **BL-36: a file picked from Filo's trash for a card cover, a File tile or a background was refused** (Impact 1/10, Hard 1/10; found while building 6.2). Phase 3 (E-14) links a picked file that is in the vault and copies one from a hidden folder. But main's `vault:copy-file` refused any source inside `.filo/`, so a pick from `.filo/trash` failed with "File rejected by vault safety check". Phase 3's unit test mocked the copy, so it never met main. Fixed by 6.2's change in main; `recoveryAndCopyIpc.test.ts` ("copies a trashed note the user picked out of .filo/trash") fails without it.
 
 **Left for 6B** (tasks 6.9 to 6.18, its pass test above): the Raw view's tab switch with a conflict (A-07), Convert to UTF-8's reload (A-04), the board items B-01 to B-09 and BL-02. The finder repros for B-01 and B-02 are in the audit session's scratchpad (`…\a643b672-…\scratchpad\repros\finderB`). Nothing in 6A changed them.
+
+### Phase 6B outcome (2026-10-05)
+
+**Status:** done, not committed (the owner decides when). Tasks 6.9 to 6.18 are in, BL-02 with them. No decision from section 3 applied. Nine deviations are listed below. Two bugs turned up while fixing these and were fixed here: BL-37 and BL-38 (end of this section). The changes you will notice:
+- switching to another tab from a Raw view whose text can't be saved now asks, as closing the tab does; and text typed there in the last moments before a switch is no longer lost (BL-37);
+- ticking a task, setting a card's date or priority, or retitling a note no longer rewrites the board's file, and showing a Kanban board or Task List with no saved view writes nothing;
+- undoing a style change or a saved view no longer brings back a font size "Use Default Font Sizes" cleared, or an old tag name a vault-wide rename replaced;
+- a board from an older Filo is called that, with its notes safe and a way on; a board file holding no board is called broken.
+
+**What changed**
+- **6.9, switching away from a Raw view (A-07).**
+  - New `lib/notes/rawViewLeave.ts`. When the active pane is about to show another tab and the Document tab it shows has text typed in its Raw view that isn't on disk, the pane first saves it (`mayLeaveRawView`). If it can't be saved (the note changed elsewhere, or the write failed), a confirm asks: *Raw edits not saved. Your raw edits to "Plan.md" aren't saved: the note changed somewhere else, or the write failed. Switch anyway keeps a copy of them in .filo/recovery/. Cancel stays on the tab so you can choose which version to keep.* **Cancel** makes that tab active again, with the Raw view and its banner as they were; **Switch anyway** shows the other tab, and the Raw view's teardown keeps the rescue copy, as Close anyway does.
+  - The check sits where the pane takes its tab (`AppShell.svelte`, the pane-tree effect), so every way of switching goes through it: a tab click, Ctrl+Tab, opening a note or board from the sidebar, the Board Browser. A tab already shown in another pane only makes that pane active and unmounts nothing, so it asks nothing.
+  - `NoteRawView.svelte` keeps the note's path it was mounted with (renames move it), and its saves and rescue copies go by that, not by the `path` prop (BL-37).
+- **6.10, Convert to UTF-8 (A-04).**
+  - `holdReadOnlyWhileConverting` (`lib/vault/nonUtf8Paths.svelte.ts`) keeps a note read-only, as a non-UTF-8 note, until the hold is released; it follows a rename and each conversion releases only its own hold. `convertToUtf8.ts` holds the note from before the conversion until its views have the converted text.
+  - `noteStore.reload` sends a note with an unsaved or queued body, or an open conflict, through the same check as any change on disk (`onDiskChanged`): a new body there meets the typed one as a conflict and is never written under. A note with nothing unsaved is read again as before.
+- **6.11, link, embed and timer tiles stored once (B-01).**
+  - The Mind Map writer (`core/boardTileOps/mindmap.ts`) puts such a tile only in `board.inlineTiles`, and drops a def or placement with the same id (the board schema refuses a tile that is both placed and inline).
+  - `isStaleInlineCopy` (`lib/boards/tileDefBuilder.ts`): a def beside an inline tile is a stale copy. The loader drops it in memory (nothing is written for it, no recovery copy; the file loses it at the board's next real save). The tag readers (`iterateBoardOnlyTiles`: tag delete, rename, their Undo, the orphan count, "tag in use") and search skip it.
+  - Two readers needed the stale copy: the undo of deleting such a tile put it back in its frames and groups only when it had a def (now: or an inline tile), and "Use Default Font Sizes for all Existing Items" cleared sizes only on the stale copy (BL-38).
+- **6.12, a board moved during a full save (B-02).**
+  - A full save holds each waiting board's write as it was when the save began. When the board's file (or a folder above it) moves meanwhile, a rename sweep in the board scheduler replaces that copy with a new write of the board (`replaceCapturesUnder` in `writeScheduler.ts`), which reads the board's new path and fires at once.
+  - A write that failed at the old path (sent just before a folder rename) is kept for Retry as before; once the board saves at its new path, the failure left at the old path is cleared too (`onEarlierFailureHealed`), so no "couldn't save" stays for the session.
+  - A write already sent to main when the move happens can still land at the old path; KNOWN_LIMITATIONS #15 now says so (deviation 4).
+- **6.13, the drift answer and a rename (B-03).** `resolveBoardDrift` acts on the board where its hold is now (holds follow renames): Reload reads the renamed file, Keep local backs up and re-fires it there. A hold released meanwhile (the board left the cache) leaves nothing to do.
+- **6.14, needless board writes (B-04, BL-02).**
+  - A command says whether it changes its board's file (`changesBoardFile()`, `commands/Command.ts`). The history (`markBoardOf` in `history.svelte.ts`) arms a board write for a step only when it does, on execute, undo, redo, rollback and push. Steps that change only notes say no: card and task fields, line spacing, the Document tab's tags row, tile and note tags, titles, Replace All, and the file renames (their follow-up marks the boards whose paths it rewrites). A batch writes its board when any child changes it. Board parts of a step still go through the cache writers, which mark their board themselves.
+  - `applyDeltaChecked` and `NoteFieldCommand` no longer mark a board dirty. A title edit whose formatting didn't change no longer touches the tile on the board.
+  - BL-02: a Kanban board or a Task List with no `lastView` counts the view it shows with none as saved (`KANBAN_DEFAULT_VIEW`, `TASK_LIST_DEFAULT_VIEW` in `lastViewFlush.ts`, which the hydrate code shares), so nothing is written until the sort or a filter changes.
+- **6.15, the Global Defaults' frame image (B-05).** New `stores/globalDefaultImages.ts`. A rename of the image or a folder above it (in Filo, by another program, or replayed after a crash) rewrites `mindmap.frame.backgroundImage` and saves `defaults.json`. A delete that takes the file clears it inside the delete's undo step (`CascadeDeleteCommand`): Undo puts it back unless another image was picked meanwhile; redo clears it again; a restore beside a file that took the old name follows the restored copy.
+- **6.16, BoardRouter (B-07).** No default board is made for a tab whose board isn't in the cache or the project. The pane says so: *"Plans" isn't open any more. It may have been deleted. Nothing was saved in its place.*, with **Close tab**. The router re-runs only when the board comes or goes.
+- **6.17, per-key undo (B-09).** New `commands/keyDelta.ts`: a step on a flat record as the keys it set and removed, applied to the record as it stands.
+  - Style steps: a tile (`UpdateTileStyleCommand`), a frame, a Kanban card and column, a task and a section (`styleCommands.ts`), and a connection's fields and label keys (`UpdateConnectionCommand`).
+  - Saved views (`UpdateSavedViewsCommand`): the views a step added (with their place), the ones it removed, and the keys it changed in the rest.
+  - The element styles' live readers moved into `styleCommands.ts`, and the Style popup's targets (`elementStyleTargets.ts`) use them.
+- **6.18, boards Filo can't open (B-06).**
+  - An older board's message: *This board was made by an older Filo (board format 7), which this version can't open. The file was left unchanged, and its notes are safe: each is a .md file of its own. Make a new board and add them to it.* Its notice adds only *A copy is in .filo/recovery.*, without "fix it in a text editor".
+  - `boardShapeProblem` (`boardLoader.ts`): a file that is one quoted text (a double-encoded board), a list, or no object, or whose `version` is text or not a whole number, is refused as broken: *a value in it isn't one Filo understands (the whole file is one quoted text, not a board)*.
+  - The kept tab's hint now reads *Nothing in the file was changed. A file still syncing, or fixed in a text editor, opens with Retry.*
+- **Docs.**
+  - CLAUDE.md: the new modules, the writers, BoardRouter, the Raw view, and two undo rules (note-only steps write no board file; style and saved-view steps keep the keys they changed); the board-format gotcha's notice wording.
+  - KNOWN_LIMITATIONS #29 (an older or broken board's notice; nothing is written by showing a board or by a note-only change), #30 (switching tabs asks) and #15 (a write already sent when a board moves).
+  - The design doc: the Raw view's switch, and a board with no saved view.
+  - `docs/BACKLOG.md`: BL-02 is taken and removed; BL-37 and BL-38 are noted as found and fixed.
+
+**Deviations from the plan**
+1. **The switch also saves, and a root cause was fixed (6.9).** The plan said to ask, as close does. The switch saves the Raw text first (as close does) and asks only when that fails. Building the bite test showed that switching away lost text the view could still have saved (BL-37): the view's teardown read its `path` prop after the pane had already moved to the next tab. So the view now keeps its own path, which protects any other way a pane can drop it (the undo of a step on another board brings that board's tab into the pane directly).
+2. **A hold, not a reorder (6.10).** "Unfreeze only after its reload" could not be done by moving one line: the vault index's own read of the converted file reports UTF-8 and unfroze the editors before the note's reload. A read-only hold covers the whole conversion. The re-read also goes through the disk-change check when a conflict is already open, not only with a queued body.
+3. **The load drops a stale copy; the test helper needed nothing (6.11).** Besides readers skipping it, the loader drops a stale copy in memory, so the board's next save leaves it out. The plan said to fix the test helper (`seedBoard.ts`), which seeded boards differently from the live writer: it already seeded the single copy the writer now writes, so only the writer changed. Two readers had relied on the second copy (above); one of them was BL-38.
+4. **Written at once, and a sent write remains (6.12).** The replacement write fires at once rather than inside the full save that held the copy (that save doesn't wait for it; the next save and quit's settle loop do). A write already sent to main can't be recalled: it is KNOWN_LIMITATIONS #15's gap, which now names it.
+5. **A stale prompt after a rename (6.13).** While fixing the answer, the in-flight prompt registry turned out to remove a settled prompt only under the key it was asked under. After a rename the prompt sat under the new key, so the renamed board's next drift got the old answer at once, without asking. Settled prompts and resolutions are now removed wherever a rename moved them.
+6. **Steps say whether they change the board (6.14).** The audit offered "don't mark the board dirty for a note-only change" or "skip a board write whose bytes are unchanged". The first was taken: comparing bytes would need each board's canonical bytes at open, or a read before its first write. The Task List's `lastView` had BL-02's problem too, and is fixed the same way.
+7. **External deletes (6.15).** An image deleted by another program while no tile shows it is not cleared from the defaults: the same rule as a frame's own background, which only the "Remove tiles" cascade clears.
+8. **Every style popup, connections included (6.17).** The plan named the saved-views and style steps. Every style popup's step (tile, frame, card, column, task, section) now keeps its keys, and so does a connection's update, whose label size "Use Default Font Sizes" also clears.
+9. **A missing version stays "older" (6.18).** A file with no `version` is still read as an older board (the oldest boards had none); only a version that is text or not a whole number, and a file holding no board, are called broken.
+
+**Tests** (each new case was run against the Phase 6A commit, 0ea3648; see Checks)
+- **Unit:**
+  - New `boardMovedDuringFullSave.test.ts` (3, from the audit's B-02 repro): a file moved to another folder during a full save is saved at its new path; a renamed folder likewise, with nothing left failed; a write sent before a folder rename fails there and the next save clears that mark.
+  - New `inlineTileStoredOnce.test.ts` (9, from the audit's B-01 repro): stored once; tag delete, rename and "in use"; the orphan count; search; a stale copy in a cache skipped, with the tag delete's Undo putting back what it took; a board loaded with one drops it and writes nothing.
+  - New `convertToUtf8Reload.test.ts` (4, from the audit's A-04 repro): a forced reload with a queued body is a conflict and writes nothing; a clean one takes the file; Convert to UTF-8 keeps the note read-only through every read that loads the converted text; the hold follows a rename.
+  - New `styleAndSavedViewUndoPerKey.test.ts` (7): tile, frame, connection label and card styles; saved views saved, deleted and overwritten.
+  - New `noteOnlyStepsLeaveBoardFile.test.ts` (7): a note-only step on execute, undo, redo and push; a board step still arms; batches; a plain title edit; the Kanban and Task List default views.
+  - `boardDriftHold.test.ts` (+2: Keep local and Reload after a rename, and the renamed board asked again), `boardLoader.test.ts` (+1, one changed: a string payload and text versions are broken), `boardFormatMigration.test.ts`, `errorStateMessages.test.ts`, `boardFileEncodingRoundTrip.test.ts` (the new wording and kinds), `boardCacheTiles.test.ts` (an inline tile has no def), `commandMarkDirtyOriginatingBoard.test.ts` (the originating-board rule now pinned with a column style step; a card field edit writes no board), `replaceAllCommand.test.ts` (its stand-in step is a `fakeCommand`).
+- **Component:** new `boardRouterMissingBoard.test.ts` (no board made or saved, the empty state, Close tab) and `noteRawViewTeardownPath.test.ts` (2: the teardown save goes to the view's own note when its prop already names nothing, or another note). `boardRouterLoading.test.ts` seeds its board in the cache, as any board with a tab is.
+- **Characterisation:** new `notesAndBoards.test.ts` (6, in the `characterisation-suite` gate's list; harness `harness/notesAndBoards.ts`): the switch question (Cancel stays with the banner, Switch anyway keeps a copy); a switch saving the Raw text; a ticked task and a card's date saving no board file; boards with no saved view staying byte-identical, then a new sort saved; the Global Defaults' frame image through a rename, a delete and Undo; the older-board and broken-board notices.
+- **E2E:** `noBytesByLooking.e2e.ts` gains a hand-written Kanban board and Task List with no saved view, opened and shown before the quit.
+
+**Checks**
+- `npm run ci:verify` on Windows: passed on the final code. 866 test files, 8,448 passed and 5 skipped (as before), 91/91 gates; its test step took 263 s.
+  - The first run had one failure, in this phase's new connection case: it ran while that command was being edited, on the version cached before the edit. It passed alone and in the full run that followed.
+- E2E with `FILO_E2E_SCALE=1` on the final build: 45 passed (as before; `noBytesByLooking.e2e.ts` gained boards, not a case), 3.5 min.
+- **Bite checks** (the new tests on the Phase 6A commit, `0ea3648`, in a detached worktree with `node_modules` junctioned, since removed):
+  - **Unit:** all 39 new or changed cases fail, in 12 files, each for what it tests; the controls pass (a board step still arms its write, a clean reload takes the file, a re-added tile with an explicit board).
+  - **Component:** the BoardRouter case fails (a default board is made and saved); both teardown cases fail (one saves to `""`, the other is refused by `Other.md`'s hash, and `Plan.md` keeps its old text).
+  - **Characterisation:** all 6 cases fail, each for its reason: no switch question; the switch loses the Raw text; 2 board saves for a tick and a date; the hand-written boards rewritten; the frame image left at the old name; the old notice wording.
+  - **E2E** (`FILO_E2E_MAIN` on a build of `0ea3648`): `noBytesByLooking.e2e.ts` fails, naming both hand-written boards as changed.
+  - **BL-37 isolated:** on `0ea3648` with only the new `NoteRawView.svelte`, the case "saves text that can be saved" passes (its old code logged the teardown's path as `""`).
+- **The audit's repros**, run unchanged on this code: B-02's two cases pass; B-01's seven behaviour cases pass, and its diagnostic case, which asserts the second copy's stale tags, now finds no copy; A-04's case passes.
+- **Corpus check:** not run. Nothing in the editor or the Markdown writer changed.
+
+**Pass test (6B)**
+- The finder repros for B-01 and B-02 pass: **met** (B-01's diagnostic case shows the copy is gone). Both are now permanent tests.
+- `ci:verify` on Windows, and the full E2E suite with scale: **met**.
+
+**Found and fixed in this phase (BL-37, BL-38)**
+- **BL-37: switching tabs away from a Raw view could lose what was typed there** (Impact 3/10, Hard 1/10; found by 6.9's bite test). The Raw view saves 1.5 s after typing stops. A switch to another tab inside that pause, to a note not open yet (opening one from the sidebar, say), tore the view down after the pane had moved on: its `path` prop then named the next tab's note, which hadn't loaded, so it read `""`. The teardown save failed, the rescue copy failed with it, and the text was gone without a word; with a note already open, the save was refused by that note's hash and the copy filed under its name. Fixed by 6.9 (the switch saves first) and in `NoteRawView.svelte` (the view keeps the path it was mounted with). Tests: `noteRawViewTeardownPath.test.ts`, and the characterisation case "saves text that can be saved, and asks nothing".
+- **BL-38: "Use Default Font Sizes for all Existing Items" skipped a Mind Map's link, embed and timer tiles** (Impact 1/10, Hard 1/10; found by 6.11). It cleared sizes on the defs only, so these tiles were reached only through their stale second copy (B-01), which nothing shows: the tiles kept their sizes. It now clears the inline tiles' styles too (`applyDefaultsToAll.ts`).

@@ -40,16 +40,23 @@ export const mindmapTileOps: BoardTileOps<MindMapBoard> = {
     // through `seedTextFileForNewTile` at the end of the function.
     stampTextTileSeedPath(tile, boardId);
 
-    const def = buildTileDefinition(tile);
-    const updatedDefs = { ...cached.tileDefs, [tile.id]: def };
+    // A link, embed or timer tile lives only in `inlineTiles`. A second copy
+    // in `tileDefs` would never be updated again, and everything that walks
+    // the defs (tag actions, search) would act on its stale title and tags.
+    const inline = isInlineTileType(tile.type);
+    const { [tile.id]: _replaced, ...otherDefs } = cached.tileDefs;
+    void _replaced;
+    const updatedDefs = inline ? otherDefs : { ...otherDefs, [tile.id]: buildTileDefinition(tile) };
 
-    if (isInlineTileType(tile.type)) {
+    if (inline) {
       const mm = cached.board as MindMapBoard;
       const inlineTiles = {
         ...(mm.inlineTiles ?? {}),
         [tile.id]: buildInlineTileFromTile(tile),
       };
       (cached.board as Record<string, unknown>).inlineTiles = inlineTiles;
+      // A tile is placed or inline, never both (the board schema refuses it).
+      delete (mm.placements as Record<string, unknown> | undefined)?.[tile.id];
     } else {
       const mm = cached.board as MindMapBoard;
       const placements = {

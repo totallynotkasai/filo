@@ -1,5 +1,4 @@
 import { uiStore } from '../stores/ui.svelte';
-import { boardCacheStore } from '../stores/boardCache.svelte';
 import { noteStore } from '../stores/notes.svelte';
 import type { FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
@@ -130,12 +129,6 @@ function pick(delta: FrontmatterDelta, keys: string[]): FrontmatterDelta {
 
 export interface ApplyDeltaArgs {
   relPath: string;
-  /**
-   * Callers pass the command's `this.targetBoardId` verbatim (the
-   * `scripts/gates:command-targets-self` gate verifies it); the helper dirties
-   * that originating board after the change.
-   */
-  targetBoardId: string;
   /** The delta applied this leg: the forward delta on redo, the inverse on undo. */
   delta: FrontmatterDelta;
   /**
@@ -203,25 +196,25 @@ function waitForRename(relPath: string): Promise<string | null> {
 /**
  * Applies `delta` to the note, except any key another program changed since
  * the opposite leg left it (that one keeps the external value, with an "Apply
- * anyway" toast). The change goes to the note writer as a delta and the
- * command's board is marked dirty.
+ * anyway" toast). The change goes to the note writer as a delta; no board
+ * file is written for it.
  *
  * The compare base is a fresh read of the file with any queued change laid
  * over it, even when the note is open: its model catches up with another
  * program's save only after the watcher's debounce.
  */
 export async function applyDeltaChecked(args: ApplyDeltaArgs, mayWaitForRename = true): Promise<void> {
-  const { relPath, targetBoardId, delta, expected, label, atomic } = args;
+  const { relPath, delta, expected, label, atomic } = args;
 
   // Captured ONCE and consulted by the "Apply anyway" handlers: a click after
   // a vault swap must not queue this delta onto the NEW vault's same-named
   // file (the writer resolves its vault root live). Also guards the read.
   const identity = captureVaultIdentity();
 
+  // Only the note changes: no board holds its fields, so no board file is
+  // written for it (KNOWN_LIMITATIONS #29).
   const commit = (part: FrontmatterDelta, path: string = relPath): void => {
     noteStore.patchFrontmatter(path, part);
-    // allow-non-target-markdirty: shared helper, callers pass this.targetBoardId per the CI gate
-    boardCacheStore.markDirty(targetBoardId);
   };
 
   const current = await noteStore.currentFrontmatter(relPath, { fromDisk: true });

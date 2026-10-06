@@ -14,6 +14,7 @@ import { restoreFiles, retargetPath, stillTrashed, trashFiles, type RestoredItem
 import type { DrainToken } from '../lib/vault/vaultOperations';
 import { captureTileMemberships, restoreTileMemberships, type TileMemberships } from '../lib/boards/tileMemberships';
 import { NewNoteUndo } from './newNoteUndo';
+import { applyKeyDelta, keyDelta, type KeyDelta } from './keyDelta';
 
 // ── Tile Commands ──
 
@@ -529,6 +530,12 @@ export class ResizeTileCommand extends Command {
   }
 }
 
+/**
+ * A tile style popup session. The style is kept as the keys the session
+ * changed (`keyDelta.ts`): undo and redo change only those on the tile's
+ * style as it is then, so a key changed since (a size "Use Default Font
+ * Sizes" cleared) keeps its value. Fields beside `style` are put back whole.
+ */
 export class UpdateTileStyleCommand extends Command {
   description: string;
   /**
@@ -538,8 +545,11 @@ export class UpdateTileStyleCommand extends Command {
    */
   readonly targetBoardId: string;
   private tileId: string;
-  private beforeUpdates: Partial<Tile>;
-  private afterUpdates: Partial<Tile>;
+  private beforeRest: Partial<Tile>;
+  private afterRest: Partial<Tile>;
+  /** Null when the step doesn't change the style. */
+  private forward: KeyDelta | null;
+  private inverse: KeyDelta | null;
 
   constructor(
     tileId: string,
@@ -550,22 +560,34 @@ export class UpdateTileStyleCommand extends Command {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
     this.tileId = tileId;
-    // Deep-clone so nested style objects (background, border)
-    // can't be mutated through the original reference after the command
-    // is pushed.
-    this.beforeUpdates = this.snapshot(beforeUpdates);
-    this.afterUpdates = this.snapshot(afterUpdates);
+    // Deep-cloned so nested style objects (background, border) can't be
+    // mutated through the original reference after the command is pushed.
+    const { style: beforeStyle, ...beforeRest } = this.snapshot(beforeUpdates);
+    const { style: afterStyle, ...afterRest } = this.snapshot(afterUpdates);
+    this.beforeRest = beforeRest;
+    this.afterRest = afterRest;
+    const styled = 'style' in beforeUpdates || 'style' in afterUpdates;
+    type Block = Record<string, unknown> | undefined;
+    this.forward = styled ? keyDelta(beforeStyle as Block, afterStyle as Block) : null;
+    this.inverse = styled ? keyDelta(afterStyle as Block, beforeStyle as Block) : null;
     this.description = `Update tile style`;
+  }
+
+  private apply(rest: Partial<Tile>, delta: KeyDelta | null): void {
+    const tile = boardStore.getTile(this.tileId);
+    if (!tile) return;
+    const style = delta ? (applyKeyDelta(tile.style as Record<string, unknown>, delta) as Tile['style']) : undefined;
+    boardStore.updateTile(this.tileId, style ? { ...rest, style } : rest);
   }
 
   execute() {
     if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('redo', 'the tile'); return; }
-    boardStore.updateTile(this.tileId, this.afterUpdates);
+    this.apply(this.afterRest, this.forward);
   }
 
   undo() {
     if (!boardStore.getTile(this.tileId)) { toastMissingUndoRedoTarget('undo', 'the tile'); return; }
-    boardStore.updateTile(this.tileId, this.beforeUpdates);
+    this.apply(this.beforeRest, this.inverse);
   }
 }
 

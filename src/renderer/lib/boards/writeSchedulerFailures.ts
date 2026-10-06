@@ -54,8 +54,11 @@ export function isRetainableWriteError(err: unknown, ioError = false): boolean {
 export interface FailureLedger<TArgs> {
   /** Attribute failure ids to `key` (a failed fire). */
   recordFailed(key: string, ids: readonly string[]): void;
-  /** A successful fire for `key`: prune its ids + any retained re-fire. */
-  recordSuccess(key: string, primaryId: string): void;
+  /**
+   * A successful fire for `key`: prune its ids + any retained re-fire.
+   * Returns the ids its earlier failed fires attributed, besides `primaryId`.
+   */
+  recordSuccess(key: string, primaryId: string): string[];
   /** Consume (delete) one attributed id; true when it was present. */
   consume(id: string): boolean;
   /** Keep a failed fire's args getter for a later re-fire. */
@@ -90,11 +93,16 @@ export function createFailureLedger<TArgs>(): FailureLedger<TArgs> {
       // failed; prune so `failures` can't grow for the whole session.
       failures.delete(primaryId);
       const recorded = failureIdsByKey.get(key);
+      const others: string[] = [];
       if (recorded) {
-        for (const f of recorded) failures.delete(f);
+        for (const f of recorded) {
+          failures.delete(f);
+          if (f !== primaryId) others.push(f);
+        }
         failureIdsByKey.delete(key);
       }
       retained.delete(key);
+      return others;
     },
     consume: (id) => failures.delete(id),
     retain(key, getArgs) {

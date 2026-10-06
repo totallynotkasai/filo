@@ -56,6 +56,8 @@ function nextStep(entry: FailedBoardEntry, copyKept: boolean): string {
   if (entry.errorKind === 'from-future') {
     return copyKept ? 'A copy is in .filo/recovery. Update Filo, then reopen the vault.' : 'Update Filo, then reopen the vault.';
   }
+  // The message already says to rebuild it: no edit makes an old format open.
+  if (entry.errorKind === 'no-migration-path') return copyKept ? 'A copy is in .filo/recovery.' : '';
   if (!copyKept) return 'Fix the file in a text editor, then reopen the vault.';
   return 'A copy is in .filo/recovery. Fix the file in a text editor, then reopen the vault.';
 }

@@ -156,9 +156,9 @@ describe('board file encoding (real fs)', () => {
   });
 
   it.each([
-    ['a double-encoded file', (d: BoardFileData) => JSON.stringify(JSON.stringify(d, null, 2), null, 2)],
-    ['a version 7 file', (d: BoardFileData) => JSON.stringify({ ...d, version: 7 }, null, 2)],
-  ])('(f) %s is refused by the renderer and never written', async (_label, encode) => {
+    ['a double-encoded file', (d: BoardFileData) => JSON.stringify(JSON.stringify(d, null, 2), null, 2), 'schema-invalid'],
+    ['a version 7 file', (d: BoardFileData) => JSON.stringify({ ...d, version: 7 }, null, 2), 'no-migration-path'],
+  ])('(f) %s is refused by the renderer and never written', async (_label, encode, error) => {
     const rel = 'Old.board.json';
     const abs = join(root, rel);
     const bytes = encode(board());
@@ -179,7 +179,7 @@ describe('board file encoding (real fs)', () => {
     };
 
     const loaded = await loadBoard(root, rel);
-    expect(loaded).toMatchObject({ ok: false, error: 'no-migration-path' });
+    expect(loaded).toMatchObject({ ok: false, error });
     expect(channels).not.toContain('board:save');
     expect(await fs.readFile(abs, 'utf-8')).toBe(bytes);
   });

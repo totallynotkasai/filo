@@ -17,18 +17,38 @@
  * link with a regular file, so the note is shown read-only ("edit the
  * original") and main refuses its writes with `NOTE_IS_LINK`.
  */
-import { SvelteSet } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { onVaultSwap } from '../../core/vaultLifecycle';
-import { registerPathRenamable } from './renamePathKeys';
+import { rebasePath, registerPathRenamable } from './renamePathKeys';
 
 const nonUtf8 = new SvelteSet<VaultPath>();
 const linked = new SvelteSet<VaultPath>();
+/**
+ * Notes being converted to UTF-8, by hold: still read-only until the converted
+ * text is loaded, so nothing typed between the conversion and that load is
+ * built on the old decode. Keyed by hold so each conversion releases its own.
+ */
+const converting = new SvelteMap<number, VaultPath>();
+let nextHold = 1;
 
 onVaultSwap('pre-swap', 'nonUtf8Paths', () => {
   nonUtf8.clear();
   linked.clear();
+  converting.clear();
 }, { runAfter: ['leftBehind'] });
+
+/**
+ * Keeps `relPath` read-only, as a non-UTF-8 note, until the returned
+ * function is called (it follows a rename meanwhile).
+ */
+export function holdReadOnlyWhileConverting(relPath: string): () => void {
+  const hold = nextHold++;
+  converting.set(hold, vaultPath(relPath));
+  return () => {
+    converting.delete(hold);
+  };
+}
 
 /** Records whether a read found `relPath` to be a symbolic link. */
 export function noteReadLink(relPath: string, link: boolean | undefined): void {
@@ -52,7 +72,11 @@ export function noteReadEncoding(relPath: string, encoding: 'utf-8' | 'invalid-u
 }
 
 export function isNonUtf8(relPath: string | null | undefined): boolean {
-  return !!relPath && nonUtf8.has(vaultPath(relPath));
+  if (!relPath) return false;
+  const key = vaultPath(relPath);
+  if (nonUtf8.has(key)) return true;
+  for (const held of converting.values()) if (held === key) return true;
+  return false;
 }
 
 function renameIn(set: SvelteSet<VaultPath>, oldRel: string, newRel: string): void {
@@ -72,6 +96,10 @@ function renameNonUtf8Path(oldRel: string, newRel: string): void {
   if (!oldRel || !newRel || oldRel === newRel) return;
   renameIn(nonUtf8, oldRel, newRel);
   renameIn(linked, oldRel, newRel);
+  for (const [hold, key] of [...converting]) {
+    const next = rebasePath(key, oldRel, newRel);
+    if (next !== null) converting.set(hold, vaultPath(next));
+  }
 }
 
 registerPathRenamable('nonUtf8Paths', renameNonUtf8Path);
@@ -80,4 +108,5 @@ registerPathRenamable('nonUtf8Paths', renameNonUtf8Path);
 export function __resetNonUtf8PathsForTests(): void {
   nonUtf8.clear();
   linked.clear();
+  converting.clear();
 }

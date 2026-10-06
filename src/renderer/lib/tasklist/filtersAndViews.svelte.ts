@@ -18,7 +18,7 @@
 import { createId } from '../utils/ids';
 import { historyStore } from '../../stores/history.svelte';
 import { UpdateSavedViewsCommand } from '../../commands/index';
-import { flushLastViewForBoard } from '../boards/lastViewFlush';
+import { flushLastViewForBoard, TASK_LIST_DEFAULT_VIEW } from '../boards/lastViewFlush';
 import { registerComponentFlush } from '../boards/componentFlush';
 import { boardViewRevision } from '../../stores/boardViewRevision.svelte';
 import type { Priority } from '../tasks/frontmatterReaders';
@@ -229,11 +229,11 @@ export class TaskListFiltersAndViews {
       this.showCompleted = lv.showCompleted ?? true;
       this.activeSmartList = lv.smartList ?? 'all';
     } else {
-      this.activeFilterTags = [];
-      this.activeFilterStatus = null;
-      this.activeFilterPriority = null;
-      this.showCompleted = true;
-      this.activeSmartList = 'all';
+      this.activeFilterTags = [...TASK_LIST_DEFAULT_VIEW.filterTags];
+      this.activeFilterStatus = TASK_LIST_DEFAULT_VIEW.filterStatus;
+      this.activeFilterPriority = TASK_LIST_DEFAULT_VIEW.filterPriority;
+      this.showCompleted = TASK_LIST_DEFAULT_VIEW.showCompleted;
+      this.activeSmartList = TASK_LIST_DEFAULT_VIEW.smartList;
     }
     this.hydratedForBoardId = boardId;
     this.hydratedRevision = boardViewRevision(boardId);

@@ -3,14 +3,16 @@
  *
  * Confirms first (naming Windows-1252 and the backup), then asks main to
  * snapshot the original bytes to `.filo/recovery/`, decode them as
- * Windows-1252 and write UTF-8 (`vault:convert-to-utf8`). On success the note
- * leaves the non-UTF-8 set; the caller re-reads it (`onConverted`).
+ * Windows-1252 and write UTF-8 (`vault:convert-to-utf8`). The note stays
+ * read-only until its views show the converted text: a key typed before then
+ * would be built on the old decode and saved over the conversion. On success
+ * the note leaves the non-UTF-8 set; the caller re-reads it (`onConverted`).
  */
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { reportError } from '../utils/errorBus';
 import { uiStore } from '../../stores/ui.svelte';
-import { noteReadEncoding } from './nonUtf8Paths.svelte';
+import { holdReadOnlyWhileConverting, noteReadEncoding } from './nonUtf8Paths.svelte';
 import { captureVaultIdentity, isStillSameVault } from './vaultIdentity';
 import { noteStore } from '../../stores/notes.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
@@ -36,13 +38,16 @@ export function confirmConvertToUtf8(vaultRoot: string, relPath: string, onConve
     cancelLabel: 'Cancel',
     onConfirm: () => {
       void (async () => {
+        const release = holdReadOnlyWhileConverting(relPath);
         try {
           await invokeOk('vault:convert-to-utf8', vaultRoot, relPath);
           noteReadEncoding(relPath, 'utf-8');
           await reloadConvertedNote(relPath);
+          release();
           uiStore.pushToast({ text: `Converted "${relPath}" to UTF-8. The original is in .filo/recovery/.`, type: 'success', duration: 6000 });
           onConverted?.();
         } catch (err) {
+          release();
           const code = err instanceof IpcEnvelopeError ? err.code : undefined;
           reportError(
             'convertToUtf8',

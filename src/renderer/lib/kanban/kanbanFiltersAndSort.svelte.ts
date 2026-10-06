@@ -10,6 +10,7 @@ import { vaultPathForTile } from './kanbanFrontmatterWriter';
 
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
 import { naturalCompare } from '../utils/naturalSort';
+import { KANBAN_DEFAULT_VIEW } from '../boards/lastViewFlush';
 export type KanbanSortBy = 'manual' | 'title' | 'created' | 'dueDate' | 'priority';
 
 export interface KanbanFilterProp {
@@ -192,9 +193,9 @@ export class KanbanFiltersAndSort {
       this.activeFilterTags = Array.isArray(lv.filterTags) ? [...lv.filterTags] : [];
       this.activeFilterProp = lv.filterProp ? { ...lv.filterProp } : null;
     } else {
-      this.activeSortBy = 'manual';
-      this.activeFilterTags = [];
-      this.activeFilterProp = null;
+      this.activeSortBy = KANBAN_DEFAULT_VIEW.sortBy;
+      this.activeFilterTags = [...KANBAN_DEFAULT_VIEW.filterTags];
+      this.activeFilterProp = KANBAN_DEFAULT_VIEW.filterProp;
     }
   }
 

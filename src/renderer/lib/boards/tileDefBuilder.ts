@@ -42,6 +42,19 @@ export function isInlineTileType(type: string): boolean {
   return INLINE_TILE_TYPES.has(type);
 }
 
+/**
+ * Whether a Mind Map's `tileDefs[id]` is a second copy of a link, embed or
+ * timer tile, which lives in `board.inlineTiles`. Such a copy is never kept
+ * up to date (edits go to the inline tile), so readers skip it: a tag action
+ * working from it would write the tile's old tags back.
+ */
+export function isStaleInlineCopy(
+  board: { type?: string; inlineTiles?: Record<string, unknown> } | undefined,
+  id: string,
+): boolean {
+  return board?.type === 'mindmap' && !!board.inlineTiles?.[id];
+}
+
 // ── Tile definition builders ──
 
 /**

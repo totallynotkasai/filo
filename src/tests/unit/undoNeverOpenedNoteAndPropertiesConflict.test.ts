@@ -236,7 +236,6 @@ describe('"Apply anyway" clicked after a vault swap is a no-op', () => {
   it('atomic handler: whole-patch force is also swallowed after the swap', async () => {
     await applyDeltaChecked({
       relPath: 'recur.md',
-      targetBoardId: 'tl',
       delta: patchToFrontmatterDelta({ completed: false, dueDate: '2026-01-15' }),
       expected: patchToFrontmatterDelta({ completed: false, dueDate: '2026-01-01' }),
       label: 'recur.md',

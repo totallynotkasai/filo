@@ -362,7 +362,8 @@ export function createScheduler<TArgs>(
         // Prune this key's attributed ids (and any retained re-fire) so the
         // ledger can't grow for the whole session. Crash recovery is unaffected:
         // `.filo/.dirty` + `failedVaultPaths` are owned by `endWrite`/`markPathFailed`.
-        ledger.recordSuccess(key, failureId);
+        // Ids it failed under elsewhere (the file moved since) are healed too.
+        for (const earlier of ledger.recordSuccess(key, failureId)) opts.onEarlierFailureHealed?.(earlier, sentinel);
         // Prune this path's write-generation entry on a still-newest, now-clean
         // success to bound `writeGenByPath`. A timed-out write keeps its entry
         // (the late-heal gen guard still needs it).
@@ -565,6 +566,18 @@ export function createScheduler<TArgs>(
         { vaultRoot: parkedEntry.vaultRoot, path: fallbackPath ?? parkedEntry.path },
         true,
       );
+    }
+  }
+
+  /**
+   * A full save's capture holds the path its key had when the save began. If
+   * that file moves before the capture is sent, sending it would write the
+   * board back where it was. A fresh schedule of the key takes the capture's
+   * place (`takeCapture`) and reads the new path when it fires, at once.
+   */
+  function replaceCapturesUnder(isUnder: (path: string) => boolean): void {
+    for (const [key, capture] of [...captures]) {
+      if (capture.schedulePath && isUnder(capture.schedulePath)) schedule(key, capture.getArgs, 0);
     }
   }
 
@@ -979,6 +992,7 @@ export function createScheduler<TArgs>(
     flushAll,
     retryFailed,
     discardRetained: (key: string) => ledger.release(key),
+    replaceCapturesUnder,
     reset,
     hasPendingTimer,
     hasParked,

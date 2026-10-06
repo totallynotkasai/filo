@@ -17,7 +17,8 @@ import {
  * quitting, writes no byte of any file outside `.filo/`. The vault holds the
  * shapes a careless writer changes: CRLF, a BOM, a comment, `zip: 02134`
  * (a string a YAML re-dump turns into the number 2134), notes without
- * frontmatter, task fields, tables, code and checklists.
+ * frontmatter, task fields, tables, code and checklists. Two boards written by
+ * hand carry no saved view (`lastView`): showing them writes none.
  */
 
 let root: string;
@@ -36,9 +37,43 @@ const LOOKED_AT = {
   Checklist: '---\ntitle: Checklist\n---\n- [ ] one\n- [x] two\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n',
 };
 
+/** A Kanban board and a Task List as a person or another tool writes them: no `lastView`. */
+function handWrittenBoards(): Record<string, string> {
+  const at = 1790000000000;
+  const def = (id: string, filePath: string): Record<string, unknown> => ({
+    id, type: 'text', filePath, style: { headerColor: '', bodyColor: '' }, createdAt: at, updatedAt: at,
+  });
+  const head = (id: string, name: string, type: string, settings: Record<string, unknown>): Record<string, unknown> => ({
+    id, name, emoji: '', createdAt: at, updatedAt: at, type,
+    settings: { backgroundColor: '', defaultFolder: '', accentColor: '', ...settings, defaults: {} },
+  });
+  const board = (data: Record<string, unknown>): string => JSON.stringify({ version: 8, ...data, connections: {}, frames: [] }, null, 2);
+  return {
+    'Hand Kanban.board.json': board({
+      board: {
+        ...head('handkanban01', 'Hand Kanban', 'kanban', {}),
+        columns: [{ id: 'handcolumn01', title: 'To do', position: 0, collapsed: false, tilePlacements: [{ tileId: 'handcard0001', position: 0 }] }],
+      },
+      tileDefs: { handcard0001: def('handcard0001', 'Plain.md') },
+    }),
+    'Hand List.board.json': board({
+      board: {
+        ...head('handlist0001', 'Hand List', 'tasklist', { groupBy: 'none', sortBy: 'manual' }),
+        tasks: [{ tileId: 'handtask0001', position: 0 }],
+        sections: [{ id: 'sec_handlist', title: 'Section 1', position: 0, collapsed: false }],
+        collapsedSubtasks: [],
+      },
+      tileDefs: { handtask0001: def('handtask0001', 'Crlf.md') },
+    }),
+  };
+}
+
 test('opening every board type and several notes, then quitting, changes no file', async () => {
   test.setTimeout(240_000);
-  const vault = freshVault(root, 'LookVault', Object.fromEntries(Object.entries(LOOKED_AT).map(([k, v]) => [`${k}.md`, v])));
+  const vault = freshVault(root, 'LookVault', {
+    ...Object.fromEntries(Object.entries(LOOKED_AT).map(([k, v]) => [`${k}.md`, v])),
+    ...handWrittenBoards(),
+  });
   generateVault(vault, 1000);
   const before = hashVault(vault);
 
@@ -49,6 +84,8 @@ test('opening every board type and several notes, then quitting, changes no file
       ['Gen Mind Map', '.tile-container'],
       ['Gen Kanban', '.kanban-card-shell'],
       ['Gen Task List', '.task-item-wrap'],
+      ['Hand Kanban', '.kanban-card-shell'],
+      ['Hand List', '.task-item-wrap'],
     ] as const) {
       await openBoardByName(win, name);
       await expect(win.locator(selector).first()).toBeVisible({ timeout: 30_000 });

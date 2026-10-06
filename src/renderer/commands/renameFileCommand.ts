@@ -52,6 +52,11 @@ export class RenameFileCommand extends Command {
     await this.move(this.toPath, this.fromPath, 'undo');
   }
 
+  /** The rename's own follow-up marks every board whose paths it rewrites. */
+  changesBoardFile(): boolean {
+    return false;
+  }
+
   private async move(from: string, to: string, verb: 'undo' | 'redo'): Promise<void> {
     // A different vault is open: its same-named file isn't the one renamed.
     if (!this.vaultRoot || vaultStore.path !== this.vaultRoot) {

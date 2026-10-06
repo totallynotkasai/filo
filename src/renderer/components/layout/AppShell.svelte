@@ -36,6 +36,8 @@
   import { editTitleWhenShown } from '../../lib/boards/newTileTitle';
   import { releaseTextFocus } from '../../lib/boards/componentFlush';
   import { createNewNote, folderOfNote } from '../../lib/notes/newNote';
+  import { mayLeaveRawView, rawTextUnsaved } from '../../lib/notes/rawViewLeave';
+  import { untrack } from 'svelte';
   import { placeClear, tileRects, viewRect } from '../../lib/canvas/newTilePlacement';
   import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
   import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
@@ -162,6 +164,10 @@
       const existingLeaf = workspaceStore.findLeafByTab(activeId);
       if (existingLeaf) {
         workspaceStore.setActivePane(existingLeaf.id);
+      } else if (rawLeave) {
+        // The check running for this pane shows the latest tab when it ends.
+      } else if (untrack(() => rawTextUnsaved(tabStore.tabs.find((t) => t.id === activePane.tabId)?.notePath))) {
+        rawLeave = leaveRawTab(activePane.id, activePane.tabId);
       } else {
         workspaceStore.setLeafTab(activePane.id, activeId);
       }
@@ -169,6 +175,36 @@
       workspaceStore.ensureRoot(activeId);
     }
   });
+
+  /** The raw-view check of a pane switching tabs, while it runs. Not reactive. */
+  let rawLeave: Promise<void> | null = null;
+
+  /**
+   * The active pane is leaving a Document tab whose raw view holds unsaved
+   * text: it is saved first, and if it can't be, the user chooses (as for a
+   * close). The pane then shows whichever tab is active by then, or, on
+   * Cancel, its tab is made active again.
+   */
+  async function leaveRawTab(paneId: string, leavingTabId: string): Promise<void> {
+    const notePath = tabStore.tabs.find((t) => t.id === leavingTabId)?.notePath;
+    let go = true;
+    try {
+      go = notePath ? await mayLeaveRawView(notePath) : true;
+    } finally {
+      rawLeave = null;
+    }
+    const pane = workspaceStore.leaves.find((l) => l.id === paneId);
+    if (!pane || pane.tabId !== leavingTabId) return;
+    const target = tabStore.activeTabId;
+    if (!go) {
+      if (tabStore.tabs.some((t) => t.id === leavingTabId)) tabStore.setActive(leavingTabId);
+      return;
+    }
+    if (!target || target === leavingTabId) return;
+    const shown = workspaceStore.findLeafByTab(target);
+    if (shown) workspaceStore.setActivePane(shown.id);
+    else workspaceStore.setLeafTab(paneId, target);
+  }
 
   // Apply global font from project settings to the CSS custom property
   $effect(() => {

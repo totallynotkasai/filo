@@ -14,6 +14,7 @@ import { ChangeRefusedError } from './changeRefusedError';
 import { DeleteCardCommand } from './kanbanCommands';
 import { DeleteTaskCommand } from './taskCommands';
 import { restoreClearedPins, type ClearedPin } from '../lib/vault/folderPins';
+import { clearDefaultImages, restoreDefaultImages, type ClearedDefaultImage } from '../stores/globalDefaultImages';
 import { captureTileMemberships, restoreTileMemberships, type TileMemberships } from '../lib/boards/tileMemberships';
 
 /**
@@ -74,6 +75,11 @@ export class BatchCommand extends Command {
     const ids = new Set<string>(this.targetBoardId ? [this.targetBoardId] : []);
     for (const cmd of this.commands) for (const id of cmd.touchedBoardIds()) ids.add(id);
     return ids;
+  }
+
+  /** Whether any child changes a board file. */
+  changesBoardFile(): boolean {
+    return this.commands.some((cmd) => cmd.changesBoardFile());
   }
 
   /**
@@ -233,6 +239,8 @@ export interface CascadeDeleteOptions {
   fileTags?: Record<string, string[]>;
   /** Folder pins (Root Directory, board folders) the delete cleared. */
   clearedPins?: ClearedPin[];
+  /** The Global Defaults' frame image, when the delete took its file. */
+  clearedDefaultImages?: ClearedDefaultImage[];
   /** How each board whose file went with the item was shown (camera, side toolbar), by board id. */
   boardViews?: Record<string, BoardView>;
 }
@@ -277,6 +285,8 @@ export class CascadeDeleteCommand extends Command {
   private fileTags: Record<string, string[]>; // allow-string-path-key: tags.json fileTags keys, put back verbatim
   /** Pins on the deleted folder or inside it: undo puts them back, redo clears them again. */
   private clearedPins: ClearedPin[];
+  /** The Global Defaults' frame image the delete cleared: undo puts it back, redo clears it again. */
+  private clearedDefaultImages: ClearedDefaultImage[];
   /**
    * The camera and side toolbar of each board inside the item, which the
    * delete drops with the board: undo puts them back once the file is back,
@@ -330,6 +340,7 @@ export class CascadeDeleteCommand extends Command {
     this.itemRel = opts.trashed?.rel ?? null;
     this.fileTags = this.snapshot(opts.fileTags ?? {});
     this.clearedPins = this.snapshot(opts.clearedPins ?? []);
+    this.clearedDefaultImages = this.snapshot(opts.clearedDefaultImages ?? []);
     this.boardViews = this.snapshot(opts.boardViews ?? {});
     const totalTiles = Object.values(byBoard).reduce((sum, t) => sum + t.length, 0);
     this.description = this.itemRel
@@ -432,6 +443,7 @@ export class CascadeDeleteCommand extends Command {
     // Re-apply style clears on redo. The first run is a no-op because the
     // caller already applied them before history.execute.
     boardCacheStore.applyCascadeStyleClears(this.styleClears);
+    clearDefaultImages(this.clearedDefaultImages);
   }
 
   async undo(): Promise<void> {
@@ -489,6 +501,7 @@ export class CascadeDeleteCommand extends Command {
     // cover image on a card deleted with its folder has nowhere to land
     // before its card is back.
     boardCacheStore.restoreCascadeStyleClears(this.styleClears);
+    restoreDefaultImages(this.clearedDefaultImages);
     for (const conn of this.connections) {
       // Skip a restored connection whose endpoint tile no longer exists (e.g.
       // independently removed after this cascade). The tile-restore loop above
@@ -522,6 +535,7 @@ export class CascadeDeleteCommand extends Command {
     for (const [path, list] of Object.entries(this.fileTags)) tags[retarget(path)] = list;
     this.fileTags = tags;
     this.clearedPins = this.clearedPins.map((pin) => ({ ...pin, defaultFolder: retarget(pin.defaultFolder) }));
+    this.clearedDefaultImages = this.clearedDefaultImages.map((c) => ({ backgroundImage: retarget(c.backgroundImage) }));
   }
 }
 

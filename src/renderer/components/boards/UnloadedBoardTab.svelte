@@ -40,7 +40,7 @@
     <p class="unloaded-reason">{message}</p>
   {/if}
   <p class="unloaded-hint">
-    Nothing in the file was changed. Fix it in a text editor, or wait for it to finish syncing, then retry.
+    Nothing in the file was changed. A file still syncing, or fixed in a text editor, opens with Retry.
   </p>
   <button class="unloaded-retry" onclick={() => { void retry(); }} disabled={retrying}>
     {retrying ? 'Retrying…' : 'Retry'}

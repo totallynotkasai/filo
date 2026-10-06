@@ -611,10 +611,21 @@ export const noteStore = {
     m.lossyChanges = [];
   },
 
-  /** Re-reads a note whose read failed. */
+  /**
+   * Re-reads a note (its read failed, or it was converted to UTF-8). With an
+   * edit not saved yet, or a conflict open, the file goes through the check
+   * every change on disk gets: a new body there meets the typed one as a
+   * conflict, never under it.
+   */
   async reload(relPath: string): Promise<void> {
-    const m = models.get(vaultPath(relPath));
+    const key = vaultPath(relPath);
+    const m = models.get(key);
     if (!m) return;
+    serializeViews(key);
+    if (m.status === 'conflict' || (m.status === 'ready' && (m.hasUnsavedBody || writer.hasPendingBody(key)))) {
+      await onDiskChanged(m.relPath);
+      return;
+    }
     m.loaded = load(m, true);
     await m.loaded;
   },

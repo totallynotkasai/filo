@@ -54,13 +54,21 @@ vaultSwapResettable('vaultExternalChanges.inFlightDriftPrompts', () => inFlightD
 /** `resolveBoardDrift` in progress per path: one answer, carried out once. */
 const inFlightResolutions = new Map<VaultPath, Promise<BoardDriftChoice>>();
 vaultSwapResettable('boardDrift.inFlightResolutions', () => inFlightResolutions.clear());
-// On rename, move an in-flight prompt to the new key so it isn't stranded under
-// the old one and a post-rename save doesn't open a duplicate prompt.
+
+/** Moves `map`'s entry for `oldRel` to `newRel`'s key. */
+function moveKey<V>(map: Map<VaultPath, V>, oldRel: string, newRel: string): void {
+  const value = map.get(vaultPath(oldRel));
+  if (value === undefined) return;
+  map.delete(vaultPath(oldRel));
+  map.set(vaultPath(newRel), value);
+}
+
+// On rename, move an in-flight prompt and its resolution to the new key so
+// they aren't stranded under the old one and a post-rename save doesn't open
+// a duplicate prompt.
 registerPathRenamable('vaultExternalChanges.inFlightDriftPrompts', (oldRel, newRel) => {
-  const inflight = inFlightDriftPrompts.get(vaultPath(oldRel));
-  if (inflight === undefined) return;
-  inFlightDriftPrompts.delete(vaultPath(oldRel));
-  inFlightDriftPrompts.set(vaultPath(newRel), inflight);
+  moveKey(inFlightDriftPrompts, oldRel, newRel);
+  moveKey(inFlightResolutions, oldRel, newRel);
 });
 
 /**
@@ -100,7 +108,10 @@ export function promptBoardExternalEdit(args: { path: string }): Promise<BoardDr
 
   inFlightDriftPrompts.set(key, promise);
   void promise.finally(() => {
-    if (inFlightDriftPrompts.get(key) === promise) inFlightDriftPrompts.delete(key);
+    // Wherever a rename has moved it to.
+    for (const [at, held] of inFlightDriftPrompts) {
+      if (held === promise) inFlightDriftPrompts.delete(at);
+    }
   });
   return promise;
 }
@@ -231,21 +242,26 @@ async function keepLocalVersion(rel: string): Promise<boolean> {
  */
 export function resolveBoardDrift(rel: string): Promise<BoardDriftChoice> {
   // The watcher and the writer can both ask about one change: one answer, carried out once.
-  const key = vaultPath(rel);
-  const existing = inFlightResolutions.get(key);
+  const existing = inFlightResolutions.get(vaultPath(rel));
   if (existing) return existing;
-  holdDriftDecision(holdBoardDrift(rel));
+  const hold = holdBoardDrift(rel);
+  holdDriftDecision(hold);
   const resolution = (async (): Promise<BoardDriftChoice> => {
     const choice = await promptBoardExternalEdit({ path: rel });
-    const boardId = findBoardIdForPath(rel);
+    // The board may have been renamed while the question was open: the hold
+    // follows renames, so the answer acts on the file where it is now. A
+    // hold released meanwhile (the board left the cache) leaves nothing to do.
+    if (boardDriftHold(hold.path) !== hold) return 'defer';
+    const now = hold.path;
+    const boardId = findBoardIdForPath(now);
     if (choice === 'reload') {
-      if (!boardId || (await reloadBoardFromDisk(rel, boardId)) !== 'reloaded') return 'defer';
-      releaseBoardDrift(rel);
+      if (!boardId || (await reloadBoardFromDisk(now, boardId)) !== 'reloaded') return 'defer';
+      releaseBoardDrift(hold.path);
       return 'reload';
     }
     if (choice === 'keep-local') {
-      if (!(await keepLocalVersion(rel))) return 'defer';
-      releaseBoardDrift(rel);
+      if (!(await keepLocalVersion(now))) return 'defer';
+      releaseBoardDrift(hold.path);
       // The write refused while the question was open goes now, over the
       // version just copied.
       if (boardId) void retryFailedBoardWrite(boardId);
@@ -253,9 +269,12 @@ export function resolveBoardDrift(rel: string): Promise<BoardDriftChoice> {
     }
     return 'defer';
   })();
-  inFlightResolutions.set(key, resolution);
+  inFlightResolutions.set(vaultPath(rel), resolution);
   void resolution.finally(() => {
-    if (inFlightResolutions.get(key) === resolution) inFlightResolutions.delete(key);
+    // Keyed by wherever the board is now (the rename sweep moves the key).
+    for (const [key, held] of inFlightResolutions) {
+      if (held === resolution) inFlightResolutions.delete(key);
+    }
   });
   return resolution;
 }

@@ -5,7 +5,9 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import {
   UpdateCardFieldCommand,
+  UpdateKanbanColumnStyleCommand,
 } from '@renderer/commands/index';
+import { historyStore } from '@renderer/stores/history.svelte';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard } from '@renderer/schema/index';
 import { cancelAllPendingWrites } from '@renderer/lib/boards/boardSaver';
@@ -26,7 +28,9 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * runtime board, advance the debounce window, then assert exactly one
  * `board:save` lands and its target path is A's `.board.json`.
  *
- * Exercised with a note field edit (UpdateCardField, execute and undo).
+ * Exercised with a column style step, which changes the board. A note field
+ * edit (UpdateCardField) changes only the note, so it writes neither board's
+ * file (KNOWN_LIMITATIONS #29).
  */
 
 function makeKanban(id: string): BoardFileData {
@@ -99,7 +103,30 @@ describe('Phase 6.1.R3 — commands dirty their originating board, not the activ
     restoreFiloDefault();
   });
 
-  it('UpdateCardFieldCommand — execute and undo save A even when B is active', async () => {
+  it('a column style step — execute and undo save A even when B is active', async () => {
+    const a = makeKanban('board-A');
+    const b = makeKanban('board-B');
+    boardCacheStore.hydrate({ 'board-A': a, 'board-B': b }, {
+      'board-A': 'A.board.json',
+      'board-B': 'B.board.json',
+    });
+    const cmd = new UpdateKanbanColumnStyleCommand('board-A', 'c1', {}, { accent: '#ff0000' });
+
+    boardStore.setBoard(b.board);
+
+    cmd.execute();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(capture.paths).toContain('A.board.json');
+    expect(capture.paths).not.toContain('B.board.json');
+
+    capture.paths = [];
+    cmd.undo();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(capture.paths).toContain('A.board.json');
+    expect(capture.paths).not.toContain('B.board.json');
+  });
+
+  it('a card field edit, run through the history, writes neither board file', async () => {
     const a = makeKanban('board-A');
     const b = makeKanban('board-B');
     boardCacheStore.hydrate({ 'board-A': a, 'board-B': b }, {
@@ -115,16 +142,15 @@ describe('Phase 6.1.R3 — commands dirty their originating board, not the activ
     );
 
     boardStore.setBoard(b.board);
+    historyStore.setActiveBoard('board-A');
 
-    await cmd.execute();
+    await historyStore.execute(cmd);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(capture.paths).toContain('A.board.json');
-    expect(capture.paths).not.toContain('B.board.json');
+    expect(capture.paths).toEqual([]);
 
-    capture.paths = [];
-    await cmd.undo();
+    await historyStore.undo();
     await vi.advanceTimersByTimeAsync(1000);
-    expect(capture.paths).toContain('A.board.json');
-    expect(capture.paths).not.toContain('B.board.json');
+    expect(capture.paths).toEqual([]);
+    historyStore.clear();
   });
 });

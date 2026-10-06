@@ -15,7 +15,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { boardCacheStore } from './boardCache.svelte';
 import { bumpBoardViewRevision } from './boardViewRevision.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
-import { isInlineTileType } from '../lib/boards/tileDefBuilder';
+import { isInlineTileType, isStaleInlineCopy } from '../lib/boards/tileDefBuilder';
 import { uiStore } from './ui.svelte';
 import { tagSweepLabel, withTagSweepProgress } from './tagSweepProgress.svelte';
 import {
@@ -39,11 +39,15 @@ export interface TagCascadeStore {
   flushPendingSave(): Promise<{ ok: boolean }>;
 }
 
-/** Every board-only tile (link / iframe / timer) on every loaded board. */
+/**
+ * Every board-only tile (link / iframe / timer) on every loaded board, once
+ * each: a Mind Map's live copy is its inline tile, never a def beside it.
+ */
 export function* iterateBoardOnlyTiles(): Generator<{ boardId: string; id: string; tags: string[] }> {
   for (const [boardId, data] of Object.entries(boardCacheStore.cache)) {
     for (const def of Object.values(data.tileDefs ?? {})) {
-      if (isInlineTileType(def.type)) yield { boardId, id: def.id, tags: (def as { tags?: string[] }).tags ?? [] };
+      if (!isInlineTileType(def.type) || isStaleInlineCopy(data.board, def.id)) continue;
+      yield { boardId, id: def.id, tags: (def as { tags?: string[] }).tags ?? [] };
     }
     const inline = (data.board as { inlineTiles?: Record<string, { tags?: string[] }> }).inlineTiles ?? {};
     for (const [id, t] of Object.entries(inline)) yield { boardId, id, tags: t.tags ?? [] };

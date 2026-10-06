@@ -20,6 +20,7 @@ import { loadVersionedFile } from '../vault/loadVersionedFile';
 import { detectConflictCopyPath } from '@shared/conflictCopy';
 import { safeFileName } from '@shared/fileNames';
 import { boardNameFromPath } from './boardNaming';
+import { isStaleInlineCopy } from './tileDefBuilder';
 
 // allow-module-state: immutable lookup table derived from a build-time constant
 const TILE_TYPE_SET: ReadonlySet<string> = new Set(TILE_TYPES);
@@ -34,6 +35,22 @@ const TILE_TYPE_SET: ReadonlySet<string> = new Set(TILE_TYPES);
  * Mutates `raw.tileDefs` in place — the migration output is a freshly
  * shallow-cloned envelope, so this is safe.
  */
+/**
+ * Drops each Mind Map def that duplicates an inline tile (`isStaleInlineCopy`).
+ * In memory only: nothing is written for it, and the file loses the copy at
+ * the board's next save. Mutates `raw.tileDefs` in place, as the pre-filter
+ * below does.
+ */
+function dropStaleInlineCopies(raw: unknown): void {
+  if (!raw || typeof raw !== 'object') return;
+  const envelope = raw as { tileDefs?: unknown; board?: { type?: string; inlineTiles?: Record<string, unknown> } };
+  const defs = envelope.tileDefs;
+  if (!defs || typeof defs !== 'object' || Array.isArray(defs)) return;
+  for (const id of Object.keys(defs)) {
+    if (isStaleInlineCopy(envelope.board, id)) delete (defs as Record<string, unknown>)[id];
+  }
+}
+
 function preFilterUnknownTileTypes(raw: unknown): string[] {
   if (!raw || typeof raw !== 'object') return [];
   const tileDefs = (raw as { tileDefs?: unknown }).tileDefs;
@@ -440,6 +457,22 @@ function boardLoadErrorMessage(kind: LoadBoardError['error'], relPath: string, d
 }
 
 /**
+ * What makes `raw` no board at all, or null. A file with no `version` is
+ * left to the version gate (the oldest boards had none); one whose
+ * `version` is text, or not a whole number, is broken.
+ */
+export function boardShapeProblem(raw: unknown): string | null {
+  if (typeof raw === 'string') return 'the whole file is one quoted text, not a board';
+  if (Array.isArray(raw)) return 'the file is a list, not a board';
+  if (raw === null || typeof raw !== 'object') return 'the file holds no board';
+  if (!('version' in raw)) return null;
+  const version = (raw as { version: unknown }).version;
+  if (typeof version === 'number' && Number.isInteger(version)) return null;
+  const shown = JSON.stringify(version) ?? String(version);
+  return `its "version" is ${shown.length > 40 ? `${shown.slice(0, 40)}…` : shown}, not a whole number`;
+}
+
+/**
  * Single failed-board entry returned by `loadAllBoards`. Carries the
  * vault-relative path that failed to load, the classifier reason, and the
  * detail message. Callers route these through `recovery:snapshot` (so the
@@ -522,8 +555,15 @@ export async function loadBoard(
   }
   if (!baseline) baseline = { readJson: JSON.stringify(raw) };
 
-  // Anything that isn't the current format (including a non-object) is
-  // classified by the version gate in `migrateBoardFile` below.
+  // A file that isn't a board, or names its format with something other than
+  // a whole number, is broken rather than old: no Filo wrote it that way, so
+  // "made by an older Filo" would send the user after a version that can't
+  // open it either.
+  const shapeProblem = boardShapeProblem(raw);
+  if (shapeProblem) return { ok: false, error: 'schema-invalid', message: shapeProblem };
+
+  // Any other format than the current one is classified by the version gate
+  // in `migrateBoardFile` below.
   const rawJson: unknown = raw;
 
   // Route migrate → prune → validate through the shared versioned-load helper
@@ -548,6 +588,7 @@ export async function loadBoard(
     migrateBoardFile,
     rawJson,
     (data) => {
+      dropStaleInlineCopies(data);
       droppedTileTypes = preFilterUnknownTileTypes(data);
       // Orphan / duplicate prune runs AFTER the unknown-type strip so
       // connection/frame refs are validated against the trimmed tileDefs (a
@@ -576,13 +617,17 @@ export async function loadBoard(
 
   // A board from an older Filo format that no step carries forward (or whose
   // step failed). Refused, and never written, so the file stays as it was.
+  // No Filo can open it any more, so the way on is a new board: the notes it
+  // showed are files of their own and lost nothing.
   if (loaded.status === 'no-migration-path') {
+    const format = loaded.migratedFrom ? ` (board format ${loaded.migratedFrom})` : '';
+    const why = loaded.failure !== undefined
+      ? `This board was made by an older Filo${format}, and updating it to this version's format failed (${loaded.failure}).`
+      : `This board was made by an older Filo${format}, which this version can't open.`;
     return {
       ok: false,
       error: 'no-migration-path',
-      message: loaded.failure !== undefined
-        ? `This board was made by an older Filo, and updating it to this version's format failed (${loaded.failure}). The file was left unchanged.`
-        : 'This board was made by an older Filo and is not supported. The file was left unchanged.',
+      message: `${why} The file was left unchanged, and its notes are safe: each is a .md file of its own. Make a new board and add them to it.`,
     };
   }
 

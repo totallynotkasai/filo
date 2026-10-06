@@ -645,7 +645,7 @@ export const boardCacheStore = {
    * vault-relative path in `boardPaths`, seeds an empty cache entry, and
    * appends the board to `project.boards`.
    *
-   * Callers (BoardBrowser, BoardRouter auto-create, templates) MUST go
+   * Callers (BoardBrowser, TabBar new-tab, templates) MUST go
    * through this method — pushing directly to `project.boards` skips the
    * file write and leaves the cache empty, which silently breaks every
    * subsequent `markDirty(boardId)` (since `getBoardWriteArgs` returns
@@ -744,7 +744,7 @@ export const boardCacheStore = {
    * Convenience wrapper that builds a default Board via `boardRegistry` and
    * persists it. The Kanban-folder freeze happens inside
    * `persistNewBoard` so every caller (this wrapper, BoardBrowser, TabBar
-   * new-tab, templates, BoardRouter auto-create) gets the same on-disk
+   * new-tab, templates) gets the same on-disk
    * shape — the registry is the single source of truth for default board
    * fields per type.
    */

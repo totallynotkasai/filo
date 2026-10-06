@@ -3,6 +3,7 @@ import { boardCacheStore } from './boardCache.svelte';
 import type { BoardContext } from './boardStoreTypes';
 import { historyStore } from './history.svelte';
 import { CascadeDeleteCommand, type CascadeDeleteOptions } from '../commands/index';
+import { clearDefaultImages, defaultImagesAt } from './globalDefaultImages';
 
 /**
  * Board slice — file-reference changes from outside the board (renames and
@@ -28,7 +29,7 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
 
     cascadeDeleteByVaultPath(
       deletedRelPath: string,
-      opts: Omit<CascadeDeleteOptions, 'styleClears'> & {
+      opts: Omit<CascadeDeleteOptions, 'styleClears' | 'clearedDefaultImages'> & {
         /**
          * Keep the command off every undo stack: no stack the user can reach
          * would undo it (no board open, or a Document tab's own stack), so
@@ -51,10 +52,12 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
       const hasStyleClears = Object.values(targets.styleClears).some(
         (s) => s !== undefined && Object.keys(s).length > 0,
       );
+      // The Global Defaults' frame image, when it is the file (or inside it).
+      const clearedDefaultImages = defaultImagesAt(deletedRelPath);
       // Nothing to undo at all: no tile, no style field, nothing in the trash.
       // A trashed item on no board still gets a command, so Ctrl+Z brings it
       // back.
-      if (targets.tileIds.length === 0 && !hasStyleClears && !opts.trashed) {
+      if (targets.tileIds.length === 0 && !hasStyleClears && clearedDefaultImages.length === 0 && !opts.trashed) {
         return { removedTileIds, changedBoardIds: Object.keys(targets.byBoard), command: null };
       }
 
@@ -97,10 +100,15 @@ export function makeFrontmatterSyncSlice(_ctx: BoardContext) {
       // Built before the clears land: it snapshots each Kanban card's and
       // Task List task's placement, cover image included.
       const { offStack, ...commandOpts } = opts;
-      const command = new CascadeDeleteCommand(byBoardTiles, conns, { ...commandOpts, styleClears: styleClearsSnapshot });
+      const command = new CascadeDeleteCommand(byBoardTiles, conns, {
+        ...commandOpts,
+        styleClears: styleClearsSnapshot,
+        clearedDefaultImages,
+      });
       if (hasStyleClears) {
         boardCacheStore.applyCascadeStyleClears(targets.styleClears);
       }
+      clearDefaultImages(clearedDefaultImages);
 
       // Dispatch through history so Ctrl+Z restores the file, placements and
       // styles. Off the stack, the caller offers the undo itself (a toast).

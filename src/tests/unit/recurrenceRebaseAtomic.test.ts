@@ -45,7 +45,6 @@ describe('recurrence roll-forward rebase is atomic', () => {
   async function redo(atomic?: boolean): Promise<void> {
     await applyDeltaChecked({
       relPath: 'T.md',
-      targetBoardId: 'b',
       delta: patchToFrontmatterDelta(PATCH),
       expected: patchToFrontmatterDelta(EXPECTED),
       label: 'T.md',

@@ -47,6 +47,13 @@ export interface Command {
    * snapshots describe the version replaced.
    */
   touchedBoardIds(): ReadonlySet<string>;
+  /**
+   * False for a step that changes only notes (their frontmatter, text or
+   * name): the history then leaves its board's file alone, since nothing in
+   * it changed (KNOWN_LIMITATIONS #29). A part of a step that does change a
+   * board goes through the cache writers, which mark that board themselves.
+   */
+  changesBoardFile(): boolean;
 }
 
 /**
@@ -132,5 +139,10 @@ export abstract class Command {
    */
   touchedBoardIds(): ReadonlySet<string> {
     return new Set(this.targetBoardId ? [this.targetBoardId] : []);
+  }
+
+  /** True unless the step changes only notes (see the interface). */
+  changesBoardFile(): boolean {
+    return true;
   }
 }

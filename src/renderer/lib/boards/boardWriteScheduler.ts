@@ -36,7 +36,8 @@ import { hasUncopiedOlderFormat, keepOlderFormatFile } from './migratedBoards';
 import { invokeOk } from '../utils/invokeOk';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 import { createScheduler } from './writeScheduler';
-import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
+import { isAtOrUnder, vaultPath, type VaultPath } from '../../../shared/vaultPath';
+import { registerPathRenamable } from '../vault/renamePathKeys';
 import { getBaseline, hasBaselineDrifted, isBaselineUnverified, refreshBaselineAfterWrite, unverifiedLoadedContent } from '../vault/fileBaselineRegistry';
 
 /**
@@ -217,12 +218,23 @@ const boardScheduler = createScheduler<BoardWriteArgs>({
   },
   missingSourceMessage: (key) =>
     `Filo couldn't save the latest changes (boardId: ${key}). Re-open the board and try again.`,
+  // A board that failed at its old path (moved mid-write) and then saved at
+  // its new one owes nothing at the old path any more.
+  onEarlierFailureHealed: (failureId, sentinel) => clearFailedPathAfterLateSuccess(sentinel.vaultRoot, failureId),
   // `writeBoardFile` awaits the pre-write `vault:stat` (and, for an unverified
   // board, a read) plus `board:save`, any of which can wedge on a stalled
   // network volume. Bound it so a wedged board write can't hang `flushAll` /
   // quit. (It never awaits the drift question: see `boardDriftHold`.)
   writeTimeoutMs: WRITE_TIMEOUT_MS,
   retainIoError: true,
+});
+
+// A board file (or its folder) moved while a full save holds a copy of its
+// write: the copy names the old path, so it is replaced by a write that reads
+// the board's new one. Every rename runs this sweep after the board cache has
+// rebound the board's path (`renameBoardPath`).
+registerPathRenamable('boardWriteScheduler', (oldRel) => {
+  boardScheduler.replaceCapturesUnder((path) => isAtOrUnder(path, oldRel));
 });
 
 /**

@@ -20,6 +20,7 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { setActiveVaultPath } from '@renderer/lib/vault/activeVaultPath';
 import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { fakeCommand } from '../helpers/fakeCommand';
 
 // ── Stubs ──
 
@@ -601,7 +602,7 @@ describe('Replace All — match options, the cap, and the toast Undo', () => {
     expect(filesystem['a.md']).toBe('hello sam');
 
     // Another tab is active now, and the replace isn't the last step on its stack.
-    historyStore.pushWithoutExecute({ description: 'later', targetBoardId: 'mm', execute() {}, undo() {} } as never);
+    historyStore.pushWithoutExecute(fakeCommand({ description: 'later', targetBoardId: 'mm', execute() {}, undo() {} }));
     historyStore.setActiveBoard('other');
     const toast = uiStore.toasts.find((t) => t.text.startsWith('Replaced'));
     toast?.actions?.find((a) => a.label === 'Undo')?.handler();

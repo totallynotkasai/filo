@@ -253,6 +253,16 @@ function clearRedoStack(stack: HistoryStack): void {
 }
 
 /**
+ * Arms a write of `boardId`'s file for `command`, unless the step changes
+ * only notes: a ticked task or an edited card field rewrites nothing in the
+ * board, so its file is left as it is (KNOWN_LIMITATIONS #29).
+ */
+function markBoardOf(command: Command, boardId: string | null | undefined): void {
+  if (!boardId || !command.changesBoardFile()) return;
+  boardStore.markDirty(boardId);
+}
+
+/**
  * Synchronous commit step run BEFORE the command body (so callers / tests can
  * inspect `canUndo` immediately after `execute()`). Pushes `command` onto the
  * undo stack and clears the redo stack, both with the file-snapshot scan.
@@ -274,7 +284,7 @@ function commitExecute(command: Command): { preRedoStack: Command[]; redoStackRe
   // array — i.e. no other command's commitExecute / undo / redo replaced it
   // while this command's (possibly async) body was in flight.
   const redoStackRef = stack.redoStack;
-  if (activeBoardId) boardStore.markDirty(activeBoardId);
+  markBoardOf(command, activeBoardId);
   return { preRedoStack, redoStackRef };
 }
 
@@ -317,7 +327,7 @@ function rollbackExecute(
   // origin board (whose stack we just repaired) — not the post-switch active
   // board, which this rollback never touched.
   const dirtyId = command.targetBoardId || originBoardId;
-  if (dirtyId) boardStore.markDirty(dirtyId);
+  markBoardOf(command, dirtyId);
 }
 
 /**
@@ -358,7 +368,7 @@ function rollbackUndo(
   // Dirty the board the command actually mutates (its target), falling back to
   // the originating board for board-agnostic commands.
   const dirtyId = command.targetBoardId || originBoardId;
-  if (dirtyId) boardStore.markDirty(dirtyId);
+  markBoardOf(command, dirtyId);
 }
 
 /**
@@ -399,7 +409,7 @@ function rollbackRedo(
     stack.redoStack = [...stack.redoStack, command];
   }
   const dirtyId = command.targetBoardId || originBoardId;
-  if (dirtyId) boardStore.markDirty(dirtyId);
+  markBoardOf(command, dirtyId);
 }
 
 /**
@@ -664,7 +674,7 @@ export const historyStore = {
     // Mark the board the command actually mutates (its target), not the
     // possibly-just-switched active board.
     const dirtyId = command.targetBoardId || activeBoardId;
-    if (dirtyId) boardStore.markDirty(dirtyId);
+    markBoardOf(command, dirtyId);
     // Only a cross-board switch (now, or when a queued body gets its turn)
     // needs the async scope-settle; the common same-board case keeps its
     // synchronous body so callers/tests still see immediate effects.
@@ -758,7 +768,7 @@ export const historyStore = {
     // undo()): the rollback identity-guards it before blind-restoring.
     const redoStackRef = stack.redoStack;
     const dirtyId = command.targetBoardId || activeBoardId;
-    if (dirtyId) boardStore.markDirty(dirtyId);
+    markBoardOf(command, dirtyId);
     // See undo(): settle the scope onto targetBoardId before
     // re-running a facade body on a cross-board redo; same-board keeps sync.
     const op = onTargetBoard(command, () => command.execute(), didAutoSwitch);
@@ -793,7 +803,7 @@ export const historyStore = {
       pushBoundedAndNotify(stack, command);
       clearRedoStack(stack);
     }
-    if (activeBoardId) boardStore.markDirty(activeBoardId);
+    markBoardOf(command, activeBoardId);
   },
 
   /**
@@ -816,7 +826,7 @@ export const historyStore = {
     }
     pushBoundedAndNotify(stack, command, boardId);
     clearRedoStack(stack);
-    boardStore.markDirty(boardId);
+    markBoardOf(command, boardId);
   },
 
   /**

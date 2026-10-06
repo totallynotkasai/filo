@@ -113,15 +113,31 @@ describe('boardLoader', () => {
     });
 
     // Main hands the renderer the parsed board object. A JSON string payload
-    // (a double-encoded file) is not a board envelope, so the version gate
-    // refuses it rather than the renderer parsing it a second time.
-    it('refuses a string payload as no-migration-path', async () => {
+    // (a double-encoded file) is not a board at all: it is refused as broken,
+    // never parsed a second time, and never called a board from an older Filo.
+    it('refuses a string payload as an invalid board, not an old one', async () => {
       const file = validBoardFile();
       installFiloStub({ 'board:load': () => JSON.stringify(file) });
 
       const result = await loadBoard('/vault', 'alpha.board.json');
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toBe('no-migration-path');
+      if (result.ok) return;
+      expect(result.error).toBe('schema-invalid');
+      expect(result.message).toBe('the whole file is one quoted text, not a board');
+    });
+
+    it('a "version" that is text or not a whole number is invalid, not old', async () => {
+      for (const [version, words] of [['8', '"8"'], [7.5, '7.5'], [null, 'null']] as const) {
+        installFiloStub({ 'board:load': () => ({ ...validBoardFile(), version }) });
+        const result = await loadBoard('/vault', 'alpha.board.json');
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.error).toBe('schema-invalid');
+        expect(result.message).toBe(`its "version" is ${words}, not a whole number`);
+      }
+      installFiloStub({ 'board:load': () => [validBoardFile()] });
+      const list = await loadBoard('/vault', 'alpha.board.json');
+      expect(list).toMatchObject({ ok: false, error: 'schema-invalid', message: 'the file is a list, not a board' });
     });
 
     it('preserves unknown top-level envelope keys on load (DI-11 passthrough)', async () => {

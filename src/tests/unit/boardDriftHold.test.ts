@@ -32,6 +32,10 @@ import { vaultPath } from '@shared/vaultPath';
 import { resolveBoardDrift } from '@renderer/stores/boardDrift';
 import { heldDecisions } from '@renderer/stores/heldDecisions';
 import { uiStore } from '@renderer/stores/ui.svelte';
+import { vaultStore } from '@renderer/stores/vault.svelte';
+import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
+import { renameAllPathKeys } from '@renderer/lib/vault/renamePathKeys';
+import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/lib/vault/vaultIdentity';
 import type { BoardFileData } from '@renderer/lib/boards/tileDefBuilder';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
@@ -202,5 +206,68 @@ describe('the drift question as a held decision', () => {
 
     releaseBoardDrift(PATH);
     expect(heldDecisions()).toEqual([]);
+  });
+});
+
+describe('the answer to a drift question follows a rename made while it was open', () => {
+  const OLD = 'Old/Plan.board.json';
+  const NEW = 'New/Plan.board.json';
+  let calls: Array<[string, string]>;
+
+  beforeEach(() => {
+    __resetBaselinesForTests();
+    __resetDirtyTrackingForTests();
+    __resetVaultIdentityForTests();
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+    calls = [];
+    installFiloMock((channel: string, _root: unknown, rel: unknown) => {
+      calls.push([channel, String(rel)]);
+      if (channel === 'vault:stat') return { success: true, mtimeMs: 2000, size: 50 };
+      if (channel === 'recovery:snapshot') return { success: true, path: '/v/.filo/recovery/x/Plan.board.json' };
+      return { success: true };
+    });
+    vaultStore.setPath('/v');
+    beginVaultGeneration('/v');
+    boardCacheStore.hydrate({ b: cachedBoard() }, { b: OLD });
+  });
+
+  afterEach(() => {
+    releaseBoardDrift(NEW);
+    releaseBoardDrift(OLD);
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+    boardCacheStore.clear();
+    vaultStore.setPath('');
+    __resetDirtyTrackingForTests();
+    restoreFiloDefault();
+  });
+
+  it('Keep local backs up the file where it is now and releases its hold', async () => {
+    const answer = resolveBoardDrift(OLD);
+    // Another program moves the board while the question is open.
+    boardCacheStore.renameBoardPath(OLD, NEW);
+    renameAllPathKeys(OLD, NEW);
+    expect(isBoardDriftHeld(NEW)).toBe(true);
+
+    driftToasts()[0].actions?.find((a) => a.label === 'Keep local')?.handler();
+    await expect(answer).resolves.toBe('keep-local');
+    expect(isBoardDriftHeld(NEW)).toBe(false);
+    expect(heldDecisions()).toEqual([]);
+    expect(calls).toContainEqual(['recovery:snapshot', NEW]);
+    expect(calls.some(([, rel]) => rel === OLD)).toBe(false);
+    // A later drift of the renamed board asks again (nothing left stranded).
+    const before = driftToasts().length;
+    void resolveBoardDrift(NEW);
+    expect(driftToasts()).toHaveLength(before + 1);
+  });
+
+  it('Reload reads the board at its new path', async () => {
+    const answer = resolveBoardDrift(OLD);
+    boardCacheStore.renameBoardPath(OLD, NEW);
+    renameAllPathKeys(OLD, NEW);
+
+    driftToasts()[0].actions?.find((a) => a.label === 'Reload')?.handler();
+    await answer;
+    expect(calls).toContainEqual(['board:load', NEW]);
+    expect(calls.some(([channel, rel]) => channel === 'board:load' && rel === OLD)).toBe(false);
   });
 });

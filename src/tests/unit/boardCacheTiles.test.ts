@@ -128,9 +128,12 @@ describe('boardCache — tile persistence', () => {
     const reAdded = makeNonTextTile('t1', '');
     await boardCacheStore.persistAddTile(reAdded);
 
-    // The tile def now reflects the re-added link tile, written into board 'mm'
-    // because findBoardIdForTile('t1') located it there.
-    expect(boardCacheStore.cache.mm.tileDefs.t1).toBeDefined();
+    // The re-added link tile is written into board 'mm' (findBoardIdForTile('t1')
+    // located it there), once: as an inline tile, with no def or placement beside it.
+    const mm = boardCacheStore.cache.mm.board as unknown as { inlineTiles: Record<string, unknown>; placements: Record<string, unknown> };
+    expect(mm.inlineTiles.t1).toBeDefined();
+    expect(boardCacheStore.cache.mm.tileDefs.t1).toBeUndefined();
+    expect(mm.placements.t1).toBeUndefined();
   });
 
   it('persistAddTile with explicit boardId persists into that board (happy path)', async () => {
@@ -142,7 +145,8 @@ describe('boardCache — tile persistence', () => {
     const tile = makeNonTextTile('t-new', 'mm');
     await boardCacheStore.persistAddTile(tile);
 
-    expect(boardCacheStore.cache.mm.tileDefs['t-new']).toBeDefined();
+    expect((boardCacheStore.cache.mm.board as unknown as { inlineTiles: Record<string, unknown> }).inlineTiles['t-new']).toBeDefined();
+    expect(boardCacheStore.cache.mm.tileDefs['t-new']).toBeUndefined();
   });
 
   // 6.4.M20 — cascade-delete rollback re-adds a tile that is NOT in any board's
@@ -159,7 +163,7 @@ describe('boardCache — tile persistence', () => {
     const reAdded = makeNonTextTile('t-readd', ''); // empty boardId, not in cache
     await boardCacheStore.persistAddTile(reAdded, { skipEmptySeed: true }, 'mm');
 
-    expect(boardCacheStore.cache.mm.tileDefs['t-readd']).toBeDefined();
+    expect((boardCacheStore.cache.mm.board as unknown as { inlineTiles: Record<string, unknown> }).inlineTiles['t-readd']).toBeDefined();
   });
 });
 

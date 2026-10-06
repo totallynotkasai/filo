@@ -40,6 +40,7 @@ import { vaultStore } from '../../stores/vault.svelte';
 import { defTitle, mediaTags, noteTags, noteTitle } from '../../stores/noteMeta';
 import { vaultPath, type VaultPath } from '../../../shared/vaultPath';
 import { markdownSyntaxRanges, overlapsSyntax, type SyntaxRange } from './markdownSyntax';
+import { isStaleInlineCopy } from '../boards/tileDefBuilder';
 
 /** Single match record surfaced to the Search panel + ReplaceAll command. */
 export interface SearchMatch {
@@ -212,6 +213,8 @@ function enumerateTiles(): TileEnumeration[] {
     const boardName = boardNameById.get(boardId) ?? data.board?.name ?? boardId;
     // Regular tile defs (text / image / video / audio / file) — file-backed.
     for (const [tileId, def] of Object.entries(data.tileDefs ?? {})) {
+      // A Mind Map's link, embed or timer tile is listed from its inline copy below.
+      if (isStaleInlineCopy(data.board, tileId)) continue;
       const filePath = getDefFilePath(def);
       const metadata = filePath ? untrack(() => vaultIndexStore.getMetadata(filePath)) : null;
       const title = def.type === 'text' ? untrack(() => defTitle(def)) : defTitle(def);

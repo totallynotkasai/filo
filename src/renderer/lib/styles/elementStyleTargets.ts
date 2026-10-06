@@ -12,6 +12,12 @@ import {
   UpdateTaskItemStyleCommand,
   UpdateTaskSectionStyleCommand,
 } from '../../commands/index';
+import {
+  liveKanbanCardStyle,
+  liveKanbanColumnStyle,
+  liveTaskSectionStyle,
+  liveTaskStyle,
+} from '../../commands/styleCommands';
 import type { Command } from '../../commands/Command';
 import type { BorderStyle, Shape } from '../../schema/styleEnums';
 
@@ -65,18 +71,6 @@ export interface ElementStyleTarget {
   command(boardId: string, id: string, before: ElementStyle, after: ElementStyle): Command;
 }
 
-type StyleBlock = Record<string, unknown>;
-
-function detach(style: StyleBlock | undefined): ElementStyle {
-  return style ? (JSON.parse(JSON.stringify(style)) as ElementStyle) : {};
-}
-
-function liveBoard(boardId: string, type: 'kanban' | 'tasklist'): StyleBlock | null {
-  const cached = boardCacheStore.cache[boardId];
-  if (!cached || cached.board.type !== type) return null;
-  return cached.board as StyleBlock;
-}
-
 export const ELEMENT_STYLE_TARGETS: Record<ElementStyleKind, ElementStyleTarget> = {
   kanbanCard: {
     title: 'Card Style',
@@ -85,18 +79,7 @@ export const ELEMENT_STYLE_TARGETS: Record<ElementStyleKind, ElementStyleTarget>
     defaultShadow: 0.2,
     fields: { backgroundColor: true, shape: true, accent: false, width: false, fontSizeBody: true },
     write: (boardId, id, patch) => boardCacheStore.updateKanbanCardPlacementStyle(boardId, id, patch),
-    readLive(boardId, id) {
-      const kb = liveBoard(boardId, 'kanban');
-      if (!kb) return null;
-      const columns = (kb.columns ?? []) as Array<{
-        tilePlacements?: Array<{ tileId: string; style?: StyleBlock }>;
-      }>;
-      for (const c of columns) {
-        const placement = (c.tilePlacements ?? []).find((p) => p.tileId === id);
-        if (placement) return detach(placement.style);
-      }
-      return {};
-    },
+    readLive: (boardId, id) => liveKanbanCardStyle(boardId, id) as ElementStyle | null,
     command: (boardId, id, before, after) => new UpdateKanbanCardStyleCommand(boardId, id, { ...before }, { ...after }),
   },
   kanbanColumn: {
@@ -106,12 +89,7 @@ export const ELEMENT_STYLE_TARGETS: Record<ElementStyleKind, ElementStyleTarget>
     defaultShadow: 0.3,
     fields: { backgroundColor: false, shape: false, accent: true, width: true, fontSizeBody: false },
     write: (boardId, id, patch) => boardCacheStore.updateKanbanColumnStyle(boardId, id, patch ? { ...patch } : null),
-    readLive(boardId, id) {
-      const kb = liveBoard(boardId, 'kanban');
-      if (!kb) return null;
-      const columns = (kb.columns ?? []) as Array<{ id: string; style?: StyleBlock }>;
-      return detach(columns.find((c) => c.id === id)?.style);
-    },
+    readLive: (boardId, id) => liveKanbanColumnStyle(boardId, id) as ElementStyle | null,
     command: (boardId, id, before, after) => new UpdateKanbanColumnStyleCommand(boardId, id, { ...before }, { ...after }),
   },
   task: {
@@ -121,12 +99,7 @@ export const ELEMENT_STYLE_TARGETS: Record<ElementStyleKind, ElementStyleTarget>
     defaultShadow: 0.2,
     fields: { backgroundColor: false, shape: false, accent: false, width: false, fontSizeBody: true },
     write: (boardId, id, patch) => boardCacheStore.updateTaskPlacementStyle(boardId, id, patch),
-    readLive(boardId, id) {
-      const tl = liveBoard(boardId, 'tasklist');
-      if (!tl) return null;
-      const tasks = (tl.tasks ?? []) as Array<{ tileId: string; style?: StyleBlock }>;
-      return detach(tasks.find((p) => p.tileId === id)?.style);
-    },
+    readLive: (boardId, id) => liveTaskStyle(boardId, id) as ElementStyle | null,
     command: (boardId, id, before, after) => new UpdateTaskItemStyleCommand(boardId, id, { ...before }, { ...after }),
   },
   taskSection: {
@@ -136,12 +109,7 @@ export const ELEMENT_STYLE_TARGETS: Record<ElementStyleKind, ElementStyleTarget>
     defaultShadow: 0.2,
     fields: { backgroundColor: false, shape: false, accent: false, width: false, fontSizeBody: false },
     write: (boardId, id, patch) => boardCacheStore.updateTaskSectionStyle(boardId, id, patch ? { ...patch } : null),
-    readLive(boardId, id) {
-      const tl = liveBoard(boardId, 'tasklist');
-      if (!tl) return null;
-      const sections = (tl.sections ?? []) as Array<{ id: string; style?: StyleBlock }>;
-      return detach(sections.find((s) => s.id === id)?.style);
-    },
+    readLive: (boardId, id) => liveTaskSectionStyle(boardId, id) as ElementStyle | null,
     command: (boardId, id, before, after) => new UpdateTaskSectionStyleCommand(boardId, id, { ...before }, { ...after }),
   },
 };

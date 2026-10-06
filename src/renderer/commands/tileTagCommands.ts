@@ -39,6 +39,11 @@ export class AddTileTagCommand extends Command {
   undo() {
     return fileTagsStore._applyRemoveTagFromTile(this.tileId, this.tagName);
   }
+
+  /** A board-only tile's tags go through the cache writer, which marks its board. */
+  changesBoardFile(): boolean {
+    return false;
+  }
 }
 
 export class RemoveTileTagCommand extends Command {
@@ -77,6 +82,11 @@ export class RemoveTileTagCommand extends Command {
     if (this.snapshotColor) fileTagsStore.ensureTag(this.tagName, this.snapshotColor);
     return fileTagsStore._applyAddTagToTile(this.tileId, this.tagName);
   }
+
+  /** A board-only tile's tags go through the cache writer, which marks its board. */
+  changesBoardFile(): boolean {
+    return false;
+  }
 }
 
 /**
@@ -106,6 +116,11 @@ export class AddPathTagCommand extends Command {
 
   undo() {
     return fileTagsStore._applyRemoveTagFromPath(this.path, this.tagName);
+  }
+
+  /** A note's tags are in its frontmatter, an attachment's in `.filo/tags.json`. */
+  changesBoardFile(): boolean {
+    return false;
   }
 }
 
@@ -137,5 +152,10 @@ export class RemovePathTagCommand extends Command {
     // RemoveTileTagCommand.undo). `ensureTag` is idempotent.
     if (this.snapshotColor) fileTagsStore.ensureTag(this.tagName, this.snapshotColor);
     return fileTagsStore._applyAddTagToPath(this.path, this.tagName);
+  }
+
+  /** A note's tags are in its frontmatter, an attachment's in `.filo/tags.json`. */
+  changesBoardFile(): boolean {
+    return false;
   }
 }

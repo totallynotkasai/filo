@@ -1,6 +1,25 @@
 import { Command } from './Command';
 import { boardStore } from '../stores/board.svelte';
 import type { Connection } from '../schema/index';
+import { applyKeyDelta, isEmptyKeyDelta, keyDelta, type KeyDelta } from './keyDelta';
+
+type Fields = Record<string, unknown>;
+
+/** A connection step as the fields it changed, and the label keys it changed. */
+interface ConnectionDelta {
+  fields: KeyDelta;
+  label: KeyDelta | null;
+}
+
+function connectionDelta(from: Partial<Connection>, to: Partial<Connection>): ConnectionDelta {
+  const { label: fromLabel, ...fromFields } = from;
+  const { label: toLabel, ...toFields } = to;
+  const labelled = 'label' in from || 'label' in to;
+  return {
+    fields: keyDelta(fromFields as Fields, toFields as Fields),
+    label: labelled ? keyDelta(fromLabel as Fields | undefined, toLabel as Fields | undefined) : null,
+  };
+}
 
 export class AddConnectionCommand extends Command {
   description: string;
@@ -55,6 +74,12 @@ export class DeleteConnectionCommand extends Command {
   }
 }
 
+/**
+ * A connection's style or label change. It keeps the fields it changed, and
+ * the label keys it changed, so undo and redo change only those on the
+ * connection as it stands: a label size "Use Default Font Sizes" cleared
+ * since stays cleared (`keyDelta.ts`).
+ */
 export class UpdateConnectionCommand extends Command {
   description: string;
   /**
@@ -63,8 +88,8 @@ export class UpdateConnectionCommand extends Command {
    */
   readonly targetBoardId: string;
   private connId: string;
-  private beforeUpdates: Partial<Connection>;
-  private afterUpdates: Partial<Connection>;
+  private forward: ConnectionDelta;
+  private inverse: ConnectionDelta;
 
   constructor(
     connId: string,
@@ -75,18 +100,29 @@ export class UpdateConnectionCommand extends Command {
     super();
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
     this.connId = connId;
-    // Deep-clone so a later mutation of the nested `label`
-    // object on either patch can't leak into the snapshot used by undo.
-    this.beforeUpdates = this.snapshot(beforeUpdates);
-    this.afterUpdates = this.snapshot(afterUpdates);
+    // Deep-cloned first, so a later mutation of the nested `label` object on
+    // either patch can't leak into the deltas used by undo.
+    const before = this.snapshot(beforeUpdates);
+    const after = this.snapshot(afterUpdates);
+    this.forward = connectionDelta(before, after);
+    this.inverse = connectionDelta(after, before);
     this.description = `Update connection`;
   }
 
+  private apply(delta: ConnectionDelta): void {
+    const existing = boardStore.connections[this.connId];
+    if (!existing) return;
+    const patch: Fields = applyKeyDelta({}, delta.fields);
+    for (const key of delta.fields.unset) patch[key] = undefined;
+    if (delta.label && !isEmptyKeyDelta(delta.label)) patch.label = applyKeyDelta(existing.label as Fields | undefined, delta.label);
+    boardStore.updateConnection(this.connId, patch as Partial<Connection>);
+  }
+
   execute() {
-    boardStore.updateConnection(this.connId, this.afterUpdates);
+    this.apply(this.forward);
   }
 
   undo() {
-    boardStore.updateConnection(this.connId, this.beforeUpdates);
+    this.apply(this.inverse);
   }
 }

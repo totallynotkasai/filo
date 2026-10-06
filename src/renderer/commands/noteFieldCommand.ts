@@ -1,5 +1,4 @@
 import { Command } from './Command';
-import { boardCacheStore } from '../stores/boardCache.svelte';
 import { noteStore } from '../stores/notes.svelte';
 import { patchToFrontmatterDelta, type FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
@@ -78,7 +77,11 @@ export abstract class NoteFieldCommand extends Command {
     if (before && this.forwardFrom) this.forward = this.snapshot(patchToFrontmatterDelta(this.forwardFrom(before)));
     if (before) this.inverse = this.snapshot(inverseDelta(before, this.forward));
     noteStore.patchFrontmatter(this.relPath, this.forward);
-    boardCacheStore.markDirty(this.targetBoardId);
+  }
+
+  /** Only the note's frontmatter changes; its board's file is left alone. */
+  changesBoardFile(): boolean {
+    return false;
   }
 
   async undo(): Promise<void> {
@@ -88,7 +91,6 @@ export abstract class NoteFieldCommand extends Command {
   private apply(delta: FrontmatterDelta, expected: FrontmatterDelta): Promise<void> {
     return applyDeltaChecked({
       relPath: this.relPath,
-      targetBoardId: this.targetBoardId,
       delta,
       expected,
       label: this.relPath,

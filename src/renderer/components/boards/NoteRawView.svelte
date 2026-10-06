@@ -39,7 +39,7 @@
   type RawTextEditorModule = typeof import('../../lib/editor/rawTextEditor');
 
   let {
-    path,
+    path: pathProp,
     readOnly = false,
   }: {
     /** The note's vault path. */
@@ -66,6 +66,17 @@
   let followTimer: ReturnType<typeof setTimeout> | null = null;
   let idleSaveTimer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
+  /**
+   * The note's path while the view is mounted. A pane switching to another
+   * tab tears the view down after its tab has changed, so the `path` prop
+   * can by then name the next tab's note, or none: every save, read and
+   * rescue copy here goes by this instead. A rename while mounted moves it.
+   */
+  let path = $state(untrack(() => pathProp));
+  $effect.pre(() => {
+    const next = pathProp;
+    if (!destroyed && next) path = next;
+  });
   /** Where the text field goes. */
   let host = $state<HTMLDivElement | null>(null);
   let editorModule = $state.raw<RawTextEditorModule | null>(null);

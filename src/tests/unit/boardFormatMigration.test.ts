@@ -315,7 +315,8 @@ describe('a board in an older format', () => {
     expect(result.failedBoards).toHaveLength(1);
     expect(result.failedBoards[0].errorKind).toBe('no-migration-path');
     expect(result.failedBoards[0].message).toBe(
-      'This board was made by an older Filo, and updating it to this version\'s format failed (from version 7: lanes is not a list). The file was left unchanged.',
+      'This board was made by an older Filo (board format 7), and updating it to this version\'s format failed (from version 7: lanes is not a list). ' +
+        'The file was left unchanged, and its notes are safe: each is a .md file of its own. Make a new board and add them to it.',
     );
     expect(disk.files.get(REL)).toBe(original);
     expect(disk.calls).not.toContain('board:save');
@@ -346,7 +347,9 @@ describe('a board in an older format', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toBe('no-migration-path');
-    expect(result.message).toBe('This board was made by an older Filo and is not supported. The file was left unchanged.');
+    expect(result.message).toBe(
+      'This board was made by an older Filo (board format 7), which this version can\'t open. The file was left unchanged, and its notes are safe: each is a .md file of its own. Make a new board and add them to it.',
+    );
     expect(disk.files.get(REL)).toBe(original);
   });
 });

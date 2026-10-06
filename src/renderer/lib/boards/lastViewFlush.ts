@@ -14,7 +14,9 @@
  * compare is per key: the loaded slice can carry keys the view doesn't own (the
  * Task List schema defaults `groupBy` / `sortBy` into it, though they live in
  * the board settings) and keys in another order, and a whole-object compare
- * would rewrite every Task List board the moment it is shown.
+ * would rewrite every Task List board the moment it is shown. A board with no
+ * `lastView` at all shows the default view, so that view counts as saved: the
+ * board is written only once the user changes its sort or a filter.
  *
  * Callers must pass a `nextLastView` snapshot built when the debounce was
  * ARMED, not at flush time — by teardown time the next board's hydrate may
@@ -24,11 +26,34 @@
 
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 
+/** What a Kanban board with no saved `lastView` shows (its hydrate resets to it). */
+export const KANBAN_DEFAULT_VIEW = {
+  sortBy: 'manual',
+  filterTags: [] as string[],
+  filterProp: null,
+} as const;
+
+/** What a Task List with no saved `lastView` shows (its hydrate resets to it). */
+export const TASK_LIST_DEFAULT_VIEW = {
+  filterTags: [] as string[],
+  filterStatus: null,
+  filterPriority: null,
+  showCompleted: true,
+  smartList: 'all',
+} as const;
+
+function defaultViewFor(type: string): unknown {
+  if (type === 'kanban') return KANBAN_DEFAULT_VIEW;
+  if (type === 'tasklist') return TASK_LIST_DEFAULT_VIEW;
+  return null;
+}
+
 export function flushLastViewForBoard(boardId: string, nextLastView: unknown): boolean {
   const cached = boardCacheStore.cache[boardId];
   if (!cached) return false;
   const prevSettings = (cached.board.settings ?? {}) as Record<string, unknown>;
-  if (holdsEveryValue(prevSettings.lastView, nextLastView)) return false;
+  const saved = prevSettings.lastView ?? defaultViewFor(cached.board.type);
+  if (holdsEveryValue(saved, nextLastView)) return false;
   boardCacheStore.updateBoardSettings(boardId, { ...prevSettings, lastView: nextLastView });
   return true;
 }

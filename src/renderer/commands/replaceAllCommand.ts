@@ -218,6 +218,11 @@ export class ReplaceAllCommand extends Command {
     this.toastSkipped(skipped, 'Undo skipped', 'changed since the replace');
   }
 
+  /** Only notes' text changes. */
+  changesBoardFile(): boolean {
+    return false;
+  }
+
   /**
    * Applies (or takes back) every plan through the note store: inside each
    * note's write queue, after anything queued for it (an editor body) has

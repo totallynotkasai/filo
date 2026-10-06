@@ -545,6 +545,12 @@ lands after that stat and before the write's rename is overwritten. The board's
 post-write check sees only a size (#14), so a same-size write in that gap goes
 unnoticed.
 
+The same gap applies to a move: a board write already sent to main when another
+program moves the board's file writes the board at its old path again (or, when
+its folder was renamed, fails there and is saved at the new path by the next
+save). The next open finds two files with one id and keeps the newer. A write
+not yet sent (one a full save is holding) is written at the new path instead.
+
 **Why accepted:** The gap is one IPC round trip plus one atomic rename on the
 same machine, a few milliseconds. A second writer would have to save the same
 board or settings file in that window; with one editing machine and a sync
@@ -996,13 +1002,20 @@ re-added by hand (a rename can be reversed by renaming back).
 **What:** A board file names its format (`version`). Filo reads the current
 format (8), and an older one only when migration steps carry it forward, one
 version at a time. There are no steps yet, so today only v8 boards load. A board
-from a newer Filo, older than the first step, with no version, a fractional one
-or a double-encoded file, or whose step fails, is refused: it is listed as failed
-with a notice, its bytes are copied to `.filo/recovery/`, and Filo never writes
-to it. Notes are unaffected; only the `.board.json` is refused.
+from a newer Filo, older than the first step (or with no version), or whose step
+fails, is refused: it is listed as failed with a notice, its bytes are copied to
+`.filo/recovery/`, and Filo never writes to it. The notice for an older board
+says its notes are safe and to make a new board for them, since no edit makes an
+old format open. A file holding no board (a double-encoded file, a list) or whose
+`version` is text or not a whole number is refused the same way, but called
+broken, not old. Notes are unaffected; only the `.board.json` is refused.
 
 A board a step carries forward opens in the current format, and opening it writes
-nothing: the file keeps its old format until the board changes. Its first save
+nothing: the file keeps its old format until the board changes. That holds for
+every board: showing a Kanban board or Task List with no saved view writes no
+view until the sort or a filter changes, and a change that touches only notes (a
+ticked task, a card's due date, a note's title or tags) leaves the board file as
+it is. Its first save
 copies the file as it was to `.filo/recovery/<timestamp>-keep/` (never pruned,
 #33) and only then writes the current format. If the copy can't be made (a full
 disk, `.filo/recovery/` not writable, a file over the 25 MB copy limit), the save
@@ -1062,8 +1075,10 @@ passes through the rich editor, the raw view is also allowed on lossy notes
 (#17); it is read-only for non-UTF-8 notes (#21).
 
 Switching back to the formatted view waits for the save's answer and stays in
-Raw, with the banner, unless the text is on disk. Closing a tab (or leaving
-the vault anyway) with raw text that can't be written keeps it as a copy in
+Raw, with the banner, unless the text is on disk. Switching to another tab, or
+closing this one, saves the text first and asks when it can't be written:
+**Cancel** stays on the tab with the banner; **Switch anyway** / **Close anyway**
+(or leaving the vault anyway) keeps it as a copy in
 `.filo/recovery/<timestamp>-unsaved/` and says so, and so does a save the
 writer won't take (the note stopped being UTF-8, or became a link). Frontmatter
 typed here is the user's own, so it is written even if it no longer parses.

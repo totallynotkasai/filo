@@ -47,7 +47,10 @@ export function restoreTileMemberships(m: TileMemberships): void {
   const cached = boardCacheStore.cache[m.boardId];
   if (!cached) return;
   const deleted = new Set(m.tileIds);
-  const present = (id: string): boolean => deleted.has(id) && id in cached.tileDefs;
+  // A note-backed tile is back once its def is; a link, embed or timer tile
+  // once its inline tile is.
+  const inline = cached.board.type === 'mindmap' ? (cached.board as MindMapBoard).inlineTiles ?? {} : {};
+  const present = (id: string): boolean => deleted.has(id) && (id in cached.tileDefs || id in inline);
   for (const [frameId, held] of Object.entries(m.frames)) {
     const frame = cached.frames.find((f) => f.id === frameId);
     if (!frame) continue;

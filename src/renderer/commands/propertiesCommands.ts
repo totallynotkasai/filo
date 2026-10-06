@@ -10,7 +10,6 @@
 
 import { Command } from './Command';
 import { boardStore } from '../stores/board.svelte';
-import { boardCacheStore } from '../stores/boardCache.svelte';
 import { applyDeltaChecked, fmValueEqual } from './frontmatterInverse';
 import { type FrontmatterDelta } from '../lib/vault/frontmatterDelta';
 
@@ -52,14 +51,16 @@ export class UpdatePropertiesCommand extends Command {
     // Pass BOTH legs so the frontmatter apply can rebase: it diffs
     // after-vs-before to learn which keys this command OWNS, then merges only
     // those onto the LIVE frontmatter, preserving any other (e.g. external) key.
-    await applySnapshot(this.after, this.before, this.targetBoardId);
-    // Dirty the ORIGINATING board, not whichever board is active at redo time.
-    boardCacheStore.markDirty(this.targetBoardId);
+    await applySnapshot(this.after, this.before);
   }
 
   async undo(): Promise<void> {
-    await applySnapshot(this.before, this.after, this.targetBoardId);
-    boardCacheStore.markDirty(this.targetBoardId);
+    await applySnapshot(this.before, this.after);
+  }
+
+  /** Only the note's frontmatter changes. */
+  changesBoardFile(): boolean {
+    return false;
   }
 }
 
@@ -93,7 +94,6 @@ function deltaForKeys(fm: Record<string, unknown>, keys: string[]): FrontmatterD
 async function applySnapshot(
   target: PropertiesSnapshot,
   other: PropertiesSnapshot,
-  targetBoardId: string,
 ): Promise<void> {
   const targetFm = target.fm;
   const otherFm = other.fm;
@@ -104,7 +104,6 @@ async function applySnapshot(
   if (ownedKeys.length === 0) return;
   await applyDeltaChecked({
     relPath: target.relPath,
-    targetBoardId,
     delta: deltaForKeys(targetFm, ownedKeys),
     expected: deltaForKeys(otherFm, ownedKeys),
     label: target.relPath,

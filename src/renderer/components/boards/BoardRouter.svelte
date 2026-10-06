@@ -15,7 +15,6 @@
     BOARD_SCOPE_KEY,
     type BoardScope,
   } from '../../lib/boards/boardScope.svelte';
-  import { reportError } from '../../lib/utils/errorBus';
   import { themeStore } from '../../stores/theme.svelte';
   import type { Board } from '../../schema/index';
   import UnloadedBoardTab from './UnloadedBoardTab.svelte';
@@ -44,11 +43,30 @@
   // state effects hydrate for, and then write into, the other board's file).
   let pinnedTabId = $state<string | null>(null);
 
+  /**
+   * Whether the tab's board is in the cache (or the project). A tab can
+   * outlive its board for a moment (the board deleted while its tab shows in
+   * another pane, before the delete closes the tab): the pane then shows that
+   * the board is gone. It never makes a default board under the id, which a
+   * save would write as a second board file with the deleted board's id.
+   * A boolean, so the effect below re-runs only when the board comes or goes.
+   */
+  let boardPresent = $derived(
+    !!tab && (
+      tab.boardType === 'document'
+      || tab.unloadedPath !== undefined
+      || !!boardCacheStore.cache[tab.boardId]
+      || !!vaultStore.project?.boards?.some((b) => b.id === tab.boardId)
+    ),
+  );
+
   // ── Load board data when tab changes ──
-  // IMPORTANT: Only track `tab` — untrack all project data reads to prevent
-  // re-running (and resetting the camera) on every tile/connection update.
+  // IMPORTANT: Only track `tab` and `boardPresent` — untrack all project data
+  // reads to prevent re-running (and resetting the camera) on every
+  // tile/connection update.
   $effect(() => {
     const t = tab;
+    const present = boardPresent;
     if (!t) {
       pinnedTabId = null;
       scope.board.clearBoard();
@@ -80,6 +98,17 @@
       return;
     }
 
+    // The board isn't there (any more): nothing to show, and nothing made.
+    if (!present) {
+      untrack(() => {
+        scope.board.clearBoard();
+        scope.selection.clear();
+        scope.canvas.setBoard(null);
+      });
+      pinnedTabId = t.id;
+      return;
+    }
+
     // Untrack project data reads so tile/connection/frame updates don't
     // re-trigger this effect.
     untrack(() => {
@@ -89,27 +118,11 @@
       // Prefer the board cache: Kanban/Task-List boards live in
       // `.board.json` files and are only registered in `project.boards`
       // after first save, so on tab remount the cache is often the only
-      // source of truth. Falling through to `createDefault` here would
-      // clobber the cached board with an empty shell.
-      let board: Board | undefined =
+      // source of truth.
+      const board: Board | undefined =
         (boardCacheStore.cache[t.boardId]?.board as Board | undefined) ??
         project.boards?.find((b: Board) => b.id === t.boardId);
-
-      if (!board) {
-        const registryEntry = boardRegistry[t.boardType];
-        if (!registryEntry) return;
-
-        board = registryEntry.createDefault(t.boardId, t.name, project.settings);
-
-        if (!project.boards) project.boards = [];
-        void scope.board.persistNewBoard(board).catch((err) =>
-          reportError(
-            'BoardRouter.auto-create',
-            err,
-            `Couldn't save the new board "${board?.name ?? t.boardId}"`,
-          ),
-        );
-      }
+      if (!board) return;
 
       // Per-pane `tiles` / `connections` / `frames` views are `$derived`
       // from the shared `boardCacheStore.cache[board.id]`. `setBoard(board)`
@@ -145,6 +158,12 @@
     <div class="board-transition" data-theme={themeStore.boardTheme ?? undefined}>
       {#if tab.unloadedPath !== undefined}
         <UnloadedBoardTab {tab} />
+      {:else if !boardPresent}
+        <div class="board-placeholder-type" role="status">
+          <p class="placeholder-label">"{tab.name}" isn't open any more</p>
+          <p class="placeholder-hint">It may have been deleted. Nothing was saved in its place.</p>
+          <button class="placeholder-close" onclick={() => { void tabStore.close(tab.id); }}>Close tab</button>
+        </div>
       {:else if boardModule && pinnedTabId !== tab.id}
         <!-- Only until the effect above has pinned the scope; that runs in
              the same flush, before the browser paints. -->
@@ -231,5 +250,21 @@
     font-weight: 500;
     color: var(--text-secondary);
     margin: 0;
+  }
+
+  .placeholder-hint {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .placeholder-close {
+    padding: 6px 16px;
+    border: 1px solid var(--ui-border);
+    border-radius: 6px;
+    background: var(--ui-surface);
+    color: var(--text-primary);
+    font: inherit;
+    cursor: pointer;
   }
 </style>

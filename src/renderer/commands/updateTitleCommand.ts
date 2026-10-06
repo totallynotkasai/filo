@@ -67,7 +67,19 @@ export class UpdateTitleCommand extends Command {
     this.applyBoardSide(this.args.oldTitle, this.args.oldTitleHtml);
   }
 
+  /**
+   * A note's title is in its frontmatter; the board changes only when the
+   * formatted title or a board-only tile's own title does, and its cache
+   * writer marks it then.
+   */
+  changesBoardFile(): boolean {
+    return false;
+  }
+
   private applyBoardSide(title: string, titleHtml: string | undefined): void {
+    // A note's plain title edit leaves its tile's formatting as it was: the
+    // board's file isn't rewritten for it.
+    if (this.args.notePath && this.args.oldTitleHtml === this.args.newTitleHtml) return;
     const patch: Partial<Tile> = this.args.notePath ? { titleHtml } : { title, titleHtml };
     if (boardStore.getTile(this.args.tileId)) {
       boardStore.updateTile(this.args.tileId, patch);

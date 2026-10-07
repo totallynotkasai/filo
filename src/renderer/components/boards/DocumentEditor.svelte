@@ -3,10 +3,18 @@
    * DocumentEditor — full-page Tiptap rich text editor for a single .md
    * note. Every view of the note shares its model in the note store; the
    * backing file lives in the vault. Renders the per-board styling cascade,
-   * the note's tag row and vault-file drop handling.
+   * the note's tag row and vault-file drop handling. The note is laid out on
+   * page cards (drawn only, `pageBreaks.ts`) unless Global Defaults →
+   * Document asks for one sheet, at the zoom every Document tab shares.
    */
   import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { tabStore } from '../../stores/tabs.svelte';
+  import { workspaceStore } from '../../stores/workspace.svelte';
+  import { registerCommandWithShortcut } from '../../core/commandRegistry';
+  import { focusIsInBoard } from '../../lib/utils/boardFocus';
+  import { attachPageView, type PageView } from '../../lib/editor/pageBreaks';
+  import type { PageRect } from '../../lib/editor/pageLayout';
+  import { DOCUMENT_ZOOM_LEVELS, zoomedIn, zoomedOut, zoomLabel } from '../../lib/utils/documentZoom';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { noteStore, type NoteModel } from '../../stores/notes.svelte';
   import { resolveLineSpacing } from '../../stores/noteMeta';
@@ -64,7 +72,8 @@
   let docStyle = $derived(
     effectiveDocumentStyle(vaultStore.project?.settings ?? null, board ?? null),
   );
-  let paperInlineStyle = $derived.by(() => {
+  // The sheet itself (one paper, or each page card) and the text on it.
+  let surfaceStyle = $derived.by(() => {
     const parts: string[] = [];
     if (docStyle.bodyColor) parts.push(`background-color: ${docStyle.bodyColor}`);
     if (docStyle.borderColor) parts.push(`border-color: ${docStyle.borderColor}`);
@@ -73,9 +82,44 @@
     parts.push(
       `box-shadow: 0 2px ${10 * docStyle.shadowIntensity}px rgba(0,0,0,${0.3 * docStyle.shadowIntensity})`,
     );
-    if (docStyle.bodyTextColor) parts.push(`color: ${docStyle.bodyTextColor}`);
     return parts.join('; ');
   });
+  let textStyle = $derived(docStyle.bodyTextColor ? `color: ${docStyle.bodyTextColor}` : '');
+
+  // ── Pages and zoom ──
+  let pages = $state<PageRect[]>([]);
+  let pageView: PageView | null = null;
+  let unregisterZoomKeys: Array<() => void> = [];
+  let zoom = $derived(workspaceStore.documentZoom);
+  let pagesBottom = $derived(pages.length ? pages[pages.length - 1]!.top + pages[pages.length - 1]!.height : 0);
+
+  let boardElement: HTMLDivElement;
+  let paperElement: HTMLDivElement;
+  let frontElement: HTMLDivElement;
+
+  /** Zooms every Document tab, keeping the middle of this one's view in place. */
+  async function setZoom(next: number): Promise<void> {
+    if (next === workspaceStore.documentZoom) return;
+    const el = boardElement;
+    const middle = el && el.scrollHeight > 0 ? (el.scrollTop + el.clientHeight / 2) / el.scrollHeight : 0;
+    workspaceStore.setDocumentZoom(next);
+    await tick();
+    if (el && middle > 0) el.scrollTop = middle * el.scrollHeight - el.clientHeight / 2;
+  }
+
+  // Ctrl+wheel and a touchpad pinch (which arrives as one) zoom a level per
+  // notch's worth of scrolling, so a pinch doesn't race through the levels.
+  const WHEEL_STEP = 50;
+  let wheelTotal = 0;
+  function handleWheel(e: WheelEvent): void {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    wheelTotal += e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * 40 : e.deltaY;
+    if (Math.abs(wheelTotal) < WHEEL_STEP) return;
+    const z = workspaceStore.documentZoom;
+    void setZoom(wheelTotal < 0 ? zoomedIn(z) : zoomedOut(z));
+    wheelTotal = 0;
+  }
 
   let editorElement: HTMLDivElement;
   let editor: Editor | null = null;
@@ -194,9 +238,41 @@
     composeEl.addEventListener('compositionend', () => { isComposing = false; });
     // The model may have loaded before the editor existed.
     untrack(() => view.sync({ composing: false }));
+
+    pageView = attachPageView(editor, {
+      column: () => paperElement,
+      observed: () => [frontElement],
+      onPages: (next) => { pages = next; },
+    });
+    pageView.setEnabled(untrack(() => paged));
+
+    boardElement.addEventListener('wheel', handleWheel, { passive: false });
+    // Zoom is shared by every Document tab; the keys act while focus is in this
+    // one (the note, its tag row, the zoom control), never from another board.
+    const focusHere = (): boolean => focusIsInBoard(boardElement);
+    const zoomCommands: Array<[string, string, string, () => number]> = [
+      ['document:zoom-in', 'Document: Zoom in', '=', () => zoomedIn(workspaceStore.documentZoom)],
+      ['document:zoom-out', 'Document: Zoom out', '-', () => zoomedOut(workspaceStore.documentZoom)],
+      ['document:zoom-reset', 'Document: Zoom to 100%', '0', () => 1],
+    ];
+    unregisterZoomKeys = zoomCommands.map(([name, label, key, level]) =>
+      registerCommandWithShortcut({
+        name,
+        label,
+        description: label,
+        binding: { key, ctrl: true },
+        allowInEditor: true,
+        enabled: focusHere,
+        execute: () => { void setZoom(level()); },
+      }));
   });
 
   onDestroy(() => {
+    for (const off of unregisterZoomKeys) off();
+    unregisterZoomKeys = [];
+    boardElement?.removeEventListener('wheel', handleWheel);
+    pageView?.destroy();
+    pageView = null;
     // Unsaved keystrokes go to the model; the note writer saves them after
     // this view is gone.
     view.close();
@@ -253,6 +329,14 @@
   // underneath (hidden) so it keeps following the note.
   let rawMode = $state(false);
   let rawView: NoteRawView | undefined = $state();
+
+  // Pages while the formatted view shows; the raw view is one sheet of text.
+  let paged = $derived((vaultStore.project?.settings?.document?.pageLayout ?? 'pages') === 'pages' && !rawMode);
+  let showPages = $derived(paged && pages.length > 0);
+  $effect(() => {
+    const on = paged;
+    untrack(() => pageView?.setEnabled(on));
+  });
 
   async function toggleRaw(): Promise<void> {
     if (rawMode) {
@@ -318,68 +402,85 @@
   ondragover={handleDragOver}
   ondragleave={handleDragLeave}
   ondrop={handleDrop}
+  bind:this={boardElement}
 >
   <BoardBackground
     pattern={settings.backgroundPattern ?? vaultStore.project?.settings?.document?.backgroundPattern}
     bgColor={settings.backgroundColor || vaultStore.project?.settings?.document?.backgroundColor || ''}
   />
-  <div class="document-container">
-    <div class="document-paper" style={paperInlineStyle}>
-      {#if unreadable}
-        <!-- Read failed; editing is paused so a keystroke can't
-             truncate the real (unread) file. Retry re-reads disk. -->
-        <div class="readonly-banner" role="alert">
-          <span class="readonly-text">Filo couldn't read this file{docPath ? ` ("${docPath}")` : ''}. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
-          <button class="readonly-action" onclick={retryRead}>Retry</button>
+  <div class="document-container" style:zoom={zoom === 1 ? null : zoom}>
+    <div
+      class="document-paper"
+      class:paged={showPages}
+      style={showPages ? textStyle : `${surfaceStyle}; ${textStyle}`}
+      style:min-height={showPages ? `${pagesBottom}px` : null}
+      bind:this={paperElement}
+    >
+      {#if showPages}
+        <!-- The page cards behind the text: drawn only, the note is one flow. -->
+        <div class="document-pages" aria-hidden="true">
+          {#each pages as page, i (i)}
+            <div class="document-page" style="top: {page.top}px; height: {page.height}px; {surfaceStyle}"></div>
+          {/each}
         </div>
       {/if}
-      {#if missing}
-        <!-- The file is gone, so there is nothing to edit or save into. -->
-        <div class="readonly-banner missing-banner" role="alert">
-          <span class="readonly-text">This note was deleted or moved.</span>
-          {#if trashed}
-            <button class="readonly-action" onclick={restoreFromTrash} disabled={trashStore.busy}>Restore from Trash</button>
-          {/if}
-          <button class="readonly-action" onclick={closeThisTab}>Close tab</button>
-        </div>
-      {/if}
-      {#if nonUtf8}
-        <div class="readonly-banner" role="status">
-          <span class="readonly-text">This note isn't UTF-8 (probably Windows-1252). Filo won't save it, to avoid corrupting characters.</span>
-          <button class="readonly-action" onclick={convertToUtf8}>Convert to UTF-8…</button>
-        </div>
-      {:else if linked}
-        <div class="readonly-banner" role="status">
-          <span class="readonly-text">This note is a link; edit the original.</span>
-        </div>
-      {:else if readOnly}
-        <div class="readonly-banner" role="status">
-          <span class="readonly-text">Filo can't save this file without changing formatting it doesn't support, so it's open read-only.{#if lossyChanges[0]} {describeChange(lossyChanges[0])}.{/if}</span>
-          <button class="readonly-action" onclick={() => void editInRawView()}>Edit in Raw view</button>
-          <button class="readonly-action" onclick={takeOwnership}>Take ownership</button>
-        </div>
-      {/if}
-      {#if docPath}
-        <div class="document-header">
-          <div class="document-tags-bar">
-            {#if !rawMode}
-              <NoteTagRow path={docPath} boardId={tab?.boardId ?? ''} readOnly={nonUtf8 || linked || unreadable || missing} />
-            {/if}
+      <div class="document-front" bind:this={frontElement}>
+        {#if unreadable}
+          <!-- Read failed; editing is paused so a keystroke can't
+               truncate the real (unread) file. Retry re-reads disk. -->
+          <div class="readonly-banner" role="alert">
+            <span class="readonly-text">Filo couldn't read this file{docPath ? ` ("${docPath}")` : ''}. Editing is paused so your changes can't overwrite it — retry once the file is readable.</span>
+            <button class="readonly-action" onclick={retryRead}>Retry</button>
           </div>
-          <button
-            type="button"
-            class="raw-toggle"
-            aria-pressed={rawMode}
-            title={rawMode ? 'Back to the formatted view' : 'View raw Markdown'}
-            aria-label={rawMode ? 'Back to the formatted view' : 'View raw Markdown'}
-            disabled={unreadable || missing}
-            onclick={() => void toggleRaw()}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            <span>{rawMode ? 'Formatted' : 'Raw'}</span>
-          </button>
-        </div>
-      {/if}
+        {/if}
+        {#if missing}
+          <!-- The file is gone, so there is nothing to edit or save into. -->
+          <div class="readonly-banner missing-banner" role="alert">
+            <span class="readonly-text">This note was deleted or moved.</span>
+            {#if trashed}
+              <button class="readonly-action" onclick={restoreFromTrash} disabled={trashStore.busy}>Restore from Trash</button>
+            {/if}
+            <button class="readonly-action" onclick={closeThisTab}>Close tab</button>
+          </div>
+        {/if}
+        {#if nonUtf8}
+          <div class="readonly-banner" role="status">
+            <span class="readonly-text">This note isn't UTF-8 (probably Windows-1252). Filo won't save it, to avoid corrupting characters.</span>
+            <button class="readonly-action" onclick={convertToUtf8}>Convert to UTF-8…</button>
+          </div>
+        {:else if linked}
+          <div class="readonly-banner" role="status">
+            <span class="readonly-text">This note is a link; edit the original.</span>
+          </div>
+        {:else if readOnly}
+          <div class="readonly-banner" role="status">
+            <span class="readonly-text">Filo can't save this file without changing formatting it doesn't support, so it's open read-only.{#if lossyChanges[0]} {describeChange(lossyChanges[0])}.{/if}</span>
+            <button class="readonly-action" onclick={() => void editInRawView()}>Edit in Raw view</button>
+            <button class="readonly-action" onclick={takeOwnership}>Take ownership</button>
+          </div>
+        {/if}
+        {#if docPath}
+          <div class="document-header">
+            <div class="document-tags-bar">
+              {#if !rawMode}
+                <NoteTagRow path={docPath} boardId={tab?.boardId ?? ''} readOnly={nonUtf8 || linked || unreadable || missing} />
+              {/if}
+            </div>
+            <button
+              type="button"
+              class="raw-toggle"
+              aria-pressed={rawMode}
+              title={rawMode ? 'Back to the formatted view' : 'View raw Markdown'}
+              aria-label={rawMode ? 'Back to the formatted view' : 'View raw Markdown'}
+              disabled={unreadable || missing}
+              onclick={() => void toggleRaw()}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              <span>{rawMode ? 'Formatted' : 'Raw'}</span>
+            </button>
+          </div>
+        {/if}
+      </div>
       {#if rawMode && docPath}
         <NoteRawView bind:this={rawView} path={docPath} readOnly={nonUtf8 || linked} />
       {/if}
@@ -390,6 +491,35 @@
         bind:this={editorElement}
       ></div>
     </div>
+  </div>
+  <div class="document-zoom" role="group" aria-label="Zoom">
+    <button
+      type="button"
+      class="zoom-button"
+      title="Zoom out (Ctrl+-)"
+      aria-label="Zoom out"
+      disabled={zoom <= DOCUMENT_ZOOM_LEVELS[0]!}
+      onclick={() => void setZoom(zoomedOut(zoom))}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <button
+      type="button"
+      class="zoom-level"
+      title="Zoom to 100% (Ctrl+0)"
+      aria-label={`Zoom ${zoomLabel(zoom)}; zoom to 100%`}
+      onclick={() => void setZoom(1)}
+    >{zoomLabel(zoom)}</button>
+    <button
+      type="button"
+      class="zoom-button"
+      title="Zoom in (Ctrl+=)"
+      aria-label="Zoom in"
+      disabled={zoom >= DOCUMENT_ZOOM_LEVELS[DOCUMENT_ZOOM_LEVELS.length - 1]!}
+      onclick={() => void setZoom(zoomedIn(zoom))}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
   </div>
 </div>
 
@@ -467,6 +597,100 @@
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.06);
     min-height: calc(100vh - 180px);
     padding: 56px 72px;
+    position: relative;
+    /* The page cards sit under the text, above nothing else. */
+    isolation: isolate;
+  }
+
+  /* On pages, each card draws the sheet; the paper is only the column the
+     text flows down (its padding is a page's top and side margins). */
+  .document-paper.paged {
+    background: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .document-pages {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .document-page {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: var(--ui-surface);
+    border: 1px solid var(--ui-border-light);
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.06);
+  }
+
+  /* The space that starts a block on the next page (pageBreaks.ts). Padding,
+     so it adds exactly its height; a code block keeps its grey off it. */
+  .document-editor :global(.tiptap .filo-page-break) {
+    padding-top: var(--filo-page-break, 0px);
+  }
+
+  .document-editor :global(.tiptap pre.filo-page-break) {
+    padding-top: calc(16px + var(--filo-page-break, 0px));
+    background: linear-gradient(to bottom, transparent var(--filo-page-break, 0px), var(--ui-bg) var(--filo-page-break, 0px));
+  }
+
+  /* Last in the scrolling board and stuck to the bottom of its view, so it
+     stays in the corner however far the note scrolls; the negative margin
+     keeps it from adding to the scroll height. */
+  .document-zoom {
+    position: sticky;
+    bottom: 16px;
+    z-index: 2;
+    width: max-content;
+    margin: -46px 24px 16px auto;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--ui-border);
+    border-radius: 6px;
+    background: var(--ui-surface);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  }
+
+  .zoom-button,
+  .zoom-level {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .zoom-button {
+    width: 24px;
+  }
+
+  .zoom-level {
+    min-width: 46px;
+    padding: 0 4px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .zoom-button:hover:not(:disabled),
+  .zoom-level:hover {
+    background: var(--ui-surface-hover);
+    color: var(--text-primary);
+  }
+
+  .zoom-button:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
   .document-editor {

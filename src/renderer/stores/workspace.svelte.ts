@@ -2,7 +2,7 @@
  * Workspace store — persisted layout state that belongs to "the window",
  * not the project. Split-pane tree, sidebar width, active pane id, the
  * boards' side toolbars, each Mind Map's minimap and waypoints shown or
- * hidden, and whether spell check is on.
+ * hidden, whether spell check is on, and the Document tab's zoom.
  * Persisted to `.filo/workspace.json` alongside open-tab state.
  *
  * A pane leaf references a tab id (the tab's board determines what's
@@ -13,6 +13,7 @@
 import { createId } from '../lib/utils/ids';
 import { onVaultSwap } from '../core/vaultLifecycle';
 import type { ToolbarPosition } from '../lib/canvas/floatingToolbarDrag';
+import { asDocumentZoom, DEFAULT_DOCUMENT_ZOOM } from '../lib/utils/documentZoom';
 
 export type { ToolbarPosition };
 
@@ -59,6 +60,8 @@ export interface WorkspaceLayout {
   mindMapPanels: Record<string, MindMapPanelsState>;
   /** Spell check in every text editor (the toolbar's Spelling button), on unless turned off. */
   spellcheck: boolean;
+  /** How large a Document tab shows its note (1 is 100%), one level for every note. */
+  documentZoom: number;
 }
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
@@ -67,6 +70,7 @@ const DEFAULT_LAYOUT: WorkspaceLayout = {
   boardToolbars: {},
   mindMapPanels: {},
   spellcheck: true,
+  documentZoom: DEFAULT_DOCUMENT_ZOOM,
 };
 
 const DOCKED_TOOLBAR: BoardToolbarState = { position: null, pinned: false };
@@ -222,6 +226,7 @@ export const workspaceStore = {
   get boardToolbars() { return layout.boardToolbars; },
   get mindMapPanels() { return layout.mindMapPanels; },
   get spellcheck() { return layout.spellcheck; },
+  get documentZoom() { return layout.documentZoom; },
   get leafCount() { return countLeaves(layout.paneTree); },
   get leaves() { return collectLeaves(layout.paneTree); },
 
@@ -259,6 +264,14 @@ export const workspaceStore = {
   setSpellcheck(on: boolean) {
     if (layout.spellcheck === on) return;
     layout = { ...layout, spellcheck: on };
+    notify();
+  },
+
+  /** Sets the Document tab's zoom (the nearest level), saved with the vault's layout. */
+  setDocumentZoom(zoom: number) {
+    const next = asDocumentZoom(zoom);
+    if (layout.documentZoom === next) return;
+    layout = { ...layout, documentZoom: next };
     notify();
   },
 
@@ -511,6 +524,7 @@ export const workspaceStore = {
       boardToolbars: asBoardToolbars(persisted.boardToolbars),
       mindMapPanels: asMindMapPanels(persisted.mindMapPanels),
       spellcheck: persisted.spellcheck !== false,
+      documentZoom: asDocumentZoom(persisted.documentZoom),
     };
   },
 

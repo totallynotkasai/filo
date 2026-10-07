@@ -154,7 +154,7 @@ describe('failed writes carry a code and are retried', () => {
       settings: settings as never,
       theme: 'light',
       workspace: { openTabs: [], activeTabId: '' },
-      layout: { paneTree: null, activePaneId: null, boardToolbars: {}, mindMapPanels: {}, spellcheck: true },
+      layout: { paneTree: null, activePaneId: null, boardToolbars: {}, mindMapPanels: {}, spellcheck: true, documentZoom: 1 },
     }));
     await waitFor(() => unsavedWork().failed.length === 1, 'the config save to fail');
 

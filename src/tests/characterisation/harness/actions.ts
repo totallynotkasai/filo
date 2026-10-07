@@ -1226,6 +1226,20 @@ export function spellCheckedIn(ed: Editor): boolean {
   return ed.view.dom.getAttribute('spellcheck') === 'true';
 }
 
+/** Clicks a button of the Document tab's zoom control ("Zoom in", "Zoom out", or the level, which resets it). */
+export async function clickDocumentZoom(app: CharApp, which: 'Zoom in' | 'Zoom out' | 'level'): Promise<void> {
+  const selector = which === 'level' ? '.document-zoom .zoom-level' : `.document-zoom button[aria-label="${which}"]`;
+  click($(app.el, `.document-board ${selector}`));
+  await settle();
+}
+
+/** The Document tab's zoom as its control shows it ("110%") and as its page is drawn (the CSS zoom, '' at 100%). */
+export function documentZoomShown(app: CharApp): { label: string; cssZoom: string } {
+  const label = ($(app.el, '.document-board .zoom-level').textContent ?? '').trim();
+  const cssZoom = ($(app.el, '.document-board .document-container') as HTMLElement).style.zoom;
+  return { label, cssZoom };
+}
+
 /** Put the cursor in the editor's first block, then pick an alignment in the toolbar's Text Align menu. */
 export async function alignFirstBlock(app: CharApp, ed: Editor, align: 'left' | 'center' | 'right' | 'justify'): Promise<void> {
   ed.commands.focus('start');

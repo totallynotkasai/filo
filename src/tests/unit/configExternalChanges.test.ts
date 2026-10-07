@@ -31,6 +31,7 @@ const layout = (toolbarX?: number): WorkspaceLayout => ({
   boardToolbars: toolbarX === undefined ? {} : { b: { position: { x: toolbarX, y: 0 }, pinned: false } },
   mindMapPanels: {},
   spellcheck: true,
+  documentZoom: 1,
 });
 const settingsWith = (mindmap: Record<string, unknown>): ProjectSettings =>
   ({ general: { globalFont: 'fixed' }, mindmap, kanban: {}, tasklist: {}, document: {} } as ProjectSettings);

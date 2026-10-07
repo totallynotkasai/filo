@@ -611,6 +611,7 @@ The Global Toolbar consists of the following buttons:
                     * **Task Defaults** — Standard Element Style Properties.
 
                 * **Document Defaults** — Standard Board Properties, plus:
+                    * **Page Layout** — **Pages** (the note on page cards, the default) or **One continuous sheet**. See **Document** under Board Types.
                     * **Document Page Defaults** — Standard Element Style Properties.
 
             * **Themes** (stored in `.filo/themes/`)
@@ -803,7 +804,9 @@ The sidebar shows **filenames**, not note titles (see **Note titles** in the Dat
     * **Dates read the same everywhere**: every chip, menu and message shows a day in the OS regional format (`12 Oct`, with the year when it isn't this year's).
     * **Folding a section** is an undo step, as folding a Kanban column, a frame or a task's subtasks is.
     * **An open notes box** follows its note while the user hasn't typed in it, so it never shows, or saves, an older version.
-* **Document** — The Document board is a maximised view of a single `.md` file using the same Tiptap editor as text tiles. It provides a distraction-free writing environment with the full formatting toolbar and seperates text with a purely visual page layout. See the **Text Tile / Document Board Relationship** section in the Data Model.
+* **Document** — The Document board is a maximised view of a single `.md` file using the same Tiptap editor as text tiles. It provides a distraction-free writing environment with the full formatting toolbar and separates text with a purely visual page layout (see **Pages** below). See the **Text Tile / Document Board Relationship** section in the Data Model.
+    * **Pages** — The note is laid out on page cards with A4's proportions at the page's width, one under the other with a gap between them. A block (paragraph, heading, list item, code block, table, task) that would run past a page's bottom margin starts the next page; a horizontal rule is never moved. The pages are drawn only: the note is one flow of text, its file holds no page breaks, and typing, the caret, selection, copy and undo cross from one page to the next as on one sheet. A block taller than a page's text area (a very long paragraph, table or code block) isn't split: its page grows to hold it. Global Defaults → Document → **Page Layout** switches between **Pages** (the default) and **One continuous sheet**. The Raw view is always one sheet.
+    * **Zoom** — A control in the bottom-right corner of the tab (−, the level, +) zooms the page from 50% to 200%; clicking the level returns to 100%. Ctrl+= / Ctrl+− / Ctrl+0 do the same while a Document tab is focused, and Ctrl+wheel (or a touchpad pinch) over the page zooms a level at a time. Zoom is one level for every note, kept in `.filo/workspace.json`, and changes only how large the page is drawn: the text wraps as it does at 100% while the window has room for the page.
     * **Tag row** — At the top of the note, above the text, the note's tags show as chips with an input for adding more (comma-separated, with autocomplete). See **Tag System** in the Data Model.
     * **Raw view** — A **Raw** toggle shows the whole file as plain text, frontmatter included, for editing exactly what is on disk; **Formatted** switches back. The text box colours the Markdown, numbers the lines, shows invisible characters (a zero-width space, a stray BOM, a control character) and finds inside the note (Ctrl+F); it never changes the text by itself, and Tab leaves it. It saves 1.5 s after typing stops, when the text box loses focus, on Ctrl+S, when switching back, when switching to another tab and when the tab closes; switching or closing asks first when the text can't be saved (Cancel stays on the tab). While it has no unsaved changes it follows changes made elsewhere; text it loads from disk clears its undo history, so Ctrl+Z never mixes the two versions. A save lands only if the file hasn't changed since the raw view loaded it; otherwise nothing is written and a banner offers **Use the new version (discard mine)**, which first keeps a copy of the typed text in `.filo/recovery/`, or **Keep mine** (which first backs the other version up there). The file's BOM and line endings are kept. The raw view is read-only for a non-UTF-8 note. It stays editable for a note the rich editor opens read-only because it can't reproduce its formatting, since raw text never passes through the rich editor.
     * **Title** — Renaming the Document tab edits the note's `title:`; it never renames the file.
@@ -949,6 +952,7 @@ Tabs are used to organize the user's boards. Each tab represents a different boa
 | Ctrl + K | Insert Link |
 | Ctrl + Shift + F | Vault-wide Search |
 | Ctrl + Shift + T | Tags Browser |
+| Ctrl + =, Ctrl + −, Ctrl + 0 | Zoom in, zoom out, zoom to 100% (Document tab) |
 | N | New tile beside the selected tile, or in the middle of the view (Mind Map) |
 | C | Start a connection from the selected tile (Mind Map) |
 | Enter | Rename the selected tile (Mind Map) |

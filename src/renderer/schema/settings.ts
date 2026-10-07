@@ -186,6 +186,8 @@ export const DocumentDefaultsSchema = z.object({
   backgroundColor: z.string().default(''),
   backgroundPattern: BackgroundPatternSchema.default('none'),
   accentColor: z.string().default(''),
+  /** A note in a Document tab on page cards (drawn only, never in the file) or on one sheet. */
+  pageLayout: z.enum(['pages', 'continuous']).default('pages'),
   document: DocumentElementDefaultsSchema.prefault({}),
 });
 

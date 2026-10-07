@@ -176,6 +176,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
             "headerColor": "",
             "shadowIntensity": 0.2,
           },
+          "pageLayout": "pages",
         },
         "general": {
           "activeRootFolder": "",
@@ -358,6 +359,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
             "headerColor": "",
             "shadowIntensity": 0.2,
           },
+          "pageLayout": "pages",
         },
         "general": {
           "activeRootFolder": "",
@@ -763,6 +765,7 @@ describe('zod default trees (pinned on v3 before the v4 migration)', () => {
               "headerColor": "",
               "shadowIntensity": 0.2,
             },
+            "pageLayout": "pages",
           },
           "general": {
             "activeRootFolder": "",

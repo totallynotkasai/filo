@@ -142,6 +142,7 @@ describe('workspaceStore', () => {
       boardToolbars: { board_1: { position: { x: 40, y: 80 }, pinned: true } },
       mindMapPanels: { board_1: { minimap: false, waypoints: true } },
       spellcheck: false,
+      documentZoom: 1.25,
     };
 
     workspaceStore.hydrate(before);

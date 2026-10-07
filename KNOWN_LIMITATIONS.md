@@ -1666,3 +1666,29 @@ the old path would be a vault-wide text rewrite on each rename.
 
 **Impact:** After renaming or moving a note, links to it from other notes
 need pasting again (Copy link to note, then paste over the old link).
+
+## 53. A block taller than a page isn't split across two pages
+
+**What:** In a Document tab's page view, a block that would run past a
+page's bottom margin starts the next page whole. A block taller than a
+page's text area (a very long paragraph, a long table or code block, a task
+item with a long sub-list) can't start a page and still fit, so its page
+grows to hold it: that page card is taller than the others. A word
+processor would split it at a line. Two smaller marks of the same choice: a
+block quote that runs onto the next page draws its left bar across the gap
+between the cards, and a heading opening a list item or a quote that starts
+a page sits a little lower on it than other blocks do.
+
+**Where:** [src/renderer/lib/editor/pageLayout.ts](src/renderer/lib/editor/pageLayout.ts)
+(`layoutPages`), [src/renderer/lib/editor/pageBreaks.ts](src/renderer/lib/editor/pageBreaks.ts).
+
+**Why accepted:** The pages are drawn over one editable flow of text, and a
+break is space put above a whole block, so nothing in the note or its file
+changes. Splitting a block at a line would mean finding where the browser
+wrapped each line and putting space inside the text itself, which the caret,
+selection and typed accents (IME) would all have to cross.
+
+**Impact:** Only the drawing: the note, its saves and its undo history are
+the same with pages on or off. A note of ordinary paragraphs pages cleanly;
+Global Defaults → Document → Page Layout → One continuous sheet turns the
+cards off.

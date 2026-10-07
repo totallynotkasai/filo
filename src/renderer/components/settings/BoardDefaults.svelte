@@ -576,6 +576,13 @@
         <span class="setting-label">Accent Color</span>
         <ColorPicker value={documentDefaults.accentColor} onchange={(c) => update('document.accentColor', c)} />
       </div>
+      <div class="setting-row">
+        <label class="setting-label" for="doc-page-layout">Page Layout</label>
+        <select id="doc-page-layout" class="setting-select" value={documentDefaults.pageLayout} onchange={(e) => update('document.pageLayout', (e.target as HTMLSelectElement).value)}>
+          <option value="pages">Pages</option>
+          <option value="continuous">One continuous sheet</option>
+        </select>
+      </div>
 
       <h4 class="subsection-title">Document Element Defaults</h4>
       <div class="setting-row">

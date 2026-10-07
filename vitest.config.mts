@@ -60,6 +60,9 @@ export default defineConfig({
         // environment doesn't apply here.
         extends: true,
         resolve: { conditions: ['browser'] },
+        // Bundled with the editor up front: found mid-run, it is bundled on
+        // its own, and its decorations are then another copy's to the editor.
+        optimizeDeps: { include: ['@tiptap/pm/view'] },
         test: {
           name: 'browser',
           include: ['src/tests/browser/**/*.test.ts'],

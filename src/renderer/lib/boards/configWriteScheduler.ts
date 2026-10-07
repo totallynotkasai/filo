@@ -218,6 +218,8 @@ function buildConfigPayloads(
       ...(Object.keys(layout?.mindMapPanels ?? {}).length > 0 ? { mindMapPanels: layout?.mindMapPanels } : {}),
       // Written only when off, so a vault that never turned it off keeps its file as it was.
       ...(layout?.spellcheck === false ? { spellcheck: false } : {}),
+      // Likewise only once notes are zoomed.
+      ...(layout && layout.documentZoom !== 1 ? { documentZoom: layout.documentZoom } : {}),
     }, null, 2),
     'defaults.json': JSON.stringify({
       mindmap: settings.mindmap ?? {},

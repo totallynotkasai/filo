@@ -331,9 +331,22 @@ coincidence, cross-basename correlation (the name actually changed, e.g.
   and size+extension alone isn't strong enough evidence to merge tile references
   for two unrelated multi-MB files.
 
-In the middle band (256 B – 10 MB) a content-hash confirms the pair. Same-basename
-renames (only the folder moved) always pair, at any size. So the only case that
-dangles is a rename **with a name change** on a file at the size extremes.
+In the middle band (256 B – 10 MB) a content-hash confirms the pair. A
+same-basename rename (only the folder moved) pairs at any size when its bytes
+still match (or only its size can be compared, from 256 B up). A note (`.md`)
+moved to a path that held no file pairs even when its bytes changed in the
+same moment, as when an agent moves a note into a new folder and fixes its
+links at once: it is followed as a move, then reported as changed, so an
+unsaved edit meets the Reload / Keep mine question on the moved note (an empty
+new note is taken for a new placeholder, not the moved one). So, besides
+renames **with a name change** at the size extremes, what dangles is a
+same-named attachment or board whose bytes changed in the move.
+
+The flip side of following a changed note: two unrelated notes of the same
+name, one deleted and the other created where no file was, in the same moment
+(or within the watcher's 1.5 s hold, #31), are followed as a move. Tiles of
+the deleted note then show the new one; relink them. No text is lost: an
+unsaved edit meets the conflict question, which keeps both sides.
 
 **Where:** [src/main/services/renameCorrelation.ts](src/main/services/renameCorrelation.ts)
 (the `CROSS_BASENAME_MIN_SIZE_BYTES` floor and the `CROSS_BASENAME_HASH_REQUIRED_BELOW`
@@ -1126,10 +1139,25 @@ to show. 1.5 s covers Explorer and `git mv`, which move a file in one
 operation. It has not yet been measured against OneDrive, whose download of the
 new name and removal of the old one can be further apart.
 
+**Folders:** Windows reports a folder renamed by another program by the two
+folder names alone. Filo follows it from two reads of the tree when every file
+the old folder held is in the new one by name, even with files added or
+changed in the same moment. Otherwise its files are followed by the watcher's
+30 s walk, one by one, except a note whose save meets its file gone: the save
+asks for a walk at once (`vault:reconcile` with `{ now }`), so the note is
+followed within the 3 s wait.
+
 **Impact:**
 - A move whose halves are further apart shows as a delete (the prompt keeps
   tiles by default and offers a relink) plus a new file. An unsaved edit is
-  kept behind the "deleted" prompt's **Keep mine**, not lost.
+  kept behind the "deleted" prompt's **Keep mine**, not lost; **Keep mine**
+  then writes the note back at its old place, a second copy beside the moved
+  one.
+- A folder renamed while, in the same moment, one of its notes is edited and
+  another removed: the tree can't pair the folder (a name is missing), and by
+  the time the walk runs the watcher already knows the edited note's new path
+  as a file, so it reads as a new note, and the old one as deleted (the
+  "deleted" prompt if it had typing in it).
 - An external delete of a note reaches the app about 1.5 s later than before.
 - A case-only rename (`Draft.md` → `draft.md`) made within about 7 s of a Filo
   write to the note is not reported at once (the echo window can't tell the

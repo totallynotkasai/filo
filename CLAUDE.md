@@ -125,7 +125,7 @@ filo/
 │   │   │   ├── fileWatcherClassify.ts # Path classification + ignore rules for watcher events (hidden segments like .stversions/ ignored; any other file with an extension is an attachment)
 │   │   │   ├── fileWatcherHash.ts     # Content hash (with a size ceiling) for echo and rename matching
 │   │   │   ├── fileWatcherWalk.ts     # The 30 s reconcile walk (re-reads a file only when its stat moved); files changed since the vault was armed
-│   │   │   ├── fileWatcherOwnMoves.ts # Filo's own renames and trash moves move the walk's record with the files, so the next walk doesn't report them
+│   │   │   ├── fileWatcherOwnMoves.ts # Filo's own renames and trash moves (and folder moves the renderer followed) move the walk's record and caches with the files, so the next walk doesn't report them; a path last seen gone never marks the new one gone
 │   │   │   ├── watcherSupervisor.ts   # Reopens the fs.watch handle after it dies
 │   │   │   ├── watcherSuppression.ts  # Own-echo windows: suppress / suppressWrite / suppressTree
 │   │   │   ├── syncConflictNotifier.ts # Live notices for sync-client conflict copies (board forks, notes' strong-named copies, refused renames)
@@ -139,7 +139,7 @@ filo/
 │   │   │   ├── vaultRegistry.ts       # Active vault tracker (gates IPC); armedAt: when the open began
 │   │   │   ├── recoverySnapshot.ts    # `.filo/recovery/` snapshots; `<ts>-unsaved/` rescue copies and `<ts>-keep/` kept versions (never pruned)
 │   │   │   ├── recoveryCopies.ts      # Settings → Recovery: open a copy, delete copies to the Recycle Bin (only paths inside `.filo/recovery/`)
-│   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames (never onto a path that already held a file: that is a replace)
+│   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames (never onto a path that already held a file: that is a replace); a note moved to a free path and changed at once pairs too, and its change is sent after the rename (`changedOnMove`)
 │   │   │   ├── rendererCrashHandler.ts # Renderer crash → breadcrumb + Reload/Quit dialog; Reload releases the vault first (`releaseActiveVault`)
 │   │   │   ├── recentVaults.ts        # Persisted recent vault list
 │   │   │   ├── publicHttp.ts          # getPublic: the Link tile's page fetch; each hop's connection resolves through `checkedLookup` and its connected address is checked, so only public addresses are reached (no DNS rebinding)
@@ -351,7 +351,7 @@ filo/
 │   │   │   │   ├── noteDiskChange.ts  # decideDiskChange: what a watcher event does to a loaded note
 │   │   │   │   ├── rawViews.ts        # Mounted raw views: unsaved text for close / quit and the save indicator, flush, rescue copies (marked only once kept; a called-off leave rolls back)
 │   │   │   │   ├── rawViewLeave.ts    # A pane switching away from a raw view saves it first, and asks (Switch anyway / Cancel) when its text can't be saved
-│   │   │   │   ├── renameGrace.ts     # askUnlessMoved: wait out a rename before "deleted" / "couldn't save"
+│   │   │   │   ├── renameGrace.ts     # askUnlessMoved: wait out a rename before "deleted" / "couldn't save", asking the watcher for a walk at once
 │   │   │   │   ├── unsavedNoteTexts.ts # The text a rescue copy holds for each unsaved note
 │   │   │   │   ├── createNote.ts      # createNoteFile: exclusive create with `title:`, ` (n)` on collision
 │   │   │   │   ├── newNote.ts         # createNewNote: "New note" (sidebar, Ctrl+N in a Document tab, New Tab → Document): `Untitled.md`, opened with its title ready to type
@@ -413,7 +413,7 @@ filo/
 │   │   │   │   ├── relinkTargets.ts   # Which files a broken tile may be re-linked to (a file tile: any)
 │   │   │   │   ├── folderPins.ts      # Root Directory + board folder pins: follow renames, clear on delete
 │   │   │   │   ├── folderPinPaths.ts  # Case-folded pin path rules (no store imports)
-│   │   │   │   ├── treeFolderMoves.ts # Folder renames read off two tree reads (Windows reports only the folder names)
+│   │   │   │   ├── treeFolderMoves.ts # Folder renames read off two tree reads (Windows reports only the folder names): every old file in the new folder by name, files added or changed meanwhile allowed
 │   │   │   │   ├── unreconciledFolderMoves.ts # Folder moves any tree read saw, kept for the next reconcile
 │   │   │   │   ├── unsavedMessages.ts # Close / open / quit wording for unsaved work, by cause; the quit dialog ("Waiting for your decision" when only held decisions are left) and the Retry result
 │   │   │   │   ├── sidebarTagFilter.ts # Files a tag (or child tag) selects; tree cut down to them
@@ -556,7 +556,7 @@ filo/
 │   │   │   │   ├── kanbanKeyboardNav.ts # Arrow keys over the cards as drawn; the card landed on is scrolled into view
 │   │   │   │   └── kanbanTileCreation.ts, kanbanFileDropHandler.ts, kanbanInsertPosition.ts
 │   │   │   ├── tasklist/              # Task List logic
-│   │   │   │   ├── notesBox.svelte.ts # The row notes box draft; follows its note until the user types; an unsaved draft counts for leave / quit (rescue copy, held conflict); saves 1.5 s after typing stops, and Escape saves and closes it
+│   │   │   │   ├── notesBox.svelte.ts # The row notes box draft; follows its note until the user types; an unsaved draft counts for leave / quit (rescue copy, held conflict; "Use theirs (discard mine)" keeps a copy in `.filo/recovery/<ts>-keep/` first); saves 1.5 s after typing stops, and Escape saves and closes it
 │   │   │   │   ├── taskTitleEdit.svelte.ts # A row's title while typed: Enter / click-away / a save commit it (registerComponentFlush), Escape drops it
 │   │   │   │   ├── taskParent.ts      # A subtask's parent: the placement's `parentTileId`, else an older note's `parent:` (read, never written)
 │   │   │   │   ├── notesBoxMarkdown.ts # The notes box writes what was typed (a newline stays a plain newline, a soft break); a `\` line break shows back as a newline
@@ -985,10 +985,15 @@ Boundary").
   (`noteStore.discardQueued`), so a failed mark never lingers for the session.
   Both it and the "deleted by another program" prompt wait
   `NOTE_RENAME_GRACE_MS` (3 s) first and ask nothing if a rename re-points the
-  note meanwhile (`askUnlessMoved`).
+  note meanwhile (`askUnlessMoved`). They also ask the watcher for a walk at
+  once (`vault:reconcile` with `{ now: true }`, past its throttle, its moves
+  sent before the reply), since Windows reports a folder another program
+  renamed by the folder names alone.
 - **External renames re-key before draining.** `handleExternalRename`
   (`stores/vaultExternalChanges.ts`) calls `renameAllPathKeys` first, since the
-  file has already moved, so a pending body lands on the new path.
+  file has already moved, so a pending body lands on the new path. Its drain
+  passes `followsMove`: a note whose body waits for the conflict prompt's
+  answer (a note moved and edited at once) doesn't stop the boards following.
 - **Deletes go to Filo's trash.** Every user-facing delete (sidebar file or
   folder, board, "delete tile and file", "delete task and file") calls
   `trashVaultPath`, which moves the item to

@@ -56,7 +56,7 @@ vi.mock('../../main/services/renameCorrelation', () => ({
     signalEntered?.();
     signalEntered = null;
     await gate;
-    return { filtered: unique, renames: [] };
+    return { filtered: unique, renames: [], conflicts: [], changedOnMove: [] };
   },
 }));
 

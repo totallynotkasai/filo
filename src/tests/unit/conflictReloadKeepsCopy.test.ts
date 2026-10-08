@@ -128,4 +128,26 @@ describe('a conflict answered with Reload', () => {
     await noteStore.flushAll();
     expect(vault.read('Chapter.md')).toContain('And a third, typed after the prompt appeared.');
   });
+
+  it('shows the newest version on disk when another save lands while the copy is written', async () => {
+    const m = await inConflict();
+    // An agent saves again while Reload keeps its copy, and the watcher reports it.
+    const filo = (window as unknown as { filo: { invoke: (c: string, ...a: unknown[]) => Promise<unknown> } }).filo;
+    const inner = filo.invoke.bind(filo);
+    filo.invoke = async (channel: string, ...args: unknown[]) => {
+      const out = await inner(channel, ...args);
+      if (channel === 'recovery:keep-unsaved') {
+        vault.writeExternally('Chapter.md', '---\ntitle: Chapter\n---\nThe agent\'s second edit.\n');
+        await noteStore.onDiskChanged('Chapter.md');
+      }
+      return out;
+    };
+
+    await noteStore.resolveConflict('Chapter.md', 'reload');
+    expect(m.status).toBe('ready');
+    expect(m.body.trim()).toBe("The agent's second edit.");
+    // Nothing is written: the note shows what the file holds.
+    await noteStore.flushAll();
+    expect(vault.read('Chapter.md')).toContain("The agent's second edit.");
+  });
 });

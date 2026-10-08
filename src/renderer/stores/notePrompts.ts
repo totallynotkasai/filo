@@ -97,7 +97,9 @@ function promptConflict(m: NoteModel): void {
  * The Task List notes box met a note whose body changed since the box opened
  * (a Document tab, another program). Its draft is not written until the user
  * picks. "Keep mine" writes the pending other version to disk first, backs it
- * up to `.filo/recovery/`, then writes the draft; "Use theirs" drops the draft.
+ * up to `.filo/recovery/`, then writes the draft; "Use theirs (discard mine)"
+ * keeps a copy of the draft in `.filo/recovery/<ts>-keep/` first (asking
+ * before it goes on without one), then drops it, as Reload does.
  *
  * The question is a held decision, so the save indicator's popover can show it
  * again once the toast is gone, until `stillHeld` says it was answered.
@@ -105,7 +107,13 @@ function promptConflict(m: NoteModel): void {
 export function promptNotesBoxConflict(
   rel: string,
   draft: () => string,
-  handlers: { onKept(status: SetBodyStatus): void; onUseTheirs(): void; stillHeld(): boolean },
+  handlers: {
+    onKept(status: SetBodyStatus): void;
+    onUseTheirs(): void;
+    stillHeld(): boolean;
+    /** The whole note as the draft would make it, for the copy. */
+    rescueText(): string;
+  },
 ): void {
   const key = `notes-box:${rel}`;
   holdDecision({
@@ -140,13 +148,48 @@ export function promptNotesBoxConflict(
         },
       },
       {
-        label: 'Use theirs',
-        handler: () => {
-          handlers.onUseTheirs();
-          releaseDecision(key);
+        label: 'Use theirs (discard mine)',
+        handler: async () => {
+          const vaultRoot = getActiveVaultPath();
+          const identity = captureVaultIdentity();
+          if (!vaultRoot) return;
+          try {
+            const keptIn = await keepNoteVersion(vaultRoot, rel, handlers.rescueText());
+            if (!isStillSameVault(identity) || !handlers.stillHeld()) return;
+            // Declined: the question stays held, so the save popover offers it again.
+            if (!keptIn && !(await confirmUseTheirsWithoutCopy(rel))) return;
+            if (!isStillSameVault(identity) || !handlers.stillHeld()) return;
+            handlers.onUseTheirs();
+            if (keptIn) notesBoxDraftKept(rel, keptIn);
+          } catch (err) {
+            reportError('notePrompts.notesBox', err, `Couldn't use the other version of "${rel}"`);
+          } finally {
+            if (!handlers.stillHeld()) releaseDecision(key);
+          }
         },
       },
     ],
+  });
+}
+
+function confirmUseTheirsWithoutCopy(rel: string): Promise<boolean> {
+  return uiStore.confirmAsync({
+    title: 'Use the other version without a copy?',
+    body: `Filo couldn't keep a copy of the task notes you typed for "${noteTitle(rel)}". Using the other version drops them, and they will be lost.`,
+    confirmLabel: 'Use it anyway',
+    cancelLabel: 'Cancel',
+    danger: true,
+  });
+}
+
+/** The notes box now shows the other version; its draft is in `keptIn`. */
+function notesBoxDraftKept(rel: string, keptIn: string): void {
+  uiStore.pushToast({
+    text: `"${noteTitle(rel)}" task notes now show the other version. What you typed is saved in .filo/recovery/.`,
+    type: 'info',
+    duration: 10000,
+    dedupeKey: `notes-box-kept:${rel}`,
+    actions: [{ label: 'Show in folder', handler: () => void window.filo.invoke('shell:show-item-in-folder', keptIn) }],
   });
 }
 

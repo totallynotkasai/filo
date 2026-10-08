@@ -74,19 +74,28 @@ export function moveRecords(snapshot: WalkSnapshot, oldRel: string, newRel: stri
   putRecords(snapshot, newRel, takeRecords(snapshot, oldRel));
 }
 
-/** Moves the watcher's size, hash and folder caches with a move, so a later rename of a moved file still pairs. */
+/**
+ * Moves the watcher's size, hash and folder caches with a move, so a later
+ * rename of a moved file still pairs.
+ *
+ * A path last seen gone says nothing about the new place. When the files of a
+ * folder were already followed one by one (a sync client reports each), their
+ * old paths read gone and their new ones present; carrying "gone" over would
+ * make a later rename onto one of them look like a move onto a free name, not
+ * the replace it is.
+ */
 export function moveCaches(caches: WalkPathCaches, oldRel: string, newRel: string): void {
   const base = vaultPath(oldRel);
-  const rekey = <T>(map: Map<VaultPath, T>): void => {
+  const rekey = <T>(map: Map<VaultPath, T>, carry: (value: T) => boolean = () => true): void => {
     for (const [key, value] of [...map]) {
       if (key !== base && !key.startsWith(`${base}/`)) continue;
       map.delete(key);
-      map.set(vaultPath(newRel + key.slice(base.length)), value);
+      if (carry(value)) map.set(vaultPath(newRel + key.slice(base.length)), value);
     }
   };
   rekey(caches.lastKnownSizes);
   rekey(caches.lastKnownHashes);
-  rekey(caches.presence);
+  rekey(caches.presence, (present) => present);
   for (const key of [...caches.knownDirs]) {
     if (key !== base && !key.startsWith(`${base}/`)) continue;
     caches.knownDirs.delete(key);

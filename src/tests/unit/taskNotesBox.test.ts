@@ -120,10 +120,36 @@ describe('NotesBox keeps its draft when the body is refused', () => {
 });
 
 describe('NotesBox: a draft the note does not have is unsaved work', () => {
+  let kept: string[];
+  let keepFails: boolean;
+
+  beforeEach(() => {
+    beginVaultGeneration('/vault');
+    vaultStore.setPath('/vault');
+    kept = [];
+    keepFails = false;
+    installFiloMock(async (channel: string, ...args: unknown[]) => {
+      if (channel === 'recovery:keep-unsaved') {
+        if (keepFails) return { success: false, error: 'EACCES', code: 'EACCES' };
+        const items = args[1] as Array<{ relPath: string; text: string }>;
+        kept.push(...items.map((i) => i.text));
+        return { success: true, dir: '.filo/recovery/x-keep', kept: items.map((i) => i.relPath), failed: [] };
+      }
+      return { success: true };
+    });
+  });
+
   afterEach(() => {
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
+    uiStore.closeConfirm?.();
     __resetComponentFlushesForTests();
+    vaultStore.setPath('');
+    restoreFiloDefault();
   });
+
+  function useTheirsAction(): (() => unknown) | undefined {
+    return uiStore.toasts.find((t) => t.dedupeKey === 'notes-box:Task.md')?.actions?.find((a) => a.label === 'Use theirs (discard mine)')?.handler;
+  }
 
   function conflictedBox(): { box: NotesBox; untrack: () => void; writes: string[] } {
     let body = 'opened\n';
@@ -152,10 +178,43 @@ describe('NotesBox: a draft the note does not have is unsaved work', () => {
     untrack();
     await new Promise((r) => setTimeout(r, 0));
     expect(unsavedWork().pending).toContain('task.md');
-    const useTheirs = uiStore.toasts.find((t) => t.dedupeKey === 'notes-box:Task.md')?.actions?.find((a) => a.label === 'Use theirs');
-    useTheirs?.handler();
+    await useTheirsAction()?.();
     expect(unsavedWork().pending).not.toContain('task.md');
     expect(heldDecisions()).toEqual([]);
+  });
+
+  it('"Use theirs (discard mine)" keeps a copy of the draft in .filo/recovery first, then shows the other version', async () => {
+    const { box, untrack, writes } = conflictedBox();
+    box.draft = 'An hour of notes for this scene';
+    await box.save(false);
+    await useTheirsAction()?.();
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toContain('An hour of notes for this scene');
+    expect(box.draft.trim()).toBe('theirs');
+    expect(box.inConflict).toBe(false);
+    expect(writes).toEqual([]);
+    expect(uiStore.toasts.some((t) => t.text.includes('What you typed is saved in .filo/recovery/'))).toBe(true);
+    untrack();
+  });
+
+  it('asks before dropping the draft when no copy could be kept; Cancel keeps the question and the draft', async () => {
+    const { box, untrack } = conflictedBox();
+    await box.save(false);
+    keepFails = true;
+    const confirm = vi.spyOn(uiStore, 'confirmAsync').mockResolvedValue(false);
+    await useTheirsAction()?.();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(box.draft).toBe('mine');
+    expect(box.inConflict).toBe(true);
+    expect(heldDecisions().map((d) => d.key)).toContain('notes-box:Task.md');
+
+    confirm.mockResolvedValue(true);
+    await useTheirsAction()?.();
+    expect(box.draft.trim()).toBe('theirs');
+    expect(box.inConflict).toBe(false);
+    expect(heldDecisions()).toEqual([]);
+    confirm.mockRestore();
+    untrack();
   });
 
   it('the save before leaving hands a typed draft to the note', async () => {

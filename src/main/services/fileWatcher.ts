@@ -802,6 +802,37 @@ export class FileWatcher {
     }
   }
 
+  /** The walk {@link walkAndNotifyNow} has queued and not yet started. */
+  private queuedWalk: Promise<void> | null = null;
+
+  /**
+   * A walk that starts after this call (a walk in flight may have read the
+   * folders before the change), with what it finds sent to the renderer
+   * before this resolves, past the notify debounce. For when the renderer
+   * must know now where a file went: a note's save found its file gone, and
+   * Windows reports a folder another program renamed by the folder names
+   * alone, so its files would wait for the 30 s walk. Calls made while a walk
+   * waits to start share it.
+   */
+  walkAndNotifyNow(): Promise<void> {
+    if (this.queuedWalk) return this.queuedWalk;
+    const walk: Promise<void> = Promise.resolve().then(async () => {
+      while (this.reconcileInFlightPromise) await this.reconcileInFlightPromise;
+      if (this.queuedWalk === walk) this.queuedWalk = null;
+      if (this.aborted) return;
+      await this.reconcileNow({ seedOnly: false });
+      if (this.aborted) return;
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
+        this.debounceTimer = null;
+        this.debounceFirstQueuedAt = null;
+      }
+      await this.notifyRenderers();
+    });
+    this.queuedWalk = walk;
+    return walk;
+  }
+
   private scheduleNotify(): void {
     // Refuse to arm a new debounce after `stop()`: the live watcher callback
     // may have queued events in the same tick stop() fired.
@@ -1002,7 +1033,7 @@ export class FileWatcher {
     }));
     if (this.aborted) return;
     const wasPresentBefore = (relPath: string): boolean => this.presence.get(vaultPath(relPath)) ?? false;
-    const { filtered: correlated, renames, conflicts } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath), wasPresentBefore);
+    const { filtered: correlated, renames, conflicts, changedOnMove } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath), wasPresentBefore);
     // Re-check after the only await: a vault swap inside the hash-probe
     // window must not send the OLD vault's events — the renderer's rename
     // queue captures vault identity at ARRIVAL, so a late send would drive
@@ -1066,6 +1097,12 @@ export class FileWatcher {
     const treeChanged = renames.length > 0
       || filtered.some(c => c.eventType === 'rename');
 
+    // A note moved and changed at once: its change goes out after its rename,
+    // so it reaches the note at its new path (the renderer handles both in
+    // arrival order).
+    const changedAfterMove: FileChangeEvent[] = changedOnMove
+      .filter((rel) => exists(rel))
+      .map((rel) => ({ type: 'document', filename: rel, eventType: 'change' }));
     const windows = BrowserWindow.getAllWindows();
     for (const win of windows) {
       if (filtered.length > 0) {
@@ -1073,6 +1110,9 @@ export class FileWatcher {
       }
       for (const r of renames) {
         win.webContents.send('vault:file-renamed', r);
+      }
+      if (changedAfterMove.length > 0) {
+        win.webContents.send('vault:files-changed', changedAfterMove);
       }
       if (treeChanged) {
         win.webContents.send('vault:tree-updated');

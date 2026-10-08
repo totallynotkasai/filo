@@ -219,11 +219,13 @@ export function makeExternalChangesSlice(ctx: VaultContext) {
       const pathKeysOk = renameAllPathKeys(oldRel, newRel);
 
       // Drain pending writers before the cascade, so the board and tag
-      // rewrites below don't race a write still in flight.
+      // rewrites below don't race a write still in flight. A note moved and
+      // changed at once meets its conflict prompt in this drain; that waits
+      // for the user and must not stop the boards from following the move.
       try {
         await withDrainedWrites(
           () => runExternalRenameCascade(ctx, oldRel, newRel, renamedBoardIds, pathKeysOk, captured),
-          { paths: [oldRel, newRel] },
+          { paths: [oldRel, newRel], followsMove: true },
         );
       } catch (err) {
         if (err instanceof PendingWritesFailedError) {

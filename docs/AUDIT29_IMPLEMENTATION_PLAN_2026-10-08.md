@@ -1,7 +1,7 @@
 # Audit-29 implementation plan (draft, 2026-10-08)
 
 - **Source:** [AUDIT29_FULL_AUDIT_2026-10-08.md](AUDIT29_FULL_AUDIT_2026-10-08.md). Finding IDs (A-01, C-08 …) refer to it. Write "Audit-29 A-01" in commit messages, since Audit-28 used the same letters.
-- **Status:** in progress. Phases 0 and 1 done 2026-10-08 (outcomes in section 4). Decided: D1 (a), tight paragraphs; D3 (`npm run preview`, then `npm start`; no dev guard); D4 (push now, for Phase 0; Phase 1 stays on this PC). D2 and D5 to D8 still have only their defaults.
+- **Status:** in progress. Phases 0, 1 and 2 done 2026-10-08 (outcomes in section 4). Decided: D1 (a), tight paragraphs; D3 (`npm run preview`, then `npm start`; no dev guard); D4 (push now, for Phase 0; Phases 1 and 2 stay on this PC); D5 (follow a note moved and edited at once as a move). D2 and D6 to D8 still have only their defaults.
 - **Scores:** out of 10, as in the report. **Hard:** 0/10 = minutes, 5/10 = a few days with tests, 10/10 = weeks.
 
 ## 1. How this plan works
@@ -264,3 +264,53 @@ Your agent moves, rewrites and merges notes from outside Filo. Phase 2 makes tha
 **New findings:** BL-44 (a card whose note mixes bullets and checklist items in one list grows a line when its editor mounts; the note is read-only anyway) and BL-45 (typing `- ` at the start of a soft-broken line leaves it text). Both are in `docs/BACKLOG.md`.
 
 **For you:** close Filo if it's open, then run `npm run preview` once. Settings should read `Filo 0.2.2 (<commit>)`, with no `+`. Then open `Leveling System Ideas` and try Heading 3, and Enter at the end of a stat line. On the days after, open Filo with `npm start`.
+
+### Phase 2 (done 2026-10-08)
+
+**Decisions taken:** D5, the default: a note moved and edited at once is followed as a move, then the usual Reload / Keep mine question. Task 2.6 (BL-08) measured, as you chose. Phase 2 stays on this PC with Phase 1: committed, not pushed.
+
+**What changed**
+
+| # | Change |
+|---|---|
+| 2.1 (C-02) | `renameCorrelation.ts`: a lone same-named pair of notes (`.md`, `.markdown`) whose new path held no file pairs even when its bytes changed (`movedAndChanged`), unless the new file is empty. The watcher sends the rename, then a change of the new path (`changedOnMove`), so the renderer re-keys the note, its tabs and tiles first, and the moved note's own drift check then asks Reload / Keep mine. A clean note just shows the edit. |
+| 2.2 (C-03) | Every "is this note gone?" check (`askUnlessMoved`: a save that found its file gone, a note deleted with typing in it) asks the watcher for a walk at once: `vault:reconcile` with `{ now: true }` runs past the 5 s throttle, after any walk in flight, sends what it finds before replying, and calls that arrive while one waits share it (`FileWatcher.walkAndNotifyNow`). The check waits for that walk if it takes longer than the 3 s grace. A folder renamed by another program is followed from two tree reads when every file it held is in the new folder by name, with files added or changed meanwhile allowed (`treeFolderMoves.ts`); a folder holding exactly the old files wins over one holding them among others, and a pairing two folders could make is refused. |
+| 2.3 (A-01) | The notes box's "Use theirs (discard mine)" keeps a copy of the draft (the note's frontmatter over it) in `.filo/recovery/<ts>-keep/` first, then a toast names it with Show in folder. With no copy it asks ("Use the other version without a copy?"); Cancel keeps the question and the draft. |
+| 2.4 (A-03) | Reload takes a newer version that landed while the typing was being copied (`conflictDisk`, read by the disk-change handler while the note was still in conflict) over the read it started with, unless that one is older by its modification time. |
+| 2.5 (C-07) | A followed folder move carries a path's "present" mark to the new path, never its "gone" mark (`moveCaches`), so a later rename onto one of the moved files is still a replace. |
+| 2.6 (BL-08) | Measured; see "BL-08" below. |
+
+**Deviations from the plan**
+
+1. **The drain lets a note waiting for its answer through (2.1).** Pairing alone wasn't enough: the outside-rename handler drains every writer before it moves the boards on, and the moved note's typing met the other program's edit in that drain and became a conflict, which counts as a failed write. The drain refused, the tile stayed on the old path, and an error toast said "Couldn't complete the operation". `withDrainedWrites` takes a new `followsMove` scope, passed only by the outside-rename handler: a note whose body waits for the conflict answer doesn't block it there. In-app renames, trash and the rest still refuse on it. Unit-tested both ways.
+2. **Not an empty note, and notes only (2.1).** An empty note created as the old one goes is far more often a new placeholder than the old one moved, so it isn't paired. A board or attachment whose bytes changed in the move still needs them to match, as before. The trade-off is in KNOWN_LIMITATIONS #7: two unrelated notes of the same name, one deleted and one created on a free path in the same moment, are followed as a move (relink the tiles; no text is lost).
+3. **The walk, not only for failed writes (2.2).** The plan said a failed write asks main to check at once. The walk is asked by `askUnlessMoved`, which also guards the "deleted by another program" question for a note with typing in it, so both are covered. It's a new option of the existing `vault:reconcile` channel rather than a new channel.
+4. **Folders match by name only (2.2).** I first kept a size check (at least one file keeping its size), then dropped it, as the plan says: the walk can't follow a note edited under a renamed folder either. By the time it runs, the watcher has already seen the edit at the new path, so the path reads as a file that was there before, and a move onto it as a replace. The tree's pairing by name is the only quick way such a note is followed. What's left is in KNOWN_LIMITATIONS #31: a folder renamed while, in the same moment, one of its notes is edited and another removed.
+5. **The notes box: a toast and a confirm (2.3).** Not in the plan: the toast says where the copy went, and the confirm mirrors "Reload without a copy?".
+6. **No second read (2.4).** The plan offered "re-read after `keepTyping()`" or "take `conflictDisk`". A read after the copy is an await between the copy and the drop, so keys typed during it would be dropped without a copy; taking `conflictDisk` needs no await.
+
+**New characterisation spec** `agentReorganises.test.ts` (7 cases, registered in the `characterisation-suite` gate), all through the whole app and a real disk: a note moved into a new folder and edited at once, with typing (Keep mine keeps both sides; Reload keeps the typing), and without; a folder renamed while a note is written into it (followed in under 3 s, nothing asks); a one-note folder renamed and its note edited (Reload / Keep mine on the moved note, never "no longer exists"); a folder renamed while one of its notes is deleted (followed by the walk the save asks for); a note merged into a same-named one and deleted (the deleted question, not taken for a move). On the code before this phase, 6 of the 7 fail; the merge case pins that the new pairing doesn't misfire.
+
+**Checks**
+
+| Check | Result |
+|---|---|
+| `ci:verify`, main checkout (Phase 2 complete, version 0.2.3) | Green in 363 s: lint, knip, svelte-check (918 files, 0 errors), main typecheck, 879 test files (8,648 passed, 5 skipped), build, 91/91 gates. Two earlier runs this phase failed, and each is fixed or explained: the first only the Chromium caret case now in BL-09 (passed 3 of 3 alone); the second only the `ipc-envelope-usage` gate, which caught the walk request dropping its result unchecked (`renameGrace.ts` now uses `invokeOk`, so a failed walk falls back to the grace). |
+| E2E with `FILO_E2E_SCALE=1` | 46/47 in 3.9 min. The miss was the Kanban 300 switch-back budget (636 ms against 500 ms), BL-28's known spike; that spec then passed 3 of 3 alone. Nothing in this phase touches Kanban. |
+| Hands-on, the built app | `dist/`, scratch profiles, real Electron IPC (which the characterisation suite fakes), driven by Playwright. A note with typing moved into a new `01 Story` folder and rewritten at once: the sidebar showed only `01 Story`, the `Plot` tab stayed open with the typing, and the one toast was "'Plot' was changed by another program … Reload / Keep mine"; Keep mine wrote the typing into `01 Story/Plot.md` and kept the other version in `.filo/recovery/<ts>-keep/`. A folder renamed while one of its notes was deleted (the tree can't pair it): the open note followed in 890 ms with its typing and no toast, through the walk it asked for. No console errors. |
+| Corpus | Not run: nothing in the editor or Markdown writing changed. |
+
+**BL-08: measured, no growth, closed without a fix.** The built app (`dist/`, a scratch profile), a note of about 3,000 words open in a Document tab, and another program rewriting the note 600 times, each waited for until the editor showed it. After three forced garbage collections at each checkpoint (Chrome DevTools Protocol), the page's heap read:
+
+| Outside edits | 0 | 25 | 100 | 200 | 300 | 450 | 500 | 525 | 600 |
+|---|---|---|---|---|---|---|---|---|---|
+| Heap in use (MB) | 13.27 | 14.69 | 15.05 | 15.37 | 15.60 | 15.63 | 15.63 | 15.06 | 15.08 |
+
+DOM nodes (1,789) and event listeners (170) stayed the same throughout. The first 25 loads cost 1.4 MB (code and caches warming up). After that the heap rose about 2 KB a load, levelled at 15.6 MB, then dropped back. That's far below the 0.4 MB a load the unit environment showed, and it's bounded. A separate run of 200 edits gave the same curve. So what the unit environment keeps is most likely jsdom's own, not the app's. BL-08 leaves the backlog.
+
+**New findings:**
+- **BL-46** (backlog): a folder renamed while, in the same moment, one of its notes is edited and another removed. The tree can't pair the folders (a name is missing), and the walk reads the edited note's new path as a file that was already there, so the note is reported deleted. Confirmed with a throwaway characterisation spec, and written into KNOWN_LIMITATIONS #31. Hard 3/10: it needs the watcher to tell a path that appeared since the old one was last seen from one that held a file all along, without opening the replace case again.
+- BL-28 seen again: one Kanban 300 switch-back spike in the E2E run (see Checks).
+- BL-09 gains a case: the Chromium spec "ArrowDown and ArrowUp keep the column" failed once in the first full `ci:verify` of this phase (the caret still on its first line when the wait ran out), then passed 3 of 3 alone. No editor code changed in this phase.
+
+**For you:** close Filo if it's open, then run `npm run preview` once. Settings should read `Filo 0.2.3 (<commit>)`. On the days after, open Filo with `npm start`. Your agent can now move and edit notes while Filo is open; if it moves a note you were typing in, you'll get one Reload / Keep mine question on the moved note.

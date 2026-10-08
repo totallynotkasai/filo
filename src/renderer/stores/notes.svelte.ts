@@ -327,6 +327,11 @@ interface KeptTyping {
   dir: string | null;
 }
 
+/** `a` holds a version older than `b` by its modification time (unknown counts as not older). */
+function readBefore(a: FreshRead, b: FreshRead): boolean {
+  return a.mtimeMs !== undefined && b.mtimeMs !== undefined && a.mtimeMs < b.mtimeMs;
+}
+
 /** How many times a copy is taken again because typing went on while it was written. */
 const KEEP_TYPING_ATTEMPTS = 3;
 
@@ -543,6 +548,11 @@ export const noteStore = {
     return { ...(await writer.flushAll()), rawNotSaved: raw.notSaved };
   },
 
+  /** True while the note's body waits for the conflict prompt's answer (Reload / Keep mine). */
+  awaitsConflictAnswer(relPath: string): boolean {
+    return models.get(vaultPath(relPath))?.status === 'conflict';
+  },
+
   /** True while anything for `path` is queued, being written or failed. */
   hasPendingWrites(relPath: string): boolean {
     return loadingBodyPaths.has(vaultPath(relPath)) || writer.hasWork(relPath);
@@ -707,8 +717,17 @@ export const noteStore = {
     }
     if (models.get(key) !== m || !isStillSameVault(identity)) return;
     if (choice === 'reload') {
+      // Another save that lands while the typing is copied is read by the
+      // disk-change handler into `conflictDisk` (the note is still in
+      // conflict, so nothing else takes it, and nothing announces it again).
+      // Take it over the read above, or the note would show, as clean, a
+      // version the file no longer holds. Not a read made after the copy: keys
+      // typed during that read would be dropped without one.
+      const seen = m.conflictDisk;
       const typed = await keepTyping();
       if (typed === false) return;
+      const later = m.conflictDisk;
+      if (later && later !== seen && !readBefore(later, fresh)) fresh = later;
       writer.dropBody(key);
       m.editorOwner = null;
       adoptDisk(m, fresh);

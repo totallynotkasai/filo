@@ -173,6 +173,14 @@ export interface DrainScope {
    * and the op for it.
    */
   within?: DrainToken;
+  /**
+   * The operation follows a move the disk has already made (another
+   * program's rename). A note whose write waits for the conflict prompt's
+   * answer doesn't block it then: refusing can't undo the move, it would only
+   * leave the boards pointing at the old path, and the answer acts on the
+   * note where the rename moved it.
+   */
+  followsMove?: boolean;
 }
 
 /** `p` as a case-folded vault-relative key; an absolute path under the vault is made relative. */
@@ -195,7 +203,10 @@ function overlaps(a: string, b: string): boolean {
  * through here and still refuse on any failure.
  */
 function blockingFailures(detail: PendingWritesFailedDetail, scope: DrainScope): PendingWritesFailedDetail {
-  if (!scope.paths) return detail;
+  const notes = scope.followsMove
+    ? detail.notes.failed.filter((f) => !noteStore.awaitsConflictAnswer(f))
+    : detail.notes.failed;
+  if (!scope.paths) return { ...detail, notes: { failed: notes } };
   const vaultRoot = getActiveVaultPath();
   const keys = scope.paths.map((p) => scopeKey(p, vaultRoot));
   const hits = (failed: string[]): string[] =>
@@ -204,7 +215,7 @@ function blockingFailures(detail: PendingWritesFailedDetail, scope: DrainScope):
       return keys.some((s) => overlaps(k, s));
     });
   return {
-    notes: { failed: hits(detail.notes.failed) },
+    notes: { failed: hits(notes) },
     board: { failed: hits(detail.board.failed) },
     misc: { failed: hits(detail.misc.failed) },
     config: { failed: hits(detail.config.failed) },

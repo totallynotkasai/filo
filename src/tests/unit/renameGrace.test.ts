@@ -171,6 +171,66 @@ describe('askUnlessMoved', () => {
   });
 });
 
+describe('askUnlessMoved asks the watcher where the file went at once', () => {
+  it('requests a walk now, and a move it reports settles the note before the grace ends: no prompt', async () => {
+    const s = spies();
+    const walks: unknown[][] = [];
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:reconcile') {
+        walks.push(args);
+        // The walk found the note moved; the rename re-keys it.
+        s.stillHere.mockReturnValue(false);
+        return { success: true };
+      }
+      if (channel === 'vault:file-exists') {
+        calls.push(args);
+        return false;
+      }
+      return undefined;
+    });
+    askUnlessMoved('Places/Castle.md', s.stillHere, s.ask, s.onBack);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(walks).toEqual([[{ now: true }]]);
+    await vi.advanceTimersByTimeAsync(NOTE_RENAME_GRACE_MS);
+    expect(calls).toHaveLength(0);
+    expect(s.ask).not.toHaveBeenCalled();
+  });
+
+  it('waits for a walk slower than the grace before it asks', async () => {
+    const s = spies();
+    let finishWalk!: () => void;
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:reconcile') return new Promise((resolve) => { finishWalk = () => resolve({ success: true }); });
+      if (channel === 'vault:file-exists') {
+        calls.push(args);
+        return false;
+      }
+      return undefined;
+    });
+    askUnlessMoved('A.md', s.stillHere, s.ask, s.onBack);
+    await vi.advanceTimersByTimeAsync(NOTE_RENAME_GRACE_MS + 2000);
+    expect(s.ask).not.toHaveBeenCalled();
+    finishWalk();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.ask).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed walk leaves the grace to decide', async () => {
+    const s = spies();
+    installFiloMock((channel: string, ...args: unknown[]) => {
+      if (channel === 'vault:reconcile') throw new Error('no watcher');
+      if (channel === 'vault:file-exists') {
+        calls.push(args);
+        return false;
+      }
+      return undefined;
+    });
+    askUnlessMoved('A.md', s.stillHere, s.ask, s.onBack);
+    await vi.advanceTimersByTimeAsync(NOTE_RENAME_GRACE_MS);
+    expect(s.ask).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('dropGraceChecks', () => {
   it('cancels every waiting check', async () => {
     const s = spies();

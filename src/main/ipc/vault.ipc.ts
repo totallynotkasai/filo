@@ -510,9 +510,16 @@ export function registerVaultHandlers(): void {
     }
   });
 
-  ipcMain.handle('vault:reconcile', async () => {
+  ipcMain.handle('vault:reconcile', async (_event, opts?: { now?: boolean }) => {
     if (!activeWatcher) return { success: false, error: 'No active watcher' };
     const now = Date.now();
+    if (opts?.now === true) {
+      // Asked for when a note's save found its file gone: where it went
+      // matters now, not after the throttle or the 30 s walk.
+      lastReconcileAt = now;
+      await activeWatcher.walkAndNotifyNow();
+      return { success: true };
+    }
     if (now - lastReconcileAt < RECONCILE_THROTTLE_MS) {
       return { success: true, skipped: true };
     }

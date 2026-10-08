@@ -110,7 +110,11 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'vault:remove-recent': z.tuple([unknownArg]),
   'vault:pin-recent': z.tuple([unknownArg, unknownArg]),
   'vault:clear-recents': z.tuple([]),
-  'vault:reconcile': z.tuple([]),
+  // Optional `{ now }`: a walk past the throttle, its findings sent before the reply.
+  'vault:reconcile': z.union([
+    z.tuple([]),
+    z.tuple([z.object({ now: z.boolean().optional() }).strict()]),
+  ]),
   // (vaultRoot, old folder, new folder): a folder move the renderer followed.
   'vault:followed-move': z.tuple([nonEmptyString, nonEmptyString, nonEmptyString]),
 

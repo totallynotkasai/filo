@@ -109,4 +109,15 @@ describe('vault:reconcile — throttle resets on vault swap (Phase 3 / 3.5)', ()
     expect(afterSwap.success).toBe(true);
     expect(afterSwap.skipped).toBeUndefined();
   });
+
+  it('a walk asked for now (a note whose file went missing) runs inside the throttle window', async () => {
+    await watchHandler({}, vaultDir);
+    await reconcileHandler({});
+    const now = (await reconcileHandler({}, { now: true })) as { success: boolean; skipped?: boolean };
+    expect(now.success).toBe(true);
+    expect(now.skipped).toBeUndefined();
+    // And it counts as the last walk: a focus walk right after is throttled.
+    const focus = (await reconcileHandler({})) as { success: boolean; skipped?: boolean };
+    expect(focus.skipped).toBe(true);
+  });
 });

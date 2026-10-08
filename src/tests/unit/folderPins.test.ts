@@ -95,12 +95,41 @@ describe('folderMovesBetween (a folder renamed by another program, seen as two t
     expect(folderMovesBetween(before, after, ROOT)).toEqual([{ oldFolder: 'Old', newFolder: 'Archive/Old' }]);
   });
 
-  it('pairs nothing for a delete, an empty folder, different contents, or an ambiguous match', () => {
+  it('pairs nothing for a delete, an empty folder, different files, or an ambiguous match', () => {
     expect(folderMovesBetween([dir('Old', [file('Old/a.md')])], [], ROOT)).toEqual([]);
     expect(folderMovesBetween([dir('Old', [])], [dir('New', [])], ROOT)).toEqual([]);
-    expect(folderMovesBetween([dir('Old', [file('Old/a.md', 1)])], [dir('New', [file('New/a.md', 2)])], ROOT)).toEqual([]);
+    expect(folderMovesBetween([dir('Old', [file('Old/a.md', 1)])], [dir('New', [file('New/b.md', 1)])], ROOT)).toEqual([]);
     const two = [dir('A', [file('A/x.md')]), dir('B', [file('B/x.md')])];
     expect(folderMovesBetween(two, [dir('C', [file('C/x.md')])], ROOT)).toEqual([]);
+  });
+
+  it('pairs a folder renamed while a note was added to it, or one of its notes changed', () => {
+    const before = [dir('Places', [file('Places/Castle.md', 400), file('Places/Forest.md', 500)])];
+    const added = [dir('04 Worldbuilding', [file('04 Worldbuilding/Castle.md', 400), file('04 Worldbuilding/Forest.md', 500), file('04 Worldbuilding/Lake.md', 300)])];
+    expect(folderMovesBetween(before, added, ROOT)).toEqual([{ oldFolder: 'Places', newFolder: '04 Worldbuilding' }]);
+    const edited = [dir('04 Worldbuilding', [file('04 Worldbuilding/Castle.md', 431), file('04 Worldbuilding/Forest.md', 501)])];
+    expect(folderMovesBetween(before, edited, ROOT)).toEqual([{ oldFolder: 'Places', newFolder: '04 Worldbuilding' }]);
+    const oneNote = [dir('Ideas', [file('Ideas/Plot.md', 400)])];
+    expect(folderMovesBetween(oneNote, [dir('01 Story', [file('01 Story/Plot.md', 455)])], ROOT)).toEqual([{ oldFolder: 'Ideas', newFolder: '01 Story' }]);
+  });
+
+  it('pairs nothing when a file is missing from the new folder', () => {
+    const before = [dir('Places', [file('Places/Castle.md', 400), file('Places/Forest.md', 500)])];
+    expect(folderMovesBetween(before, [dir('New', [file('New/Castle.md', 400), file('New/Lake.md', 500)])], ROOT)).toEqual([]);
+  });
+
+  it('pairs nothing when two new folders could each be the old one, or two old ones fit one new one', () => {
+    const before = [dir('Old', [file('Old/a.md', 10)])];
+    const twoNew = [dir('X', [file('X/a.md', 10), file('X/b.md')]), dir('Y', [file('Y/a.md', 10), file('Y/c.md')])];
+    expect(folderMovesBetween(before, twoNew, ROOT)).toEqual([]);
+    const twoOld = [dir('A', [file('A/a.md', 10)]), dir('B', [file('B/b.md', 10)])];
+    expect(folderMovesBetween(twoOld, [dir('C', [file('C/a.md', 10), file('C/b.md', 10)])], ROOT)).toEqual([]);
+  });
+
+  it('a new folder holding exactly the old one\'s files wins over one holding them among others', () => {
+    const before = [dir('Old', [file('Old/a.md', 10)])];
+    const after = [dir('X', [file('X/a.md', 10), file('X/b.md')]), dir('Y', [file('Y/a.md', 10)])];
+    expect(folderMovesBetween(before, after, ROOT)).toEqual([{ oldFolder: 'Old', newFolder: 'Y' }]);
   });
 });
 

@@ -400,6 +400,34 @@ describe('withDrainedWrites — scoped to the paths an operation touches', () =>
     expect(vault.read('Card.md')).toBe('---\ntitle: Card\n---\nTyped text\n');
     expect(await vaultStore.save()).toBe(true);
   });
+
+  it('a note waiting for its conflict answer blocks an operation Filo makes, but not one following a move already on disk', async () => {
+    const vault = installMemoryVault({ 'Plot.md': '---\ntitle: Plot\n---\nBody\n' });
+    const m = noteStore.acquire('Plot.md', 'editor');
+    await m.loaded;
+    noteStore.setBody('Plot.md', 'Body, typed\n', 'editor');
+    vault.writeExternally('Plot.md', '---\ntitle: Plot\n---\nBody, links fixed\n');
+    await noteStore.onDiskChanged('Plot.md');
+    expect(m.status).toBe('conflict');
+
+    const op = vi.fn(async () => 'ran');
+    await expect(withDrainedWrites(op, { paths: ['Plot.md', 'Story/Plot.md'] })).rejects.toBeInstanceOf(PendingWritesFailedError);
+    expect(op).not.toHaveBeenCalled();
+    for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
+
+    await expect(withDrainedWrites(op, { paths: ['Plot.md', 'Story/Plot.md'], followsMove: true })).resolves.toBe('ran');
+    expect(uiStore.toasts.some((t) => t.text.includes("Couldn't complete the operation"))).toBe(false);
+    // The typing is still held for the answer, not written over the other version.
+    expect(vault.read('Plot.md')).toContain('links fixed');
+    expect(m.status).toBe('conflict');
+  });
+
+  it('following a move still refuses on a write that failed for another reason', async () => {
+    await failedWriteAt('Card.md');
+    const op = vi.fn(async () => 'ran');
+    await expect(withDrainedWrites(op, { paths: ['Card.md', 'Moved/Card.md'], followsMove: true })).rejects.toBeInstanceOf(PendingWritesFailedError);
+    expect(op).not.toHaveBeenCalled();
+  });
 });
 
 describe('PendingWritesFailedError', () => {

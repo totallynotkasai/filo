@@ -277,6 +277,7 @@ export class NotesBox {
           this.forgetIfDone();
         },
         stillHeld: () => this.conflictOpen && this.unsaved,
+        rescueText: () => this.rescueText(),
       });
       return;
     }

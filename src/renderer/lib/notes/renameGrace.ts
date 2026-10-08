@@ -6,10 +6,32 @@
  * the old path or its "missing" event was handled. A check waits
  * `NOTE_RENAME_GRACE_MS`, then asks only if the note is still in question and
  * the file is still gone.
+ *
+ * The check also asks the watcher to walk the vault at once. Windows reports
+ * a folder another program renamed by the two folder names alone, and when
+ * its contents changed in the same moment (a note added, one edited) the tree
+ * can't tell it was a move: without the walk its notes would be followed only
+ * by the 30 s walk, after a wrong "no longer exists" prompt.
  */
 import { getActiveVaultPath } from '../vault/activeVaultPath';
 import { captureVaultIdentity, isStillSameVault } from '../vault/vaultIdentity';
 import { NOTE_RENAME_GRACE_MS } from '../vault/externalChangeWindows';
+import { settleRenameQueue } from '../../stores/vaultRenameQueue';
+import { invokeOk } from '../utils/invokeOk';
+
+/**
+ * Asks the watcher for a walk now and resolves once the moves it found have
+ * been followed: main sends them before it replies, and they run on the
+ * rename queue. Never rejects: without it the grace alone decides.
+ */
+async function walkForMoves(): Promise<void> {
+  try {
+    await invokeOk('vault:reconcile', { now: true });
+    await settleRenameQueue();
+  } catch {
+    // No watcher, or the walk failed: the grace check still runs.
+  }
+}
 
 interface GraceCheck {
   timer: ReturnType<typeof setTimeout>;
@@ -27,7 +49,11 @@ const graceChecks = new Set<GraceCheck>();
  */
 export function askUnlessMoved(relPath: string, stillHere: () => boolean, ask: () => void, onBack: () => void): void {
   const identity = captureVaultIdentity();
+  const walked = walkForMoves();
   const check = async (): Promise<void> => {
+    if (!isStillSameVault(identity) || !stillHere()) return;
+    // A walk that took longer than the grace (a big vault) is waited for.
+    await walked;
     if (!isStillSameVault(identity) || !stillHere()) return;
     const vaultRoot = getActiveVaultPath();
     if (!vaultRoot) return;

@@ -135,8 +135,10 @@ export interface IpcChannelMap {
     args: [vaultRoot: string];
     result: IpcSuccess<{ released?: boolean }>;
   };
+  // `{ now }`: walk past the throttle (after any walk in flight), and send
+  // what it finds before replying.
   'vault:reconcile': {
-    args: [];
+    args: [opts?: { now?: boolean }];
     result: IpcSuccess<{ skipped?: boolean }>;
   };
   // A folder move another program made, which the renderer followed: the

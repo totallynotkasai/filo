@@ -15,24 +15,22 @@ import { normalizeVaultRelative, toVaultRelative } from '../utils/path';
 interface FolderInfo {
   /** Vault-relative path, as spelled on disk. */
   rel: string;
-  /** Every file below it: path relative to the folder and size, case-folded, sorted. */
-  signature: string;
+  /** Every file below it: path relative to the folder, case-folded, to its size. */
+  files: Map<string, number | undefined>;
 }
 
 /** Every folder in `nodes`, keyed by its case-folded vault-relative path. */
 function foldersOf(nodes: FileTreeNode[], rootAbs: string): Map<string, FolderInfo> {
   const out = new Map<string, FolderInfo>();
-  const visit = (node: FileTreeNode): string[] => {
-    if (!node.isDirectory) {
-      return [`${normalizeVaultRelative(node.name)}\t${node.sizeBytes ?? ''}`];
-    }
-    const files: string[] = [];
+  const visit = (node: FileTreeNode): Map<string, number | undefined> => {
+    if (!node.isDirectory) return new Map([[normalizeVaultRelative(node.name), node.sizeBytes]]);
+    const files = new Map<string, number | undefined>();
     for (const child of node.children ?? []) {
       const prefix = child.isDirectory ? `${normalizeVaultRelative(child.name)}/` : '';
-      for (const f of visit(child)) files.push(prefix + f);
+      for (const [name, size] of visit(child)) files.set(prefix + name, size);
     }
     const rel = toVaultRelative(node.path, rootAbs);
-    if (rel) out.set(normalizeVaultRelative(rel), { rel, signature: files.sort().join('\n') });
+    if (rel) out.set(normalizeVaultRelative(rel), { rel, files });
     return files;
   };
   for (const n of nodes) visit(n);
@@ -52,11 +50,49 @@ function topOnlyIn(a: Map<string, FolderInfo>, b: Map<string, FolderInfo>): Fold
 }
 
 /**
- * Each folder that left the tree while a folder holding exactly the same
- * files (names and sizes) arrived: a rename or a move. A folder with no files
- * is never paired, and a signature shared by two candidates on either side is
- * ambiguous, so it isn't either: a missed pairing only leaves a pin to be
- * cleared, while a wrong one would re-point tiles at another folder's files.
+ * Whether `arrived` can be `gone` moved: every file `gone` held is there by
+ * name. Files added in the same moment (an agent renaming a folder and
+ * writing a new note into it) and files changed in it (the same agent fixing
+ * their links) don't stop the pairing: the watcher's walk can't follow those
+ * changed notes either, since their new paths are already known to it as
+ * files by then, so this is their one quick way to be followed.
+ *
+ * DECISION: a folder deleted while another arrives holding files of the same
+ * names, between two tree reads, is followed as a move too: tiles of its
+ * files then show the new ones. A tile can be re-linked, whereas a missed move
+ * of an open note asks "deleted?" about a note that only moved.
+ */
+function couldBeMovedTo(gone: FolderInfo, arrived: FolderInfo): boolean {
+  for (const name of gone.files.keys()) {
+    if (!arrived.files.has(name)) return false;
+  }
+  return true;
+}
+
+/** The same files, by name and size, and no others. */
+function sameFiles(a: FolderInfo, b: FolderInfo): boolean {
+  if (a.files.size !== b.files.size) return false;
+  for (const [name, size] of a.files) {
+    if (!b.files.has(name) || b.files.get(name) !== size) return false;
+  }
+  return true;
+}
+
+/** The one arrived folder `gone` became: the one holding exactly its files, else the only one that could be it. */
+function targetOf(gone: FolderInfo, arrived: FolderInfo[]): FolderInfo | null {
+  const fits = arrived.filter((a) => couldBeMovedTo(gone, a));
+  const exact = fits.filter((a) => sameFiles(gone, a));
+  if (exact.length > 0) return exact.length === 1 ? (exact[0] ?? null) : null;
+  return fits.length === 1 ? (fits[0] ?? null) : null;
+}
+
+/**
+ * Each folder that left the tree while a folder holding its files arrived
+ * (`couldBeMovedTo`; one holding exactly its files first): a rename or a
+ * move. A folder with no files is never paired, and neither is one that two
+ * folders on the other side could be, or that could be two: a missed pairing
+ * only leaves a pin to be cleared (or the walk to follow it), while a wrong
+ * one would re-point tiles at another folder's files.
  */
 export function folderMovesBetween(
   before: FileTreeNode[],
@@ -65,14 +101,13 @@ export function folderMovesBetween(
 ): Array<{ oldFolder: string; newFolder: string }> {
   const was = foldersOf(before, rootAbs);
   const now = foldersOf(after, rootAbs);
-  const gone = topOnlyIn(was, now).filter((f) => f.signature !== '');
-  const arrived = topOnlyIn(now, was).filter((f) => f.signature !== '');
-  const count = (list: FolderInfo[], sig: string): number => list.filter((f) => f.signature === sig).length;
+  const gone = topOnlyIn(was, now).filter((f) => f.files.size > 0);
+  const arrived = topOnlyIn(now, was).filter((f) => f.files.size > 0);
+  const targets = new Map(gone.map((g) => [g, targetOf(g, arrived)]));
   const moves: Array<{ oldFolder: string; newFolder: string }> = [];
-  for (const g of gone) {
-    if (count(gone, g.signature) !== 1 || count(arrived, g.signature) !== 1) continue;
-    const a = arrived.find((f) => f.signature === g.signature);
-    if (a) moves.push({ oldFolder: g.rel, newFolder: a.rel });
+  for (const [g, a] of targets) {
+    if (!a || [...targets.values()].filter((t) => t === a).length !== 1) continue;
+    moves.push({ oldFolder: g.rel, newFolder: a.rel });
   }
   return moves;
 }

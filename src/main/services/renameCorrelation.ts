@@ -132,6 +132,43 @@ async function sameBasenameBytesPreserved(
   return true;
 }
 
+const NOTE_EXTENSIONS = new Set(['.md', '.markdown']);
+
+/**
+ * A note moved to a free path and changed in the same moment: an agent moving
+ * `Plot.md` into a new `01 Story/` folder and fixing its links at once. The
+ * bytes no longer match, so the content check above refuses the pair, and the
+ * move would arrive as a delete plus a create: the "deleted" prompt, and Keep
+ * mine recreating the note at its old place beside the moved one. Followed as
+ * a move instead, and the caller reports the new path as changed after the
+ * rename, so the moved note's own drift check (Reload / Keep mine) meets the
+ * edit.
+ *
+ * Only a lone same-named pair of notes, onto a path that held no file before
+ * the batch (`wasPresentBefore` must be given, and false), and only when the
+ * new file isn't empty: an empty note created as an old one goes is far more
+ * often a new placeholder than a move.
+ *
+ * DECISION: two unrelated same-named notes, one deleted and one created on a
+ * free path within the same moment (or the watcher's 1.5 s hold), are followed
+ * as a move too: tiles of the gone note then show the new one. No text is
+ * lost (an unsaved edit meets the conflict prompt, which keeps copies), and a
+ * tile can be re-linked, whereas a move that arrives as a delete forks the
+ * note (KNOWN_LIMITATIONS #7).
+ */
+function movedAndChanged(
+  missing: FileChangeEvent,
+  present: FileChangeEvent,
+  relPathSize: ((relPath: string) => number | null) | undefined,
+  wasPresentBefore: ((relPath: string) => boolean) | undefined,
+): boolean {
+  if (wasPresentBefore === undefined || wasPresentBefore(present.filename)) return false;
+  if (missing.type !== 'document' || present.type !== 'document') return false;
+  if (!NOTE_EXTENSIONS.has(extname(missing.filename).toLowerCase())) return false;
+  if (!NOTE_EXTENSIONS.has(extname(present.filename).toLowerCase())) return false;
+  return relPathSize?.(present.filename) !== 0;
+}
+
 /**
  * Correlates a batch of file-change events into rename pairs + a filtered
  * residual feed. Pure function — takes a `relPathExists` probe so callers
@@ -195,8 +232,14 @@ export async function correlateRenames(
   renames: Array<{ oldPath: string; newPath: string }>;
   /** Pairs REFUSED because the present file is a sync conflict copy of the missing one. */
   conflicts: Array<{ copyPath: string; canonicalPath: string; client: string }>;
+  /**
+   * New paths of renames paired although their bytes may differ (see
+   * `movedAndChanged`). The caller reports each as changed after the rename.
+   */
+  changedOnMove: string[];
 }> {
   const renames: Array<{ oldPath: string; newPath: string }> = [];
+  const changedOnMove: string[] = [];
   const conflicts: Array<{ copyPath: string; canonicalPath: string; client: string }> = [];
   // OneDrive keeps both sides of a conflict by RENAMING the
   // local file to `Note-<DEVICE>.md` (same bytes) and downloading the other
@@ -258,6 +301,11 @@ export async function correlateRenames(
           conflicts.push({ copyPath: pres.filename, canonicalPath: miss.filename, client: cc.client });
         } else if (!replacesFile(pres.filename, miss.filename) && await sameBasenameBytesPreserved(miss, pres, relPathSize, relPathHash)) {
           renames.push({ oldPath: miss.filename, newPath: pres.filename });
+          suppressedKeys.add(`${miss.type}:${miss.filename}`);
+          suppressedKeys.add(`${pres.type}:${pres.filename}`);
+        } else if (movedAndChanged(miss, pres, relPathSize, wasPresentBefore)) {
+          renames.push({ oldPath: miss.filename, newPath: pres.filename });
+          changedOnMove.push(pres.filename);
           suppressedKeys.add(`${miss.type}:${miss.filename}`);
           suppressedKeys.add(`${pres.type}:${pres.filename}`);
         }
@@ -373,5 +421,5 @@ export async function correlateRenames(
   }
 
   const filtered = events.filter(c => !suppressedKeys.has(`${c.type}:${c.filename}`));
-  return { filtered, renames, conflicts };
+  return { filtered, renames, conflicts, changedOnMove };
 }

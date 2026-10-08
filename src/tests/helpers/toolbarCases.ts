@@ -46,6 +46,25 @@ export function selectFirstBlock(ed: Editor): void {
   ed.commands.setTextSelection({ from: 1, to: 1 + first.content.size });
 }
 
+/** The position just inside `text`'s first occurrence (after its first character). */
+function insideText(ed: Editor, text: string): number {
+  let pos = -1;
+  ed.state.doc.descendants((n, p) => {
+    if (pos < 0 && n.isText && n.text!.includes(text)) pos = p + n.text!.indexOf(text) + 1;
+    return pos < 0;
+  });
+  if (pos < 0) throw new Error(`"${text}" isn't in the note`);
+  return pos;
+}
+
+/** A caret inside `text`, as a click on its line leaves it. */
+function caretIn(ed: Editor, text: string): void {
+  ed.commands.setTextSelection(insideText(ed, text));
+}
+
+/** Lines of a note from another app, joined by single newlines (soft breaks), as Keep and Canvas write them. */
+const LINES = 'Dear Aria,\nThe ferry leaves at dawn.\nBring the letter.';
+
 export interface ToolbarCase {
   name: string;
   start?: string;
@@ -314,6 +333,102 @@ export const TOOLBAR_CASES: ToolbarCase[] = [
   { name: 'bullet list over a soft break', start: 'Alpha\nbeta', run: (e) => e.chain().toggleBulletList().run(), saved: '- Alpha\n  beta' },
   { name: 'quote over a soft break', start: 'Alpha\nbeta', run: (e) => e.chain().toggleBlockquote().run(), saved: '> Alpha\n> beta' },
   { name: 'table cell text over a soft break', start: 'Alpha\nbeta', run: (e) => e.chain().insertTable({ rows: 2, cols: 1, withHeaderRow: true }).run() },
+  // A block command with the caret on one line of soft-broken lines acts on
+  // that line alone; the lines around it keep their form (`lineBlocks.ts`).
+  {
+    name: 'heading on one line of soft-broken lines',
+    start: LINES,
+    run: (e) => {
+      caretIn(e, 'The ferry');
+      return e.chain().setHeading({ level: 3 }).run();
+    },
+    saved: 'Dear Aria,\n\n### The ferry leaves at dawn.\n\nBring the letter.',
+  },
+  {
+    name: 'heading from the dropdown on the first of soft-broken lines',
+    start: LINES,
+    run: (e) => {
+      caretIn(e, 'Dear');
+      return e.chain().command(clearBlockTextStyle).setHeading({ level: 2 }).run();
+    },
+    saved: '## Dear Aria,\n\nThe ferry leaves at dawn.\nBring the letter.',
+  },
+  {
+    name: 'heading shortcut on the last of soft-broken lines',
+    start: LINES,
+    run: (e) => {
+      caretIn(e, 'Bring');
+      return e.chain().toggleHeading({ level: 1 }).run();
+    },
+    saved: 'Dear Aria,\nThe ferry leaves at dawn.\n\n# Bring the letter.',
+  },
+  {
+    name: 'heading on two selected lines of three: those two, the third left',
+    start: LINES,
+    run: (e) => {
+      e.commands.setTextSelection({ from: insideText(e, 'The ferry'), to: insideText(e, 'Bring') });
+      return e.chain().setHeading({ level: 3 }).run();
+    },
+    saved: 'Dear Aria,\n\n### The ferry leaves at dawn.<br data-filo-soft-break>Bring the letter.',
+  },
+  {
+    name: 'normal text on one line of a soft-broken heading',
+    start: '## Dear Aria,<br data-filo-soft-break>The ferry leaves at dawn.',
+    run: (e) => {
+      caretIn(e, 'The ferry');
+      return e.chain().command(clearBlockTextStyle).setParagraph().run();
+    },
+    saved: '## Dear Aria,\n\nThe ferry leaves at dawn.',
+  },
+  {
+    name: 'centre one line of soft-broken lines',
+    start: LINES,
+    run: (e) => {
+      caretIn(e, 'The ferry');
+      return e.chain().setTextAlign('center').run();
+    },
+    saved: 'Dear Aria,\n\n<p style="text-align: center;">The ferry leaves at dawn.</p>\n\nBring the letter.',
+  },
+  {
+    name: 'indent one line of soft-broken lines',
+    start: LINES,
+    run: (e) => {
+      caretIn(e, 'The ferry');
+      return e.chain().increaseIndent().run();
+    },
+    saved: 'Dear Aria,\n\n<p style="margin-left: 24px;">The ferry leaves at dawn.</p>\n\nBring the letter.',
+  },
+  {
+    name: 'quote one line of soft-broken lines',
+    start: LINES,
+    run: (e) => {
+      caretIn(e, 'The ferry');
+      return e.chain().toggleBlockquote().run();
+    },
+    saved: 'Dear Aria,\n\n> The ferry leaves at dawn.\n\nBring the letter.',
+  },
+  ...([
+    ['bulletList', '- '],
+    ['orderedList', '1. '],
+    ['taskList', '- [ ] '],
+  ] as const).map(([kind, marker]): ToolbarCase => ({
+    name: `the ${kind} button on one line of soft-broken lines`,
+    start: LINES,
+    run: (e) => {
+      caretIn(e, 'The ferry');
+      return e.chain().switchList(kind).run();
+    },
+    saved: `Dear Aria,\n\n${marker}The ferry leaves at dawn.\n\nBring the letter.`,
+  })),
+  {
+    name: 'heading on a line after Shift+Enter takes its whole paragraph',
+    start: 'Dear Aria,\\\nThe ferry leaves at dawn.',
+    run: (e) => {
+      caretIn(e, 'The ferry');
+      return e.chain().setHeading({ level: 3 }).run();
+    },
+    saved: '### Dear Aria,<br>The ferry leaves at dawn.',
+  },
   {
     name: 'centred text with characters HTML must escape',
     start: 'a < b & c > d',

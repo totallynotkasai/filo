@@ -1695,3 +1695,52 @@ selection and typed accents (IME) would all have to cross.
 the same with pages on or off. A note of ordinary paragraphs pages cleanly;
 Global Defaults → Document → Page Layout → One continuous sheet turns the
 cards off.
+
+## 54. Other Markdown apps show a paragraph and a typed blank line differently
+
+**What:** In Filo, Enter starts the next paragraph on the next line with no
+space between them, as a wrapped line sits, and list items stand the same
+way. A gap is a blank line you type: an empty paragraph, which Filo writes as
+one more blank line in the file. Markdown has no way to say "no gap", so other
+apps (Obsidian, GitHub, a Markdown preview) put their own space between every
+two paragraphs, and fold a run of blank lines into that one gap. A note
+written in Filo looks more spaced out there, and a blank line typed in Filo
+adds nothing on top. The other way round, a note from those apps looks closed
+up in Filo. Lines joined by single newlines (a note from Keep, a plain-text
+paste) also look like separate paragraphs in Filo; a heading, alignment,
+indent, quote or list on one of them acts on that line alone, and Enter
+beside one opens a new line there. A Shift+Enter line break looks the same
+but keeps its paragraph whole, as in a word processor.
+
+**Where:** [src/css/style.css](src/css/style.css) (`.tiptap p:has(+ p)`, `.tiptap li > p`),
+the same rules in [src/renderer/components/boards/DocumentEditor.svelte](src/renderer/components/boards/DocumentEditor.svelte),
+[src/renderer/lib/editor/emptyParagraphs.ts](src/renderer/lib/editor/emptyParagraphs.ts),
+[src/renderer/lib/editor/lineBlocks.ts](src/renderer/lib/editor/lineBlocks.ts).
+
+**Why accepted:** Tight paragraphs are how the owner writes (decision D1 of
+the Audit-29 plan). The spacing is drawn by Filo's styles and is never in the
+note, so the file stays plain Markdown that every app reads the same, words,
+order and structure alike.
+
+**Impact:** Only the look: a note is spaced differently in Filo and in other
+apps.
+
+## 55. Blank lines at the start of a note aren't kept
+
+**What:** Empty lines typed above a note's first line are written to the
+file as blank lines, but they are gone when the note reopens, and the next
+save drops them from the file. Blank lines between two blocks, and after the
+last one, are kept.
+
+**Where:** [src/renderer/lib/editor/emptyParagraphs.ts](src/renderer/lib/editor/emptyParagraphs.ts)
+(`encodeEmptyParagraphs`), [src/renderer/lib/notes/noteFile.ts](src/renderer/lib/notes/noteFile.ts)
+(`withBlankLinesAfterFence`).
+
+**Why accepted:** Under a note's frontmatter, a blank line between the
+closing `---` and the text is the usual gap, which other apps write and Filo
+keeps as it is. A note's first empty line would be written as the same blank
+line, so a reader of the file can't tell the two apart; reading every such
+gap as an empty line would put one at the top of most notes.
+
+**Impact:** To keep space above a note's first line, start it with text (a
+heading, say).

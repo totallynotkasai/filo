@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, quiesce, reopenVault, type CharApp } from './harness/app';
-import { $$, editors, openNoteFromSidebar, caretAfter, pressInEditor, typeKeys, leaveEditor } from './harness/actions';
+import { $$, editors, openNoteFromSidebar, caretAfter, pressInEditor, typeKeys, leaveEditor, chooseTextStyle } from './harness/actions';
 import { documentBanners } from './harness/errorStates';
 
 type Editor = ReturnType<typeof editors>[number];
@@ -82,5 +82,60 @@ describe('what is typed reopens as typed', () => {
     expect(documentBanners(app)).toEqual([]);
     expect(again.isEditable).toBe(true);
     expect(again.getText()).toContain('    indented text');
+  });
+});
+
+describe('lines written one per thought, and blank lines', () => {
+  // A note from Keep or an agent: one paragraph whose lines are joined by single newlines.
+  const STATS = 'Physical\nStrength - raw power\nEndurance - stamina\n';
+
+  it('Enter at the end of a line opens a new line there; what is typed lands on it', async () => {
+    const app = await startApp({ 'Stats.md': `---\ntitle: Stats\n---\n${STATS}` });
+    await openNoteFromSidebar(app, 'Stats.md');
+    const ed = noteEditor(app);
+    await caretAfter(ed, 'raw power');
+    await pressInEditor(ed, 'Enter');
+    await typeKeys(ed, 'Speed - movement');
+    await leaveEditor(ed);
+    await quiesce();
+    expect(body(app, 'Stats.md')).toBe('Physical\nStrength - raw power\n\nSpeed - movement\n\nEndurance - stamina\n');
+
+    const again = await reopenNote(app, 'Stats.md');
+    expect(documentBanners(app)).toEqual([]);
+    expect(again.isEditable).toBe(true);
+  });
+
+  it('Heading 3 from the toolbar on one line changes that line alone', async () => {
+    const app = await startApp({ 'Stats.md': `---\ntitle: Stats\n---\n${STATS}` });
+    await openNoteFromSidebar(app, 'Stats.md');
+    const ed = noteEditor(app);
+    await caretAfter(ed, 'Phys');
+    await chooseTextStyle(app, 'Heading 3');
+    await leaveEditor(ed);
+    await quiesce();
+    expect(body(app, 'Stats.md')).toBe('### Physical\n\nStrength - raw power\nEndurance - stamina\n');
+
+    const again = await reopenNote(app, 'Stats.md');
+    expect(documentBanners(app)).toEqual([]);
+    expect(again.getJSON().content?.map((n) => n.type)).toEqual(['heading', 'paragraph']);
+  });
+
+  it('blank lines typed after the last line are there when the note reopens, and reopening writes nothing', async () => {
+    const app = await startApp({ 'End.md': '---\ntitle: End\n---\nLast line\n' });
+    await openNoteFromSidebar(app, 'End.md');
+    const ed = noteEditor(app);
+    await caretAfter(ed, 'Last line');
+    await pressInEditor(ed, 'Enter');
+    await pressInEditor(ed, 'Enter');
+    await leaveEditor(ed);
+    await quiesce();
+    const saved = app.read('End.md');
+    expect(body(app, 'End.md')).toBe('Last line\n\n\n\n');
+
+    const again = await reopenNote(app, 'End.md');
+    await quiesce();
+    expect(documentBanners(app)).toEqual([]);
+    expect(again.getJSON().content?.map((n) => n.content?.length ?? 0)).toEqual([1, 0, 0]);
+    expect(app.read('End.md')).toBe(saved);
   });
 });

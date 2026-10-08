@@ -62,7 +62,9 @@ export default defineConfig({
         resolve: { conditions: ['browser'] },
         // Bundled with the editor up front: found mid-run, it is bundled on
         // its own, and its decorations are then another copy's to the editor.
-        optimizeDeps: { include: ['@tiptap/pm/view'] },
+        // The Svelte compiler (a spec compiles a component's styles) likewise,
+        // or finding it mid-run reloads the page under the running specs.
+        optimizeDeps: { include: ['@tiptap/pm/view', 'svelte/compiler'] },
         test: {
           name: 'browser',
           include: ['src/tests/browser/**/*.test.ts'],

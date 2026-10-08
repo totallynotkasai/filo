@@ -1289,6 +1289,20 @@ export async function leaveEditor(ed: Editor): Promise<void> {
   await settle();
 }
 
+/**
+ * With the caret where it is in the focused editor, pick `label` ("Heading 3",
+ * "Normal text") in the toolbar's Text style menu.
+ */
+export async function chooseTextStyle(app: CharApp, label: string): Promise<void> {
+  const select = $(app.el, 'select.style-select') as unknown as HTMLSelectElement;
+  const option = [...select.options].find((o) => (o.textContent ?? '').trim() === label);
+  if (!option) throw new Error(`Text style has no "${label}"`);
+  select.dispatchEvent(new Event('focus'));
+  select.value = option.value;
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  await settle();
+}
+
 /** Put the cursor in the editor's first block, then click the toolbar's Increase Indent button. */
 export async function indentFirstBlock(app: CharApp, ed: Editor): Promise<void> {
   ed.commands.focus('start');

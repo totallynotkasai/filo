@@ -3,6 +3,7 @@ import { sanitizeNoteHtml } from '../utils/sanitizeHtml';
 import { renderSoftBreaksAsNodes } from './softBreak';
 import { noteImageUrl } from './noteImages';
 import { toPosix } from '../utils/path';
+import { EMPTY_PARAGRAPH_SENTINEL, encodeEmptyParagraphs } from './emptyParagraphs';
 
 /**
  * A note body as static HTML, for a Kanban card whose editor isn't mounted
@@ -114,6 +115,18 @@ function toTaskLists(root: HTMLElement): void {
   }
 }
 
+/**
+ * A blank line the user typed is an empty paragraph in the editor, a line high
+ * (paragraphs have no gap between them, so nothing else shows it). The body
+ * went through `encodeEmptyParagraphs` as the editor's load does; each
+ * sentinel paragraph becomes the editor's empty one.
+ */
+function showEmptyParagraphs(root: HTMLElement): void {
+  for (const p of Array.from(root.querySelectorAll('p'))) {
+    if (p.textContent === EMPTY_PARAGRAPH_SENTINEL) p.replaceChildren(p.ownerDocument.createElement('br'));
+  }
+}
+
 /** `html` with each image's address made the one the editor shows it from. */
 function withVaultImages(html: string, notePath: string): string {
   if (!html.includes('<img')) return html;
@@ -140,12 +153,15 @@ export function renderNotePreviewHtml(body: string, notePath = ''): string {
   let html: string;
   try {
     const template = document.createElement('template');
-    template.innerHTML = sanitizeNoteHtml(withVaultImages(md.render(body), notePath));
+    // A body already holding the sentinel is left as written, as the editor's load leaves it.
+    const source = body.includes(EMPTY_PARAGRAPH_SENTINEL) ? body : encodeEmptyParagraphs(body, md);
+    template.innerHTML = sanitizeNoteHtml(withVaultImages(md.render(source), notePath));
     const wrap = document.createElement('div');
     wrap.appendChild(template.content);
     normaliseWhitespace(wrap);
     wrapInlineRuns(wrap);
     toTaskLists(wrap);
+    if (source !== body) showEmptyParagraphs(wrap);
     html = wrap.innerHTML;
   } catch {
     // A body markdown-it can't render still shows as its text.

@@ -2,6 +2,7 @@ import { Extension, type CommandProps } from '@tiptap/core';
 import { Fragment, NodeRange, type Node as ProseMirrorNode, type NodeType } from '@tiptap/pm/model';
 import type { EditorState, Transaction } from '@tiptap/pm/state';
 import { canJoin, findWrapping } from '@tiptap/pm/transform';
+import { onLinesAlone } from './lineBlocks';
 
 /**
  * The list buttons (and Ctrl+Shift+7 / 8 / 9) as a word processor has them:
@@ -149,7 +150,8 @@ export const ListSwitch = Extension.create({
 
   addCommands() {
     return {
-      switchList:
+      // On one line of a soft-broken paragraph, that line alone becomes the list item (`lineBlocks.ts`).
+      switchList: onLinesAlone(
         (kindName: ListKind) =>
         ({ state, tr, dispatch, commands }: CommandProps): boolean => {
           const kind = state.schema.nodes[kindName];
@@ -182,6 +184,7 @@ export const ListSwitch = Extension.create({
           for (const pos of lists) joinNeighbours(tr, pos);
           return true;
         },
+      ),
     };
   },
 

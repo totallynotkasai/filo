@@ -22,7 +22,7 @@ const BREAK_RULES = `
   .page-column { width: 812px; padding: 56px 72px; box-sizing: border-box; position: relative; }
   .page-column .tiptap { font-size: 16px; line-height: 1.5; }
   .page-column .tiptap p { margin-top: 0; margin-bottom: 1.25em; }
-  .page-column .tiptap p + p { margin-top: 0.5em; }
+  .page-column .tiptap p:has(+ p) { margin-bottom: 0; }
   .page-column .tiptap pre { padding: 16px; background: #eee; }
   .page-column .tiptap .filo-page-break { padding-top: var(--filo-page-break, 0px); }
   .page-column .tiptap pre.filo-page-break {

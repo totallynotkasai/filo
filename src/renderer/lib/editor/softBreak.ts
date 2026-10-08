@@ -1,6 +1,7 @@
 import { Extension, Node } from '@tiptap/core';
 import { Fragment, type Mark, type Node as ProseMirrorNode } from '@tiptap/pm/model';
-import type { Transaction } from '@tiptap/pm/state';
+import { TextSelection, type Transaction } from '@tiptap/pm/state';
+import { canSplit } from '@tiptap/pm/transform';
 
 /**
  * A single newline inside a paragraph (a soft line break), as the file has it.
@@ -191,12 +192,35 @@ export const SoftBreak = Node.create({
 });
 
 /**
- * Enter beside a soft break splits the paragraph at that break, which goes.
- * Left in, it would open the new paragraph (an empty first line, and a
- * `<br data-filo-soft-break>` in a plain note) or end the old one. High
- * priority, so a list item's or table's Enter doesn't split first; it removes
- * the break and hands the key on, so theirs (or the paragraph split) runs on
- * the text without it.
+ * In `tr`, replaces the soft break at `at` with a boundary between blocks: a
+ * new list item when its line is in one, else a new block of the same kind.
+ * Where no boundary can go, the break is only removed, and Enter splits there.
+ */
+function breakToBoundary(tr: Transaction, at: number): void {
+  const $at = tr.doc.resolve(at);
+  const item = $at.depth > 1 ? $at.node(-1).type.name : '';
+  tr.delete(at, at + 1);
+  const depth = item === 'listItem' || item === 'taskItem' ? 2 : 1;
+  if (canSplit(tr.doc, at, depth)) tr.split(at, depth);
+  else if (depth === 2 && canSplit(tr.doc, at, 1)) tr.split(at, 1);
+}
+
+/**
+ * Enter beside a soft break opens a new empty line at the caret, as Enter at
+ * a paragraph's end (or start) does. The lines of a soft-broken paragraph
+ * look like paragraphs (none has a gap), so the break next to the caret
+ * becomes a boundary between blocks first, with the caret kept on its line,
+ * and Enter then runs there as usual: at a line's end the new line opens
+ * under it, at a line's start above it, and on the empty line between two
+ * breaks under that one. A boundary alone showed nothing, and what was typed
+ * next joined the following line. A break left in would open the new
+ * paragraph (an empty first line, and a `<br data-filo-soft-break>` in a
+ * plain note) or end the old one.
+ *
+ * High priority, so a list item's or table's Enter doesn't split first; it
+ * makes the boundary and hands the key on, so theirs (or the paragraph
+ * split) runs on the text without the break. In a list item the boundary is a
+ * new item, so the new line is an item between the two.
  */
 export const SoftBreakEnter = Extension.create({
   name: 'filoSoftBreakEnter',
@@ -208,11 +232,22 @@ export const SoftBreakEnter = Extension.create({
         const { selection } = editor.state;
         if (!selection.empty) return false;
         const { $from } = selection;
-        const at = $from.nodeAfter?.type.name === 'softBreak'
-          ? $from.pos
-          : $from.nodeBefore?.type.name === 'softBreak' ? $from.pos - 1 : null;
-        if (at === null) return false;
-        editor.view.dispatch(editor.state.tr.delete(at, at + 1));
+        const breakAfter = $from.nodeAfter?.type.name === 'softBreak';
+        const breakBefore = $from.nodeBefore?.type.name === 'softBreak';
+        if (!breakAfter && !breakBefore) return false;
+        const tr = editor.state.tr;
+        const pos = $from.pos;
+        // The later break first, so the earlier one's position still holds.
+        if (breakAfter) breakToBoundary(tr, pos);
+        let caret = pos;
+        if (breakBefore) {
+          const steps = tr.steps.length;
+          breakToBoundary(tr, pos - 1);
+          // The caret's line now starts the block after the boundary.
+          caret = tr.mapping.slice(steps).map(pos - 1, 1);
+        }
+        tr.setSelection(TextSelection.create(tr.doc, caret));
+        editor.view.dispatch(tr);
         return false;
       },
     };

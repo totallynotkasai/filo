@@ -1,7 +1,7 @@
 # Audit-29 implementation plan (draft, 2026-10-08)
 
 - **Source:** [AUDIT29_FULL_AUDIT_2026-10-08.md](AUDIT29_FULL_AUDIT_2026-10-08.md). Finding IDs (A-01, C-08 …) refer to it. Write "Audit-29 A-01" in commit messages, since Audit-28 used the same letters.
-- **Status:** in progress. Phase 0 done 2026-10-08 (outcome in section 4). Decided: D3 (`npm run preview`, then `npm start`; no dev guard) and D4 (push now). D1, D2 and D5 to D8 still have only their defaults.
+- **Status:** in progress. Phases 0 and 1 done 2026-10-08 (outcomes in section 4). Decided: D1 (a), tight paragraphs; D3 (`npm run preview`, then `npm start`; no dev guard); D4 (push now, for Phase 0; Phase 1 stays on this PC). D2 and D5 to D8 still have only their defaults.
 - **Scores:** out of 10, as in the report. **Hard:** 0/10 = minutes, 5/10 = a few days with tests, 10/10 = weeks.
 
 ## 1. How this plan works
@@ -217,3 +217,50 @@ Your agent moves, rewrites and merges notes from outside Filo. Phase 2 makes tha
 **New findings:** BL-42 (above), and BL-43: the GitHub run grew to 54 minutes, almost all of it the unit suite (3,100 s against 2,029 s on 4 October). The `dist/` rebuild hazard (deviation 1) was found and fixed in this phase.
 
 **For you:** close Filo if it's open, then run `npm run preview` once. Settings should read `Filo 0.2.1 (<commit>+)`: the `+` is the paragraph change, still uncommitted until Phase 1. On the days after, open Filo with `npm start`.
+
+### Phase 1 (done 2026-10-08)
+
+**Decisions taken:** D1, the default (a): tight paragraphs, with lists matched, Enter at a line break fixed and block commands acting on one line. You also chose to keep Phase 1 on this PC: it is committed, not pushed.
+
+**What changed**
+
+| # | Change |
+|---|---|
+| 1.1 (D-01) | Tight paragraphs kept, with no setting: the uncommitted `p:has(+ p)` rule and the card preview's blank lines are committed with this phase. Written up in CLAUDE.md (Common Gotchas, "Paragraphs have no gap between them", and the structure list), KNOWN_LIMITATIONS #54 ("Other Markdown apps show a paragraph and a typed blank line differently") and the design doc's "Line & paragraph spacing". |
+| 1.2 (D-01) | Lists stand as close as paragraphs. An item's paragraph (a checklist item's sits in a `div`) and a list nested in an item add no margin, in `style.css` and again in `DocumentEditor.svelte`, whose own `li` margin (0.3em) is gone. A whole list keeps its margin below. A checklist's checkbox label is one line tall (`1lh`), the box centred on it. New Chromium spec `paragraphSpacingInChromium.test.ts` (24 cases): in a tile, a card's preview and a Document tab, at each of the 7 Line Spacings, a paragraph, a bullet, a numbered and a checklist item are each a line apart, and a list keeps a gap below; a sub-list; the card preview as tall as its editor; Heading 3 on a stat block's line. |
+| 1.3 (D-08) | Enter beside a line break opens a new empty line at the caret. The break becomes a block boundary (a new item, in a list), the caret stays on its line, and Enter then runs as usual. At the end of a line the new line opens under it and typing goes there; at the start of a line, above it; on an empty line between two breaks, under it. One Ctrl+Z puts it back. `softBreakEnter.test.ts` (8 cases, Refuter 1's stat block among them), `editorCaretInChromium.test.ts` with real keys (the note grows by a line, "Speed" never joins the next line), and a characterisation case through the whole app and disk. |
+| 1.4 (D-02) | New `lib/editor/lineBlocks.ts`. Heading, Normal text, Align, Indent, Quote (Ctrl+Shift+B: the toolbar has no Quote button) and the list buttons, with their shortcuts, split a block of soft-broken lines at the soft breaks around the selection, then act, in one undo step. The heading menu's style clear (`clearBlockTextStyle`) clears only the selected lines. 12 new toolbar cases (saved, reloaded, and read by micromark too), `lineBlocks.test.ts` (11), the Chromium stat-block case, and a characterisation case: Heading 3 from the Text style menu changes only that line on disk. |
+| 1.5 (H-03) | Blank lines after a note's last block are rebuilt on load (`encodeEmptyParagraphs`), so Enter, Enter after the last line survives reopening, and reopening writes nothing (characterisation case). Blank lines at the start can't be told from the gap under frontmatter: KNOWN_LIMITATIONS #55. |
+| 1.6 (D-05) | A title is one line (new `lib/editor/oneLine.ts`). The title and label editor holds one paragraph. A pasted line break or paragraph, plain or HTML, becomes a space, formatting kept. A title saved over two paragraphs opens as one line with all its words, and the commit turns any line break into a space. `titleOneLine.test.ts` (7), `titlePasteInChromium.test.ts` (3, the browser's real paste). |
+| 1.7 | One commit: the uncommitted change with 1.1 to 1.6. Version 0.2.2. |
+
+**Deviations from the plan**
+
+1. **Only soft breaks split (1.4).** A Shift+Enter line break keeps its paragraph whole, as in a word processor, where a paragraph style takes all its lines (a `DECISION` in `lineBlocks.ts`). The plan said "line breaks". Soft breaks are the lines from Keep, Canvas, an agent or a plain-text paste, which the owner didn't type as one paragraph.
+2. **Lines a selection spans stay one block (1.4).** The split is at the breaks around the selection, as the plan says, not between the selected lines. Heading 3 on two of three lines makes one heading of two lines (`<br data-filo-soft-break>` in the file).
+3. **Not in a list item or table cell (1.4).** A split there would make the item two paragraphs (a loose list) or turn the table into HTML, so a command there acts on the whole item, as before.
+4. **Two problems found and fixed in 1.4 while testing it.**
+   - A command that changes nothing split the block in the file anyway: Shift+Tab on a line with no indent, Align Left on a left line, Normal text on a paragraph. A split the command leaves alike on both sides is now joined back (alignment `left` counts as none).
+   - Normal text (Ctrl+Alt+0) on a line that already was a paragraph threw "Invalid content for node type hardBreak". TipTap's `setNode` falls back to `clearNodes` there, which maps positions it reads from the split document through the split's own steps a second time. The wrapped command now runs on a transaction of its own over the split document (TipTap's `CommandManager` with a custom state), and its steps are added to the shared one.
+5. **The heading menu's style clear (1.4)** removed the size, font and colour of every line in the block, not just the ones becoming a heading. It now clears the selected lines only.
+6. **Only the end is rebuilt (1.5)**, as the plan allowed. The start is KNOWN_LIMITATIONS #55. The end's rebuild leaves the body as written when anything but blank lines follows the last block (a link reference definition, which the between-blocks rebuild drops: E-14, Phase 6). It also checks its own result, so a block left open to the end (a code fence never closed) never takes the empty lines in.
+7. **More than `li > p` (1.2).** A nested list's margin, the Document tab's `li` margin and the checkbox label also had to go: a checklist stood 2 to 3 px looser than the text at Line Spacing 1 and 1.15, and at every spacing in a Document tab.
+8. **Connection labels too (1.6)**, since they use the same editor. The commit turns only line breaks into spaces, not other runs of spaces: a tile header writes `title:` whenever the commit's text differs from it, so collapsing double spaces would rewrite titles nobody edited. The one-line Enter moved from `createEditor.ts` into `oneLine.ts`.
+9. **The new line's kind (1.3).** In a list item the break becomes an item boundary, so the new line is an item between the two. In a heading the new line is a paragraph between two headings.
+10. **The spacing spec reads the real styles.** `paragraphSpacingInChromium.test.ts` compiles `DocumentEditor.svelte` with `svelte/compiler` at test time, instead of copying its rules as the finder's repro and `pageBreaksInChromium.test.ts` do. `svelte/compiler` joined the browser project's `optimizeDeps` (found mid-run, it reloads the page under the running specs), and `src/tests/types/rawImports.d.ts` declares `?raw` imports.
+11. **One test pinned the old behaviour.** `editorEditsReadBack.test.ts` ("a heading made from a one-line-per-thought paragraph, Ctrl+I from the end of its first line") put the caret on the first line and expected a two-line heading. It now selects both lines first, keeping its subject (italic across the break).
+12. **The corpus shows changes, all from 1.5** (see Checks). The plan's pass said no change.
+
+**Checks**
+
+| Check | Result |
+|---|---|
+| `ci:verify`, main checkout (Phase 1 complete) | Green in 338 s: lint, knip, svelte-check (918 files, 0 errors), main typecheck, 877 test files (8,617 passed, 5 skipped), build, 91/91 gates. An earlier run, started before the last fixes, failed only the `editorEditsReadBack.test.ts` case in deviation 11. |
+| E2E with `FILO_E2E_SCALE=1` | 47/47 in 3.7 min, scale budgets in. |
+| Corpus, the 741-note list against `corpus-a29.json` | 0 newly read-only, 0 newly failed to load. 4 outputs changed, each a note ending in blank lines, which a save now keeps. Three of them now save byte for byte as their file. The fourth (`node_modules/filelist/README.md`) still differs from its file elsewhere: Filo writes its `*` bullets as `-`, as before. 5 notes not compared (docs edited between the runs); the 2 that failed before are the archived Audit-28 docs. |
+| Corpus, your 21 book notes against `owner-corpus-a29.json` | 20 editable, 1 read-only (`Duplicate Review`, as before). 3 outputs changed, all now byte for byte as their files: `Plot Overview`, `Character Profiles` and `Old Magic Ideas` end in blank lines, now kept (and shown as empty lines at the end). |
+| Hands-on, the built app | `dist/`, a scratch profile and a fresh copy of the book vault at 1,366 px, driven by Playwright. Heading 3 from the Text style menu on `Leveling System Ideas`'s "Physical (likely capped)" made that line alone a heading; the file read `**Potential stats**`, a blank line, `### Physical (likely capped)`, a blank line, then the stat lines as before. Ctrl+Z put it back. End and Enter on "Strength — raw power…" opened a line under it, and "Speed - movement" was typed there, saved as its own paragraph. `Duplicate Review`'s bullets stand a line apart, like its text. No toasts, no errors, and the quit exited. The first save of that note also dropped a space typed at the end of a line, which Filo has always done (`lineEndSpaces.ts`). |
+
+**New findings:** BL-44 (a card whose note mixes bullets and checklist items in one list grows a line when its editor mounts; the note is read-only anyway) and BL-45 (typing `- ` at the start of a soft-broken line leaves it text). Both are in `docs/BACKLOG.md`.
+
+**For you:** close Filo if it's open, then run `npm run preview` once. Settings should read `Filo 0.2.2 (<commit>)`, with no `+`. Then open `Leveling System Ideas` and try Heading 3, and Enter at the end of a stat line. On the days after, open Filo with `npm start`.

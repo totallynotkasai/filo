@@ -743,12 +743,10 @@
     margin-top: 0;
     margin-bottom: 1.25em;
   }
-  /* Visible blank-line gap between consecutive paragraphs.
-     Adjacent-sibling rule beats CSS margin collapse so the second paragraph
-     always gets the extra breathing room, matching Word-style
-     "Enter = blank line between paragraphs." */
-  .document-editor :global(.tiptap p + p) {
-    margin-top: 0.5em;
+  /* Enter puts the next paragraph on the next line, no gap (style.css has
+     the why); this outranks the margin above. */
+  .document-editor :global(.tiptap p:has(+ p)) {
+    margin-bottom: 0;
   }
 
   /* Sizes and weights come from the shared `.tiptap h1…h6` scale in
@@ -782,8 +780,15 @@
     margin-bottom: 0.8em;
   }
 
-  .document-editor :global(.tiptap li) {
-    margin-bottom: 0.3em;
+  /* Items a line apart, as paragraphs are (style.css has the why); these
+     outrank the margins above. */
+  .document-editor :global(.tiptap li > p),
+  .document-editor :global(.tiptap li > div > p),
+  .document-editor :global(.tiptap li > ul),
+  .document-editor :global(.tiptap li > ol),
+  .document-editor :global(.tiptap li > div > ul),
+  .document-editor :global(.tiptap li > div > ol) {
+    margin-bottom: 0;
   }
 
   .document-editor :global(.tiptap blockquote) {
@@ -868,9 +873,5 @@
     display: flex;
     align-items: flex-start;
     gap: 8px;
-  }
-
-  .document-editor :global(.tiptap ul[data-type="taskList"] li label) {
-    margin-top: 3px;
   }
 </style>

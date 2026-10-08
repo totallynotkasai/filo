@@ -22,8 +22,9 @@ import type { Editor } from '@tiptap/core';
  *    paragraphs *before* the body reaches `setContent`. It walks the body's
  *    block structure via the editor's own markdown-it tokenizer (so code
  *    fences, lists, and blockquotes are treated as opaque single blocks and are
- *    never split), and for every run of blank lines *between top-level blocks*
- *    it injects one sentinel paragraph per "extra" blank line. markdown-it then
+ *    never split), and for every run of blank lines *between top-level blocks*,
+ *    and after the last one, it injects one sentinel paragraph per "extra"
+ *    blank line. markdown-it then
  *    produces a real paragraph for each sentinel; `stripEmptyParagraphSentinels`
  *    removes the sentinel character afterwards, leaving a truly empty paragraph.
  *
@@ -34,10 +35,12 @@ import type { Editor } from '@tiptap/core';
  */
 export const EMPTY_PARAGRAPH_SENTINEL = '';
 
-/** Minimal shape of a markdown-it block token — `level` + source line `map`. */
+/** Minimal shape of a markdown-it block token — `type`, `level`, source line `map` and an inline token's `content`. */
 interface BlockToken {
+  type: string;
   level: number;
   map: [number, number] | null;
+  content: string;
 }
 
 /** The slice of markdown-it we depend on: block tokenization with line maps. */
@@ -59,6 +62,14 @@ export interface BlockTokenizer {
  * `gap = next.startLine - prev.endLine` is the count of blank lines between two
  * adjacent top-level blocks; one of those is the ordinary paragraph separator,
  * so `gap - 1` empty paragraphs are reconstructed.
+ *
+ * The same holds after the last block: the serialiser writes N empty
+ * paragraphs at a note's end as the block, a blank line and N more line ends,
+ * so the blank lines after it, less one, are empty paragraphs (the file's own
+ * final newline isn't a blank line). Blank lines typed at the end of a note
+ * then survive reopening. Those at its start don't: under frontmatter a blank
+ * line is the usual gap below the block, which a note's first empty
+ * paragraph would look like (KNOWN_LIMITATIONS).
  */
 export function encodeEmptyParagraphs(body: string, tokenizer: BlockTokenizer): string {
   if (!body) return body;
@@ -79,21 +90,70 @@ export function encodeEmptyParagraphs(body: string, tokenizer: BlockTokenizer): 
     .map((t): [number, number] => {
       const [start, end] = t.map as [number, number];
       let last = end;
-      while (last > start + 1 && !/[^ \t\r]/.test(lines[last - 1] ?? '')) last--;
+      while (last > start + 1 && isBlank(lines[last - 1])) last--;
       return [start, last];
     });
-  if (blocks.length < 2) return body;
+  if (blocks.length === 0) return body;
+  const atEnd = emptyParagraphsAtEnd(lines, body.endsWith('\n'), blocks[blocks.length - 1]![1]);
+  if (blocks.length < 2 && atEnd === 0) return body;
 
   const segments: string[] = [];
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i]!; // i < blocks.length
-    if (i > 0) {
-      const gap = block[0] - blocks[i - 1]![1]; // i > 0 ⇒ i-1 in range
-      for (let extra = 1; extra < gap; extra++) segments.push(EMPTY_PARAGRAPH_SENTINEL);
+  if (blocks.length < 2) {
+    // One block: everything up to its end as written (a link reference
+    // definition above it stays), then the empty paragraphs after it.
+    segments.push(lines.slice(0, blocks[0]![1]).join('\n'));
+  } else {
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i]!; // i < blocks.length
+      if (i > 0) {
+        const gap = block[0] - blocks[i - 1]![1]; // i > 0 ⇒ i-1 in range
+        for (let extra = 1; extra < gap; extra++) segments.push(EMPTY_PARAGRAPH_SENTINEL);
+      }
+      segments.push(lines.slice(block[0], block[1]).join('\n'));
     }
-    segments.push(lines.slice(block[0], block[1]).join('\n'));
   }
-  return segments.join('\n\n');
+  const between = blocks.length < 2 ? body : segments.join('\n\n');
+  if (atEnd === 0) return between;
+  for (let extra = 0; extra < atEnd; extra++) segments.push(EMPTY_PARAGRAPH_SENTINEL);
+  const encoded = segments.join('\n\n');
+  // A block that runs to the end of the note (a code fence or `<pre>` never
+  // closed) would take the empty paragraphs in as its own text.
+  return endsWithEmptyParagraphs(encoded, atEnd, tokenizer) ? encoded : between;
+}
+
+/** True for a line Markdown reads as blank: only spaces and tabs (a no-break space is text). */
+function isBlank(line: string | undefined): boolean {
+  return !/[^ \t\r]/.test(line ?? '');
+}
+
+/**
+ * How many empty paragraphs the blank lines after the last block (ending at
+ * `lastBlockEnd`) stand for. None when anything but blank lines follows it: a
+ * line no block holds, as a link reference definition is, keeps the body as
+ * written.
+ */
+function emptyParagraphsAtEnd(lines: readonly string[], endsWithNewline: boolean, lastBlockEnd: number): number {
+  const count = endsWithNewline ? lines.length - 1 : lines.length;
+  let lastText = count - 1;
+  while (lastText >= 0 && isBlank(lines[lastText])) lastText--;
+  if (lastText + 1 !== lastBlockEnd) return 0;
+  return Math.max(0, count - lastBlockEnd - 1);
+}
+
+/** True when `encoded` ends in `n` top-level paragraphs holding only the sentinel. */
+function endsWithEmptyParagraphs(encoded: string, n: number, tokenizer: BlockTokenizer): boolean {
+  let tokens: BlockToken[];
+  try {
+    tokens = tokenizer.parse(encoded, {});
+  } catch {
+    return false;
+  }
+  const tail = tokens.slice(tokens.length - 3 * n);
+  if (tail.length !== 3 * n) return false;
+  return tail.every((t, i) => {
+    const expected = ['paragraph_open', 'inline', 'paragraph_close'][i % 3];
+    return t.type === expected && (t.type !== 'inline' ? t.level === 0 : t.content === EMPTY_PARAGRAPH_SENTINEL);
+  });
 }
 
 /**

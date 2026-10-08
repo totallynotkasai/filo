@@ -1,6 +1,7 @@
 import { Blockquote } from '@tiptap/extension-blockquote';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { typedOnly } from './sceneBreaks';
+import { onLinesAlone } from './lineBlocks';
 
 /**
  * A quote as it is written to the file.
@@ -25,6 +26,16 @@ export const FiloBlockquote = Blockquote.extend({
   // `> ` starts a quote as typed, not `>` and Enter (`sceneBreaks.ts`).
   addInputRules() {
     return typedOnly(this.parent?.() ?? []);
+  },
+
+  // Ctrl+Shift+B on one line of a soft-broken paragraph quotes that line alone (`lineBlocks.ts`).
+  addCommands() {
+    const parent = this.parent?.();
+    return {
+      ...parent,
+      setBlockquote: onLinesAlone(parent?.setBlockquote),
+      toggleBlockquote: onLinesAlone(parent?.toggleBlockquote),
+    };
   },
 
   addStorage() {

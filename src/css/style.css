@@ -1037,12 +1037,12 @@ select:focus:not(:focus-visible) {
   margin-top: 0;
   margin-bottom: 1em;
 }
-/* Visible blank-line gap between consecutive paragraphs. The
-   adjacent-sibling rule beats CSS margin collapse so the second paragraph's
-   margin-top always applies, matching the Word-style "Enter = blank line"
-   expectation. */
-.tiptap p + p {
-  margin-top: 0.4em;
+/* Enter starts a new paragraph, and it sits on the next line with no gap, as
+   a wrapped line does: a gap is a blank line the user typed (an empty
+   paragraph). Margins collapse, so the space has to go from the paragraph
+   above, not only the one below; a paragraph keeps it before any other block. */
+.tiptap p:has(+ p) {
+  margin-bottom: 0;
 }
 /* A tile or card whose note is empty says where to type: the editor's
    Placeholder marks the one empty paragraph (`is-editor-empty`), and a card's
@@ -1080,6 +1080,18 @@ select:focus:not(:focus-visible) {
 .tiptap ul, .tiptap ol {
   padding-left: 1.5em;
   margin-bottom: 1em;
+}
+/* A list stands as close as the text around it: an item's own paragraph (a
+   checklist item's sits in a `div`) and a list nested in an item add no space,
+   so items sit a line apart, as paragraphs do. The whole list keeps its margin
+   below. */
+.tiptap li > p,
+.tiptap li > div > p,
+.tiptap li > ul,
+.tiptap li > ol,
+.tiptap li > div > ul,
+.tiptap li > div > ol {
+  margin-bottom: 0;
 }
 .tiptap ul {
   list-style-type: disc;
@@ -1129,10 +1141,18 @@ select:focus:not(:focus-visible) {
   display: flex;
   align-items: flex-start;
 }
+/* The checkbox sits centred on the item's first line, and its label is one
+   line tall: a box taller than a tight line would push the next item down. */
 .tiptap ul[data-type="taskList"] li > label {
   margin-right: 0.5em;
   user-select: none;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  height: 1lh;
+}
+.tiptap ul[data-type="taskList"] li > label input {
+  margin: 0;
 }
 
 /* ============================================================

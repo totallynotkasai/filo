@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { renderNotePreviewHtml } from '@renderer/lib/editor/staticPreview';
+import { EMPTY_PARAGRAPH_SENTINEL } from '@renderer/lib/editor/emptyParagraphs';
 
 function dom(html: string): HTMLElement {
   const d = document.createElement('div');
@@ -88,6 +89,14 @@ describe('renderNotePreviewHtml', () => {
     expect(d.querySelector('span')?.getAttribute('style')).toBe('font-size: 20px');
     const indented = [...d.querySelectorAll('p')].find((p) => p.textContent === 'Indented twice.');
     expect(indented?.getAttribute('style')).toBe('margin-left: 48px');
+  });
+
+  it('shows a blank line the user typed as an empty paragraph, as the editor does', () => {
+    const d = dom(renderNotePreviewHtml('Line 1\n\nLine 2\n\n\nLine 3\n'));
+    const paragraphs = [...d.querySelectorAll('p')];
+    expect(paragraphs.map((p) => p.textContent)).toEqual(['Line 1', 'Line 2', '', 'Line 3']);
+    expect(paragraphs[2]?.innerHTML).toBe('<br>');
+    expect(d.innerHTML).not.toContain(EMPTY_PARAGRAPH_SENTINEL);
   });
 
   it('returns the same HTML for the same body', () => {

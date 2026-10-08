@@ -115,7 +115,9 @@ describe('bold, italic or strikethrough selected from the end of a line (A26-05)
 
   it('a heading made from a one-line-per-thought paragraph, Ctrl+I from the end of its first line', () => {
     const ed = load('Title line\nsubtitle\n\nBody');
-    select(ed, posAfter(ed, 'Title'));
+    // Both lines selected, so the heading takes both (on one line alone it
+    // would take that line, `lineBlocks.ts`).
+    select(ed, 1, posAfter(ed, 'subtitle'));
     ed.chain().setHeading({ level: 1 }).run();
     select(ed, posAfter(ed, 'Title line'), posAfter(ed, 'subtitle'));
     ed.chain().toggleItalic().run();

@@ -14,18 +14,23 @@
  */
 
 export interface ResolvedTitleCommit {
-  /** Trimmed plain-text title; `fallback` when the user emptied the editor. */
+  /** Trimmed one-line plain-text title; `fallback` when the user emptied the editor. */
   plain: string;
   /** Rich-text HTML, or undefined when it adds nothing over `plain`. */
   titleHtml: string | undefined;
 }
+
+/** Line breaks, with the spaces around them. */
+const LINE_BREAKS = /[ \t]*(?:\r\n?|\n)+[ \t]*/g;
 
 export function resolveTitleCommitValues(
   rawText: string,
   html: string,
   fallback: string,
 ): ResolvedTitleCommit {
-  const plain = rawText.trim() || fallback;
+  // A title is one line (`oneLine.ts`): a line break that reached the editor
+  // anyway is a space, never a newline in `title:`. Spaces typed stay.
+  const plain = rawText.replace(LINE_BREAKS, ' ').trim() || fallback;
   const stripped = html.replace(/<\/?p[^>]*>/gi, '').trim();
   const isPlain = stripped === plain || stripped === '';
   return { plain, titleHtml: isPlain ? undefined : html };

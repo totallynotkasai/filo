@@ -71,29 +71,47 @@ async function showsAndSavesAs(ed: Editor, markdown: string): Promise<void> {
 }
 
 describe('Enter beside a soft break', () => {
-  it('End on the first line, then Enter: two paragraphs, no HTML', async () => {
+  // After Enter at the end of `one`: `one` is 1–4, the new empty line's caret
+  // place is 6, and `two` starts at 8.
+  it('End on the first line, then Enter: a new empty line under it, no HTML, and typing goes there', async () => {
     const ed = editorWith('one\ntwo', 1);
     await userEvent.keyboard('{End}');
     await caretAt(ed, 4);
     await userEvent.keyboard('{Enter}');
-    await showsAndSavesAs(ed, 'one\n\ntwo');
+    await caretAt(ed, 6);
+    await showsAndSavesAs(ed, 'one\n\n\ntwo');
+    await userEvent.keyboard('new');
+    await showsAndSavesAs(ed, 'one\n\nnew\n\ntwo');
   });
 
-  it('Home on the second line, then Enter: the same', async () => {
+  it('Home on the second line, then Enter: a new empty line above it, the caret stays on the line', async () => {
     const ed = editorWith('one\ntwo', 8);
     await userEvent.keyboard('{Home}');
     await caretAt(ed, 5);
     await userEvent.keyboard('{Enter}');
-    await showsAndSavesAs(ed, 'one\n\ntwo');
+    await caretAt(ed, 8);
+    await showsAndSavesAs(ed, 'one\n\n\ntwo');
   });
 
-  it('in a list item: a new item, not a break opening it', async () => {
+  it('the new line shows: the note grows by a line, and typing never joins the next line', async () => {
+    const ed = editorWith('Strength - raw power\nEndurance - stamina\nVitality - HP pool', 2);
+    await userEvent.keyboard('{End}');
+    await caretAt(ed, 21);
+    const before = ed.view.dom.getBoundingClientRect().height;
+    await userEvent.keyboard('{Enter}');
+    await expect.poll(() => ed.view.dom.getBoundingClientRect().height).toBeGreaterThan(before);
+    await userEvent.keyboard('Speed');
+    await showsAndSavesAs(ed, 'Strength - raw power\n\nSpeed\n\nEndurance - stamina\nVitality - HP pool');
+  });
+
+  it('in a list item: a new empty item between the two lines, which become items', async () => {
     // The item's text starts at 3: list, item and paragraph each open one position.
     const ed = editorWith('- one\n  two', 3);
     await userEvent.keyboard('{End}');
     await caretAt(ed, 6);
     await userEvent.keyboard('{Enter}');
-    await showsAndSavesAs(ed, '- one\n- two');
+    await userEvent.keyboard('mid');
+    await showsAndSavesAs(ed, '- one\n- mid\n- two');
   });
 
   it('away from a break, Enter splits as before', async () => {

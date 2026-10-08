@@ -47,6 +47,8 @@ import { FiloBlockquote } from './blockquote';
 import { isFiloLink } from '../../schema/link';
 import { blockLayoutHtml, hasBlockLayout } from './blockLayout';
 import { FiloTextAlign, ListItemLayout, isListItem } from './listItemLayout';
+import { onLinesAlone } from './lineBlocks';
+import { OneLineDocument, OneLineEnter, OneLinePaste, oneLineHtml } from './oneLine';
 import { installNoteSerializer } from './delimiterRuns';
 import { FiloLink } from './autolinkMarkdown';
 import { carriesKeptTextStyle } from './textStyleSpans';
@@ -145,9 +147,10 @@ const Indent = Extension.create({
         if (found && dispatch) dispatch(tr);
         return found;
       };
+    // On the selected lines alone, not the whole soft-broken block (`lineBlocks.ts`).
     return {
-      increaseIndent: indentDelta(1),
-      decreaseIndent: indentDelta(-1),
+      increaseIndent: onLinesAlone(indentDelta(1)),
+      decreaseIndent: onLinesAlone(indentDelta(-1)),
     };
   },
 });
@@ -196,6 +199,12 @@ interface MarkdownSerializeState {
 const ORDERED_PAREN_START = /^(\d{1,9})\)(?=[ \t]|$)/;
 
 const ParagraphWithBlankLines = Paragraph.extend({
+  // Normal text on one line of a soft-broken heading leaves the other lines a heading (`lineBlocks.ts`).
+  addCommands() {
+    const parent = this.parent?.();
+    return { ...parent, setParagraph: onLinesAlone(parent?.setParagraph) };
+  },
+
   addStorage() {
     return {
       markdown: {
@@ -259,6 +268,16 @@ const ParagraphWithBlankLines = Paragraph.extend({
 const HeadingWithLayout = Heading.extend({
   addInputRules() {
     return typedOnly(this.parent?.() ?? []);
+  },
+
+  // A heading on one line of a soft-broken paragraph takes that line alone (`lineBlocks.ts`).
+  addCommands() {
+    const parent = this.parent?.();
+    return {
+      ...parent,
+      setHeading: onLinesAlone(parent?.setHeading),
+      toggleHeading: onLinesAlone(parent?.toggleHeading),
+    };
   },
 
   addStorage() {
@@ -463,26 +482,10 @@ export function createTiptapEditor(options: TiptapEditorOptions): Editor {
 }
 
 /**
- * A title or label is one line. Enter (with Shift or Ctrl too) does nothing
- * in the editor, so the host's keydown handler commits the text as it is;
- * the editor's own Enter ran first and split the title in two ("Chap" and
- * "ter One"). ProseMirror runs no keymap while an IME is composing, so the
- * Enter that confirms a composition stays the IME's.
- */
-const OneLineEnter = Extension.create({
-  name: 'filoOneLineEnter',
-  priority: 1000,
-
-  addKeyboardShortcuts() {
-    const nothing = (): boolean => true;
-    return { Enter: nothing, 'Shift-Enter': nothing, 'Mod-Enter': nothing };
-  },
-});
-
-/**
- * Creates a minimal Tiptap editor for connection labels.
+ * Creates a minimal Tiptap editor for titles and connection labels.
  * Supports only inline formatting (bold, italic, underline, color, highlight, font).
- * No block-level formatting (headings, lists, code blocks etc.) to keep labels compact.
+ * No block-level formatting (headings, lists, code blocks etc.) to keep labels compact,
+ * and one line: one paragraph, Enter refused, pasted lines joined (`oneLine.ts`).
  */
 export function createLabelEditor(
   options: Pick<
@@ -492,12 +495,13 @@ export function createLabelEditor(
 ): Editor {
   return new Editor({
     element: options.element,
-    content: options.content || '<p></p>',
+    content: options.content ? oneLineHtml(options.content) : '<p></p>',
     editorProps: {
       attributes: () => ({ spellcheck: spellcheckAttribute(), class: 'label-tiptap' }),
     },
     extensions: [
       StarterKit.configure({
+        document: false, // replaced by OneLineDocument (one paragraph)
         heading: false,
         blockquote: false,
         codeBlock: false,
@@ -521,7 +525,9 @@ export function createLabelEditor(
       Color,
       Highlight.configure({ multicolor: true }),
       FontFamily,
+      OneLineDocument,
       OneLineEnter,
+      OneLinePaste,
       PasteHtmlCleanup,
     ],
     onUpdate: ({ editor: e }) => options.onUpdate?.(e.getHTML()),

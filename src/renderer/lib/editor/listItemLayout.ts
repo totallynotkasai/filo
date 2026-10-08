@@ -3,6 +3,7 @@ import { TextAlign } from '@tiptap/extension-text-align';
 import { Plugin, PluginKey, type Transaction } from '@tiptap/pm/state';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { hasBlockLayout } from './blockLayout';
+import { onLinesAlone } from './lineBlocks';
 
 /**
  * No alignment or indent inside a list or checklist item.
@@ -71,13 +72,16 @@ export const ListItemLayout = Extension.create({
 /**
  * TipTap's TextAlign, whose `setTextAlign` leaves list items alone. It fails
  * when nothing it touches can be aligned, so `can().setTextAlign(…)` says
- * whether the toolbar's Align control applies.
+ * whether the toolbar's Align control applies. On one line of a soft-broken
+ * paragraph it aligns that line alone (`lineBlocks.ts`).
  */
 export const FiloTextAlign = TextAlign.extend({
   addCommands() {
+    const parent = this.parent?.();
     return {
-      ...this.parent?.(),
-      setTextAlign:
+      ...parent,
+      unsetTextAlign: onLinesAlone(parent?.unsetTextAlign),
+      setTextAlign: onLinesAlone(
         (alignment: string) =>
         ({ tr, state, dispatch }: CommandProps): boolean => {
           if (!this.options.alignments.includes(alignment)) return false;
@@ -95,6 +99,7 @@ export const FiloTextAlign = TextAlign.extend({
           }
           return found;
         },
+      ),
     };
   },
 });

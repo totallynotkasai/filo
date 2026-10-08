@@ -30,7 +30,11 @@ test("a folder Filo never opened: Settings names this build, and the first board
   const { win } = launched;
   try {
     await win.keyboard.press('Control+,');
-    await expect(win.locator('.settings-version')).toHaveText(`Filo ${VERSION}`, { timeout: 5_000 });
+    // The version, then the commit the build was made from (`+`: with
+    // uncommitted changes). Built from a git checkout, so never "dev".
+    const shape = new RegExp(`^Filo ${VERSION.replace(/\./g, '\\.')} \\([0-9a-f]{7,}\\+?\\)$`);
+    await expect(win.locator('.settings-version')).toHaveText(shape, { timeout: 5_000 });
+    await expect(win.locator('.settings-version')).toHaveAttribute('title', /^Built from commit [0-9a-f]{7,}/);
     await win.keyboard.press('Escape');
     await expect(win.locator('.settings-version')).toHaveCount(0);
 

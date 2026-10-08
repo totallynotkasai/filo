@@ -793,6 +793,9 @@ this build ignores. There is no cross-version coordination, because Filo hasn't
 shipped a stable format before this one.
 
 **Impact:** Update every machine before opening a synced vault with this build.
+Settings names the build at the foot of its tabs (`Filo 0.2.1 (f830c42)`: the
+version and the commit it was built from), so you can check that each machine
+runs the same one. Filo itself doesn't compare them.
 
 ## 21. Non-UTF-8 notes are read-only; conversion assumes Windows-1252
 

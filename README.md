@@ -30,8 +30,10 @@ boards.
 git clone <repo-url>
 cd "Filo - From Scratch"
 npm install
-npm run dev          # development with hot reload
-npm run build        # production build to dist/
+npm run preview      # build into dist-preview/ and run it (see below)
+npm start            # run the last dist-preview/ build again
+npm run dev:scratch  # development with hot reload, on a scratch profile
+npm run build        # production build to dist/ (what the tests drive)
 npm run package      # build + electron-builder for current platform
 npm run package:win  # Windows NSIS only
 npm run package:mac  # macOS DMG only
@@ -39,6 +41,39 @@ npm run package:linux # Linux AppImage only
 ```
 
 Installers land in `release/`.
+
+### Running Filo day to day
+
+Use a built copy for real work, never the dev server.
+
+1. When a change has landed, close Filo and run `npm run preview`. It builds
+   the app into `dist-preview/` and opens it on your own profile, with your
+   recent vaults.
+2. On other days, run `npm start`. It opens that same build again without
+   building, so work still under way in this folder never reaches the copy
+   you use.
+3. Settings shows which build is running, at the foot of its tabs:
+   `Filo 0.2.1 (f830c42)` is version 0.2.1, built from commit `f830c42`. A
+   `+` after the commit means the build also held changes not yet committed.
+
+Or install it: run `npm run package:win`, then `release/Filo Setup <version>.exe`.
+An installed copy is apart from this folder altogether.
+
+**Why not `npm run dev`:** the dev server reloads the window when a source
+file changes, for instance when another Claude session edits Filo's code. A
+reload skips everything Filo does when it closes: typing not yet saved,
+pending board writes, the copies it keeps of unsaved work, changes waiting
+for your answer and the undo history are all lost.
+
+**Why its own folder:** `npm run build` and the test suites rebuild `dist/`.
+Filo loads some of its code (the Raw view, Replace, the Tags Browser) only the
+first time you use it, and a rebuild deletes the files a running copy would
+load. Nothing but `npm run preview` writes `dist-preview/`.
+
+**For development,** `npm run dev:scratch` runs the dev server on a scratch
+profile (`%APPDATA%\filo-dev`), so it opens none of your vaults; open a test
+vault from Home. Plain `npm run dev` uses your own profile and reopens your
+last vault.
 
 ### First run
 

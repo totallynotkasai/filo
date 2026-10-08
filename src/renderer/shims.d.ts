@@ -31,6 +31,13 @@ interface ImportMeta {
 }
 
 /**
+ * The commit a build was made from, replaced with a string literal by the
+ * renderer's `define` (`electron.vite.config.mts`). Undefined where nothing
+ * stamps it (the test runner), so read it through `typeof`: `APP_COMMIT`.
+ */
+declare const __FILO_COMMIT__: string | undefined;
+
+/**
  * Global stylesheets are imported for their side effect (`import '../css/style.css'`
  * in main.ts). TypeScript 6 enables `noUncheckedSideEffectImports` by default, which
  * requires a declaration for side-effect imports; Vite handles the actual CSS.

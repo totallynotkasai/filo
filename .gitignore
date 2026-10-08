@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# `npm run preview`'s own build (scripts/dev.mjs)
+dist-preview/
 release/
 # Earlier builds moved out of release/ (one folder per version)
 release-archive/

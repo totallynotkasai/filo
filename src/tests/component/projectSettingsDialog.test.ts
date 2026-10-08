@@ -3,7 +3,8 @@
  * Revert bar sits above the scrolling page and is enabled only when its tab
  * has changes, the bulk actions are at the end of the page, and a typed
  * number outside the schema's range is clamped in the field before it
- * reaches the copy. The rail names the build's version under the tabs.
+ * reaches the copy. The rail names the build's version and commit under the
+ * tabs.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -81,9 +82,11 @@ describe('Settings dialog', () => {
     expect(panel?.getAttribute('aria-labelledby')).toBe('settings-tab-general');
   });
 
-  it("shows this build's version under the tabs, outside the tablist", () => {
+  it("shows this build's version and commit under the tabs, outside the tablist", () => {
     const version = document.querySelector('.settings-version');
-    expect(version?.textContent).toBe(`Filo ${packageVersion}`);
+    // The test runner stamps no commit, so the build reads as "dev".
+    expect(version?.textContent).toBe(`Filo ${packageVersion} (dev)`);
+    expect(version?.getAttribute('title')).toBe('Built without a commit id');
     expect(packageVersion).toMatch(/^\d+\.\d+\.\d+/);
     expect(version?.closest('[role="tablist"]')).toBeNull();
     expect(version?.previousElementSibling?.getAttribute('role')).toBe('tablist');

@@ -11,7 +11,8 @@ Filo is a local-first, visual-first Personal Knowledge Management (PKM) desktop 
 ## Quick Reference
 
 ```
-Run dev:        npm run dev
+Run for real:   npm run preview          (builds into dist-preview/ and runs it on the owner's profile; npm start reruns that build unbuilt)
+Run dev:        npm run dev:scratch      (dev server on a scratch profile; plain npm run dev uses the owner's and reopens the last vault)
 Lint:           npm run lint             (eslint, --max-warnings 0: a warning fails CI)
 Dead code:      npm run knip             (unused files, exports and dependencies: any finding fails CI)
 Type-check:     npm run check            (renderer + shared, svelte-check)
@@ -332,7 +333,7 @@ filo/
 │   │   │   └── savedViewsCommand.ts   # UpdateSavedViewsCommand: the views it added / removed and the keys it changed, applied to the list as it stands
 │   │   │
 │   │   ├── constants/
-│   │   │   ├── appVersion.ts          # APP_VERSION: package.json's version at build time (Settings shows it under its tabs)
+│   │   │   ├── appVersion.ts          # APP_VERSION: package.json's version at build time; APP_COMMIT: the commit it was built from, `+` with uncommitted changes (the renderer's `define`); Settings shows both under its tabs
 │   │   │   ├── defaults.ts            # TILE_DEFAULTS, FRAME_DEFAULTS, ACCENT_COLOR
 │   │   │   ├── icons.ts               # Shared single-path icon `d` strings (STYLE_ICON_PATH, PIN_ICON_PATH)
 │   │   │   ├── boardIcons.ts          # Each board type's icon path (New-board menu, sidebar file tree)
@@ -826,7 +827,7 @@ filo/
 │       └── types/
 │           └── js-yaml.d.ts           # Test-only js-yaml declaration (js-yaml is a test oracle, banned from the app)
 │
-└── scripts/                           # Build / dev scripts (electron-vite launcher)
+└── scripts/                           # Build / dev scripts (dev.mjs: the electron-vite launcher behind dev, dev:scratch, preview and start)
     ├── gates/                         # ci:gates: the static checks (see "CI gates")
     ├── corpus/                        # The corpus check: buildList.mjs (which notes), compare.mjs (two results)
     └── perf/                          # genVault.mjs (a large deterministic vault) + measure.mjs
@@ -1123,3 +1124,5 @@ Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, U
 4. **Test as you go.** Write unit tests for `lib/` modules as you build them. Don't batch testing to the end.
 5. **No placeholder content.** No "Lorem ipsum", no sample images, no stub data in production code. If a feature isn't ready, don't ship a fake version of it.
 6. **If something is ambiguous,** check the Design Doc. If it's still ambiguous, make a reasonable decision, document it with a `// DECISION:` comment, and move on.
+7. **Bump the version with every build handed to the owner** (`npm version <x.y.z> --no-git-tag-version`, which updates `package-lock.json` too). Settings shows it beside the commit, so builds can be told apart.
+8. **Never launch Filo on the owner's profile.** `npm run preview`, `npm start` and plain `npm run dev` open it with the owner's recent vaults; a check runs `npm run dev:scratch`, or passes `-- --user-data-dir=<scratch folder>` to any of them. Never write `dist-preview/`: the owner may be running Filo from it.

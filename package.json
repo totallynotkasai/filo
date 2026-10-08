@@ -1,13 +1,15 @@
 {
   "name": "filo",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A Personal Knowledge Management desktop application with infinite canvas mind mapping",
   "private": true,
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:scratch": "node scripts/dev.mjs --scratch",
     "build": "electron-vite build",
     "preview": "node scripts/dev.mjs --preview",
+    "start": "node scripts/dev.mjs --start",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
     "test:unit:coverage": "vitest run --coverage --disableConsoleIntercept",

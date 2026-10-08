@@ -17,7 +17,7 @@
   import { settleThemeEditor } from '../../lib/themes/themeEditorGuard';
   import { handleListKeyNav } from '../../lib/utils/listKeyNav';
   import { reportError } from '../../lib/utils/errorBus';
-  import { APP_VERSION } from '../../constants/appVersion';
+  import { APP_COMMIT, APP_COMMIT_HINT, APP_VERSION } from '../../constants/appVersion';
   import { settingsTabRequest, type SettingsTab } from '../../lib/settings/settingsTabRequest.svelte';
 
   // A notice may ask for a tab (Open Recovery): taken as the dialog opens, or
@@ -316,7 +316,7 @@
         </button>
       {/each}
     </div>
-    <p class="settings-version">Filo {APP_VERSION}</p>
+    <p class="settings-version" title={APP_COMMIT_HINT}>Filo {APP_VERSION} ({APP_COMMIT})</p>
   </div>
 
   <div

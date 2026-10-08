@@ -1,10 +1,43 @@
 import { defineConfig } from 'electron-vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { execFileSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+/**
+ * The commit this build is made from, shown beside the version in Settings so
+ * two builds of one version can be told apart. A `+` marks a build that also
+ * holds uncommitted changes to what goes into it, since the commit alone would
+ * then name code the build doesn't match. "dev" when git can't say (a copy of
+ * the source without its history).
+ */
+function buildCommit(): string {
+  const git = (args: string[]): string =>
+    execFileSync('git', args, { cwd: __dirname, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  try {
+    const id = git(['rev-parse', '--short', 'HEAD']);
+    const changed = git([
+      'status',
+      '--porcelain',
+      '--',
+      'src/main',
+      'src/renderer',
+      'src/shared',
+      'src/css',
+      'index.html',
+      'package.json',
+      'package-lock.json',
+      'electron.vite.config.mts',
+      'svelte.config.mjs',
+    ]);
+    return changed === '' ? id : `${id}+`;
+  } catch {
+    return 'dev';
+  }
+}
 
 /**
  * The editors' dependencies, pre-bundled when the dev server starts. The
@@ -84,6 +117,9 @@ export default defineConfig({
       },
     ],
     root: '.',
+    define: {
+      __FILO_COMMIT__: JSON.stringify(buildCommit()),
+    },
     optimizeDeps: {
       include: editorDepsToPrebundle(),
     },

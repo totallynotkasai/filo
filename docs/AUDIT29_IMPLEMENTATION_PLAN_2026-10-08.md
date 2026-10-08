@@ -212,8 +212,8 @@ Your agent moves, rewrites and merges notes from outside Filo. Phase 2 makes tha
 | Hands-on (scratch profile, `-- --user-data-dir=<scratch>`) | `npm run preview` built `dist-preview/` and Settings showed `Filo 0.2.1 (f830c42+)` with the tooltip "Built from commit f830c42, with changes not yet committed". `npm start` reopened it without building. `npm run dev:scratch` opened Home with "No recent vaults". Each window closed through the normal quit path. No file in your real profile (`%APPDATA%\filo`) changed. |
 | Corpus | Not run: nothing in the editor or Markdown writing changed. |
 
-**Push:** this commit and the 11 before it (Audit-28 Phases 0 to 8 and the page view) went to `origin/main` once the checks above passed. The uncommitted paragraph change stayed on this PC.
+**Push:** a6de678 and the 11 commits before it (Audit-28 Phases 0 to 8 and the page view) went to `origin/main` (`ead80a3..a6de678`) once the checks above passed. The uncommitted paragraph change stayed on this PC. GitHub's run [37763160533](https://github.com/totallynotkasai/filo/actions/runs/37763160533) passed on `ubuntu-24.04` in 54 min 27 s, the first Linux check of those commits. That's slower than the 35 to 43 minutes before, which is BL-43. This outcome note was pushed after it as a docs-only commit, which starts no run.
 
-**New findings:** BL-42 (above). The `dist/` rebuild hazard (deviation 1) was found and fixed in this phase.
+**New findings:** BL-42 (above), and BL-43: the GitHub run grew to 54 minutes, almost all of it the unit suite (3,100 s against 2,029 s on 4 October). The `dist/` rebuild hazard (deviation 1) was found and fixed in this phase.
 
 **For you:** close Filo if it's open, then run `npm run preview` once. Settings should read `Filo 0.2.1 (<commit>+)`: the `+` is the paragraph change, still uncommitted until Phase 1. On the days after, open Filo with `npm start`.

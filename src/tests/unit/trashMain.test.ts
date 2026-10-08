@@ -123,6 +123,48 @@ describe('vault:trash-move and vault:trash-restore', () => {
     expect((await read('Old/Note.md')).toString()).toBe('text');
   });
 
+  describe('movedTo: a folder above the item renamed while it was in the trash', () => {
+    it('restores under the renamed folder when its own folder is gone', async () => {
+      await write('Mind Map 1/Hero.md', 'hero');
+      const moved = await call('vault:trash-move', vault, 'Mind Map 1/Hero.md');
+      await fs.rename(join(vault, 'Mind Map 1'), join(vault, 'Story'));
+      const restored = await call('vault:trash-restore', vault, moved.trashId, { movedTo: 'Story/Hero.md' });
+      expect(restored).toMatchObject({ success: true, restoredPath: 'Story/Hero.md', originalPath: 'Mind Map 1/Hero.md', alongside: false });
+      expect((await read('Story/Hero.md')).toString()).toBe('hero');
+      expect(await exists('Mind Map 1')).toBe(false);
+    });
+
+    it('goes beside a file that took the name in the renamed folder', async () => {
+      await write('Old/Hero.md', 'hero');
+      const moved = await call('vault:trash-move', vault, 'Old/Hero.md');
+      await fs.rename(join(vault, 'Old'), join(vault, 'New'));
+      await write('New/Hero.md', 'a new hero');
+      const restored = await call('vault:trash-restore', vault, moved.trashId, { movedTo: 'New/Hero.md' });
+      expect(restored).toMatchObject({ success: true, restoredPath: 'New/Hero (restored).md', alongside: true });
+      expect((await read('New/Hero.md')).toString()).toBe('a new hero');
+    });
+
+    it('keeps the original path while its folder is still there, or when the renamed one is gone too', async () => {
+      await write('Old/A.md', 'a');
+      await write('Old/B.md', 'b');
+      const a = await call('vault:trash-move', vault, 'Old/A.md');
+      const b = await call('vault:trash-move', vault, 'Old/B.md');
+      expect(await call('vault:trash-restore', vault, a.trashId, { movedTo: 'New/A.md' })).toMatchObject({ restoredPath: 'Old/A.md' });
+      await fs.rm(join(vault, 'Old'), { recursive: true });
+      expect(await call('vault:trash-restore', vault, b.trashId, { movedTo: 'New/B.md' })).toMatchObject({ restoredPath: 'Old/B.md' });
+    });
+
+    it('never takes the item to another name, into .filo, or out of the vault', async () => {
+      await write('Old/Hero.md', 'hero');
+      const moved = await call('vault:trash-move', vault, 'Old/Hero.md');
+      await fs.rename(join(vault, 'Old'), join(vault, 'New'));
+      await fs.mkdir(join(vault, '.filo', 'themes'), { recursive: true });
+      expect(await call('vault:trash-restore', vault, moved.trashId, { movedTo: '.filo/themes/Hero.md' })).toMatchObject({ success: false, code: 'FORBIDDEN' });
+      expect(await call('vault:trash-restore', vault, moved.trashId, { movedTo: '../Hero.md' })).toMatchObject({ success: false });
+      expect(await call('vault:trash-restore', vault, moved.trashId, { movedTo: 'New/Villain.md' })).toMatchObject({ success: true, restoredPath: 'Old/Hero.md' });
+    });
+  });
+
   it('restoring onto a path that is taken again goes beside it', async () => {
     await write('Plan.md', 'original');
     await write('Plan.board.json', '{}');

@@ -4,11 +4,14 @@
  * file itself waits in `.filo/trash` until undo or Settings → Trash restores
  * it, whatever its type or size.
  */
+import type { Command } from './Command';
 import { noteStore } from '../stores/notes.svelte';
 import { uiStore } from '../stores/ui.svelte';
-import { reindexUnder, syncRestoredNotes, syncRestoredTree } from '../stores/trash.svelte';
+import { historyStore } from '../stores/history.svelte';
+import { registerDeleteUndo, reindexUnder, syncRestoredNotes, syncRestoredTree } from '../stores/trash.svelte';
 import { restoreTrashed, trashVaultPath, type DrainToken } from '../lib/vault/vaultOperations';
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
+import { whereRestored } from '../lib/vault/restoredItems';
 import { reportError } from '../lib/utils/errorBus';
 
 /**
@@ -34,6 +37,11 @@ export interface TrashedItem {
   /** Vault-relative path it had. */
   rel: string;
   trashId: string;
+  /**
+   * Where it would be now had it moved with a folder above it renamed since
+   * (`commandPaths.ts`); its restore goes there when its own folder is gone.
+   */
+  movedTo?: string;
 }
 
 /** Where a restored item landed: its old path, or beside it when that was taken. */
@@ -89,9 +97,11 @@ export async function trashFiles(
 }
 
 /**
- * Moves each trashed item back. An item that is no longer in the trash but is
- * on disk at its old path (restored from Settings → Trash meanwhile) counts as
- * restored. Returns where each item landed; the others are reported.
+ * Moves each trashed item back. An item this session already restored some
+ * other way (Settings → Trash) counts as restored where that restore put it,
+ * if it is still there; a file that is merely at the old path is not taken for
+ * it (it may be a new note of the same name). Returns where each item landed;
+ * the others are reported.
  */
 export async function restoreFiles(vaultRoot: string, items: TrashedItem[], context: string): Promise<RestoredItem[]> {
   const identity = captureVaultIdentity();
@@ -100,17 +110,21 @@ export async function restoreFiles(vaultRoot: string, items: TrashedItem[], cont
   for (const item of items) {
     if (!isStillSameVault(identity)) return restored;
     try {
-      const result = await restoreTrashed(vaultRoot, item.trashId, item.rel);
+      const result = await restoreTrashed(vaultRoot, item.trashId, item.rel, undefined, item.movedTo);
       if (result.success) {
         restored.push({ rel: item.rel, restoredPath: result.restoredPath });
         continue;
       }
       if (result.code === 'TRASH_ITEM_MISSING') {
-        const back = await window.filo.invoke('vault:file-exists', vaultRoot, item.rel).catch(() => false);
-        if (back) {
-          restored.push({ rel: item.rel, restoredPath: item.rel });
+        const landed = whereRestored(item.trashId);
+        const back = landed ? await window.filo.invoke('vault:file-exists', vaultRoot, landed).catch(() => false) : false;
+        if (landed && back) {
+          restored.push({ rel: item.rel, restoredPath: landed });
           continue;
         }
+        failed.push(item.rel);
+        uiStore.toast(`"${item.rel}" is no longer in Filo's trash, so it wasn't brought back.`, 'warning', 6000);
+        continue;
       }
       failed.push(item.rel);
       reportError(context, new Error(result.error ?? result.code ?? 'vault:trash-restore failed'), `Couldn't restore "${item.rel}" from Filo's trash.`);
@@ -139,6 +153,28 @@ export async function restoreFiles(vaultRoot: string, items: TrashedItem[], cont
     );
   }
   return restored;
+}
+
+// allow-module-state: keyed by command objects, which leave with the history at a vault swap
+const offeredToTrashList = new WeakSet<Command>();
+
+/**
+ * Lets Settings → Trash restore what a board's own delete moved to the trash
+ * (a tile, card or task deleted with its file) through that delete's undo,
+ * while it is still in the history, so the tile comes back with its file, as
+ * a sidebar delete's does. `trashIds` names the entries its files are in now,
+ * and `alsoBack` what else comes back ("its card"); a command calls this after
+ * each move into the trash, and is offered once.
+ */
+export function offerUndoToTrashList(command: Command, trashIds: () => string[], alsoBack: string): void {
+  if (offeredToTrashList.has(command) || trashIds().length === 0) return;
+  offeredToTrashList.add(command);
+  registerDeleteUndo({
+    trashIds,
+    alsoBack,
+    undo: async () => (await historyStore.undoStep(command, `Undo ${command.description}`)) && trashIds().length === 0,
+    inHistory: () => historyStore.holds(command),
+  });
 }
 
 /**

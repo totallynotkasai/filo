@@ -82,9 +82,9 @@
     return haystack.filter((ref) => {
       const parsed = parsedByPath[ref.path];
       if (!parsed) return false;
-      // Board templates have a fenced filo-board block — those create new
-      // boards, not Kanban cards, so they're never valid here.
-      if (parsed.content.boardJson) return false;
+      // A template with a filo-board block makes a board, not a card, even
+      // when the block can't be read, so it is never listed here.
+      if (parsed.content.ref.isBoard) return false;
       return templateMatchesBoardType(parsed.content, boardType);
     });
   });

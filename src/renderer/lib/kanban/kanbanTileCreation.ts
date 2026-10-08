@@ -151,8 +151,9 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
         // never overwritten; the helper bumps to ` (n)`. The title stays the
         // one the user sees ('New Card'); only the filename is bumped, so no
         // "renamed because it exists" toast.
-        ({ relPath } = await createNoteFile({ vaultRoot, folder, title: tileTitle }));
-        noteMadeForNewItem(relPath);
+        let content: string;
+        ({ relPath, content } = await createNoteFile({ vaultRoot, folder, title: tileTitle }));
+        noteMadeForNewItem(relPath, content);
       } catch (err) {
         reportError('kanban.seed-md', err, `Failed to create a file for "${tileTitle}" — the card was not added`);
         return;
@@ -209,8 +210,9 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
 
     let relPath: string;
     try {
-      ({ relPath } = await createNoteFile({ vaultRoot, folder, title, frontmatter, body }));
-      noteMadeForNewItem(relPath);
+      let content: string;
+      ({ relPath, content } = await createNoteFile({ vaultRoot, folder, title, frontmatter, body }));
+      noteMadeForNewItem(relPath, content);
       await vaultStore.refreshTree();
     } catch (err) {
       reportError(

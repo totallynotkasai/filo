@@ -90,11 +90,19 @@ export function registerVaultTrashHandlers(): void {
 
   /**
    * Moves a trashed item back: to its original path, or beside it
-   * (`… (restored).md`) when that path is taken again.
+   * (`… (restored).md`) when that path is taken again. `movedTo` names the
+   * same item under a folder above it that was renamed meanwhile; it is used
+   * only when the item's own folder is gone (`restoreFromTrash`).
    */
-  ipcMain.handle('vault:trash-restore', async (_event, vaultRoot: string, trashId: string) => {
+  ipcMain.handle('vault:trash-restore', async (_event, vaultRoot: string, trashId: string, options?: { movedTo?: string }) => {
     try {
       assertActiveVault(vaultRoot);
+      const movedTo = options?.movedTo === undefined ? undefined : toPosix(options.movedTo);
+      if (movedTo !== undefined) {
+        assertSafeRelativePath(movedTo);
+        if (namesFiloDir(vaultRoot, movedTo)) throw new FiloDirForbiddenError(`FORBIDDEN: ${movedTo} is inside .filo`);
+        assertWithinVault(vaultRoot, join(vaultRoot, ...movedTo.split('/')));
+      }
       const entry = (await listTrash(vaultRoot)).find((e) => e.trashId === trashId);
       if (entry) {
         assertWithinVault(vaultRoot, join(vaultRoot, ...entry.originalPath.split('/')));
@@ -103,8 +111,8 @@ export function registerVaultTrashHandlers(): void {
       const watcher = getActiveWatcher();
       const moveDone = watcher?.beginOwnMove();
       try {
-        const restored = await restoreFromTrash(vaultRoot, trashId);
-        if (restored.alongside) await suppressWatcher(vaultRoot, restored.restoredPath, restored.kind);
+        const restored = await restoreFromTrash(vaultRoot, trashId, {}, movedTo);
+        if (restored.restoredPath !== restored.originalPath) await suppressWatcher(vaultRoot, restored.restoredPath, restored.kind);
         watcher?.noteOwnRestore(restored.restoredPath, trashId);
         return { success: true, ...restored };
       } finally {

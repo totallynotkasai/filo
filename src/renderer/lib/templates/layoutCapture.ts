@@ -23,16 +23,17 @@ import { vaultPath, type VaultPath } from '@shared/vaultPath';
  *
  * **Content groups.** When two captured text tiles showed the same note
  * (same `filePath`), they are tagged with the same anonymous `contentGroup`
- * key. On instantiation each unique group is assigned exactly one new note
- * path and one title, so the resulting tiles show a single new `.md` file —
- * preserving the many-tiles-to-one-file relationship the user authored.
- * Tiles in distinct groups each get their own note. An untagged text tile
- * is a singleton.
+ * key. On instantiation each unique group gets one title, and its later
+ * tiles are listed as sharing the note of its first (`sharedNotes`), so the
+ * resulting tiles show a single new `.md` file — preserving the
+ * many-tiles-to-one-file relationship the user authored. Tiles in distinct
+ * groups each get their own note. An untagged text tile is a singleton.
  *
  * Inserting a template re-creates each tile through the normal `createTile`
- * factory, which provides fresh ids. The title and note path are computed
- * here and passed as overrides so the per-group sharing is honoured; the
- * note itself is created (with `title:`) when the tile is added.
+ * factory, which provides fresh ids. The title is computed here; each new
+ * note is picked and created when its tile is added, by the same path every
+ * new tile takes (`seedTextFileForNewTile`), so an undo of the insert can
+ * take the notes away again.
  */
 
 interface NormalizedSelection {
@@ -201,11 +202,6 @@ export interface InstantiateContext {
    * `Object.values(boardStore.tiles).map(t => t.title)`.
    */
   existingTitles: string[];
-  /**
-   * Picks the path of the new note for a text tile titled `title` (a free
-   * name in the board's content folder). Called once per content group.
-   */
-  allocateNotePath: (title: string) => string;
 }
 
 const BASE_TITLE = 'New Tile';
@@ -233,6 +229,11 @@ function buildTitleAllocator(existingTitles: string[]): () => string {
 export interface InstantiateResult {
   tiles: Tile[];
   connections: Connection[];
+  /**
+   * Text tiles that show the note an earlier tile of the insert makes (a
+   * content group's later tiles): their id → that tile's id.
+   */
+  sharedNotes: Map<string, string>;
 }
 
 export function instantiateLayoutTemplate(
@@ -240,9 +241,10 @@ export function instantiateLayoutTemplate(
   ctx: InstantiateContext,
 ): InstantiateResult {
   const nextTitle = buildTitleAllocator(ctx.existingTitles);
-  // Per-instantiation map: group key → { title, filePath } resolved once
-  // and reused for every template tile in that group.
-  const groupResolution = new Map<string, { title: string; filePath: string }>();
+  // Per-instantiation map: group key → its title and the tile that makes its
+  // note, resolved once and reused for every template tile in that group.
+  const groupResolution = new Map<string, { title: string; firstTileId: string | null }>();
+  const sharedNotes = new Map<string, string>();
 
   const tiles: Tile[] = [];
   for (const t of template.tiles) {
@@ -252,21 +254,13 @@ export function instantiateLayoutTemplate(
       ...(t.config ?? {}),
     };
 
-    let title: string;
-    if (t.type === 'text' && t.contentGroup) {
-      let group = groupResolution.get(t.contentGroup);
-      if (!group) {
-        const groupTitle = nextTitle();
-        group = { title: groupTitle, filePath: ctx.allocateNotePath(groupTitle) };
-        groupResolution.set(t.contentGroup, group);
-      }
-      title = group.title;
-      overrides.filePath = group.filePath;
-    } else {
-      title = nextTitle();
-      if (t.type === 'text') overrides.filePath = ctx.allocateNotePath(title);
+    const group = t.type === 'text' && t.contentGroup ? t.contentGroup : null;
+    let resolved = group ? groupResolution.get(group) : undefined;
+    if (group && !resolved) {
+      resolved = { title: nextTitle(), firstTileId: null };
+      groupResolution.set(group, resolved);
     }
-    overrides.title = title;
+    overrides.title = resolved ? resolved.title : nextTitle();
 
     const tile = ctx.createTile(
       t.type,
@@ -277,6 +271,10 @@ export function instantiateLayoutTemplate(
       ctx.boardId,
       overrides,
     );
+    if (resolved) {
+      if (resolved.firstTileId === null) resolved.firstTileId = tile.id;
+      else sharedNotes.set(tile.id, resolved.firstTileId);
+    }
     tiles.push(tile);
   }
 
@@ -309,5 +307,5 @@ export function instantiateLayoutTemplate(
     });
   }
 
-  return { tiles, connections };
+  return { tiles, connections, sharedNotes };
 }

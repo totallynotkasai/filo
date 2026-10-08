@@ -32,15 +32,18 @@ let loaded = $state(false);
 let busy = $state(false);
 
 /**
- * A delete this session can still undo as a whole: `trashId()` names the
- * trash entry its item is in now (null once undone), and `undo()` runs the
- * delete's own undo, which also puts back the tiles it removed. True once
- * the item is back.
+ * A delete this session can still undo as a whole: `trashIds()` names the
+ * trash entries its items are in now (none once undone), and `undo()` runs
+ * the delete's own undo, which also puts back the tiles it removed. True once
+ * every item is back.
  */
 export interface DeleteUndo {
-  trashId: () => string | null;
-  /** Whether the delete removed any tile (the restore toast says so). */
-  tilesBack: boolean;
+  trashIds: () => readonly string[];
+  /**
+   * What else the undo puts back, for the restore toast ("the tiles that
+   * showed it", "its card"), or null when the delete removed nothing else.
+   */
+  alsoBack: string | null;
   undo: () => Promise<boolean>;
   /**
    * Whether the delete's step is still in the history. Once it isn't (undone
@@ -74,7 +77,20 @@ export function deleteUndoCount(): number {
 
 function deleteUndoFor(trashId: string): DeleteUndo | undefined {
   pruneDeleteUndos();
-  return deleteUndos.find((d) => d.trashId() === trashId);
+  return deleteUndos.find((d) => d.trashIds().includes(trashId));
+}
+
+/**
+ * What a restore through a delete's undo brought back: the item, the other
+ * items the same delete moved to the trash (its undo brings them all), and
+ * what showed them.
+ */
+function restoredThroughUndo(path: string, alsoBack: string | null, others: number): string {
+  const parts = [`"${path}"`];
+  if (others > 0) parts.push(`the ${others === 1 ? 'other file' : `${others} other files`} deleted with it`);
+  if (alsoBack) parts.push(alsoBack);
+  const list = parts.length < 3 ? parts.join(' and ') : `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+  return `Restored ${list}.`;
 }
 
 /** Vault-relative paths of every file in `tree` at or under `rel`. */
@@ -301,13 +317,10 @@ export const trashStore = {
     busy = true;
     try {
       const viaUndo = deleteUndoFor(entry.trashId);
+      const others = viaUndo ? viaUndo.trashIds().length - 1 : 0;
       if (viaUndo && (await viaUndo.undo())) {
         if (!isStillSameVault(identity)) return;
-        uiStore.toast(
-          viaUndo.tilesBack ? `Restored "${entry.originalPath}" and the tiles that showed it.` : `Restored "${entry.originalPath}".`,
-          'success',
-          4000,
-        );
+        uiStore.toast(restoredThroughUndo(entry.originalPath, viaUndo.alsoBack, others), 'success', 5000);
         return;
       }
       if (!isStillSameVault(identity)) return;

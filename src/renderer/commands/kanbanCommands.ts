@@ -10,7 +10,7 @@ import type {
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
 import { NewNoteUndo } from './newNoteUndo';
-import { restoreFiles, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
+import { offerUndoToTrashList, restoreFiles, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
 
 // ── Kanban Commands ──
@@ -171,6 +171,7 @@ export class DeleteCardCommand extends Command {
     const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
     this.lastExecuteCompletion = prior.then(async () => {
       this.trashed = [...this.trashed, ...await trashFiles(vaultRoot, [rel], 'deleteCard.execute', drain)];
+      offerUndoToTrashList(this, () => this.trashed.map((t) => t.trashId), 'its card');
     });
     await this.lastExecuteCompletion;
   }

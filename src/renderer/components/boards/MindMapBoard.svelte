@@ -312,7 +312,7 @@
       },
       onInsertTemplate: () => {
         templatesStore.setPendingInsertAnchor({ x: canvasPos.x, y: canvasPos.y });
-        uiStore.openModal('template-picker');
+        templatesStore.openBrowser();
       },
       onSaveWaypoint: () => {
         if (!boardStore.current) return;

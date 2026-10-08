@@ -23,7 +23,11 @@ export interface TemplateRef {
   path: string;
   /** Display name (filename without `.md`, optionally overridden by frontmatter `title`). */
   name: string;
-  /** True when the template body contains a `filo-board` fenced block. */
+  /**
+   * True when the template body contains a `filo-board` fenced block, even
+   * one that isn't valid JSON: such a template makes a board (or says why it
+   * can't), never a card, task or tile.
+   */
   isBoard: boolean;
 }
 
@@ -40,7 +44,7 @@ export interface TemplateContent {
    * it regardless of the active board's type.
    */
   boardType: string | null;
-  /** Parsed `filo-board` JSON, if any. */
+  /** Parsed `filo-board` JSON; null without a block, or when the block isn't valid JSON (`ref.isBoard` tells the two apart). */
   boardJson: unknown | null;
   /** Body with the `filo-board` block removed (for the starter tile). */
   bodyWithoutBoardBlock: string;
@@ -94,7 +98,7 @@ export function collectTemplateRefs(
       out.push({
         path: rel,
         name: filename.replace(/\.md$/i, ''),
-        isBoard: false, // set when the template is read (`isBoard: boardJson !== null`).
+        isBoard: false, // set when the template is read (`parseTemplate`).
       });
     }
   }
@@ -140,7 +144,7 @@ export function parseTemplate(
   const boardType = fmBoardType.length > 0 ? fmBoardType : null;
 
   return {
-    ref: { ...ref, name, isBoard: boardJson !== null },
+    ref: { ...ref, name, isBoard: fenceMatch !== null },
     body,
     frontmatter,
     boardType,

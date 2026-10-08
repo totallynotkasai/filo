@@ -29,8 +29,8 @@ function deleteStep(place: 'stack' | 'offStack' | 'nowhere' = 'stack'): { comman
   if (place === 'stack') historyStore.pushWithoutExecute(command);
   if (place === 'offStack') historyStore.holdOffStack(command);
   registerDeleteUndo({
-    trashId: () => trashId,
-    tilesBack: false,
+    trashIds: () => (trashId ? [trashId] : []),
+    alsoBack: null,
     undo: async () => trashId === null,
     inHistory: () => historyStore.holds(command),
   });

@@ -14,6 +14,7 @@
  * need other handling overrides it.
  */
 import { rebasePath } from '../lib/vault/renamePathKeys';
+import { vaultPath } from '../../shared/vaultPath';
 
 /**
  * Field names whose string value (or array of strings) is a vault path.
@@ -83,6 +84,12 @@ function trashedRel(value: unknown): string | null {
  * retargets the command's snapshots from the original path to where it
  * landed, so those snapshots must still name the original path. A rename of
  * a folder above it moves nothing that is in the trash.
+ *
+ * The exception: such a rename is noted on the item (`movedTo`, see
+ * `followTrashedItem`), and when the folder it was in no longer exists at
+ * restore (a board's folder renamed with the board) it goes back under the
+ * renamed folder instead of making the old folder again. The retarget then
+ * follows it there like any other landing place.
  */
 function trashedPaths(owner: object): string[] {
   const out: string[] = [];
@@ -94,6 +101,19 @@ function trashedPaths(owner: object): string[] {
     }
   }
   return out;
+}
+
+/**
+ * A trashed item whose folder (or a folder above it) moved from `oldRel` to
+ * `newRel`: notes where the item would be now. Its own path is never renamed
+ * (a file of that name at that path now is another file).
+ */
+function followTrashedItem(item: { rel: string; movedTo?: string }, oldRel: string, newRel: string): void {
+  const at = item.movedTo ?? item.rel;
+  // Only a folder above it: `oldRel` itself is a file that is not this one.
+  if (vaultPath(at) === vaultPath(oldRel)) return;
+  const next = rebasePath(at, oldRel, newRel);
+  if (next !== null) item.movedTo = next;
 }
 
 /**
@@ -124,6 +144,10 @@ export function rebaseCommandFields(
     if (value instanceof Map || value instanceof Set) return; // keyed by tile / board ids, never paths
     if (Array.isArray(value)) {
       value.forEach((item, i) => visit(value, i, item, pathField));
+      return;
+    }
+    if (trashedRel(value) !== null) {
+      followTrashedItem(value as { rel: string; movedTo?: string }, oldRel, newRel);
       return;
     }
     if (isRenamable(value)) {

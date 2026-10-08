@@ -3,6 +3,7 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import { boardStore } from '../../stores/board.svelte';
+  import { templatesStore } from '../../stores/templates.svelte';
   import { createId } from '../../lib/utils/ids';
   import { isNewBoardNameTaken } from '../../lib/boards/newBoardPlace';
   import type { BoardType } from '../../../shared/types';
@@ -86,6 +87,12 @@
     const ok = await boardStore.persistNewBoard(board);
     if (!ok) return;
     tabStore.open(board.id, board.name, board.type);
+  }
+
+  function newBoardFromTemplate(): void {
+    showNewTabMenu = false;
+    if (!vaultStore.project) return;
+    templatesStore.openBrowser({ newBoard: true });
   }
 
   // Close menu on outside click
@@ -298,6 +305,13 @@
             <span>{bt.label}</span>
           </button>
         {/each}
+        <div class="new-tab-separator" role="separator"></div>
+        <button class="new-tab-option" role="menuitem" onclick={newBoardFromTemplate}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M12 18v-6M9 15h6"/>
+          </svg>
+          <span>New board from template…</span>
+        </button>
       </div>
     {/if}
   </div>
@@ -513,6 +527,7 @@
     font-family: var(--font-system);
     cursor: pointer;
     text-align: left;
+    white-space: nowrap;
     transition: background-color 0.1s ease;
   }
 
@@ -523,5 +538,11 @@
   .new-tab-option svg {
     color: var(--text-secondary);
     flex-shrink: 0;
+  }
+
+  .new-tab-separator {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--ui-border);
   }
 </style>

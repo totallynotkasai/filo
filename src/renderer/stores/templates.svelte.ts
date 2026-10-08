@@ -1,5 +1,6 @@
 import type { LayoutTemplate } from '../schema/index';
 import { vaultStore } from './vault.svelte';
+import { uiStore } from './ui.svelte';
 import { reportError } from '../lib/utils/errorBus';
 import {
   listLayoutTemplates,
@@ -29,6 +30,13 @@ let loading = $state(false);
  * viewport centre).
  */
 let pendingInsertAnchor = $state<{ x: number; y: number } | null>(null);
+
+/**
+ * The Template Browser was opened for a new board (the New Tab menu's "New
+ * board from template…"): it lists only the templates that make a board,
+ * even over a Mind Map.
+ */
+let newBoardOnly = $state(false);
 
 async function refresh(): Promise<void> {
   const root = vaultStore.path;
@@ -68,6 +76,19 @@ export const templatesStore = {
   },
   get pendingInsertAnchor(): { x: number; y: number } | null {
     return pendingInsertAnchor;
+  },
+  get newBoardOnly(): boolean {
+    return newBoardOnly;
+  },
+
+  /**
+   * Opens the Template Browser. Over a Mind Map it lists every template (a
+   * layout or a note goes on the canvas, a board template makes a board);
+   * anywhere else, and with `newBoard`, only the templates that make a board.
+   */
+  openBrowser(opts: { newBoard?: boolean } = {}): void {
+    newBoardOnly = opts.newBoard === true;
+    uiStore.openModal('template-picker');
   },
 
   setPendingInsertAnchor(anchor: { x: number; y: number } | null): void {
@@ -129,4 +150,5 @@ onVaultSwap('pre-swap', 'templates', () => {
   loaded = false;
   loading = false;
   pendingInsertAnchor = null;
+  newBoardOnly = false;
 });

@@ -230,7 +230,7 @@ filo/
 │   │   │   ├── noteLayout.ts          # setNoteLineSpacing
 │   │   │   ├── vaultFolderOps.ts      # In-app rename/move
 │   │   │   ├── vaultDeleteOps.ts      # Sidebar delete → .filo/trash + tile cascade; its undo from Ctrl+Z, the toast or Settings → Trash (boards that went with the item get their camera and toolbar place back)
-│   │   │   ├── trash.svelte.ts        # Settings → Trash list, restore (through the delete's undo while it lasts, tiles too), empty, 30-day purge
+│   │   │   ├── trash.svelte.ts        # Settings → Trash list, restore (through the delete's undo while it lasts, its tiles, cards or tasks too), empty, 30-day purge
 │   │   │   ├── recoveryCopies.svelte.ts # Settings → Recovery list: Open, Show in folder, Delete / Delete all (Recycle Bin; "Delete permanently?" only when it refuses)
 │   │   │   ├── vaultStoreTypes.ts     # Shared store types
 │   │   │   ├── vaultTree.ts           # File-tree projection helpers
@@ -269,7 +269,7 @@ filo/
 │   │   │   ├── fileTagsCascade.svelte.ts # Tag rename / remove cascade into board-only tiles (each once: a stale def copy of an inline tile is skipped) and board settings, plus the `.md` sweep
 │   │   │   ├── tagUndo.svelte.ts      # Undo toast for vault-wide tag delete / rename, until dismissed or the next tag action's toast replaces it (a rename's Undo changes back only what it changed); isMergingRename
 │   │   │   ├── tagSweepProgress.svelte.ts # A running tag sweep: "n of N notes" toast; Tags Browser Rename / Delete wait for it
-│   │   │   ├── templates.svelte.ts    # Layout-template store
+│   │   │   ├── templates.svelte.ts    # Layout-template store; openBrowser (the Template Browser, for a new board only from the New Tab menu)
 │   │   │   ├── ui.svelte.ts           # Modals, toasts, context menu state; the sidebar's place, and whether the docked one pushes the workspace aside (`sidebarPushesWorkspace`, the Document zoom counted while a Document tab is on screen: `showDocumentPage`)
 │   │   │   ├── theme.svelte.ts
 │   │   │   ├── themeVersion.svelte.ts # Counts theme applications; colours read off :root re-resolve on a switch
@@ -311,7 +311,7 @@ filo/
 │   │   │   ├── noteLayoutCommands.ts  # SetLineSpacingCommand (frontmatter `lineSpacing:`)
 │   │   │   ├── tileCommands.ts        # tile add/delete/move/resize/style/lock
 │   │   │   ├── newNoteUndo.ts         # Undo of a new tile, card or task: its empty note (one Filo made for it, on no other board) to Filo's trash; redo brings it back
-│   │   │   ├── trashedFiles.ts        # trashFiles / restoreFiles: shared by the delete commands' undo; DeleteWithFileOptions (a task's or card's note to the trash with it)
+│   │   │   ├── trashedFiles.ts        # trashFiles / restoreFiles: shared by the delete commands' undo; DeleteWithFileOptions (a task's or card's note to the trash with it); offerUndoToTrashList (Settings → Trash restores a tile, card or task deleted with its file through its undo)
 │   │   │   ├── noteFieldCommand.ts    # Base of the card/task field commands: forward + inverse FrontmatterDelta; changes no board file (`changesBoardFile`)
 │   │   │   ├── frontmatterInverse.ts  # inverseDelta, applyDeltaChecked (same-key conflict check on undo)
 │   │   │   ├── updateTitleCommand.ts  # Title edit = frontmatter `title:` delta (+ board titleHtml)
@@ -357,7 +357,7 @@ filo/
 │   │   │   │   ├── createNote.ts      # createNoteFile: exclusive create with `title:` (or none: `writeTitle: false`), ` (n)` on collision
 │   │   │   │   ├── newNote.ts         # createNewNote: "New note" (sidebar, Ctrl+N in a Document tab, New Tab → Document): `Untitled.md` with no `title:` until it is named (a sidebar rename names it), opened with its title ready to type
 │   │   │   │   ├── placeholderNames.ts # New Card / New Tile n / New Task n / Untitled / X - Subtask n: renamed after the first title (withPlaceholderRename), not while leaving the vault
-│   │   │   │   ├── madeForNewItems.ts # The notes Filo made this session for a new tile, card or task (an undo may trash them while empty); follows renames
+│   │   │   │   ├── madeForNewItems.ts # The notes Filo made this session for a new tile, card or task, with the text each was made with (an undo may trash one while it is still as made: frontmatterAsMade); follows renames
 │   │   │   │   ├── keepVersion.ts     # keepNoteVersion: a copy in `.filo/recovery/<ts>-keep/` of a version a reload is about to drop
 │   │   │   │   ├── openNote.ts        # openNoteInDocumentTab
 │   │   │   │   ├── recreateNote.ts    # recreateMissingNote: a broken text tile's "Recreate backing file" (exclusive create)
@@ -412,6 +412,7 @@ filo/
 │   │   │   │   ├── externalChangeWindows.ts # Self-write / attachment-delete / note-rename grace windows
 │   │   │   │   ├── keepLocalBackup.ts # backupThenRead: back up, read, re-stat (Keep mine overwrites only what it backed up)
 │   │   │   │   ├── relinkTargets.ts   # Which files a broken tile may be re-linked to (a file tile: any)
+│   │   │   │   ├── restoredItems.ts   # Where each item restored from Filo's trash this session landed (by trash id; follows renames): a later undo puts its tile there
 │   │   │   │   ├── folderPins.ts      # Root Directory + board folder pins: follow renames, clear on delete
 │   │   │   │   ├── folderPinPaths.ts  # Case-folded pin path rules (no store imports)
 │   │   │   │   ├── treeFolderMoves.ts # Folder renames read off two tree reads (Windows reports only the folder names): every old file in the new folder by name, files added or changed meanwhile allowed
@@ -630,10 +631,11 @@ filo/
 │   │   │   │   ├── defaultColours.ts  # The Global Defaults colours a theme pick hands back to the theme
 │   │   │   │   └── chromeText.ts      # Toolbar / tab bar colour settings over the theme's, and their black / white text
 │   │   │   ├── templates/             # Layout and Markdown templates
-│   │   │   │   ├── templateService.ts
+│   │   │   │   ├── templateService.ts # Template refs, parse (`isBoard`: a ```filo-board``` block, even one that isn't valid JSON), interpolate
 │   │   │   │   ├── templateNote.ts    # noteFromTemplate: the note a template makes on every board (frontmatter kept and filled in, title, body)
-│   │   │   │   ├── boardFromTemplate.ts # createBoardFromTemplate: a ```filo-board``` template's board, its columns and cards / sections and tasks / tiles each with a note
-│   │   │   │   ├── layoutCapture.ts
+│   │   │   │   ├── boardFromTemplate.ts # createBoardFromTemplate: a ```filo-board``` template's board (named file-safe), its columns and cards / sections and tasks / tiles each with a note
+│   │   │   │   ├── templateBoardSettings.ts # withTemplateSettings: a board template's `settings` the board's schema takes (never `defaultFolder`), the rest named
+│   │   │   │   ├── layoutCapture.ts   # Capture a selection as a layout template; instantiate it (titles, and the tiles that share one note: `sharedNotes`)
 │   │   │   │   └── layoutTemplateStore.ts
 │   │   │   ├── search/                # Query parser + search runner (matches over the vault index's bodies)
 │   │   │   │   ├── queryParser.ts     # `tag:` / `board:` / `has:` / `property:` / `type:` operators, /regex/, free text (with no operator: exactly as typed, spaces and quotes included); a backslash escapes only a colon in an operator value
@@ -705,7 +707,7 @@ filo/
 │   │       │   ├── TextFormattingToolbar.svelte # The rich-text formatting toolbar for the active editor: disabled with none; narrower boxes, then a More formatting (⋯) popover, as its room calls for (`toolbarDensity.ts`)
 │   │       │   ├── LinkInsertPopup.svelte # Insert Link (toolbar button, Ctrl+K): text + URL applied to the captured range
 │   │       │   ├── Dropdown.svelte
-│   │       │   ├── TabBar.svelte
+│   │       │   ├── TabBar.svelte      # Tabs, overflow, the New Tab menu (each board type, Document, New board from template…)
 │   │       │   ├── Tab.svelte
 │   │       │   ├── SplitPaneContainer.svelte
 │   │       │   ├── PaneView.svelte
@@ -728,7 +730,7 @@ filo/
 │   │       │   ├── KanbanSideToolbar.svelte
 │   │       │   ├── KanbanFindBar.svelte # Filter-in-place text input over the columns
 │   │       │   ├── KanbanNewTileModal.svelte # The New card picker (Text / Audio / Link / From Template…), in plain words
-│   │       │   ├── KanbanTemplatePicker.svelte # "From Template…": Markdown templates for a new card
+│   │       │   ├── KanbanTemplatePicker.svelte # "From Template…": Markdown templates for a new card (never a board template)
 │   │       │   ├── TagPromptPopup.svelte # Text input for the Kanban bulk "Add tag"
 │   │       │   ├── TaskListBoard.svelte
 │   │       │   ├── TaskListSection.svelte # One section: header, row dndzone, quick-add / add-task footer
@@ -790,7 +792,7 @@ filo/
 │   │       ├── modals/                # Other modal dialogs
 │   │       │   ├── ProjectSettings.svelte  # Tabbed wrapper around settings/
 │   │       │   ├── BoardBrowser.svelte
-│   │       │   ├── TemplateBrowser.svelte
+│   │       │   ├── TemplateBrowser.svelte # Ctrl+T on every board: on a Mind Map layout, note and board templates; elsewhere (and New board from template…) board templates only
 │   │       │   ├── SaveTemplateModal.svelte
 │   │       │   ├── OrphanCatcher.svelte
 │   │       │   ├── RelinkTileModal.svelte # Re-link a broken tile to a vault file (undoable)
@@ -1008,7 +1010,10 @@ Boundary").
   `trashVaultPath`, which moves the item to
   `.filo/trash/<trashId>/files/<originalPath>` next to a `manifest.json`. Undo
   and Settings → Trash call `restoreTrashed`, a rename back (or beside the
-  original as `… (restored)` if the name is taken again). Emptying the trash
+  original as `… (restored)` if the name is taken again, or under a folder
+  above it renamed since when its own folder is gone: `movedTo`), which
+  records where each item landed (`lib/vault/restoredItems.ts`), so a later
+  undo follows it there instead of taking a file at the old path. Emptying the trash
   and the 30-day purge send items to the OS Recycle Bin; only if that refuses
   does a confirm ask "Delete permanently?" (gate `deletes-go-to-trash`).
 - **On file rename:** `lib/vault/fileRefIntegrity.ts` rewrites every
@@ -1052,17 +1057,17 @@ When adding a new tile type or board type: register it, implement the interface,
 - **A note-only step writes no board file.** A command that changes only notes (a card or task field, a title, a note's tags, Replace All, a rename) says so (`changesBoardFile()` false), and the history then arms no write of its board: nothing in it changed (KNOWN_LIMITATIONS #29). A part of a step that does change a board goes through the cache writers, which mark that board themselves; a batch writes its board when any child changes it.
 - **Style and saved-view steps keep the keys they changed** (`commands/keyDelta.ts`), not whole objects: undo and redo change only those on the element as it stands, so a size "Use Default Font Sizes" cleared, or a tag a vault-wide rename rewrote in another view, keeps its newer value.
 - **Board undo covers layout plus inverse frontmatter deltas.** A command that changes a note (title, tags, task/card fields) records a forward and an inverse `FrontmatterDelta`. Undo sends the inverse through `noteStore.patchFrontmatter`, so it lands on a fresh read of the file and keeps unrelated edits made in between. If another program changed the same key since (checked against a fresh read of the file, never the open note's model, which lags the watcher debounce), undo keeps that value and offers "Apply anyway" on a toast (`applyDeltaChecked`), because a blind inverse would overwrite the newer value. "Apply anyway" writes the note wherever a rename has moved it meanwhile.
-- **Commands follow renames.** Every command on every stack (Document-tab stacks included) is re-pointed when a file or folder is renamed, in-app or by another program: `stores/history.svelte.ts` registers a `'history'` rename sweep that calls `Command.renamePath(old, new)`. The default (`rebaseCommandFields` in `commands/commandPaths.ts`) rewrites every string held under a name in `PATH_FIELDS`, including snapshots, arrays and child commands; it never walks the user's own data (`CONTENT_FIELDS`: frontmatter, deltas, splices), and paths under a trashed item stay pinned, because restore puts the item back at its original path first. A new path-like field name must go in `PATH_FIELDS` (gate `commands-follow-renames`). Only `RenameFileCommand` overrides `renamePath`.
+- **Commands follow renames.** Every command on every stack (Document-tab stacks included) is re-pointed when a file or folder is renamed, in-app or by another program: `stores/history.svelte.ts` registers a `'history'` rename sweep that calls `Command.renamePath(old, new)`. The default (`rebaseCommandFields` in `commands/commandPaths.ts`) rewrites every string held under a name in `PATH_FIELDS`, including snapshots, arrays and child commands; it never walks the user's own data (`CONTENT_FIELDS`: frontmatter, deltas, splices), and paths under a trashed item stay pinned, because restore puts the item back at its original path first; a folder renamed above a trashed item is noted on it (`movedTo`), and its restore goes there when its own folder no longer exists. A new path-like field name must go in `PATH_FIELDS` (gate `commands-follow-renames`). Only `RenameFileCommand` overrides `renamePath`.
 - **A board reload drops every step that touches it.** When a board is read again from disk (`reloadBoardFromDisk`), `historyStore.clearBoard(id, { changedOnDisk: true })` drops, from every stack and from the off-stack cascades a toast still offers (`holdOffStack` / `undoOffStack`), each command whose `touchedBoardIds()` holds it: by default its `targetBoardId`; `CascadeDeleteCommand`, `BatchCommand` and `DeleteTilesCommand` add every board they hold a snapshot of (gate `cascade-touched-boards`). Closing or deleting a board drops only the steps that target it. A redo whose file can't go to Filo's trash throws `ChangeRefusedError`, so it stays a redo; placement re-adds (`persistAddKanbanPlacement`, `persistAddTaskPlacement`) are no-ops for a tile already placed.
 - **Task List steps record the move, not the arrays.** `MoveTaskBlockCommand` keeps the ids that moved and every task's section and order before and after (`lib/tasklist/sectionMembership.ts`); undo and redo put only those tasks beside their neighbours on the live board and recompute section starts. `AddTaskCommand` / `DeleteTaskCommand` recompute starts from each task's section too, so a task added or removed meanwhile by anything else is neither undone nor pushed into another section.
 - **A queued execute runs on its own board.** An execute body waiting behind a running command switches back to the board it was made on first (as a queued undo or redo does), and is rolled back with a toast if that board was closed.
 - **Undo on a note that's gone doesn't queue a write.** `applyDeltaChecked` throws `NoteGoneError` when the file no longer exists; the history store puts the command back where it was and shows *Couldn't undo: "Card.md" no longer exists.* with **Skip this step** (drops it so earlier steps can still be undone).
 - **A change a note can't take leaves no undo step.** A tag add or remove on a note whose frontmatter the rewriter won't touch (malformed YAML, an anchored `tags:`), that isn't UTF-8, is a link, or has an unsaved edit rejects with `ChangeRefusedError` (`commands/changeRefusedError.ts`); the history store shows its message and takes the step off the stack (or, for undo / redo, leaves it where it was).
-- **Undoing a new tile, card or task trashes its empty note.** A note Filo made for the add (`madeForNewItems.ts`) that is still empty and on no other board goes to Filo's trash with the undo, and comes back before the redo re-adds the item (`commands/newNoteUndo.ts`); a note with text stays.
+- **Undoing a new tile, card or task trashes its empty note.** A note Filo made for the add (`madeForNewItems.ts`, which keeps the text it was made with) that is still empty, whose frontmatter is still what Filo wrote, and that is on no other board goes to Filo's trash with the undo, and comes back before the redo re-adds the item (`commands/newNoteUndo.ts`); a note with text, or with a tag or field set in another view, stays. A layout template's insert (`AddTilesCommand`) makes its notes the same way and undoes them each once.
 - **No command keeps a note body.** Delete undo is a restore from `.filo/trash` (a rename back); Replace All keeps only the replaced snippets and before/after hashes, and applies only while the file's bytes match. Gate `no-note-body-in-commands`.
 - Text editing undo is handled by TipTap/ProseMirror internally (separate from board undo). Board-level Ctrl+Z fires when no TipTap editor is focused.
 - **Vault-wide tag delete and rename are undone from their toast** (`stores/tagUndo.svelte.ts`; it stays until dismissed or the next tag action's toast replaces it), not from board history, because they touch many files and belong to no board. Each Undo changes back only what its action changed (the notes it rewrote, the attachments, board-only tiles and filter chips that carried the tag), so a note tagged with the new name in between keeps it. A merge (a rename into a tag that exists in any spelling, registered or only in a note: `isMergingRename`) asks first and has no undo.
-- **Replace All is undone from its toast too.** It sits on the stack of the tab that was active when it ran; the toast's Undo (`historyStore.undoFromToast`) takes it off whichever stack holds it and undoes it even with steps on top, which is safe only because its undo leaves any file changed since alone. A board delete, and every sidebar delete, also offer Undo on their "moved to Filo's trash" toast. A sidebar delete's step stays on the stack of the board that was active (often not the board that showed the file); the toast's Undo takes it off there the same way (its undo puts back only the item and the placements a board no longer holds), and Settings → Trash restores through that undo while the step lasts, so the tiles come back too. With no board open the step is held off every stack and only the toast and Settings → Trash offer it.
+- **Replace All is undone from its toast too.** It sits on the stack of the tab that was active when it ran; the toast's Undo (`historyStore.undoFromToast`) takes it off whichever stack holds it and undoes it even with steps on top, which is safe only because its undo leaves any file changed since alone. A board delete, and every sidebar delete, also offer Undo on their "moved to Filo's trash" toast. A sidebar delete's step stays on the stack of the board that was active (often not the board that showed the file); the toast's Undo takes it off there the same way (its undo puts back only the item and the placements a board no longer holds), and Settings → Trash restores through that undo while the step lasts, so the tiles come back too. With no board open the step is held off every stack and only the toast and Settings → Trash offer it. A tile, card or task deleted with its file is offered to Settings → Trash the same way (`offerUndoToTrashList`): its step is board-bound, so Restore runs it through `historyStore.undoStep`, which takes it off its stack and undoes it on its board, switching there as Ctrl+Z does (the file alone comes back when that board isn't open).
 
 ### Override Cascade (Styles)
 

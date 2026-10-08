@@ -11,7 +11,7 @@ import { cloneTile } from '../lib/utils/cloneTile';
 import { samePath } from '../lib/utils/path';
 import { vaultPath } from '../../shared/vaultPath';
 import { DeleteCardCommand } from './kanbanCommands';
-import { restoreFiles, retargetPath, stillTrashed, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
+import { offerUndoToTrashList, restoreFiles, retargetPath, stillTrashed, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
 import { captureTileMemberships, restoreTileMemberships, type TileMemberships } from '../lib/boards/tileMemberships';
 import { NewNoteUndo } from './newNoteUndo';
@@ -136,31 +136,127 @@ export class UpdateTilePathCommand extends Command {
   }
 }
 
+export interface AddTilesOptions {
+  /** Connections between the new tiles: added with them, and gone with them on undo. */
+  connections?: Connection[];
+  /**
+   * Text tiles that show the note an earlier one of these tiles makes (a
+   * layout template's tiles that shared one note): their id → that tile's id.
+   */
+  sharedNotes?: ReadonlyMap<string, string>;
+  boardId?: string;
+}
+
+/**
+ * Several tiles added in one step: a drop, or a layout template's insert
+ * with its connections. Each new text tile's note is made as a single new
+ * tile's is (`seedTextFileForNewTile`), and its add's undo moves each note
+ * still as Filo made it to Filo's trash, once every tile showing it is gone;
+ * the redo brings it back first. A tile whose new note can't be made comes off
+ * again, with the tiles sharing its note and the connections to it.
+ */
+// allow-own-board-only: its connections join its own new tiles, all on its own board
 export class AddTilesCommand extends Command {
   description: string;
   readonly targetBoardId: string;
   private tiles: Tile[];
+  private connections: Connection[];
+  private sharedNotes: Map<string, string>;
+  /** The notes the last undo moved to Filo's trash, each with the path its tiles had. */
+  private newNotes: Array<{ path: string; undo: NewNoteUndo }> = [];
 
-  constructor(tiles: Tile[], description?: string, boardId?: string) {
+  constructor(tiles: Tile[], description?: string, options: AddTilesOptions = {}) {
     super();
-    this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
+    this.targetBoardId = options.boardId ?? boardStore.current?.id ?? '';
     // Deep-clone each tile for the same reason as AddTileCommand above.
     this.tiles = tiles.map((t) => this.snapshot(t));
-    this.description = description ?? `Insert ${this.tiles.length} tile(s)`;
+    this.connections = (options.connections ?? []).map((c) => this.snapshot(c));
+    this.sharedNotes = new Map(options.sharedNotes ?? []);
+    const count = this.tiles.length;
+    this.description = description ?? `Insert ${count} tile${count === 1 ? '' : 's'}`;
   }
 
-  execute() {
+  execute(): void | Promise<void> {
+    // Nothing to bring back first: the tiles go on at once (the caller selects them).
+    if (this.newNotes.length === 0) {
+      this.addAll();
+      return;
+    }
+    return (async () => {
+      for (const { path, undo } of this.newNotes) {
+        const back = await undo.restore('AddTilesCommand.redo');
+        if (!back) continue;
+        for (const tile of this.tiles) {
+          if (tile.type === 'text' && tile.filePath && samePath(tile.filePath, path)) tile.filePath = back;
+        }
+      }
+      this.newNotes = this.newNotes.filter((n) => n.undo.trashedNote);
+      this.addAll();
+    })();
+  }
+
+  private addAll(): void {
     for (const tile of this.tiles) {
-      boardStore.addTile(tile);
+      const firstId = this.sharedNotes.get(tile.id);
+      if (!firstId) {
+        void boardStore.addTile(tile).then((added) => {
+          if (!added) this.drop(tile.id);
+          else this.followNote(tile.id);
+        });
+        continue;
+      }
+      // The note is made by the tile listed first (added above, its path
+      // picked at once); this one shows it and makes none of its own.
+      const first = boardCacheStore.getFullTilesForBoard(this.targetBoardId)[firstId];
+      if (tile.type === 'text' && first?.type === 'text' && first.filePath) tile.filePath = first.filePath;
+      void boardStore.addTile(tile, { skipEmptySeed: true });
+    }
+    for (const conn of this.connections) boardStore.addConnection(this.snapshot(conn));
+  }
+
+  /** The tiles sharing `firstId`'s note follow it to the name its create landed on. */
+  private followNote(firstId: string): void {
+    const placed = boardCacheStore.getFullTilesForBoard(this.targetBoardId);
+    const first = placed[firstId];
+    if (first?.type !== 'text' || !first.filePath) return;
+    for (const [id, sharedWith] of this.sharedNotes) {
+      const tile = placed[id];
+      if (sharedWith !== firstId || tile?.type !== 'text' || tile.filePath === first.filePath) continue;
+      boardCacheStore.persistUpdateTile(id, { filePath: first.filePath } as Partial<Tile>, this.targetBoardId);
     }
   }
 
-  undo() {
+  /**
+   * `tileId`'s new note couldn't be made, so its tile came off: so do the
+   * tiles sharing that note and the connections to them, and the step no
+   * longer holds them. A step left with nothing leaves the history.
+   */
+  private drop(tileId: string): void {
+    const gone = new Set([tileId]);
+    for (const [id, firstId] of this.sharedNotes) if (firstId === tileId) gone.add(id);
+    for (const id of gone) if (id !== tileId) boardStore.removeTile(id);
+    this.tiles = this.tiles.filter((t) => !gone.has(t.id));
+    this.connections = this.connections.filter((c) => !gone.has(c.fromTileId) && !gone.has(c.toTileId));
+    for (const id of gone) this.sharedNotes.delete(id);
+    if (this.tiles.length === 0) historyStore.forget(this);
+  }
+
+  async undo(): Promise<void> {
+    for (const conn of this.connections) boardStore.removeConnection(conn.id);
     for (let i = this.tiles.length - 1; i >= 0; i--) {
       const t = this.tiles[i];
       if (!t) continue;
       adoptNotePath(t, this.targetBoardId);
       boardStore.removeTile(t.id);
+    }
+    // Each note once, now that no tile of this step shows it.
+    const seen = new Set<string>(this.newNotes.map((n) => vaultPath(n.path)));
+    for (const t of this.tiles) {
+      if (t.type !== 'text' || !t.filePath || seen.has(vaultPath(t.filePath))) continue;
+      seen.add(vaultPath(t.filePath));
+      const undo = new NewNoteUndo();
+      await undo.trashIfUnused(t.filePath, 'AddTilesCommand.undo');
+      if (undo.trashedNote) this.newNotes.push({ path: t.filePath, undo });
     }
   }
 }
@@ -303,6 +399,9 @@ export class DeleteTilesCommand extends Command {
         // keep their ids so the next undo tries them again.
         const moved = await trashFiles(vaultRoot, this.filePaths, 'deleteTiles.execute', drain);
         this.trashed = [...this.trashed, ...moved];
+        const one = this.tiles.length === 1;
+        const kind = this.kanbanCards.length > 0 ? (one ? 'card' : 'cards') : (one ? 'tile' : 'tiles');
+        offerUndoToTrashList(this, () => this.trashed.map((t) => t.trashId), `${one ? 'its' : 'the'} ${kind}`);
       });
     } else {
       this.lastExecuteCompletion = Promise.resolve();

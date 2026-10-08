@@ -84,6 +84,13 @@ describe('parseTemplate', () => {
     expect(parsed.bodyWithoutBoardBlock).not.toContain('filo-board');
   });
 
+  it('a filo-board block that is not valid JSON still marks a board template (never a card or tile)', () => {
+    const raw = '```filo-board\n{"type":"kanban", columns: []}\n```\n';
+    const parsed = parseTemplate({ path: 'Templates/Bad.md', name: 'Bad', isBoard: false }, raw);
+    expect(parsed.boardJson).toBeNull();
+    expect(parsed.ref.isBoard).toBe(true);
+  });
+
   it('extracts boardType frontmatter and normalises case', () => {
     const raw = '---\ntitle: t\nboardType: Kanban\n---\nbody';
     const parsed = parseTemplate({ path: 't.md', name: 't', isBoard: false }, raw);

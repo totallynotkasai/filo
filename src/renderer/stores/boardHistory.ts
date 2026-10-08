@@ -1,5 +1,5 @@
 import type { Connection, Frame, Tile, TileGroup } from '../schema/index';
-import { historyStore, type Command } from './history.svelte';
+import { historyStore } from './history.svelte';
 import {
   AddTileCommand,
   AddTilesCommand,
@@ -11,7 +11,6 @@ import {
   DeleteFrameCommand,
   AlignTilesCommand,
   LayoutTilesCommand,
-  BatchCommand,
   ToggleGroupCommand,
   ToggleLockCommand,
   AddWaypointCommand,
@@ -41,26 +40,19 @@ export function makeHistorySlice() {
     },
 
     /**
-     * Adds tiles AND connections in a single atomic undo step. Used by
-     * Layout Template insertion so a template with edges between its tiles
-     * is reverted in one Ctrl+Z. When `connections` is empty this is
-     * equivalent to `addTilesWithHistory`.
+     * Adds tiles AND the connections between them in a single undo step.
+     * Used by Layout Template insertion so a template with edges between its
+     * tiles is reverted in one Ctrl+Z, its new notes with it. `sharedNotes`
+     * lists the tiles that show another one's note (see `AddTilesCommand`).
      */
     addTilesAndConnectionsWithHistory(
       tiles: Tile[],
       connections: Connection[],
       description: string,
+      sharedNotes?: ReadonlyMap<string, string>,
     ): void {
-      if (tiles.length === 0 && connections.length === 0) return;
-      const commands: Command[] = [];
-      if (tiles.length > 0) commands.push(new AddTilesCommand(tiles, description));
-      for (const conn of connections) commands.push(new AddConnectionCommand(conn));
-      if (commands.length === 1) {
-        const only = commands[0];
-        if (only) historyStore.execute(only);
-        return;
-      }
-      historyStore.execute(new BatchCommand(description, commands));
+      if (tiles.length === 0) return;
+      historyStore.execute(new AddTilesCommand(tiles, description, { connections, sharedNotes }));
     },
 
     removeTilesWithHistory(tileIds: string[], options?: DeleteTilesOptions): void {

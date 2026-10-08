@@ -122,7 +122,7 @@ function bakeBoardSettings(type: Board['type'], src: ProjectSettings): BoardSett
 /**
  * The board-settings keys that are style: colours, pattern, title font size
  * and the per-board `defaults` cascade block. "Apply … Defaults to all
- * Boards" overwrites only these. Everything else a board keeps (Kanban
+ * Boards" overwrites or clears only these. Everything else a board keeps (Kanban
  * saved views, its default folder, Mind Map snap / semantic zoom /
  * visibility, Task List group and sort) is not style and must survive.
  */
@@ -136,8 +136,9 @@ export const BOARD_STYLE_SETTING_KEYS = [
 
 /**
  * `existing` with its style keys replaced by the ones in `built` (from
- * `buildBoardSettingsFromGlobal` / `…FromTheme`). A style key `built`
- * doesn't carry is left as the board has it.
+ * `buildBoardSettingsFromGlobal` / `…FromTheme`). A style key `built` leaves
+ * blank or doesn't carry (a Task List's own title size) is removed, so the
+ * board follows the defaults there too, as the confirm promises.
  */
 export function mergeBoardStyleSettings(
   existing: BoardSettings,
@@ -145,7 +146,8 @@ export function mergeBoardStyleSettings(
 ): BoardSettings {
   const next: BoardSettings = { ...existing };
   for (const key of BOARD_STYLE_SETTING_KEYS) {
-    if (key in built) next[key] = built[key];
+    if (built[key] !== undefined) next[key] = built[key];
+    else delete next[key];
   }
   return next;
 }

@@ -10,7 +10,9 @@
  * titled after the template, first on the board.
  */
 import type { Board, Tile, TileDefinition } from '../../schema/index';
+import type { BoardType } from '../../../shared/types';
 import { BoardTemplateSkeletonSchema, MAX_TEMPLATE_ITEMS, type BoardTemplateItem, type BoardTemplateSkeleton } from '../../schema/boardTemplate';
+import { boardDefaults } from '../../core/boardDefaults';
 import { boardStore } from '../../stores/board.svelte';
 import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { vaultStore } from '../../stores/vault.svelte';
@@ -18,7 +20,8 @@ import { uiStore } from '../../stores/ui.svelte';
 import { createTile } from '../../stores/tiles.svelte';
 import { defaultTileStyleSnapshot } from '../../constants/defaults';
 import { createNoteFile } from '../notes/createNote';
-import { getActiveContentFolder } from '../vault/conventionPaths';
+import { fileNameSafe, getActiveContentFolder } from '../vault/conventionPaths';
+import { withTemplateSettings } from './templateBoardSettings';
 import { freeNewBoardName } from '../boards/newBoardPlace';
 import { placeClear, type PlacedRect } from '../canvas/newTilePlacement';
 import { createId } from '../utils/ids';
@@ -149,13 +152,33 @@ async function fillMindMap(board: Board, skeleton: BoardTemplateSkeleton, prose:
 export async function createBoardFromTemplate(ref: TemplateRef, content: TemplateContent, now: Date = new Date()): Promise<Board | null> {
   const parsed = BoardTemplateSkeletonSchema.safeParse(content.boardJson);
   if (!parsed.success || !TEMPLATE_BOARD_TYPES.has(parsed.data.type)) {
-    uiStore.toast(`The board in template "${ref.name}" can't be read, so no board was made.`, 'error', 6000);
+    uiStore.toast(
+      content.boardJson === null
+        ? `The filo-board block in template "${ref.name}" isn't valid JSON, so no board was made.`
+        : `The board in template "${ref.name}" can't be read, so no board was made.`,
+      'error',
+      6000,
+    );
     return null;
   }
   const skeleton = parsed.data;
-  // The name is the board's file name, so it must be free where the board goes.
-  const board = await boardStore.createBoard(freeNewBoardName(`${ref.name} ${localIsoDate(now)}`), skeleton.type, skeleton.settings);
-  if (!board) return null;
+  const type = skeleton.type as BoardType;
+  // The name is the board's file name: one a file can have (a template's
+  // title may hold `:` or `?`), free where the board goes.
+  const name = freeNewBoardName(`${fileNameSafe(ref.name)} ${localIsoDate(now)}`);
+  const board = boardDefaults[type](`${type}_${createId()}`, name, vaultStore.project?.settings);
+  const { settings, refused } = withTemplateSettings(type, board.settings as Record<string, unknown>, skeleton.settings);
+  board.settings = settings as typeof board.settings;
+  // A failure has already said why.
+  if (!(await boardStore.persistNewBoard(board))) return null;
+  if (refused.length > 0) {
+    const one = refused.length === 1;
+    uiStore.toast(
+      `"${board.name}" was made without the template's ${one ? 'setting' : 'settings'} ${refused.map((k) => `"${k}"`).join(', ')}: ${one ? "it isn't one" : "they aren't ones"} this kind of board can take.`,
+      'warning',
+      8000,
+    );
+  }
   const folder = getActiveContentFolder(boardCacheStore.cache[board.id]?.board ?? board);
   const prose = noteFromTemplate(content, ref.name, now);
   if (board.type === 'kanban') await fillKanban(board, skeleton, prose, folder, now);

@@ -6,6 +6,7 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultIndexStore } from '@renderer/stores/vaultIndex.svelte';
 import { DeleteTilesCommand } from '@renderer/commands/index';
+import { restoreTrashed } from '@renderer/lib/vault/vaultOperations';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { __resetErrorBusForTests, onError, type ReportedError } from '@renderer/lib/utils/errorBus';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -272,7 +273,7 @@ describe('DeleteTilesCommand — files go to the trash and come back on undo', (
     expect(h.vault.trash.size).toBe(0);
   });
 
-  it('a restore that fails still brings the tile back and reports the error', async () => {
+  it('a file no longer in the trash still brings the tile back, and says the file did not come back', async () => {
     setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
     const h = installVault({ 'Foo.md': 'body' });
 
@@ -284,23 +285,63 @@ describe('DeleteTilesCommand — files go to the trash and come back on undo', (
     await cmd.undo();
 
     expect(boardStore.getTile('t1')).toBeDefined();
-    expect(errors.some((e) => (e.message ?? '').includes("Couldn't restore \"Foo.md\""))).toBe(true);
+    const toasts = (uiStore.toast as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(toasts.some((c) => String(c[0]).includes('"Foo.md" is no longer in Filo\'s trash'))).toBe(true);
   });
 
-  it('an item restored from Settings → Trash meanwhile counts as restored', async () => {
+  it('a restore that fails reports the error, and the next undo tries again', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'body' });
+
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
+    let fail = true;
+    h.setHook((channel) => {
+      if (channel === 'vault:trash-restore' && fail) {
+        fail = false;
+        throw new Error('EBUSY');
+      }
+    });
+
+    await cmd.undo();
+    expect(errors.some((e) => (e.message ?? '').includes("Couldn't restore \"Foo.md\""))).toBe(true);
+    expect(h.vault.trash.size).toBe(1);
+  });
+
+  it('an item restored from Settings → Trash meanwhile counts as restored where that restore put it', async () => {
+    setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
+    const h = installVault({ 'Foo.md': 'body' });
+
+    const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
+    await cmd.execute();
+    // A new note took the name, then Settings → Trash put the original beside it.
+    h.vault.writeExternally('Foo.md', 'newcomer');
+    const [trashId] = [...h.vault.trash.keys()];
+    const restored = await restoreTrashed('/vault', trashId!, 'Foo.md');
+    expect(restored).toMatchObject({ success: true, restoredPath: 'Foo (restored).md' });
+
+    await cmd.undo();
+
+    expect(errors).toEqual([]);
+    // The tile shows the restored original, never the newcomer at the old path.
+    expect((boardStore.getTile('t1') as TextTile | undefined)?.filePath).toBe('Foo (restored).md');
+    expect(h.vault.read('Foo.md')).toBe('newcomer');
+  });
+
+  it('a file merely at the old path is not taken for the trashed one', async () => {
     setupActiveBoardWithTiles([makeTextTile('t1', 'Foo')]);
     const h = installVault({ 'Foo.md': 'body' });
 
     const cmd = new DeleteTilesCommand(['t1'], { vaultRoot: '/vault', filePaths: ['Foo.md'] });
     await cmd.execute();
     h.vault.trash.clear();
-    h.vault.writeExternally('Foo.md', 'body');
+    h.vault.writeExternally('Foo.md', 'another note');
 
     await cmd.undo();
 
-    expect(boardStore.getTile('t1')).toBeDefined();
-    expect(errors).toEqual([]);
-    expect(h.vault.read('Foo.md')).toBe('body');
+    const toasts = (uiStore.toast as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(toasts.some((c) => String(c[0]).includes('"Foo.md" is no longer in Filo\'s trash'))).toBe(true);
+    expect(h.vault.read('Foo.md')).toBe('another note');
   });
 
   it('a file restored beside a new one at its old path re-targets the tile', async () => {

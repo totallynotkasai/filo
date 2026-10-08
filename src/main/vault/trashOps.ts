@@ -25,7 +25,7 @@
  */
 import { promises as fs } from 'fs';
 import { randomBytes } from 'crypto';
-import { dirname, extname, join } from 'path';
+import { dirname, extname, join, posix } from 'path';
 import { retryOnWindowsLock } from './filenameUtils';
 import { toPosix } from '../../shared/pathUtils';
 
@@ -307,23 +307,50 @@ async function moveWithoutReplacing(
 /** How many free names a restore tries while other programs keep taking them. */
 const RESTORE_ATTEMPTS = 5;
 
+async function isDirectory(p: string): Promise<boolean> {
+  try {
+    return (await fs.stat(p)).isDirectory();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+/**
+ * Where the item goes back: its original path, or `movedTo` (the same name
+ * under a folder above it that was renamed while it was in the trash) when
+ * the folder it was in no longer exists and the renamed one does. Restoring
+ * to the original path then would make the old folder again, beside the one
+ * the user renamed.
+ */
+async function restoreBase(vaultRoot: string, originalPath: string, movedTo: string | undefined): Promise<string> {
+  if (!movedTo || movedTo === originalPath) return originalPath;
+  if (posix.basename(movedTo).toLowerCase() !== posix.basename(originalPath).toLowerCase()) return originalPath;
+  if (await exists(dirname(join(vaultRoot, ...originalPath.split('/'))))) return originalPath;
+  return (await isDirectory(dirname(join(vaultRoot, ...movedTo.split('/'))))) ? movedTo : originalPath;
+}
+
 /**
  * Moves a trashed item back. When its original path is taken, it goes beside
  * it (`… (restored).md`) and `alongside` is true. It never replaces a file:
- * a path taken during the restore moves it to the next free name.
+ * a path taken during the restore moves it to the next free name. `movedTo`
+ * is checked by the caller (a safe path in the vault, outside `.filo/`); see
+ * `restoreBase` for when it is used.
  */
 export async function restoreFromTrash(
   vaultRoot: string,
   trashId: string,
   hooks: RestoreHooks = {},
+  movedTo?: string,
 ): Promise<{ restoredPath: string; originalPath: string; kind: TrashKind; alongside: boolean }> {
   const manifest = await readManifest(vaultRoot, trashId);
   if (!manifest) throw new TrashItemMissingError(trashId);
   if (manifest.restoredTo !== undefined) throw new TrashAlreadyRestoredError(trashId, manifest.restoredTo);
   const item = itemPathOf(vaultRoot, trashId, manifest.originalPath);
   if (!(await exists(item))) throw new TrashItemMissingError(trashId);
+  const base = await restoreBase(vaultRoot, manifest.originalPath, movedTo);
   for (let attempt = 0; ; attempt++) {
-    const restoredPath = await freeRestorePath(vaultRoot, manifest.originalPath, manifest.kind);
+    const restoredPath = await freeRestorePath(vaultRoot, base, manifest.kind);
     const target = join(vaultRoot, ...restoredPath.split('/'));
     // The item's folder may have been deleted since.
     await fs.mkdir(dirname(target), { recursive: true });
@@ -353,7 +380,7 @@ export async function restoreFromTrash(
       restoredPath,
       originalPath: manifest.originalPath,
       kind: manifest.kind,
-      alongside: restoredPath !== manifest.originalPath,
+      alongside: restoredPath !== base,
     };
   }
 }

@@ -76,6 +76,7 @@ const CHARACTERISATION_SPECS = {
   'agentReorganises.test.ts': 7,
   'boardKeys.test.ts': 11,
   'viewsAndPanels.test.ts': 12,
+  'templatesAndBoards.test.ts': 11,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

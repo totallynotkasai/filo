@@ -741,6 +741,35 @@ export const historyStore = {
   },
 
   /**
+   * Settings → Trash's restore of what a board's own delete moved to the
+   * trash (a tile, card or task deleted with its file): takes `command` off
+   * the undo stack that holds it and runs its undo on its board, switching to
+   * that board first as Ctrl+Z does, even with other steps on top. Only for a
+   * delete whose undo puts back what it took beside the board as it stands
+   * then. Resolves false (nothing undone, the step left where it was) when no
+   * undo stack holds it or its board isn't open in a tab, and false too when
+   * the undo failed (said so).
+   */
+  async undoStep(command: Command, label: string): Promise<boolean> {
+    if (!Object.values(stacks).some((s) => s.undoStack.includes(command))) return false;
+    const target = command.targetBoardId;
+    let didAutoSwitch = false;
+    if (target && target !== activeBoardId) {
+      if (!(boardActivator?.(target) ?? false)) return false;
+      didAutoSwitch = true;
+    }
+    dropCommand(command);
+    markBoardOf(command, target || activeBoardId);
+    return runChained(onTargetBoard(command, () => command.undo(), didAutoSwitch)).then(
+      () => true,
+      (err: unknown) => {
+        reportError('historyStore', err, `"${label}" failed.`);
+        return false;
+      },
+    );
+  },
+
+  /**
    * Redoes the most recently undone command on the active board.
    *
    * Same target-board guard as undo(); async via `runChained`.

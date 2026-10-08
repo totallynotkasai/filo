@@ -9,7 +9,7 @@
   import { templatesStore } from '../../stores/templates.svelte';
   import { createTile } from '../../stores/tiles.svelte';
   import { instantiateLayoutTemplate } from '../../lib/templates/layoutCapture';
-  import { fileNameSafe, getActiveContentFolder, nextFreeMdPath } from '../../lib/vault/conventionPaths';
+  import { getActiveContentFolder } from '../../lib/vault/conventionPaths';
   import { createNoteFile } from '../../lib/notes/createNote';
   import { noteMadeForNewItem } from '../../lib/notes/madeForNewItems';
   import { centreIn, placeClear, tileRects } from '../../lib/canvas/newTilePlacement';
@@ -17,12 +17,12 @@
   import { reportError } from '../../lib/utils/errorBus';
   import { createBoardFromTemplate } from '../../lib/templates/boardFromTemplate';
   import { noteFromTemplate } from '../../lib/templates/templateNote';
-  import { boardCacheStore } from '../../stores/boardCache.svelte';
   import {
     collectTemplateRefs,
     defaultTemplatesFolder,
     parseTemplate,
     searchTemplates,
+    type TemplateContent,
     type TemplateRef,
   } from '../../lib/templates/templateService';
   import type { LayoutTemplate } from '../../schema/index';
@@ -33,7 +33,14 @@
    *   1. Layout Templates — saved structure (type/size/position/style) of a
    *      tile selection. Stored as `.filo/templates/*.template.json`.
    *   2. Markdown Templates — `.md` files in the vault's `Templates/`
-   *      folder with `{{title}}` / `{{date}}` substitution.
+   *      folder with `{{title}}` / `{{date}}` substitution. One with a
+   *      ```filo-board``` block makes a new board; any other becomes a note
+   *      and a tile on the canvas.
+   *
+   * Over a Mind Map it lists both. Anywhere else (a Kanban board, a Task
+   * List, a Document tab, no tab), and when opened for a new board (the New
+   * Tab menu), it lists only the board templates: nothing else has a canvas
+   * to go on.
    *
    * Insertion anchor for layout templates comes from
    * `templatesStore.pendingInsertAnchor` when the browser was opened from
@@ -46,8 +53,13 @@
   let renameDraft = $state('');
   let renameError = $state<string | null>(null);
   let confirmingDelete = $state<string | null>(null);
+  /** Each Markdown template as read, by path (whether it makes a board is in its text). */
+  let parsedByPath = $state<Record<string, TemplateContent>>({});
+  let reading = $state(false);
 
   const isOpen = $derived(uiStore.isModalOpen('template-picker'));
+  /** Layout and note templates go on this canvas; anywhere else only board templates are listed. */
+  const onCanvas = $derived(!templatesStore.newBoardOnly && boardStore.current?.type === 'mindmap');
 
   $effect(() => {
     if (isOpen) {
@@ -70,7 +82,10 @@
   const mdRefs = $derived<TemplateRef[]>(
     collectTemplateRefs(vaultStore.rawTree, vaultStore.path, defaultTemplatesFolder()),
   );
-  const filteredMdRefs = $derived<TemplateRef[]>(searchTemplates(mdRefs, query));
+  /** Each template once read: named by its `title:` when it has one, and whether it makes a board. */
+  const readMdRefs = $derived<TemplateRef[]>(mdRefs.map((ref) => parsedByPath[ref.path]?.ref ?? ref));
+  const listedMdRefs = $derived<TemplateRef[]>(onCanvas ? readMdRefs : readMdRefs.filter((ref) => ref.isBoard));
+  const filteredMdRefs = $derived<TemplateRef[]>(searchTemplates(listedMdRefs, query));
 
   async function loadMdRaw(ref: TemplateRef): Promise<string | null> {
     const root = vaultStore.path;
@@ -84,6 +99,24 @@
       return null;
     }
   }
+
+  // Each template is read once the browser opens, so the board templates can
+  // be told from the others (and marked) before one is picked.
+  $effect(() => {
+    if (!isOpen) return;
+    const missing = mdRefs.filter((r) => !parsedByPath[r.path]);
+    if (missing.length === 0) return;
+    reading = true;
+    void (async () => {
+      const next: Record<string, TemplateContent> = { ...parsedByPath };
+      for (const ref of missing) {
+        const raw = await loadMdRaw(ref);
+        if (raw !== null) next[ref.path] = parseTemplate(ref, raw);
+      }
+      parsedByPath = next;
+      reading = false;
+    })();
+  });
 
   function computeAnchor(template: LayoutTemplate): { x: number; y: number } {
     const stored = templatesStore.consumePendingInsertAnchor();
@@ -104,18 +137,17 @@
     }
     const anchor = computeAnchor(record.template);
     const existingTitles = Object.values(boardStore.tiles).map((t) => t.title);
-    const folder = getActiveContentFolder(board);
-    const { tiles, connections } = instantiateLayoutTemplate(record.template, {
+    const { tiles, connections, sharedNotes } = instantiateLayoutTemplate(record.template, {
       anchor,
       boardId: board.id,
       createTile,
       existingTitles,
-      allocateNotePath: (title) => nextFreeMdPath(boardCacheStore.cache, folder, fileNameSafe(title)),
     });
     boardStore.addTilesAndConnectionsWithHistory(
       tiles,
       connections,
       `Insert template "${record.template.name}"`,
+      sharedNotes,
     );
     selectionStore.clear();
     selectionStore.selectMultiple(tiles.map((t) => t.id));
@@ -124,6 +156,7 @@
   }
 
   async function pickMarkdown(ref: TemplateRef): Promise<void> {
+    // Read again: the file may have changed since the list was read.
     const raw = await loadMdRaw(ref);
     if (raw === null) {
       uiStore.toast(`Failed to load template: ${ref.name}`, 'error');
@@ -131,9 +164,9 @@
     }
     const content = parseTemplate(ref, raw);
 
-    if (content.boardJson) {
+    if (content.ref.isBoard) {
       // A failure has already said why.
-      const created = await createBoardFromTemplate(ref, content);
+      const created = await createBoardFromTemplate(content.ref, content);
       if (!created) return;
       tabStore.open(created.id, created.name, created.type, created.emoji ?? '');
       uiStore.toast(`Created board "${created.name}"`, 'success', 1800);
@@ -143,22 +176,22 @@
 
     const board = boardStore.current;
     const vaultRoot = vaultStore.path;
-    if (!board || !vaultRoot) {
-      uiStore.toast('Open a board to insert a template', 'warning');
-      uiStore.closeModal();
+    if (!onCanvas || !board || !vaultRoot) {
+      uiStore.toast(`"${ref.name}" makes a note, not a board: open a Mind Map to put it on the canvas.`, 'info', 5000);
       return;
     }
     // The same note every board makes from a template: its frontmatter kept
     // and filled in, then a tile for it, clear of the tiles in the view.
     const note = noteFromTemplate(content, ref.name);
     let relPath: string;
+    let written: string;
     try {
-      ({ relPath } = await createNoteFile({ vaultRoot, folder: getActiveContentFolder(board), title: note.title, frontmatter: note.frontmatter, body: note.body }));
+      ({ relPath, content: written } = await createNoteFile({ vaultRoot, folder: getActiveContentFolder(board), title: note.title, frontmatter: note.frontmatter, body: note.body }));
     } catch (err) {
       reportError('TemplateBrowser.markdown', err, `Couldn't make a note from template "${ref.name}"`);
       return;
     }
-    noteMadeForNewItem(relPath);
+    noteMadeForNewItem(relPath, written);
     const view = newTileView(canvasStore);
     const tile = createTile('text', { x: 0, y: 0 }, board.id, { title: note.title, filePath: relPath } as never);
     const wanted = templatesStore.consumePendingInsertAnchor() ?? centreIn(view, tile.size);
@@ -255,16 +288,18 @@
   }
 </script>
 
-<Modal id="template-picker" title="Templates" width="720px">
+<Modal id="template-picker" title={templatesStore.newBoardOnly ? 'New Board from Template' : 'Templates'} width="720px">
   <div class="browser">
     <input
       class="search-input"
       type="text"
       placeholder="Search templates..."
+      aria-label="Search templates"
       bind:value={query}
     />
 
     <!-- ── Layout Templates ── -->
+    {#if onCanvas}
     <section class="section">
       <header class="section-header">
         <h3 class="section-title">Layout Templates</h3>
@@ -391,15 +426,16 @@
         </div>
       {/if}
     </section>
+    {/if}
 
-    <!-- ── Markdown Templates ── -->
+    <!-- ── Markdown Templates (board templates only, off a Mind Map) ── -->
     <section class="section">
       <header class="section-header">
-        <h3 class="section-title">Markdown Templates</h3>
+        <h3 class="section-title">{onCanvas ? 'Markdown Templates' : 'Board Templates'}</h3>
         <span class="section-count">{filteredMdRefs.length}</span>
       </header>
 
-      {#if mdRefs.length === 0}
+      {#if onCanvas && mdRefs.length === 0}
         <p class="empty-hint">
           No Markdown templates. Create <code>.md</code> files inside the
           <code>Templates/</code> folder of your vault to use them here.
@@ -408,10 +444,21 @@
           <code>{`{{year}}`}</code>, <code>{`{{month}}`}</code> and
           <code>{`{{day}}`}</code> placeholders.
         </p>
+      {:else if !onCanvas && listedMdRefs.length === 0}
+        <p class="empty-hint">
+          {#if reading}
+            Loading…
+          {:else}
+            No board templates. A board template is a <code>.md</code> file in
+            the <code>Templates/</code> folder of your vault with a
+            <code>```filo-board```</code> block that describes the board.
+            Templates for notes and layouts go on a Mind Map's canvas.
+          {/if}
+        </p>
       {:else if filteredMdRefs.length === 0}
-        <p class="empty-hint">No Markdown templates match "{query}".</p>
+        <p class="empty-hint">No {onCanvas ? 'Markdown' : 'board'} templates match "{query}".</p>
       {:else}
-        <ul class="md-list" role="listbox" aria-label="Markdown templates">
+        <ul class="md-list" aria-label={onCanvas ? 'Markdown templates' : 'Board templates'}>
           {#each filteredMdRefs as ref (ref.path)}
             <li>
               <button
@@ -419,7 +466,12 @@
                 type="button"
                 onclick={() => void pickMarkdown(ref)}
               >
-                <span class="md-name">{ref.name}</span>
+                <span class="md-name">
+                  {ref.name}
+                  {#if onCanvas && ref.isBoard}
+                    <span class="md-kind">Makes a board</span>
+                  {/if}
+                </span>
                 <span class="md-path">{ref.path}</span>
               </button>
             </li>
@@ -687,6 +739,16 @@
     font-size: 14px;
     font-weight: 500;
     color: var(--text-primary);
+  }
+
+  .md-kind {
+    margin-left: 6px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    border: 1px solid var(--ui-border);
+    border-radius: 999px;
   }
 
   .md-path {

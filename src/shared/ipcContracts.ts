@@ -338,8 +338,10 @@ export interface IpcChannelMap {
   };
   // Moves a trashed item back; beside its original path (`alongside`) when
   // that path is taken. `TRASH_ITEM_MISSING` when it was restored or purged.
+  // `movedTo`: the item under a folder above it renamed since, used only when
+  // its own folder is gone.
   'vault:trash-restore': {
-    args: [vaultRoot: string, trashId: string];
+    args: [vaultRoot: string, trashId: string, options?: { movedTo: string }];
     result: IpcSuccess<{ restoredPath: string; originalPath: string; kind: TrashKind; alongside: boolean }>;
   };
   'vault:trash-list': {

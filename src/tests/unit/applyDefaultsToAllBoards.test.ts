@@ -5,7 +5,7 @@
  * that can't be are named rather than silently skipped.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mergeBoardStyleSettings, buildBoardSettingsFromGlobal } from '@renderer/lib/styles/buildBoardDefaults';
+import { mergeBoardStyleSettings, buildBoardSettingsFromGlobal, buildBoardSettingsFromTheme } from '@renderer/lib/styles/buildBoardDefaults';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { boardStore } from '@renderer/stores/board.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
@@ -64,6 +64,18 @@ describe('mergeBoardStyleSettings', () => {
     expect(next.groupBy).toBe('tag');
     expect(next.sortBy).toBe('manual');
     expect(next.accentColor).toBe('');
+  });
+
+  it("clears a Task List's own title size, as the confirm says, from the Global Defaults and from the theme", () => {
+    const existing = { accentColor: '#00ff00', titleFontSize: 30, groupBy: 'none', sortBy: 'priority', defaults: { task: { fontSizeTitle: 20 } } };
+    const viaGlobal = mergeBoardStyleSettings(existing, buildBoardSettingsFromGlobal('tasklist', ProjectSettingsSchema.parse({})));
+    const viaTheme = mergeBoardStyleSettings(existing, buildBoardSettingsFromTheme('tasklist'));
+    for (const next of [viaGlobal, viaTheme]) {
+      expect('titleFontSize' in next).toBe(false);
+      expect(next.groupBy).toBe('none');
+    }
+    expect(viaGlobal.accentColor).toBe('');
+    expect(viaGlobal.defaults).toEqual({});
   });
 });
 

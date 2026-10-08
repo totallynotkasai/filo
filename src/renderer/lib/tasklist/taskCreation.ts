@@ -159,7 +159,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     // existing off-board file with the same name is never overwritten.
     const created = await noteStore.createUnique(args.relPath, () => seedFile);
     const relPath = created.relPath;
-    noteMadeForNewItem(relPath);
+    noteMadeForNewItem(relPath, created.text);
     // Post-write hydration is best-effort — the file IS on disk now, so the row
     // is valid; a lagging index / doc-load just hydrates lazily on the next edit.
     // A failure here must NOT roll the placement back (hence its own try/catch).

@@ -156,8 +156,11 @@ export const IPC_PAYLOAD_SCHEMAS = {
   'vault:sweep-orphan-tmp': z.tuple([nonEmptyString]),
   // (vaultRoot, vault-relative path).
   'vault:trash-move': z.tuple([nonEmptyString, nonEmptyString]),
-  // (vaultRoot, trashId). The id format is checked main-side.
-  'vault:trash-restore': z.tuple([nonEmptyString, nonEmptyString]),
+  // (vaultRoot, trashId, { movedTo }?). The id format and the path are checked main-side.
+  'vault:trash-restore': z.union([
+    z.tuple([nonEmptyString, nonEmptyString]),
+    z.tuple([nonEmptyString, nonEmptyString, z.object({ movedTo: nonEmptyString }).strict()]),
+  ]),
   'vault:trash-list': z.tuple([nonEmptyString]),
   // (vaultRoot, trash ids | the retention sweep).
   'vault:trash-purge': z.tuple([nonEmptyString, z.union([z.array(nonEmptyString).max(10_000), z.literal('olderThan30d')])]),

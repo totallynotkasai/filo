@@ -113,6 +113,16 @@ test('every main view passes a WCAG 2.1 AA scan', async () => {
       expect.soft(await scan(win, '.kanban-board'), 'Kanban board').toEqual([]);
     });
 
+    await test.step('Template Browser off a Mind Map (board templates only)', async () => {
+      await win.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await win.keyboard.press('Control+T');
+      await expect(modal).toBeVisible({ timeout: 5_000 });
+      await expect(modal.locator('.section-title')).toHaveText(['Board Templates']);
+      expect.soft(await scan(win, 'dialog[aria-modal="true"]'), 'Template Browser, board templates').toEqual([]);
+      await win.keyboard.press('Escape');
+      await expect(modal).toBeHidden();
+    });
+
     await test.step('Task List board', async () => {
       await newBoard(win, 'Task List');
       await expect(win.locator('.tasklist-board').first()).toBeVisible({ timeout: 20_000 });

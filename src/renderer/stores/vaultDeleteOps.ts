@@ -88,8 +88,8 @@ function offerDeleteUndo(itemName: string, command: CascadeDeleteCommand, offSta
     return command.trashId === null;
   };
   registerDeleteUndo({
-    trashId: () => command.trashId,
-    tilesBack: command.touchedBoardIds().size > 0,
+    trashIds: () => (command.trashId ? [command.trashId] : []),
+    alsoBack: command.touchedBoardIds().size > 0 ? 'the tiles that showed it' : null,
     undo,
     inHistory: () => historyStore.holds(command),
   });

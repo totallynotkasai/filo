@@ -78,7 +78,7 @@ export async function seedTextFileForNewTile(
     if (fresh) {
       const result = await noteStore.createUnique(filename, () => newNoteText({ title }, body));
       created = true;
-      noteMadeForNewItem(result.relPath);
+      noteMadeForNewItem(result.relPath, result.text);
       if (result.relPath !== filename) {
         filename = result.relPath;
         tile.filePath = filename;

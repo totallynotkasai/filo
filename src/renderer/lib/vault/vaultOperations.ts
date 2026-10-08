@@ -43,6 +43,7 @@ import { boardCacheStore } from '../../stores/boardCache.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { currentVaultGeneration } from './vaultIdentity';
 import { getActiveVaultPath } from './activeVaultPath';
+import { noteRestored } from './restoredItems';
 import { vaultPath } from '@shared/vaultPath';
 import type {
   ChannelArgs,
@@ -460,19 +461,27 @@ export async function trashVaultPath(
 /**
  * Moves a trashed item back to where it was, or beside it when that path is
  * taken again (`alongside`). `originalPath` names the note (or folder) whose
- * write queues are held while it comes back.
+ * write queues are held while it comes back. `movedTo` is where it would be
+ * now had it moved with a folder above it renamed since: main restores it
+ * there when its own folder is gone.
  */
 export async function restoreTrashed(
   vaultRoot: string,
   trashId: string,
   originalPath: string,
   within?: DrainToken,
+  movedTo?: string,
 ): Promise<ChannelResult<'vault:trash-restore'>> {
-  return withDrainedWrites(async () => {
-    return noteStore.hold([originalPath], async () => {
-      return window.filo.invoke('vault:trash-restore', vaultRoot, trashId);
+  const paths = movedTo ? [originalPath, movedTo] : [originalPath];
+  const result = await withDrainedWrites(async () => {
+    return noteStore.hold(paths, async () => {
+      return movedTo
+        ? window.filo.invoke('vault:trash-restore', vaultRoot, trashId, { movedTo })
+        : window.filo.invoke('vault:trash-restore', vaultRoot, trashId);
     });
-  }, { paths: [originalPath], within });
+  }, { paths, within });
+  if (result.success) noteRestored(trashId, result.restoredPath);
+  return result;
 }
 
 /** What is in Filo's trash, newest first. */

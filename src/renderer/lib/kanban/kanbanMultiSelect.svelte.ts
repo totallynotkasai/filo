@@ -1,6 +1,8 @@
 import type { KanbanBoard as KanbanBoardType, Tile } from '../../schema/index';
 import { noteTags } from '../../stores/noteMeta';
+import { fileTagsStore } from '../../stores/fileTags.svelte';
 import { sameTag } from '../vault/sidebarTagFilter';
+import { canonicaliseTagName } from '../vault/tagsStorage';
 import type { SelectionScope } from '../../stores/selection.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { historyStore } from '../../stores/history.svelte';
@@ -10,8 +12,25 @@ import {
   DeleteCardCommand,
   MoveCardsCommand,
   AddPathTagCommand,
+  AddTileTagCommand,
 } from '../../commands/index';
 import { buildBulkCardContextMenu } from './kanbanContextMenus';
+
+/**
+ * What a bulk "Add tag" did, in the user's words: how many cards took the tag,
+ * and why the others didn't (they had it, or are recordings not yet made,
+ * whose tags are kept with their file).
+ */
+export function bulkTagResult(tag: string, added: number, count: { already: number; noFile: number }): string {
+  const cards = (n: number): string => `${n} card${n === 1 ? '' : 's'}`;
+  const noFile = `${count.noFile === 1 ? '1 audio card has' : `${count.noFile} audio cards have`} nothing recorded yet (a recording keeps its tags with its file)`;
+  if (added > 0) {
+    return count.noFile > 0 ? `Added #${tag} to ${cards(added)}. Skipped: ${noFile}.` : `Added #${tag} to ${cards(added)}`;
+  }
+  if (count.noFile === 0) return `All selected cards already have #${tag}`;
+  const already = count.already > 0 ? `${cards(count.already)} already ${count.already === 1 ? 'has' : 'have'} it, and ` : '';
+  return `#${tag} wasn't added: ${already}${noFile}.`;
+}
 
 export interface KanbanMultiSelectDeps {
   /** The pane's selection scope. Bulk actions and the click-toggle both
@@ -182,24 +201,35 @@ export class KanbanMultiSelect {
     const boardId = this.deps.getBoardId();
     if (!boardId) return;
     const allTilesById = this.deps.getAllTilesById();
+    // The spelling the vault already uses for this tag, if any.
+    const tag = canonicaliseTagName(fileTagsStore.file, norm) || norm;
 
     // One tag-add command per card, run as a single BatchCommand on the
     // history chain, so save()/quit cover every card via whenChainSettled()
-    // and the whole bulk add is one undo step. Each goes through the tag-row
-    // writer, which adds the tag to a fresh read of the note in the form its
-    // `tags:` field already has (a list, or text such as `tags: project`), so
-    // the tags the note carries are never replaced.
+    // and the whole bulk add is one undo step. A text card's tag goes through
+    // the tag-row writer, which adds it to a fresh read of the note in the form
+    // its `tags:` field already has (a list, or text such as `tags: project`),
+    // so the tags the note carries are never replaced. A link card keeps its
+    // tags on the board, a recording in `.filo/tags.json` by its file.
     const commands: Command[] = [];
+    const count = { already: 0, noFile: 0 };
     for (const tileId of selected) {
       const tile = allTilesById[tileId];
       if (!tile) continue;
       const path = this.deps.vaultPathForTile(tile);
-      if (!path) continue;
-      if (noteTags(path).some((t) => sameTag(t, norm))) continue;
-      commands.push(new AddPathTagCommand(path, norm, boardId));
+      if (path) {
+        if (noteTags(path).some((t) => sameTag(t, tag))) count.already++;
+        else commands.push(new AddPathTagCommand(path, tag, boardId));
+        continue;
+      }
+      const found = fileTagsStore.findTile(tileId);
+      if (!found) continue;
+      if (found.tags.some((t) => sameTag(t, tag))) count.already++;
+      else if (tile.type === 'audio' && !tile.src) count.noFile++;
+      else commands.push(new AddTileTagCommand(tileId, tag, boardId));
     }
     if (commands.length === 0) {
-      uiStore.toast(`All selected cards already have #${norm}`, 'info', 2000);
+      uiStore.toast(bulkTagResult(tag, 0, count), 'info', 4000);
       return;
     }
     // Crash-safe (whenChainSettled covers the batch on quit) + undoable in one step.
@@ -207,11 +237,11 @@ export class KanbanMultiSelect {
     // rolled back). On failure, stay silent here — the chain already surfaced
     // the visual error.
     const ok = await historyStore
-      .execute(new BatchCommand(`Add #${norm} to ${commands.length} card(s)`, commands, boardId))
+      .execute(new BatchCommand(`Add #${tag} to ${commands.length} card${commands.length === 1 ? '' : 's'}`, commands, boardId))
       .then(() => true, () => false);
     this.deps.bumpCacheVersion();
     if (ok) {
-      uiStore.toast(`Added #${norm} to ${commands.length} card(s)`, 'success', 2000);
+      uiStore.toast(bulkTagResult(tag, commands.length, count), 'success', count.noFile > 0 ? 4000 : 2000);
     }
   }
 

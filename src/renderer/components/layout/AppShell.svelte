@@ -44,6 +44,7 @@
   import { toggleLockSelection } from '../../lib/boards/toggleLockSelection';
   import { requestDeleteSelected, selectableTileIds, toggleGroupSelection, type DeleteSelectionDeps } from '../../lib/mindmap/selectionActions';
   import { framesStore } from '../../stores/frames.svelte';
+  import { templatesStore } from '../../stores/templates.svelte';
   import { isCanvasKeyBlocked } from '../../lib/mindmap/mindMapKeyboard';
   import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { tiptapToolbar } from '../../lib/editor/toolbarConfig';
@@ -293,11 +294,12 @@
         execute: () => uiStore.openModal('project-settings'),
       }),
       registerCommandWithShortcut({
-        name: 'template:open', label: 'Insert Template', description: 'Insert Template',
+        name: 'template:open', label: 'Templates', description: 'Open the Template Browser',
         binding: { key: 't', ctrl: true },
-        // A layout template inserts tiles on the canvas.
-        enabled: onMindMap,
-        execute: () => uiStore.openModal('template-picker'),
+        // Every board: a board template makes a new board from anywhere; a
+        // layout or note template goes onto a Mind Map's canvas.
+        enabled: vaultIsOpen,
+        execute: () => templatesStore.openBrowser(),
       }),
       registerCommandWithShortcut({
         name: 'tag:open-browser', label: 'Open Tags Browser', description: 'Open Tags Browser',

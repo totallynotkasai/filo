@@ -12,7 +12,7 @@ import type {
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
 import { NewNoteUndo } from './newNoteUndo';
-import { restoreFiles, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
+import { offerUndoToTrashList, restoreFiles, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
 import { applyMove, layoutOf, movedTasks, regroup, type SectionKey, type TaskLayout } from '../lib/tasklist/sectionMembership';
 
@@ -307,6 +307,7 @@ export class DeleteTaskCommand extends Command {
       const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
       this.lastExecuteCompletion = prior.then(async () => {
         this.trashed = [...this.trashed, ...await trashFiles(vaultRoot, [rel], 'deleteTask.execute', drain)];
+        offerUndoToTrashList(this, () => this.trashed.map((t) => t.trashId), 'its task');
       });
       await this.lastExecuteCompletion;
     } else {

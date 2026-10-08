@@ -72,6 +72,19 @@ describe('Command.renamePath', () => {
     expect(cmd.child.tiles[0].style.backgroundImage).toBe('Projects/bg.png');
   });
 
+  it('notes where a trashed item would be now when a folder above it is renamed, keeping its own path', () => {
+    const cmd = new Holder();
+    const item: { rel: string; trashId: string; movedTo?: string } = { rel: 'Mind Map 1/Hero.md', trashId: 'abc' };
+    cmd.trashed = [item];
+    cmd.renamePath('Mind Map 1', 'Story');
+    expect(item).toEqual({ rel: 'Mind Map 1/Hero.md', trashId: 'abc', movedTo: 'Story/Hero.md' });
+    // A second rename moves it on; a file of its name elsewhere doesn't.
+    cmd.renamePath('Story', 'Saga');
+    cmd.renamePath('Saga/Hero.md', 'Saga/Other.md');
+    expect(item.movedTo).toBe('Saga/Hero.md');
+    expect(item.rel).toBe('Mind Map 1/Hero.md');
+  });
+
   it('RenameFileCommand ignores its own rename but follows a later one', () => {
     const cmd = new RenameFileCommand('Old.md', 'New.md');
     const ends = (): unknown => ({ fromPath: Reflect.get(cmd, 'fromPath'), toPath: Reflect.get(cmd, 'toPath') });

@@ -78,3 +78,55 @@ describe('a table column dragged to a width', () => {
     expect(disk.split('\n')[0]).toBe('| Name | Role |');
   });
 });
+
+/**
+ * The Document tab's zoom is CSS `zoom` on the page. prosemirror-tables
+ * added the pointer's screen pixels to the column's own pixels, so at 150% the
+ * border ran half again as fast as the pointer (Audit-29 E-10).
+ */
+describe('a table column dragged in a zoomed note', () => {
+  function zoomedEditor(zoom: number): Editor {
+    const page = document.createElement('div');
+    page.style.zoom = String(zoom);
+    page.style.width = '700px';
+    document.body.appendChild(page);
+    const el = document.createElement('div');
+    page.appendChild(el);
+    const ed = createTiptapEditor({ element: el, content: '' });
+    editors.push(ed);
+    loadMarkdownIntoEditor(ed, TABLE);
+    dragFirstColumnTo(ed, 200);
+    return ed;
+  }
+
+  function mouse(target: EventTarget, type: string, x: number, y: number, buttons: number): void {
+    target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons }));
+  }
+
+  /** Drags the first column's right border `dx` screen pixels; returns how far its border moved on screen. */
+  function dragBorder(ed: Editor, dx: number): number {
+    const cell = ed.view.dom.querySelector('th') as HTMLElement;
+    const before = cell.getBoundingClientRect();
+    const x = before.right - 2;
+    const y = before.top + before.height / 2;
+    mouse(cell, 'mousemove', x, y, 0);
+    mouse(cell, 'mousedown', x, y, 1);
+    mouse(window, 'mousemove', x + dx / 2, y, 1);
+    mouse(window, 'mousemove', x + dx, y, 1);
+    mouse(window, 'mouseup', x + dx, y, 0);
+    const after = (ed.view.dom.querySelector('th') as HTMLElement).getBoundingClientRect();
+    return after.right - before.right;
+  }
+
+  for (const zoom of [1, 1.5, 0.75]) {
+    it(`follows the pointer at ${zoom * 100}%, and saves the width in the note's own pixels`, () => {
+      const ed = zoomedEditor(zoom);
+      const moved = dragBorder(ed, 60);
+      expect(Math.abs(moved - 60), `the border moved ${moved} px for 60 px of pointer`).toBeLessThan(2);
+      const width = columnWidths(ed)[0] as number[];
+      expect(Math.abs(width[0]! - (200 + 60 / zoom))).toBeLessThan(1);
+      // One width for the whole column, as the library sets it.
+      expect(columnWidths(ed)[2]).toEqual(width);
+    });
+  }
+});

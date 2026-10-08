@@ -85,6 +85,42 @@ describe('the docked sidebar at laptop widths', () => {
     expect(sidebarPushesWorkspace(1660, 400)).toBe(false);
   });
 
+  it('allows for a zoomed Document page, which is wider; zoomed out, it keeps the 100% rule', () => {
+    // At 150% the 860 px page is 1,290 px wide: on a 1,366 px laptop the
+    // first ~58 px of every line sat under the sidebar.
+    expect(sidebarPushesWorkspace(1366, 240, 1.5)).toBe(true);
+    expect(sidebarPushesWorkspace(1366, 240, 1)).toBe(false);
+    expect(sidebarPushesWorkspace(1769, 240, 1.5)).toBe(true);
+    expect(sidebarPushesWorkspace(1770, 240, 1.5)).toBe(false);
+    expect(sidebarPushesWorkspace(1366, 240, 0.5)).toBe(false);
+    expect(sidebarPushesWorkspace(1100, 240, 0.5)).toBe(true);
+  });
+
+  it("takes the Document zoom only while a Document tab is on screen", () => {
+    const width = window.innerWidth;
+    const stop = uiStore.trackWindowWidth();
+    try {
+      uiStore.setSidebarFloating(false);
+      uiStore.setSidebarOpen(true);
+      workspaceStore.setDocumentZoom(1.5);
+      Object.defineProperty(window, 'innerWidth', { value: 1366, configurable: true });
+      window.dispatchEvent(new Event('resize'));
+      expect(uiStore.sidebarPushesWorkspace, 'no Document tab shown').toBe(false);
+      const gone = uiStore.showDocumentPage();
+      expect(uiStore.sidebarPushesWorkspace, 'a Document tab at 150%').toBe(true);
+      workspaceStore.setDocumentZoom(1);
+      expect(uiStore.sidebarPushesWorkspace, 'the same tab at 100%').toBe(false);
+      workspaceStore.setDocumentZoom(1.5);
+      gone();
+      gone();
+      expect(uiStore.sidebarPushesWorkspace, 'the tab gone (said twice)').toBe(false);
+    } finally {
+      stop();
+      workspaceStore.reset();
+      Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+    }
+  });
+
   it('pushes only while it is docked and open, following the window', () => {
     const width = window.innerWidth;
     const stop = uiStore.trackWindowWidth();
@@ -131,6 +167,14 @@ describe('nested frames', () => {
   it('draws larger frames first, so a frame inside another is above it whichever was made first', () => {
     expect(framesInPaintOrder([street, city, region]).map((f) => f.id)).toEqual(['region', 'city', 'street']);
     expect(framesInPaintOrder([region, twin]).map((f) => f.id)).toEqual(['region', 'twin']);
+  });
+
+  it('leaves out the frames inside a folded one, at any depth, and keeps the folded one and its neighbours', () => {
+    const folded = { ...region, collapsed: true };
+    expect(framesInPaintOrder([street, city, folded, overlap]).map((f) => f.id)).toEqual(['region', 'overlap']);
+    expect(framesInPaintOrder([street, { ...city, collapsed: true }, region]).map((f) => f.id)).toEqual(['region', 'city']);
+    // A folded frame of the same size holds nothing, so its twin stays drawn.
+    expect(framesInPaintOrder([folded, twin]).map((f) => f.id)).toEqual(['region', 'twin']);
   });
 
   it('a drag torn down mid-gesture puts the nested frames back too', () => {

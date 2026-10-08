@@ -27,16 +27,18 @@ export const MIND_MAP_SHORTCUTS = [
   { id: 'mindmap:remove-tiles', label: 'Mind Map: Remove the selected tiles', binding: { key: 'Backspace' } },
 ] as const satisfies readonly BoardCommand[];
 
+// A command with two keys is two commands of one name (each key can be rebound).
 export const KANBAN_SHORTCUTS = [
-  { id: 'kanban:add-tile', label: 'Kanban: Add tile', binding: { key: 'n' } },
+  { id: 'kanban:add-tile', label: 'Kanban: New card', binding: { key: 'n' } },
   { id: 'kanban:new-card', label: 'Kanban: New card', binding: { key: 'n', ctrl: true } },
   { id: 'kanban:add-column', label: 'Kanban: Add column', binding: { key: 'n', shift: true } },
+  { id: 'kanban:select-all', label: 'Kanban: Select all cards on screen', binding: { key: 'a', ctrl: true } },
 ] as const satisfies readonly BoardCommand[];
 
 export const TASK_LIST_SHORTCUTS = [
   { id: 'tasklist:focus-quick-add', label: 'Task List: Focus quick-add input', binding: { key: 'n' } },
   { id: 'tasklist:select-all', label: 'Task List: Select all visible', binding: { key: 'a', ctrl: true } },
-  { id: 'tasklist:add-task', label: 'Task List: Add task', binding: { key: 'Enter', ctrl: true } },
+  { id: 'tasklist:add-task', label: 'Task List: New task', binding: { key: 'Enter', ctrl: true } },
   { id: 'tasklist:new-task', label: 'Task List: New task', binding: { key: 'n', ctrl: true } },
   { id: 'tasklist:move-up', label: 'Task List: Move task up', binding: { key: 'ArrowUp', alt: true } },
   { id: 'tasklist:move-down', label: 'Task List: Move task down', binding: { key: 'ArrowDown', alt: true } },
@@ -62,7 +64,7 @@ export const SHORTCUT_AREAS: readonly ShortcutArea[] = [
       { keys: 'Arrow keys', description: 'Select the nearest tile in that direction' },
       { keys: 'Ctrl+Shift+Arrow', description: 'Add the nearest tile in that direction to the selection' },
       { keys: 'Ctrl+Arrow', description: 'Move the selected tiles' },
-      { keys: 'Escape', description: 'Stop drawing a connection' },
+      { keys: 'Escape', description: 'Stop drawing a connection, or clear the selection' },
       { keys: 'Shift+Drag', description: 'Select the tiles in an area' },
       { keys: 'Menu key or Shift+F10', description: 'The focused tile\'s menu' },
     ],

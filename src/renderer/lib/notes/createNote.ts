@@ -9,6 +9,8 @@ import { boardCacheStore } from '../../stores/boardCache.svelte';
  *
  * - The frontmatter carries `title: <title>` exactly as given, first, ahead
  *   of any `frontmatter` keys the caller adds (template or task fields).
+ *   With `writeTitle: false` it doesn't: the note is named by its file alone
+ *   until the user names it, so a rename of the file renames it.
  * - The filename is `fileNameSafe(title)`, bumped to ` (n)` past any path
  *   already on a board, in the tree, or found on disk at create time. The
  *   create is exclusive, so an existing file is never overwritten.
@@ -20,13 +22,14 @@ export async function createNoteFile(args: {
   vaultRoot: string;
   folder: string;
   title: string;
+  writeTitle?: boolean;
   frontmatter?: Record<string, unknown>;
   body?: string | ((finalStem: string) => string);
 }): Promise<{ relPath: string; content: string }> {
   const baseName = fileNameSafe(args.title);
   const { title: _ignored, ...rest } = args.frontmatter ?? {};
   void _ignored;
-  const fm = { title: args.title, ...rest };
+  const fm = args.writeTitle === false ? rest : { title: args.title, ...rest };
   const created = await noteStore.createUnique(
     nextFreeMdPath(boardCacheStore.cache, args.folder, baseName),
     (stem) => newNoteText(fm, typeof args.body === 'function' ? args.body(stem) : (args.body ?? '')),

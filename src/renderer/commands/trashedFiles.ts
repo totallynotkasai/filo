@@ -11,6 +11,24 @@ import { restoreTrashed, trashVaultPath, type DrainToken } from '../lib/vault/va
 import { captureVaultIdentity, isStillSameVault } from '../lib/vault/vaultIdentity';
 import { reportError } from '../lib/utils/errorBus';
 
+/**
+ * Opt-in note delete for a command that removes a task or a card. When the
+ * user picks "Delete … and file", the note moves into Filo's trash with it and
+ * undo moves it back. Absent these options the command is placement-only and
+ * the file stays on disk.
+ */
+export interface DeleteWithFileOptions {
+  /** Vault-relative note to move into Filo's trash with the item. */
+  filePath?: string;
+  /** Vault root; required when `filePath` is set. */
+  vaultRoot?: string;
+  /**
+   * The drained op the first execute runs inside, if any: its trash move then
+   * runs under that drain instead of waiting for the op to finish.
+   */
+  drain?: DrainToken;
+}
+
 /** A file or folder the command moved into Filo's trash. */
 export interface TrashedItem {
   /** Vault-relative path it had. */

@@ -523,6 +523,13 @@
   // caret, and its Insert Link opens the popup here.
   $effect(() => installTextMenu());
 
+  // Spelling on or off reaches every text field: one that doesn't set its
+  // own spellcheck (a task's title and notes box, a dialog's field) takes
+  // the page's. The note editors set theirs from the same setting.
+  $effect(() => {
+    document.documentElement.setAttribute('spellcheck', String(workspaceStore.spellcheck));
+  });
+
   // In a narrow window the docked sidebar pushes the workspace aside, so it
   // never covers the start of a note's lines (uiStore.sidebarPushesWorkspace).
   $effect(() => uiStore.trackWindowWidth());

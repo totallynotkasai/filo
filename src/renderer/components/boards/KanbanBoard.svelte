@@ -59,6 +59,7 @@
   import { KanbanMultiSelect } from '../../lib/kanban/kanbanMultiSelect.svelte';
   import { KanbanDragController } from '../../lib/kanban/kanbanDragController.svelte';
   import { registerKanbanShortcuts } from '../../lib/kanban/kanbanShortcuts';
+  import { deleteCardWithFile } from '../../lib/kanban/kanbanCardDelete';
   import KanbanFindBar from './KanbanFindBar.svelte';
   import KanbanTemplatePicker from './KanbanTemplatePicker.svelte';
   import TagEditor from '../tags/TagEditor.svelte';
@@ -442,6 +443,12 @@
     announce(`Card removed: ${title}`);
   }
 
+  function deleteTileWithFile(tileId: string) {
+    const card = allTilesById[tileId];
+    if (!board || !card) return;
+    deleteCardWithFile(board.id, card, () => { tickAndPersist(); announce(`Card and its note deleted: ${card.title || 'card'}`); });
+  }
+
   // ── Tile drag/drop + column reorder live in `KanbanDragController` ──
 
   // ── Column-level OS / vault file drop ──
@@ -658,6 +665,7 @@
       boardRoot: () => boardRootEl,
       addCard: shortcutAddTile,
       addColumn: () => addColumn(),
+      selectAll: () => selectionStore.selectMultiple(onScreen.flat),
     });
   });
 
@@ -915,6 +923,7 @@
             onDelete={() => deleteColumn(column.id)}
             onAddTile={() => openNewTilePicker(column.id)}
             onDeleteTile={(tileId) => deleteTile(tileId)}
+            onDeleteTileWithFile={(tileId) => deleteTileWithFile(tileId)}
             moveTargets={columns.filter((c) => c.id !== column.id).map((c) => ({ id: c.id, title: c.title }))}
             onMoveTile={(tileId, columnId) => multiSelect.moveTilesToColumn([tileId], columnId)}
             onCardPointerDown={dragController.onCardPointerDown}
@@ -925,6 +934,7 @@
             onColumnHeaderPointerDown={dragController.onColumnHeaderPointerDown}
             onToggleCollapse={() => toggleColumnCollapsed(column.id)}
             onSetDueDate={setTileDueDate}
+            onSetDueTime={fmWriter.setTileDueTime}
             onSetPriority={setTilePriority}
             onPickCoverImage={pickCoverImageForTile}
             onClearCoverImage={clearCoverImageForTile}

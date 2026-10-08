@@ -54,12 +54,16 @@ describe('the read-only banner names what would change', () => {
     await m.unmount();
   });
 
-  it('a change that only adds a blank line names the line it would go above', async () => {
-    // A tight list mixing bullets and checklist items: Filo writes it as two.
+  it('a list a save would split in two is named as such, not as the blank line it shows as', async () => {
+    // A tight list mixing bullets and checklist items: Filo writes it as two,
+    // which the file shows only as a blank line between them.
     recordingFilo({ 'Mixed.md': '---\ntitle: Mixed\n---\nIntro\n\n- a\n- [ ] b\n' });
     const m = await mountDocumentEditor({ docPath: 'Mixed.md' });
     const text = m.target.querySelector('.readonly-banner .readonly-text')?.textContent ?? '';
-    expect(text).toContain('Saving would add a blank line above line 7');
+    expect(text).toBe(
+      "Filo can't save this file without changing formatting it doesn't support, so it's open read-only. "
+      + 'Line 6: this list would be split into a list and a checklist.',
+    );
     await m.unmount();
   });
 

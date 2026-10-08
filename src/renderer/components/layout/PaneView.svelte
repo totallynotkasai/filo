@@ -28,6 +28,7 @@
   } from '../../lib/boards/boardScope.svelte';
   import { createBoardScope } from '../../lib/boards/boardScopeFactory';
   import { registerComponentFlush } from '../../lib/boards/componentFlush';
+  import { mayLeaveRawView, rawTextUnsaved } from '../../lib/notes/rawViewLeave';
 
   interface Props {
     paneId: string;
@@ -126,8 +127,12 @@
     activate();
   }
 
-  function closePane(e: MouseEvent) {
+  async function closePane(e: MouseEvent) {
     e.stopPropagation();
+    // Closing the pane unmounts its raw view, as switching its tab does: text
+    // there that can't be saved is asked about first.
+    const notePath = tab?.notePath;
+    if (notePath && rawTextUnsaved(notePath) && !(await mayLeaveRawView(notePath, 'close'))) return;
     workspaceStore.closeLeaf(paneId);
   }
 

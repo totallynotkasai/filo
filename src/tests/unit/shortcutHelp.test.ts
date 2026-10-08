@@ -15,7 +15,7 @@ describe('helpSections', () => {
     expect(sections.map((s) => s.title)).toEqual(['Everywhere', 'Mind Map', 'Kanban', 'Task List', 'Text']);
     expect(sections[0]?.commands.map((c) => c.label)).toEqual(['Save']);
     const kanban = sections.find((s) => s.title === 'Kanban');
-    expect(kanban?.commands.map((c) => c.label)).toEqual(['Add tile', 'New card', 'Add column']);
+    expect(kanban?.commands.map((c) => c.label)).toEqual(['New card', 'New card', 'Add column', 'Select all cards on screen']);
     expect(kanban?.commands.find((c) => c.id === 'kanban:add-column')?.binding).toEqual({ key: 'm', ctrl: false, shift: true, alt: false });
   });
 
@@ -29,12 +29,12 @@ describe('helpSections', () => {
 
 describe('helpBindingConflict', () => {
   it('lets two boards share a key', () => {
-    // Kanban's Add tile is N, as the Mind Map's New tile is.
+    // Kanban's New card is N, as the Mind Map's New tile is.
     expect(helpBindingConflict({ key: 'n' }, 'mindmap:new-tile', [], {})).toBeNull();
   });
 
   it('refuses a key another command of the same board has, open or not', () => {
-    expect(helpBindingConflict({ key: 'n' }, 'kanban:add-column', [], {})).toBe('Kanban: Add tile');
+    expect(helpBindingConflict({ key: 'n' }, 'kanban:add-column', [], {})).toBe('Kanban: New card');
   });
 
   it('refuses a key a command that works everywhere has, both ways', () => {

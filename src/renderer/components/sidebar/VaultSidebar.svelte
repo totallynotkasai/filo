@@ -190,15 +190,18 @@
   /**
    * Global Escape handler. Clears the sidebar's multi-selection when no
    * modal is open and no input/editor has focus. Bubble phase (not capture)
-   * so CodeMirror / inputs swallow Escape first when focused.
+   * so CodeMirror / inputs swallow Escape first when focused. An Escape that
+   * clears it says so (preventDefault), so the same press doesn't also close
+   * the Search panel.
    */
   $effect(() => {
     function onGlobalKey(e: KeyboardEvent) {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
       if (uiStore.activeModal) return;
       const ae = document.activeElement as HTMLElement | null;
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || isContentEditableAware(ae))) return;
       if (vaultStore.selectedPaths.size === 0) return;
+      e.preventDefault();
       vaultStore.clearSelection();
     }
     document.addEventListener('keydown', onGlobalKey);

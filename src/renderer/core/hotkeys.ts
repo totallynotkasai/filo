@@ -103,10 +103,18 @@ const HOTKEYS_PATH = '.filo/hotkeys.json';
 
 // ── Key event matching ──
 
-function bindingMatches(binding: ShortcutBinding, e: KeyboardEvent): boolean {
+/**
+ * Whether `e` presses `binding`. Exactly, or (`alias`) by the other spelling
+ * of its key: `+` is `=` shifted on the main keys and its own key on the
+ * number pad, and browsers and Word zoom in on all three, so a binding of
+ * `=` (without Shift) takes `+` too, Shift or not. The dispatch tries every
+ * exact match first, so a key bound to `+` itself keeps it.
+ */
+function bindingMatches(binding: ShortcutBinding, e: KeyboardEvent, alias = false): boolean {
   const ctrlMatch = binding.ctrl ? (e.ctrlKey || e.metaKey) : !(e.ctrlKey || e.metaKey);
-  const shiftMatch = binding.shift ? e.shiftKey : !e.shiftKey;
   const altMatch = binding.alt ? e.altKey : !e.altKey;
+  if (alias) return binding.key === '=' && !binding.shift && e.key === '+' && ctrlMatch && altMatch;
+  const shiftMatch = binding.shift ? e.shiftKey : !e.shiftKey;
   return e.key.toLowerCase() === binding.key.toLowerCase() && ctrlMatch && shiftMatch && altMatch;
 }
 
@@ -130,16 +138,18 @@ function handleKeyDown(e: KeyboardEvent) {
   // Escape stays: it closes the topmost layer, the dialog included.
   const behindDialog = e.key !== 'Escape' && isModalDialogOpen();
 
-  for (const shortcut of shortcuts) {
-    if (bindingMatches(shortcut, e)) {
-      if (fieldKeepsKey && !shortcut.allowInField) continue;
-      if (inContentEditable && !inFormInput && e.key !== 'Escape' && !shortcut.allowInEditor) continue;
-      if (behindDialog && !shortcut.allowInDialog) continue;
-      // Skip (don't fire, don't preventDefault) so a same-binding shortcut
-      // registered by the active pane can still match — see `enabled` above.
-      if (shortcut.enabled && !shortcut.enabled()) continue;
-      if (shortcut.action() !== false) e.preventDefault();
-      return;
+  for (const alias of [false, true]) {
+    for (const shortcut of shortcuts) {
+      if (bindingMatches(shortcut, e, alias)) {
+        if (fieldKeepsKey && !shortcut.allowInField) continue;
+        if (inContentEditable && !inFormInput && e.key !== 'Escape' && !shortcut.allowInEditor) continue;
+        if (behindDialog && !shortcut.allowInDialog) continue;
+        // Skip (don't fire, don't preventDefault) so a same-binding shortcut
+        // registered by the active pane can still match — see `enabled` above.
+        if (shortcut.enabled && !shortcut.enabled()) continue;
+        if (shortcut.action() !== false) e.preventDefault();
+        return;
+      }
     }
   }
 }

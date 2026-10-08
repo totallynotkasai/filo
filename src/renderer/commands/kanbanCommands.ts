@@ -10,6 +10,8 @@ import type {
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
 import { NewNoteUndo } from './newNoteUndo';
+import { restoreFiles, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
+import type { DrainToken } from '../lib/vault/vaultOperations';
 
 // ── Kanban Commands ──
 //
@@ -90,6 +92,11 @@ export class AddCardCommand extends Command {
   }
 }
 
+/**
+ * Removes one card's placement, and with `DeleteWithFileOptions` ("Delete
+ * from vault…") moves its note into Filo's trash too, as the Task List's
+ * "Delete task and file" does: undo moves the note back first, then the card.
+ */
 export class DeleteCardCommand extends Command {
   description: string;
   readonly targetBoardId: string;
@@ -103,13 +110,26 @@ export class DeleteCardCommand extends Command {
   // undo() inserts before this sibling so an intervening sibling add/remove
   // doesn't land the restored card at a stale absolute index.
   private beforeTileId: string | null;
+  // Null on the default placement-only path.
+  private filePath: string | null;
+  private trashed: TrashedItem[] = [];
+  private vaultRoot: string | undefined;
+  /** For the first execute only; see `DeleteWithFileOptions.drain`. */
+  private drain: DrainToken | undefined;
+  /** Last execute()'s move into the trash. Awaited by tests / a sequencing undo. */
+  lastExecuteCompletion: Promise<unknown> = Promise.resolve();
+  /** Last undo()'s restore from the trash. */
+  lastUndoCompletion: Promise<unknown> = Promise.resolve();
 
-  constructor(boardId: string, tileId: string) {
+  constructor(boardId: string, tileId: string, fileOpts: DeleteWithFileOptions = {}) {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;
     this.tileId = tileId;
-    this.description = `Delete card`;
+    this.description = fileOpts.filePath ? `Delete card and file` : `Delete card`;
+    this.filePath = fileOpts.filePath ?? null;
+    this.vaultRoot = fileOpts.vaultRoot;
+    this.drain = fileOpts.drain;
     this.snapshotDef = null;
     this.snapshotPlacement = null;
     this.snapshotColumnId = null;
@@ -138,11 +158,45 @@ export class DeleteCardCommand extends Command {
     }
   }
 
-  execute() {
+  async execute() {
+    // The placement goes at once, before the first await.
     boardCacheStore.removeKanbanPlacement(this.boardId, this.tileId);
+    if (!this.vaultRoot || !this.filePath) return;
+    const vaultRoot = this.vaultRoot;
+    const rel = this.filePath;
+    const drain = this.drain;
+    this.drain = undefined;
+    // Behind any earlier execute or undo, so a quick Ctrl+Y / Ctrl+Z never
+    // races this move against the last undo's restore.
+    const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
+    this.lastExecuteCompletion = prior.then(async () => {
+      this.trashed = [...this.trashed, ...await trashFiles(vaultRoot, [rel], 'deleteCard.execute', drain)];
+    });
+    await this.lastExecuteCompletion;
   }
 
-  undo() {
+  async undo() {
+    if (this.vaultRoot && this.filePath) {
+      // The note comes back before the card, so the card never seeds an empty one.
+      const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
+      this.lastUndoCompletion = prior.then(async () => {
+        if (!this.vaultRoot || this.trashed.length === 0) return;
+        const restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteCard.undo');
+        this.trashed = stillTrashed(this.trashed, restored);
+        const moved = restored.find((r) => r.restoredPath !== r.rel);
+        if (moved) {
+          // The card follows the restored copy, and a redo trashes it, not a
+          // newer file that took the old name meanwhile.
+          this.filePath = moved.restoredPath;
+          if (this.snapshotDef?.type === 'text') this.snapshotDef = { ...this.snapshotDef, filePath: moved.restoredPath };
+        }
+      });
+      await this.lastUndoCompletion;
+    }
+    this.restorePlacement();
+  }
+
+  private restorePlacement(): void {
     if (!this.snapshotDef || !this.snapshotPlacement || !this.snapshotColumnId) return;
     // Restore the placement (style + coverImage) atomically. A separate
     // setKanbanPlacementCoverImage write would re-sanitize the path and could

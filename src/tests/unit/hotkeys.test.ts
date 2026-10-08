@@ -500,4 +500,71 @@ describe('hotkeys', () => {
       }
     });
   });
+
+  // The Document zoom keys (Audit-29 D-04): Ctrl and + on the number pad, or
+  // Ctrl+Shift+=, send `+`, which a binding of `=` takes as browsers and Word do.
+  describe('the + key', () => {
+    beforeEach(() => {
+      initKeyboardShortcuts();
+    });
+
+    function press(target: EventTarget, init: KeyboardEventInit): KeyboardEvent {
+      const event = new KeyboardEvent('keydown', { ctrlKey: true, ...init, bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event;
+    }
+
+    function zoomCommands(): string[] {
+      const fired: string[] = [];
+      for (const [name, key] of [['in', '='], ['out', '-'], ['reset', '0']] as const) {
+        registerShortcut({ key, ctrl: true, allowInEditor: true, allowInField: true, description: name, action: () => { fired.push(name); } });
+      }
+      return fired;
+    }
+
+    it('takes Ctrl and + (number pad or Shift+=) as Ctrl+=, and Ctrl and the number pad − as Ctrl+-', () => {
+      const fired = zoomCommands();
+      press(document.body, { key: '=', code: 'Equal' });
+      press(document.body, { key: '+', code: 'NumpadAdd' });
+      press(document.body, { key: '+', code: 'Equal', shiftKey: true });
+      press(document.body, { key: '-', code: 'NumpadSubtract' });
+      expect(fired).toEqual(['in', 'in', 'in', 'out']);
+      // Not without Ctrl, and not Ctrl+Shift+- (`_`).
+      expect(press(document.body, { key: '+', ctrlKey: false }).defaultPrevented).toBe(false);
+      expect(press(document.body, { key: '_', shiftKey: true }).defaultPrevented).toBe(false);
+      expect(fired).toEqual(['in', 'in', 'in', 'out']);
+    });
+
+    it('leaves + to a shortcut bound to it, and a binding of Shift+= alone', () => {
+      const fired = zoomCommands();
+      registerShortcut({ key: '+', ctrl: true, description: 'plus', action: () => { fired.push('plus'); } });
+      registerShortcut({ key: '=', ctrl: true, alt: true, shift: true, description: 'shifted', action: () => { fired.push('shifted'); } });
+      press(document.body, { key: '+', code: 'NumpadAdd' });
+      expect(fired).toEqual(['plus']);
+      press(document.body, { key: '+', code: 'Equal', shiftKey: true, altKey: true });
+      expect(fired, 'a Shift binding of = never takes + by the alias').toEqual(['plus']);
+    });
+
+    it('works with the caret in the Raw view, the note and the tag row', () => {
+      const fired = zoomCommands();
+      const raw = document.createElement('div');
+      raw.setAttribute('data-plain-text-field', '');
+      raw.contentEditable = 'true';
+      const note = document.createElement('div');
+      note.contentEditable = 'true';
+      const tagRow = document.createElement('input');
+      document.body.append(raw, note, tagRow);
+      try {
+        press(raw, { key: '=', code: 'Equal' });
+        press(raw, { key: '+', code: 'NumpadAdd' });
+        press(note, { key: '-', code: 'Minus' });
+        press(tagRow, { key: '0', code: 'Digit0' });
+        expect(fired).toEqual(['in', 'in', 'out', 'reset']);
+      } finally {
+        raw.remove();
+        note.remove();
+        tagRow.remove();
+      }
+    });
+  });
 });

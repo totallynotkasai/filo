@@ -12,6 +12,7 @@ import { bringPickedFileIn } from '../vault/pickedFile';
 import { getActiveContentFolder } from '../vault/conventionPaths';
 import { resolveTextTileVaultPath } from '../boards/textTilePath';
 import { openNoteInDocumentTab } from '../notes/openNote';
+import { FIELD_READERS } from '../tasks/frontmatterReaders';
 
 export type KanbanPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
 
@@ -33,6 +34,7 @@ export interface KanbanFrontmatterWriter {
   ensureSeededFm(tile: Tile): string | null;
   updateTileFrontmatter(tileId: string, patch: Record<string, unknown>): Promise<void>;
   setTileDueDate(tileId: string, dueDate: string): Promise<void>;
+  setTileDueTime(tileId: string, dueTime: string): Promise<void>;
   setTilePriority(tileId: string, priority: KanbanPriority): Promise<void>;
   openTileAsDocument(tileId: string): void;
   pickCoverImageForTile(tileId: string): Promise<void>;
@@ -88,7 +90,16 @@ export function makeKanbanFrontmatterWriter(
   }
 
   function setTileDueDate(tileId: string, dueDate: string): Promise<void> {
+    // Clearing the date clears its time too, in one undo step, as on a task:
+    // a time with no date shows nowhere.
+    const tile = getAllTilesById()[tileId];
+    const path = tile ? resolveTextTileVaultPath(tile) : null;
+    if (!dueDate && path && FIELD_READERS.dueTime(noteFrontmatter(path))) return updateTileFrontmatter(tileId, { dueDate: '', dueTime: '' });
     return updateTileFrontmatter(tileId, { dueDate });
+  }
+
+  function setTileDueTime(tileId: string, dueTime: string): Promise<void> {
+    return updateTileFrontmatter(tileId, { dueTime });
   }
 
   function setTilePriority(tileId: string, priority: KanbanPriority): Promise<void> {
@@ -164,6 +175,7 @@ export function makeKanbanFrontmatterWriter(
     ensureSeededFm,
     updateTileFrontmatter,
     setTileDueDate,
+    setTileDueTime,
     setTilePriority,
     openTileAsDocument,
     pickCoverImageForTile,

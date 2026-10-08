@@ -63,7 +63,7 @@
   import { MarqueeSelectionController } from '../../lib/mindmap/marqueeSelectionController.svelte';
   import { confirmRemoveFrame } from '../../lib/frames/confirmRemoveFrame';
   import { createSelectionActions, selectableTileIds } from '../../lib/mindmap/selectionActions';
-  import { revealOffset } from '../../lib/canvas/revealRect';
+  import { revealOnCanvas } from '../../lib/canvas/revealRect';
   import { tileIdFromTarget, topmostHitTile } from '../../lib/mindmap/tileHitTest';
   import { resolveTextTileVaultPath } from '../../lib/boards/textTilePath';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
@@ -408,15 +408,17 @@
     }
   }
 
-  /** Selects a tile from the keyboard and brings it into view (it may be off screen). */
+  /**
+   * Selects a tile from the keyboard and brings it into view: it may be off
+   * screen, or under the docked sidebar.
+   */
   function selectByKey(id: string, additive = false): void {
     selectionStore.select(id, additive);
     const t = boardStore.getTile(id);
     if (!t) return;
-    const { dx, dy } = revealOffset(canvasStore.viewportRect, {
+    revealOnCanvas(canvasStore, {
       x: t.position.x, y: t.position.y, width: t.renderedWidth ?? t.size.width, height: t.renderedHeight ?? t.size.height,
     });
-    if (dx || dy) canvasStore.panBy(-dx * canvasStore.scale, -dy * canvasStore.scale);
   }
 
   // ── Keyboard handler ── (never while typing, or while a dialog or menu is open)
@@ -440,14 +442,19 @@
     if (isArrowKey(e.key) && e.defaultPrevented) return;
 
     // An Escape that acts says so (preventDefault), so the Search panel
-    // behind the board doesn't close with it.
+    // behind the board doesn't close with it. Last, it clears the selection,
+    // as on Kanban and the Task List; one a menu or dialog took does nothing.
     if (e.key === 'Escape') {
+      if (e.defaultPrevented) return;
       if (connectionsStore.drawing) {
         e.preventDefault();
         connectionsStore.cancelDrawing();
       } else if (connectionsStore.connectionMode) {
         e.preventDefault();
         connectionsStore.setConnectionMode(false);
+      } else if (selectionStore.selectedIds.size > 0) {
+        e.preventDefault();
+        selectionStore.clear();
       }
       return;
     }
@@ -546,7 +553,11 @@
     const tile = anchor
       ? addNewTextTile({ x: anchor.position.x + anchor.size.width + 40, y: anchor.position.y }, { stepClear: true })
       : createTileAtViewportCenter();
-    if (tile) selectionStore.select(tile.id);
+    // The anchor may be off screen or under the sidebar, and the tile beside
+    // it with it: bring the tile into view, so it is drawn and its title edit
+    // opens there (`editTitleWhenShown` drops an edit not shown within 2 s,
+    // and the keys typed would then reach the canvas).
+    if (tile) selectByKey(tile.id);
   }
 
   $effect(() => registerMindMapShortcuts({

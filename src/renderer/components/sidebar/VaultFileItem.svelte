@@ -495,7 +495,7 @@
 
 </script>
 
-<div class="vault-file-item" class:drop-target={isDropTarget} class:selected={isSelected} style="padding-left: {12 + depth * 16}px">
+<div class="vault-file-item" class:drop-target={isDropTarget} class:selected={isSelected} class:actions-pinned={isPinnedHere} style="padding-left: {12 + depth * 16}px">
   <!-- Sidebar reorder uses this explicit handle (svelte-dnd-action);
        native HTML5 drag stays on `.file-row` so canvas/column/section
        drops keep firing. See `.drag-handle` CSS below for rationale. -->
@@ -757,12 +757,10 @@
     gap: 6px;
     flex: 1;
     min-width: 0;
-    /* Right padding reserves the visual area for the absolutely-positioned
-       `.file-actions` overlay so the filename text never runs *underneath*
-       the action buttons. The padding stays whether buttons are visible
-       (hover) or not, matching the layout of the original flex-flow
-       version where `.file-actions` always reserved space. */
-    padding: 2px 100px 2px 6px;
+    /* The action buttons lie over the row's right end only while they show
+       (below): room is kept for them then, so the name never runs under
+       them, and the name has the row's whole width the rest of the time. */
+    padding: 2px 6px;
     border: none;
     border-radius: 4px;
     background: transparent;
@@ -774,8 +772,15 @@
     transition: background-color 0.08s ease;
   }
 
-  /* A file row has three action buttons (3 × 22px + gaps), a folder four. */
-  .file-row:not(.is-directory) {
+  /* While the buttons show: a folder has four (4 × 22px + gaps), a file three. */
+  .vault-file-item:hover .file-row,
+  .vault-file-item:focus-within .file-row,
+  .vault-file-item.actions-pinned .file-row {
+    padding-right: 100px;
+  }
+
+  .vault-file-item:hover .file-row:not(.is-directory),
+  .vault-file-item:focus-within .file-row:not(.is-directory) {
     padding-right: 78px;
   }
 

@@ -23,6 +23,8 @@ export interface KanbanShortcutDeps {
   /** Opens the new-card picker for the target column. */
   addCard(): void;
   addColumn(): void;
+  /** Selects every card on screen (a collapsed column's none). */
+  selectAll(): void;
 }
 
 type KanbanCommandId = (typeof KANBAN_SHORTCUTS)[number]['id'];
@@ -34,6 +36,7 @@ export function registerKanbanShortcuts(deps: KanbanShortcutDeps): () => void {
     'kanban:add-tile': { execute: deps.addCard, enabled: ownsBareKeys },
     'kanban:new-card': { execute: deps.addCard, enabled: deps.isActivePane },
     'kanban:add-column': { execute: deps.addColumn, enabled: ownsBareKeys },
+    'kanban:select-all': { execute: deps.selectAll, enabled: deps.isActivePane },
   };
   const unregister = KANBAN_SHORTCUTS.map(({ id, label, binding }) =>
     registerCommandWithShortcut({ name: id, label, description: label, binding, ...run[id] }));

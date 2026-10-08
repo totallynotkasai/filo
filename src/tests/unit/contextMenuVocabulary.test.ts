@@ -66,6 +66,18 @@ describe('Kanban menus', () => {
     expect(labels(buildCardContextMenu({ onStyle: noop, onRemove: noop }))).toEqual(['Style…', 'Remove from board']);
   });
 
+  it('card: Move to column before the danger items, then Delete from vault… as on a task', () => {
+    const del = vi.fn();
+    const items = buildCardContextMenu({
+      onOpenAsDocument: noop, onStyle: noop, onRemove: noop, onDeleteFromVault: del,
+      moveTargets: [{ id: 'b', title: 'Done' }], onMoveTo: noop,
+    });
+    expect(labels(items)).toEqual(['Open as document', 'Style…', 'Move to column', 'Done', 'Remove from board', 'Delete from vault…']);
+    expect(items.filter((i) => i.danger).map((i) => i.label)).toEqual(['Remove from board', 'Delete from vault…']);
+    items.find((i) => i.id === 'delete-from-vault')?.action?.();
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+
   it('bulk: a real heading with the plural count, then the move targets under their own heading', () => {
     const move = vi.fn();
     const items = buildBulkCardContextMenu({
@@ -73,7 +85,7 @@ describe('Kanban menus', () => {
       columns: [{ id: 'a', title: 'Todo' }, { id: 'b', title: 'Done' }],
       onAddTag: noop, onRemove: noop, onMoveTo: move,
     });
-    expect(labels(items)).toEqual(['3 cards selected', 'Add tag…', 'Remove from board', 'Move to column', 'Todo', 'Done']);
+    expect(labels(items)).toEqual(['3 cards selected', 'Add tag…', 'Move to column', 'Todo', 'Done', 'Remove from board']);
     expect(items.filter((i) => i.heading).map((i) => i.label)).toEqual(['3 cards selected', 'Move to column']);
     // Headings are headings, not disabled pseudo-items.
     expect(items.some((i) => i.disabled)).toBe(false);

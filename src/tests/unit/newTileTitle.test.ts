@@ -82,7 +82,7 @@ describe('focusIsInBoard', () => {
 });
 
 describe('Kanban shortcuts', () => {
-  it('bare N and Shift+N act only with focus in the board; Ctrl+N for the active pane anywhere', () => {
+  it('bare N and Shift+N act only with focus in the board; Ctrl+N and Ctrl+A for the active pane anywhere', () => {
     _resetForTests();
     initKeyboardShortcuts();
     const root = document.createElement('div');
@@ -95,6 +95,7 @@ describe('Kanban shortcuts', () => {
       boardRoot: () => root,
       addCard: () => fired.push('card'),
       addColumn: () => fired.push('column'),
+      selectAll: () => fired.push('all'),
     });
     const press = (init: KeyboardEventInit): void => {
       (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
@@ -111,6 +112,8 @@ describe('Kanban shortcuts', () => {
       press({ key: 'n' });
       press({ key: 'N', shiftKey: true });
       expect(fired).toEqual(['card', 'card', 'column']);
+      press({ key: 'a', ctrlKey: true });
+      expect(fired).toEqual(['card', 'card', 'column', 'all']);
     } finally {
       off();
       _resetForTests();

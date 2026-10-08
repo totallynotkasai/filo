@@ -43,6 +43,7 @@ import {
   pressShortcut,
   kanbanColumns,
   showBoard,
+  renameInSidebar,
 } from './harness/actions';
 import { pickCardCover } from './harness/pickers';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -91,9 +92,21 @@ describe('making a note or a folder with no board', () => {
     expect(folderMenu.slice(0, 2)).toEqual(['New note', 'New folder']);
     expect(await sidebarMenuLabels(app, 'Book/Chapter 1.md')).not.toContain('New note');
 
+    // Named by its file until a title is typed: no `title:` in it.
     expect(await newNoteFromSidebar(app, null, null)).toBe('Untitled.md');
-    expect(titleOf(app, 'Untitled.md')).toBe('Untitled');
+    expect(titleOf(app, 'Untitled.md')).toBeUndefined();
+    expect(activeTabName(app)).toBe('Untitled');
     expect(await newNoteFromSidebar(app, null, null)).toBe('Untitled (2).md');
+  });
+
+  it('a new note left "Untitled" takes the name its file is given in the sidebar', async () => {
+    const app = await startApp({ 'Book/Chapter 1.md': 'One\n' });
+    expect(await newNoteFromSidebar(app, null, null)).toBe('Untitled.md');
+    await renameInSidebar(app, 'Untitled.md', 'Prologue');
+    await waitFor(() => app.exists('Prologue.md'), 'the renamed file');
+    await waitFor(() => activeTabName(app) === 'Prologue', 'the tab named by the new file name');
+    expect(titleOf(app, 'Prologue.md')).toBeUndefined();
+    expect(errorToasts()).toEqual([]);
   });
 
   it('Ctrl+N in a Document tab makes a note beside it; New Tab → Document makes one at the top', async () => {

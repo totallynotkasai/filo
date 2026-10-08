@@ -44,7 +44,7 @@ describe('context menu headings', () => {
       return { label, items };
     });
     expect(summary).toEqual([
-      { label: '3 cards selected', items: ['Add tag…', 'Remove from board'] },
+      { label: '3 cards selected', items: ['Add tag…'] },
       { label: 'Move to column', items: ['Todo', 'Done'] },
     ]);
   });
@@ -65,7 +65,7 @@ describe('context menu headings', () => {
       flushSync();
       seen.push(menu.querySelector('.menu-item.focused')?.textContent?.trim() ?? '');
     }
-    expect(seen).toEqual(['Remove from board', 'Todo', 'Done', 'Add tag…', 'Remove from board']);
+    expect(seen).toEqual(['Todo', 'Done', 'Remove from board', 'Add tag…', 'Todo']);
   });
 
   it('takes focus as it opens, so a key pressed before the next frame reaches it', () => {

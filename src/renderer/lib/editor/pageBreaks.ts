@@ -1,9 +1,9 @@
 /**
  * pageBreaks — the page view of a note editor in a Document tab. It measures
- * where the note's blocks lie, asks `layoutPages` where the pages break, and
- * puts each break's space above its block as a decoration. A decoration is
- * drawn, never part of the document, so the note's Markdown, its saves and
- * its undo history never see a page.
+ * where the note's blocks lie (`pageMeasure.ts`), asks `layoutPages` where
+ * the pages break, and puts each break's space above its block as a
+ * decoration. A decoration is drawn, never part of the document, so the
+ * note's Markdown, its saves and its undo history never see a page.
  *
  * The space is padding (`--filo-page-break`, applied by the Document tab's
  * stylesheet), not margin: a margin collapses with the margin of the block
@@ -17,7 +17,8 @@ import { Plugin, PluginKey, type EditorState } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { Editor } from '@tiptap/core';
-import { layoutPages, sameBreaks, samePages, type LaidOutBlock, type PageBreak, type PageRect } from './pageLayout';
+import { layoutPages, sameBreaks, samePages, type PageBreak, type PageRect } from './pageLayout';
+import { measureBlocks, type Measured } from './pageMeasure';
 
 /** The space between two page cards, px. */
 export const PAGE_GAP = 24;
@@ -25,41 +26,52 @@ export const PAGE_GAP = 24;
 /** Pages keep A4's proportions at whatever width the page column has. */
 const PAGE_ASPECT = Math.SQRT2;
 
-/** Measure once edits pause, and at least this often while they don't. */
-const MEASURE_DEBOUNCE_MS = 60;
-const MEASURE_MAX_WAIT_MS = 250;
+/**
+ * How long a measure waits: until edits pause, and at least this often while
+ * they don't. A long note's measure lays out and reads more, so it waits for
+ * a longer pause, and typing in it is held up less often.
+ */
+export function measureWaits(blocks: number): { debounce: number; maxWait: number } {
+  if (blocks < 500) return { debounce: 60, maxWait: 250 };
+  if (blocks < 2000) return { debounce: 150, maxWait: 600 };
+  return { debounce: 300, maxWait: 1200 };
+}
 
 const pageBreaksKey = new PluginKey<DecorationSet>('filoPageBreaks');
-
-/**
- * Nodes whose children can each start a page. A task item, a table and a
- * code block are kept whole: their children don't lie in plain block flow.
- */
-const BREAKABLE_CONTAINERS = new Set(['bulletList', 'orderedList', 'taskList', 'listItem', 'blockquote']);
-
-/**
- * Never moved to a new page: a rule's line sits in the band at the foot of
- * the page it follows, and moving it would leave the page above it short.
- */
-const NEVER_MOVED = new Set(['horizontalRule']);
 
 interface BreakSpec {
   pageBreakShift: number;
 }
 
-interface Unit {
-  pos: number;
-  target: number | null;
-}
+/** Up to this many changed breaks are swapped one by one (`withBreaks`). */
+const SWAP_AT_MOST = 16;
 
 function roundPx(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function breakDecorations(doc: ProseMirrorNode, breaks: readonly PageBreak[]): DecorationSet {
+/**
+ * The node at each of `targets` (in document order), walking the note's
+ * blocks once: `doc.nodeAt` scans the blocks before its position each time.
+ */
+function nodesAt(doc: ProseMirrorNode, targets: readonly number[]): Array<ProseMirrorNode | null> {
+  const out: Array<ProseMirrorNode | null> = [];
+  let index = 0;
+  let pos = 0;
+  for (const target of targets) {
+    while (index < doc.childCount && pos + doc.child(index).nodeSize <= target) pos += doc.child(index++).nodeSize;
+    if (index >= doc.childCount || target < pos) out.push(null);
+    else if (target === pos) out.push(doc.child(index));
+    else out.push(doc.child(index).nodeAt(target - pos - 1));
+  }
+  return out;
+}
+
+function breakDecorations(doc: ProseMirrorNode, breaks: readonly PageBreak[]): Decoration[] {
   const decorations: Decoration[] = [];
-  for (const { target, shift } of breaks) {
-    const node = doc.nodeAt(target);
+  const nodes = nodesAt(doc, breaks.map((b) => b.target));
+  for (const [i, { target, shift }] of breaks.entries()) {
+    const node = nodes[i];
     if (!node) continue;
     const px = roundPx(shift);
     const spec: BreakSpec = { pageBreakShift: px };
@@ -68,7 +80,34 @@ function breakDecorations(doc: ProseMirrorNode, breaks: readonly PageBreak[]): D
       style: `--filo-page-break: ${px}px`,
     }, spec));
   }
-  return DecorationSet.create(doc, decorations);
+  return decorations;
+}
+
+/**
+ * `set` showing `breaks` instead. An edit often changes only the break on
+ * the page it is on, the breaks below keeping their blocks and their space:
+ * then only the breaks that differ are swapped, as building the set reads
+ * every block of the note for every break. When most differ (a line more on
+ * the first page pushes a block onto the next page on every page), the set
+ * is built again, which costs less than swapping them all.
+ */
+function withBreaks(set: DecorationSet, doc: ProseMirrorNode, breaks: readonly PageBreak[]): DecorationSet {
+  const shown = set.find().sort((a, b) => a.from - b.from);
+  const stale: Decoration[] = [];
+  const fresh: PageBreak[] = [];
+  let i = 0;
+  for (const b of breaks) {
+    while (i < shown.length && shown[i]!.from < b.target) stale.push(shown[i++]!);
+    // A shown break covers its whole block: the set drops one whose block an
+    // edit split or joined when it maps the decorations over the edit.
+    const d = shown[i];
+    if (d && d.from === b.target && (d.spec as BreakSpec).pageBreakShift === roundPx(b.shift)) i++;
+    else fresh.push(b);
+  }
+  while (i < shown.length) stale.push(shown[i++]!);
+  if (stale.length === 0 && fresh.length === 0) return set;
+  if (stale.length > SWAP_AT_MOST) return DecorationSet.create(doc, breakDecorations(doc, breaks));
+  return set.remove(stale).add(doc, breakDecorations(doc, fresh));
 }
 
 /** The page breaks the editor shows now, in document order. */
@@ -80,28 +119,6 @@ export function currentPageBreaks(state: EditorState): PageBreak[] {
     .sort((a, b) => a.target - b.target);
 }
 
-/**
- * The blocks pages are laid out from, in document order: each block that
- * isn't broken into its children, with the element that takes its space (the
- * outermost element it is the first block of: a list starting with it).
- */
-function collectUnits(doc: ProseMirrorNode): Unit[] {
-  const units: Unit[] = [];
-  const walk = (parent: ProseMirrorNode, contentStart: number, firstTarget: number | null): void => {
-    parent.forEach((child, offset, index) => {
-      const pos = contentStart + offset;
-      const target = index === 0 ? firstTarget : pos;
-      if (BREAKABLE_CONTAINERS.has(child.type.name) && child.childCount > 0) {
-        walk(child, pos + 1, target);
-      } else if (!NEVER_MOVED.has(child.type.name)) {
-        units.push({ pos, target });
-      }
-    });
-  };
-  walk(doc, 0, null);
-  return units;
-}
-
 function pageBreaksPlugin(onDocChanged: () => void): Plugin<DecorationSet> {
   return new Plugin<DecorationSet>({
     key: pageBreaksKey,
@@ -109,7 +126,7 @@ function pageBreaksPlugin(onDocChanged: () => void): Plugin<DecorationSet> {
       init: () => DecorationSet.empty,
       apply(tr, set) {
         const next = tr.getMeta(pageBreaksKey) as readonly PageBreak[] | undefined;
-        if (next) return breakDecorations(tr.doc, next);
+        if (next) return withBreaks(set, tr.doc, next);
         return tr.docChanged ? set.map(tr.mapping, tr.doc) : set;
       },
     },
@@ -148,6 +165,10 @@ export function attachPageView(editor: Editor, options: PageViewOptions): PageVi
   let timer: ReturnType<typeof setTimeout> | null = null;
   let firstRequestAt = 0;
   let shownPages: PageRect[] = [];
+  // The last measure, for the next one to start from. Dropped whenever
+  // something other than the note may have moved its blocks (the column's
+  // width, what sits above the editor, a font, pages switched on).
+  let measured: Measured | null = null;
 
   const showPages = (pages: PageRect[]): void => {
     if (samePages(pages, shownPages)) return;
@@ -155,9 +176,18 @@ export function attachPageView(editor: Editor, options: PageViewOptions): PageVi
     options.onPages(pages);
   };
 
-  const applyBreaks = (breaks: readonly PageBreak[]): void => {
-    if (editor.isDestroyed || sameBreaks(breaks, currentPageBreaks(editor.state))) return;
-    editor.view.dispatch(editor.state.tr.setMeta(pageBreaksKey, breaks).setMeta('addToHistory', false));
+  /**
+   * Shows `breaks`; whether they differ from those shown. Straight to the
+   * view, not through the editor's dispatch: the breaks change no text and
+   * no selection, and the editor would tell every transaction listener (the
+   * formatting toolbar reads its state again), which on a long note cost as
+   * much as the measure.
+   */
+  const applyBreaks = (breaks: readonly PageBreak[]): boolean => {
+    const view = editor.view;
+    if (editor.isDestroyed || sameBreaks(breaks, currentPageBreaks(view.state))) return false;
+    view.updateState(view.state.apply(view.state.tr.setMeta(pageBreaksKey, breaks).setMeta('addToHistory', false)));
+    return true;
   };
 
   const measure = (): void => {
@@ -171,68 +201,89 @@ export function attachPageView(editor: Editor, options: PageViewOptions): PageVi
     const column = options.column();
     const width = column?.offsetWidth ?? 0;
     if (!column || width === 0) return;
-    const columnRect = column.getBoundingClientRect();
-    // CSS zoom (and any transform) scales the rects but not the layout.
-    const scale = columnRect.width / width || 1;
+    const doc = view.state.doc;
+    const last = measured !== null && measured.width === width ? measured : null;
+    const blocks = measureBlocks(view, column, currentPageBreaks(view.state), last);
+    if (blocks === 'unchanged' || blocks.length === 0) return;
+
     const style = getComputedStyle(column);
-    const geometry = {
+    const layout = layoutPages(blocks, {
       pageHeight: Math.round(width * PAGE_ASPECT),
       gap: PAGE_GAP,
       padTop: parseFloat(style.paddingTop) || 0,
       padBottom: parseFloat(style.paddingBottom) || 0,
-    };
-
-    const current = currentPageBreaks(view.state);
-    const blocks: LaidOutBlock[] = [];
-    let next = 0;
-    let above = 0;
-    for (const unit of collectUnits(view.state.doc)) {
-      while (next < current.length && current[next]!.target < unit.pos) above += current[next++]!.shift;
-      const own = next < current.length && current[next]!.target === unit.pos ? current[next]!.shift : 0;
-      const dom = view.nodeDOM(unit.pos);
-      if (!(dom instanceof HTMLElement)) continue;
-      const rect = dom.getBoundingClientRect();
-      // Not laid out (hidden, or no layout engine at all).
-      if (rect.width === 0 && rect.height === 0) continue;
-      // A block's own padding moves its bottom, not its top.
-      blocks.push({
-        top: (rect.top - columnRect.top) / scale - above,
-        bottom: (rect.bottom - columnRect.top) / scale - above - own,
-        target: unit.target,
-      });
-    }
-    if (blocks.length === 0) return;
-
-    const layout = layoutPages(blocks, geometry);
-    applyBreaks(layout.breaks);
+    });
+    const moved = applyBreaks(layout.breaks);
     showPages(layout.pages);
+    // New breaks change the editor's height: the size notice that follows,
+    // once they are laid out, says what it is (reading it here would lay the
+    // whole note out again inside this measure).
+    measured = { doc, blocks, width, height: moved ? null : view.dom.offsetHeight };
   };
 
   function schedule(): void {
     if (destroyed || !enabled) return;
+    const { debounce, maxWait } = measureWaits(editor.state.doc.childCount);
     const now = performance.now();
     if (timer === null) firstRequestAt = now;
     else clearTimeout(timer);
-    const wait = Math.max(0, Math.min(MEASURE_DEBOUNCE_MS, firstRequestAt + MEASURE_MAX_WAIT_MS - now));
+    const wait = Math.max(0, Math.min(debounce, firstRequestAt + maxWait - now));
     timer = setTimeout(() => {
       timer = null;
       measure();
     }, wait);
   }
 
+  /** Something other than the note may have moved its blocks: the next measure reads them all. */
+  function scheduleAll(): void {
+    measured = null;
+    schedule();
+  }
+
   editor.registerPlugin(pageBreaksPlugin(schedule));
 
-  const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => schedule());
-  for (const el of [editor.view.dom, options.column(), ...options.observed()]) {
+  // The editor's size changes with what is typed (the next measure sees
+  // that) and with the breaks a measure puts in. The column holds the editor,
+  // so its height follows the note's; a new width makes the measure start
+  // afresh. What sits above the editor moves every block.
+  const editorDom = editor.view.dom;
+  const resizeObserver = typeof ResizeObserver === 'undefined'
+    ? null
+    : new ResizeObserver((entries) => {
+      const column = options.column();
+      let check = false;
+      for (const entry of entries) {
+        if (entry.target === editorDom) {
+          if (measured === null || measured.doc !== editor.state.doc) {
+            check = true;
+          } else if (measured.height === null) {
+            // The breaks the last measure put in, now laid out.
+            measured.height = editorDom.offsetHeight;
+          } else if (editorDom.offsetHeight !== measured.height) {
+            // Grown or shrunk with no edit (an image loaded): read every block.
+            measured = null;
+            check = true;
+          }
+        } else if (entry.target === column) {
+          if (measured === null || column.offsetWidth !== measured.width) check = true;
+        } else {
+          measured = null;
+          check = true;
+        }
+      }
+      if (check) schedule();
+    });
+  for (const el of [editorDom, options.column(), ...options.observed()]) {
     if (el) resizeObserver?.observe(el);
   }
   // A web font arriving re-wraps every line.
-  void document.fonts?.ready.then(() => schedule());
+  void document.fonts?.ready.then(() => scheduleAll());
 
   return {
     setEnabled(on: boolean): void {
       if (destroyed || enabled === on) return;
       enabled = on;
+      measured = null;
       if (on) {
         schedule();
         return;
@@ -242,7 +293,7 @@ export function attachPageView(editor: Editor, options: PageViewOptions): PageVi
       applyBreaks([]);
       showPages([]);
     },
-    refresh: schedule,
+    refresh: scheduleAll,
     destroy(): void {
       destroyed = true;
       if (timer !== null) clearTimeout(timer);

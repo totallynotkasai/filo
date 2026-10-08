@@ -6,6 +6,7 @@ import { withLeadSpaceNodes, withLeadSpacesOutsideRuns } from './leadSpace';
 import { withBreakMarksTrimmed } from './softBreak';
 import { withSpaceRunsUnwrapped, type MarkFlagSpecs } from './spaceRuns';
 import { withBlockEndSpacesTrimmed, withLineEndSpacesDropped } from './lineEndSpaces';
+import { zoomedColumnDrag } from './zoomedColumnDrag';
 
 /**
  * How a table is written to the file.
@@ -196,5 +197,11 @@ export const FiloTable = Table.extend({
         parse: {},
       },
     };
+  },
+  // A column dragged in a zoomed note follows the pointer: this plugin takes
+  // the drag there, so it goes before the library's own (`zoomedColumnDrag.ts`).
+  addProseMirrorPlugins() {
+    const own = this.parent?.() ?? [];
+    return this.options.resizable && this.editor.isEditable ? [zoomedColumnDrag(this.options.cellMinWidth), ...own] : own;
   },
 });

@@ -2,10 +2,11 @@
  * "New note": a note made on its own, not for a board. The sidebar's menus,
  * Ctrl+N in a Document tab and New Tab → Document all come here.
  *
- * The note is made at once as `Untitled.md` (` (n)` past a taken name) with
- * `title: Untitled`, and opens in a Document tab whose title is open for
- * typing. The title typed then names the file too, as for a new card
- * (`placeholderNames.ts`); Escape keeps "Untitled".
+ * The note is made at once as `Untitled.md` (` (n)` past a taken name), with
+ * no `title:`, and opens in a Document tab whose title is open for typing.
+ * The title typed is written as its `title:` and names the file too, as for
+ * a new card (`placeholderNames.ts`). Escape leaves it named by its file, so
+ * renaming the file in the sidebar names the note.
  */
 import { createNoteFile } from './createNote';
 import { editTitleWhenShown } from '../boards/newTileTitle';
@@ -20,7 +21,9 @@ export async function createNewNote(folder: string): Promise<string | null> {
   const vaultRoot = vaultStore.path;
   if (!vaultRoot) return null;
   try {
-    const { relPath } = await createNoteFile({ vaultRoot, folder, title: NEW_NOTE_TITLE });
+    // DECISION: no `title:` until the note is named, so a rename of the file
+    // in the sidebar names it (a written "Untitled" would outlive the rename).
+    const { relPath } = await createNoteFile({ vaultRoot, folder, title: NEW_NOTE_TITLE, writeTitle: false });
     if (vaultStore.path !== vaultRoot) return null;
     const tab = tabStore.openNote(relPath, NEW_NOTE_TITLE);
     editTitleWhenShown(tab.id);

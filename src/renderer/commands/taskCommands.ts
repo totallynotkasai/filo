@@ -12,7 +12,7 @@ import type {
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
 import { NewNoteUndo } from './newNoteUndo';
-import { restoreFiles, stillTrashed, trashFiles, type TrashedItem } from './trashedFiles';
+import { restoreFiles, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
 import { applyMove, layoutOf, movedTasks, regroup, type SectionKey, type TaskLayout } from '../lib/tasklist/sectionMembership';
 
@@ -29,7 +29,7 @@ import { applyMove, layoutOf, movedTasks, regroup, type SectionKey, type TaskLay
 // Backing files are never created or removed by Command undo/redo — the
 // Vault API owns file-system side effects. Re-adding a placement after
 // undo simply links it back to the existing `.md`. The one opt-in
-// exception is `DeleteTaskCommand` with `DeleteTaskFileOptions`:
+// exception is `DeleteTaskCommand` with `DeleteWithFileOptions`:
 // when the user explicitly chooses "Delete task & file", that command moves
 // the file to Filo's trash and its undo restores it from there (no command
 // keeps a note body), as Mind Map's `DeleteTilesCommand` does.
@@ -234,23 +234,6 @@ export class AddTaskCommand extends Command {
 }
 
 /**
- * Opt-in backing-file delete. When the user picks "Delete task & file", the
- * note moves into Filo's trash with the task and undo moves it back. Absent
- * these options the command is placement-only and the file stays on disk.
- */
-export interface DeleteTaskFileOptions {
-  /** Vault-relative note to move into Filo's trash with the task. */
-  filePath?: string;
-  /** Vault root; required when `filePath` is set. */
-  vaultRoot?: string;
-  /**
-   * The drained op the first execute runs inside, if any: its trash move then
-   * runs under that drain instead of waiting for the op to finish.
-   */
-  drain?: DrainToken;
-}
-
-/**
  * Removes one task placement (and optionally its backing file).
  *
  * The task's section and that section's order are snapshotted in the
@@ -272,7 +255,7 @@ export class DeleteTaskCommand extends Command {
   private filePath: string | null;
   private trashed: TrashedItem[] = [];
   private vaultRoot: string | undefined;
-  /** For the first execute only; see `DeleteTaskFileOptions.drain`. */
+  /** For the first execute only; see `DeleteWithFileOptions.drain`. */
   private drain: DrainToken | undefined;
   /** Last execute()'s move into the trash (resolves at once on the
    *  placement-only path). Awaited by tests / redo. */
@@ -280,7 +263,7 @@ export class DeleteTaskCommand extends Command {
   /** Last undo()'s restore from the trash. Awaited by tests / a sequencing redo. */
   lastUndoCompletion: Promise<unknown> = Promise.resolve();
 
-  constructor(boardId: string, tileId: string, fileOpts: DeleteTaskFileOptions = {}) {
+  constructor(boardId: string, tileId: string, fileOpts: DeleteWithFileOptions = {}) {
     super();
     this.targetBoardId = boardId;
     this.boardId = boardId;

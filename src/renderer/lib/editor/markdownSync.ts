@@ -4,6 +4,7 @@ import type { Editor } from '@tiptap/core';
 import { resetEditorHistory } from './editorHistory';
 import { bodyLines, withMinimalEscapes, type MarkdownRenderer } from './minimalEscapes';
 import { rendersSame } from './renderedSame';
+import { firstRenderedChange, isBlockParser, type RenderedChange } from './lossyCause';
 import {
   encodeEmptyParagraphs,
   stripEmptyParagraphSentinels,
@@ -224,9 +225,14 @@ export function loadMarkdownIntoEditor(
   if (originalBody.length > 0 && hasMarkdownStorage) {
     try {
       const roundTripped = editorMarkdown(editor);
-      lossy = isLossyMarkdownRoundTrip(originalBody, roundTripped, markdownRenderer(editor));
-      // What the read-only banner names, and Take ownership's confirm lists.
-      if (lossy) changes = roundTripChanges(originalBody, roundTripped);
+      const md = markdownRenderer(editor);
+      lossy = isLossyMarkdownRoundTrip(originalBody, roundTripped, md);
+      // What the read-only banner names, and Take ownership's confirm lists:
+      // the change that makes the note read-only first.
+      if (lossy) {
+        const cause = isBlockParser(md) ? firstRenderedChange(originalBody, roundTripped, md) : null;
+        changes = withCauseFirst(roundTripChanges(originalBody, roundTripped, 50), cause, originalBody);
+      }
     } catch {
       lossy = false;
     }
@@ -273,6 +279,30 @@ export interface RoundTripChange {
    * above, in normal form; '' when it would go at the end.
    */
   above?: string;
+  /**
+   * A block the save would split, join or turn into another kind, not a
+   * line: what happens to it ("this list would be split into a list and a
+   * checklist").
+   */
+  becomes?: string;
+  /** The body line (1-based) of a change named out of file order: a block's, or the one moved first. */
+  bodyLine?: number;
+}
+
+/**
+ * The changes a read-only note's banner and Take ownership name, the cause
+ * first (`lossyCause.ts`): a block split, joined or turned into another kind
+ * gets an entry of its own; otherwise the line change inside the first block
+ * that renders differently moves to the front. At most `max`.
+ */
+function withCauseFirst(changes: readonly RoundTripChange[], cause: RenderedChange | null, original: string, max = 3): RoundTripChange[] {
+  if (!cause) return changes.slice(0, max);
+  if (cause.becomes) return [{ original: '', filo: '', becomes: cause.becomes, bodyLine: cause.line }, ...changes].slice(0, max);
+  const lines = changes.map((c) => lineOfRoundTripChange(original, c.original || c.above || '', cause.line));
+  const inside = lines.findIndex((at) => at >= cause.line && at <= cause.lastLine);
+  if (inside <= 0) return changes.slice(0, max);
+  // Named out of file order, it carries its line.
+  return [{ ...changes[inside]!, bodyLine: lines[inside]! }, ...changes.filter((_, k) => k !== inside)].slice(0, max);
 }
 
 /** Past this many lines in the region that differs, lines are paired in order rather than diffed. */

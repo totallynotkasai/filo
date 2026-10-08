@@ -97,6 +97,10 @@
   let paperElement: HTMLDivElement;
   let frontElement: HTMLDivElement;
 
+  // A zoomed page is wider: the docked sidebar pushes the workspace aside
+  // sooner while this tab is on screen, so it never covers a line's start.
+  onMount(() => uiStore.showDocumentPage());
+
   /** Zooms every Document tab, keeping the middle of this one's view in place. */
   async function setZoom(next: number): Promise<void> {
     if (next === workspaceStore.documentZoom) return;
@@ -248,7 +252,10 @@
 
     boardElement.addEventListener('wheel', handleWheel, { passive: false });
     // Zoom is shared by every Document tab; the keys act while focus is in this
-    // one (the note, its tag row, the zoom control), never from another board.
+    // one (the note, the Raw view, its tag row, the zoom control), never from
+    // another board. Zoom changes no text, so a field (the Raw view, the tag
+    // row) lets the keys through. Ctrl and + (number pad, or Shift+=) zoom in
+    // too, as in a browser (`core/hotkeys.ts`).
     const focusHere = (): boolean => focusIsInBoard(boardElement);
     const zoomCommands: Array<[string, string, string, () => number]> = [
       ['document:zoom-in', 'Document: Zoom in', '=', () => zoomedIn(workspaceStore.documentZoom)],
@@ -262,6 +269,7 @@
         description: label,
         binding: { key, ctrl: true },
         allowInEditor: true,
+        allowInField: true,
         enabled: focusHere,
         execute: () => { void setZoom(level()); },
       }));
@@ -298,6 +306,11 @@
   let readOnly = $derived(model?.lossy ?? false);
   // The lines a save would change, for the banner and the Take ownership confirm.
   let lossyChanges = $derived(readOnly && model?.base ? locateChanges(model.base.rawText, model.lossyChanges) : []);
+  // One string: markup would drop the space before the change's words.
+  let lossyBannerText = $derived(
+    "Filo can't save this file without changing formatting it doesn't support, so it's open read-only." +
+    (lossyChanges[0] ? ` ${describeChange(lossyChanges[0])}.` : ''),
+  );
   // A note whose bytes aren't UTF-8 is non-editable until converted.
   let nonUtf8 = $derived(isNonUtf8(docPath));
   // A symbolic link is shown but never written: saving would replace the link
@@ -454,7 +467,7 @@
           </div>
         {:else if readOnly}
           <div class="readonly-banner" role="status">
-            <span class="readonly-text">Filo can't save this file without changing formatting it doesn't support, so it's open read-only.{#if lossyChanges[0]} {describeChange(lossyChanges[0])}.{/if}</span>
+            <span class="readonly-text">{lossyBannerText}</span>
             <button class="readonly-action" onclick={() => void editInRawView()}>Edit in Raw view</button>
             <button class="readonly-action" onclick={takeOwnership}>Take ownership</button>
           </div>

@@ -53,7 +53,9 @@
   let waypoints = $derived(
     boardStore.current?.type === 'mindmap' ? boardStore.current.waypoints : [],
   );
-  let showWaypointPanel = $derived(canvasStore.waypointsVisible);
+  // Shown once the board has a waypoint (added from the canvas menu): an
+  // empty panel would only lie over the tiles.
+  let showWaypointPanel = $derived(canvasStore.waypointsVisible && waypoints.length > 0);
   let effectiveMapW = $derived(mapW);
 
   let allTiles = $derived(boardStore.tiles);
@@ -246,67 +248,63 @@
   {#if showWaypointPanel}
     <div class="waypoint-panel">
       <div class="waypoint-header">Waypoints</div>
-      {#if waypoints.length > 0}
-        <div class="waypoint-list">
-          {#each waypoints as wp (wp.id)}
-            <div class="waypoint-item-row">
-              {#if renamingWpId === wp.id}
-                <input
-                  class="waypoint-rename"
-                  type="text"
-                  size="1"
-                  bind:value={renameValue}
-                  onblur={commitRenameWaypoint}
-                  onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitRenameWaypoint(); } else if (e.key === 'Escape') { renamingWpId = null; } }}
-                />
-              {:else}
-                <button
-                  class="waypoint-item"
-                  onclick={() => gotoWaypoint(wp)}
-                  ondblclick={() => startRenameWaypoint(wp)}
-                  title="Navigate to {wp.name} (double-click to rename)"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
-                    <circle cx="12" cy="9" r="2.5"/>
-                  </svg>
-                  <span class="waypoint-name">{wp.name}</span>
-                </button>
-              {/if}
+      <div class="waypoint-list">
+        {#each waypoints as wp (wp.id)}
+          <div class="waypoint-item-row">
+            {#if renamingWpId === wp.id}
+              <input
+                class="waypoint-rename"
+                type="text"
+                size="1"
+                bind:value={renameValue}
+                onblur={commitRenameWaypoint}
+                onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitRenameWaypoint(); } else if (e.key === 'Escape') { renamingWpId = null; } }}
+              />
+            {:else}
               <button
-                class="waypoint-lock"
-                class:locked={wp.locked}
-                onclick={() => boardStore.toggleWaypointLockWithHistory(wp.id)}
-                title={wp.locked ? 'Unlock waypoint' : 'Lock waypoint position'}
-                aria-label={wp.locked ? 'Unlock ' + wp.name : 'Lock ' + wp.name}
+                class="waypoint-item"
+                onclick={() => gotoWaypoint(wp)}
+                ondblclick={() => startRenameWaypoint(wp)}
+                title="Navigate to {wp.name} (double-click to rename)"
               >
-                {#if wp.locked}
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
-                    <path d="M18 10h-1V7a5 5 0 0 0-10 0v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2zm-6 7a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3-7H9V7a3 3 0 0 1 6 0v3z"/>
-                  </svg>
-                {:else}
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                    <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
-                  </svg>
-                {/if}
-              </button>
-              <button
-                class="waypoint-delete"
-                onclick={() => boardStore.removeWaypointWithHistory(wp)}
-                title="Delete waypoint"
-                aria-label="Delete {wp.name}"
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+                  <circle cx="12" cy="9" r="2.5"/>
                 </svg>
+                <span class="waypoint-name">{wp.name}</span>
               </button>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="waypoint-empty">No waypoints yet</div>
-      {/if}
+            {/if}
+            <button
+              class="waypoint-lock"
+              class:locked={wp.locked}
+              onclick={() => boardStore.toggleWaypointLockWithHistory(wp.id)}
+              title={wp.locked ? 'Unlock waypoint' : 'Lock waypoint position'}
+              aria-label={wp.locked ? 'Unlock ' + wp.name : 'Lock ' + wp.name}
+            >
+              {#if wp.locked}
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+                  <path d="M18 10h-1V7a5 5 0 0 0-10 0v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2zm-6 7a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3-7H9V7a3 3 0 0 1 6 0v3z"/>
+                </svg>
+              {:else}
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+                </svg>
+              {/if}
+            </button>
+            <button
+              class="waypoint-delete"
+              onclick={() => boardStore.removeWaypointWithHistory(wp)}
+              title="Delete waypoint"
+              aria-label="Delete {wp.name}"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+        {/each}
+      </div>
     </div>
   {/if}
 
@@ -638,13 +636,5 @@
     max-width: 110px;
   }
 
-  .waypoint-empty {
-    padding: 12px 10px;
-    font-size: 11px;
-    font-family: var(--font-system);
-    color: var(--text-tertiary);
-    text-align: center;
-    flex: 1;
-  }
 
 </style>

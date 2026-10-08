@@ -38,7 +38,7 @@
   import { portal } from '../../lib/utils/portal';
   import { FIELD_READERS, type Priority } from '../../lib/tasks/frontmatterReaders';
   import { PRIORITY_COLOR, PRIORITY_LABEL, PRIORITY_OPTIONS } from '../../constants/taskPriorities';
-  import { isOverdue as isOverdueLib } from '../../lib/tasks/dueDateFormat';
+  import { formatTimeChip, isOverdue as isOverdueLib } from '../../lib/tasks/dueDateFormat';
   import { formatDay, formatDayLong } from '../../lib/utils/dateFormat';
   import TaskDatePicker from './TaskDatePicker.svelte';
   import { clockStore } from '../../stores/clock.svelte';
@@ -54,6 +54,7 @@
     placement,
     cardStyle,
     onSetDueDate,
+    onSetDueTime,
     onSetPriority,
     onPickCoverImage,
     onClearCoverImage,
@@ -67,6 +68,8 @@
      *  over board / global card defaults. */
     cardStyle: ResolvedCardStyle;
     onSetDueDate: (dueDate: string) => void;
+    /** A time on the due date (HH:MM, '' clears it), as on a task. */
+    onSetDueTime?: (dueTime: string) => void;
     onSetPriority: (priority: Priority) => void;
     onPickCoverImage: () => void;
     onClearCoverImage: () => void;
@@ -158,6 +161,7 @@
 
   let priority = $derived<Priority>(FIELD_READERS.priority(frontmatter));
   let dueDate = $derived<string>(FIELD_READERS.dueDate(frontmatter));
+  let dueTime = $derived<string>(FIELD_READERS.dueTime(frontmatter));
 
   // ── Checklist progress (TipTap TaskList round-trips to `- [ ]` / `- [x]`) ──
   // The open note's body when loaded (ticking a box in its editor refreshes
@@ -368,7 +372,7 @@
               <line x1="8" y1="2" x2="8" y2="6" />
               <line x1="3" y1="10" x2="21" y2="10" />
             </svg>
-            {formatDueDate(dueDate)}
+            {formatDueDate(dueDate)}{dueTime ? ` ${formatTimeChip(dueTime)}` : ''}
           </button>
         {:else}
           <button
@@ -389,9 +393,12 @@
         {#if duePickerAnchor}
           <TaskDatePicker
             value={dueDate}
+            time={dueTime}
+            withTime={!!onSetDueTime}
             anchor={duePickerAnchor}
             label="Due date"
             onPick={(iso) => onSetDueDate(iso)}
+            onPickTime={(t) => onSetDueTime?.(t)}
             onClear={() => onSetDueDate('')}
             onClose={() => { duePickerAnchor = null; }}
           />

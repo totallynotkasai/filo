@@ -6,6 +6,7 @@ import { onVaultSwap } from '../core/vaultLifecycle';
 import { reportError } from '../lib/utils/errorBus';
 import type { RelinkTargets } from '../lib/vault/relinkTargets';
 import { sidebarPushesWorkspace } from '../lib/utils/sidebarLayout';
+import { workspaceStore } from './workspace.svelte';
 
 // ── Sidebar ──
 let sidebarOpen = $state(true);
@@ -28,6 +29,8 @@ let floatingBoundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 // The window's width, for the docked sidebar's push (`sidebarPushesWorkspace`).
 let windowWidth = $state(typeof window === 'undefined' ? 1440 : window.innerWidth);
+// How many Document tabs are on screen: while one is, the push allows for its zoom.
+let documentPagesShown = $state(0);
 
 // ── Board Toolbar ──
 let boardToolbarVisible = $state(true);
@@ -233,7 +236,22 @@ export const uiStore = {
    * beside it (`lib/utils/sidebarLayout.ts`).
    */
   get sidebarPushesWorkspace() {
-    return sidebarOpen && !sidebarFloating && sidebarPushesWorkspace(windowWidth, sidebarWidth);
+    const pageZoom = documentPagesShown > 0 ? workspaceStore.documentZoom : 1;
+    return sidebarOpen && !sidebarFloating && sidebarPushesWorkspace(windowWidth, sidebarWidth, pageZoom);
+  },
+
+  /**
+   * A Document tab is on screen (its editor mounted), so the push allows for
+   * the page's zoom; returns the call that says it has gone.
+   */
+  showDocumentPage(): () => void {
+    documentPagesShown++;
+    let shown = true;
+    return () => {
+      if (!shown) return;
+      shown = false;
+      documentPagesShown--;
+    };
   },
 
   /** Follows the window's width while mounted; returns the unsubscribe. */

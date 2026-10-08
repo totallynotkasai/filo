@@ -13,9 +13,12 @@ const CENTRED_VIEW_PX = 860;
  * beside the list); pushed once the window is narrower than the page plus the
  * sidebar on both sides (1,340 px with the default 240 px sidebar, more with
  * a wider one), where the sidebar would cover the start of every line.
+ * `pageZoom` is the Document tab's zoom while one is on screen: a zoomed
+ * page is wider, so it needs a wider window. Zoomed out, the rule stays as at
+ * 100%, for a Task List (800 px) in another pane.
  */
-export function sidebarPushesWorkspace(windowWidth: number, sidebarWidth: number): boolean {
-  return windowWidth < CENTRED_VIEW_PX + 2 * sidebarWidth;
+export function sidebarPushesWorkspace(windowWidth: number, sidebarWidth: number, pageZoom = 1): boolean {
+  return windowWidth < CENTRED_VIEW_PX * Math.max(1, pageZoom) + 2 * sidebarWidth;
 }
 
 interface SidebarPlace {

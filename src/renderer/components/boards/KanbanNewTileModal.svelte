@@ -79,14 +79,14 @@
     bind:this={dialogEl}
     role="dialog"
     aria-modal="true"
-    aria-label="Add tile to Kanban column"
+    aria-label="New card"
     tabindex="-1"
     onclick={handleBackdropClick}
     onkeydown={handleKeydown}
   >
     <div class="kn-card">
       <div class="kn-header">
-        <h2 class="kn-title">New Tile</h2>
+        <h2 class="kn-title">New card</h2>
         <button class="kn-close" onclick={onClose} title="Close" aria-label="Close">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18"/>
@@ -104,7 +104,7 @@
           </svg>
           <div class="kn-option-text">
             <span class="kn-option-title">Text</span>
-            <span class="kn-option-desc">Markdown note backed by a vault file</span>
+            <span class="kn-option-desc">A note you can write in</span>
           </div>
         </button>
 
@@ -115,7 +115,7 @@
           </svg>
           <div class="kn-option-text">
             <span class="kn-option-title">Audio</span>
-            <span class="kn-option-desc">Recording stored in the vault</span>
+            <span class="kn-option-desc">A sound recording</span>
           </div>
         </button>
 
@@ -126,7 +126,7 @@
           </svg>
           <div class="kn-option-text">
             <span class="kn-option-title">Link</span>
-            <span class="kn-option-desc">URL preview tile</span>
+            <span class="kn-option-desc">A web page, with its title and picture</span>
           </div>
         </button>
 
@@ -138,7 +138,7 @@
           </svg>
           <div class="kn-option-text">
             <span class="kn-option-title">From Template…</span>
-            <span class="kn-option-desc">Pick a Markdown template from the vault</span>
+            <span class="kn-option-desc">A note started from one of your templates</span>
           </div>
         </button>
       </div>

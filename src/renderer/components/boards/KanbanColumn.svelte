@@ -8,6 +8,7 @@
    * Add-Tile button opens the type-picker modal upstream.
    */
   import { buildCardContextMenu, buildColumnContextMenu, cardMenuPoint } from '../../lib/kanban/kanbanContextMenus';
+  import { cardNotePath } from '../../lib/kanban/kanbanCardDelete';
   import { untrack, getContext } from 'svelte';
   import {
     dndzone,
@@ -127,6 +128,7 @@
     onDelete,
     onAddTile,
     onDeleteTile,
+    onDeleteTileWithFile,
     moveTargets = [],
     onMoveTile,
     onCardPointerDown,
@@ -137,6 +139,7 @@
     onColumnFileDrop,
     onColumnHeaderPointerDown,
     onSetDueDate,
+    onSetDueTime,
     onSetPriority,
     onPickCoverImage,
     onClearCoverImage,
@@ -201,6 +204,8 @@
     onDelete: () => void;
     onAddTile: () => void;
     onDeleteTile: (tileId: string) => void;
+    /** "Delete from vault…" on a note-backed card: the card and its note (asks first). */
+    onDeleteTileWithFile?: (tileId: string) => void;
     /** The board's other columns, for a card's "Move to column" items. */
     moveTargets?: ReadonlyArray<{ id: string; title: string }>;
     onMoveTile?: (tileId: string, columnId: string) => void;
@@ -223,6 +228,7 @@
      */
     onColumnHeaderPointerDown: (e: PointerEvent) => void;
     onSetDueDate: (tileId: string, dueDate: string) => void;
+    onSetDueTime?: (tileId: string, dueTime: string) => void;
     onSetPriority: (tileId: string, priority: Priority) => void;
     onPickCoverImage: (tileId: string) => void;
     onClearCoverImage: (tileId: string) => void;
@@ -437,6 +443,7 @@
       onCopyLink: copyCardLink(tileId),
       onStyle: () => onOpenCardStyle?.(tileId, menuX, menuY),
       onRemove: () => onDeleteTile(tileId),
+      onDeleteFromVault: onDeleteTileWithFile && cardNotePath(tilesById[tileId]) ? () => onDeleteTileWithFile(tileId) : undefined,
       moveTargets,
       onMoveTo: onMoveTile ? (columnId) => onMoveTile(tileId, columnId) : undefined,
     }), tileId);
@@ -769,6 +776,7 @@
                   {placement}
                   cardStyle={resolveCardStyle(placement.style as Record<string, unknown> | null | undefined)}
                   onSetDueDate={(d) => onSetDueDate(placement.tileId, d)}
+                  onSetDueTime={onSetDueTime ? (t) => onSetDueTime(placement.tileId, t) : undefined}
                   onSetPriority={(p) => onSetPriority(placement.tileId, p)}
                   onPickCoverImage={() => onPickCoverImage(placement.tileId)}
                   onClearCoverImage={() => onClearCoverImage(placement.tileId)}

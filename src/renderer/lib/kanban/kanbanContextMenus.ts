@@ -10,6 +10,8 @@ interface CardMenuOpts {
   onStyle: () => void;
   /** Drops the card's placement; the note stays in the vault. */
   onRemove: () => void;
+  /** Present for a note-backed card: removes it and moves its note to Filo's trash, after a confirm. */
+  onDeleteFromVault?: () => void;
   /** The board's other columns: the card can move to any of them. */
   moveTargets?: ReadonlyArray<{ id: string; title: string }>;
   onMoveTo?: (columnId: string) => void;
@@ -20,6 +22,8 @@ interface CardMenuOpts {
  * keeps to what the header doesn't offer. "Move to column" moves the card
  * without a drag, from the keyboard too: the arrow keys move focus to a
  * card, and the menu key or Shift+F10 opens its menu (`cardMenuPoint`).
+ * The danger items come last, as on a task's menu: Remove from board, then
+ * Delete from vault….
  */
 export function buildCardContextMenu(opts: CardMenuOpts): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
@@ -28,10 +32,7 @@ export function buildCardContextMenu(opts: CardMenuOpts): ContextMenuItem[] {
   }
   if (opts.onCopyLink) items.push({ id: 'copy-link', label: copyLinkLabel('card'), icon: MENU_ICON.link, action: opts.onCopyLink });
   if (items.length > 0) items.push({ id: 'div', label: '', divider: true });
-  items.push(
-    { id: 'style', label: MENU_LABEL.style, icon: STYLE_ICON_PATH, action: opts.onStyle },
-    { id: 'remove', label: MENU_LABEL.removeFromBoard, icon: MENU_ICON.remove, danger: true, action: opts.onRemove },
-  );
+  items.push({ id: 'style', label: MENU_LABEL.style, icon: STYLE_ICON_PATH, action: opts.onStyle });
   const onMoveTo = opts.onMoveTo;
   if (onMoveTo && opts.moveTargets && opts.moveTargets.length > 0) {
     items.push(
@@ -39,6 +40,13 @@ export function buildCardContextMenu(opts: CardMenuOpts): ContextMenuItem[] {
       { id: 'move-heading', label: 'Move to column', heading: true },
       ...opts.moveTargets.map((c) => ({ id: `move-to-${c.id}`, label: c.title, icon: MENU_ICON.moveTo, action: () => onMoveTo(c.id) })),
     );
+  }
+  items.push(
+    { id: 'div-remove', label: '', divider: true },
+    { id: 'remove', label: MENU_LABEL.removeFromBoard, icon: MENU_ICON.remove, danger: true, action: opts.onRemove },
+  );
+  if (opts.onDeleteFromVault) {
+    items.push({ id: 'delete-from-vault', label: MENU_LABEL.deleteFromVault, icon: MENU_ICON.trash, danger: true, action: opts.onDeleteFromVault });
   }
   return items;
 }
@@ -109,7 +117,6 @@ export function buildBulkCardContextMenu(opts: BulkCardMenuOpts): ContextMenuIte
     { id: 'selection-heading', label: selectedHeading(opts.count, 'card'), heading: true },
     // Adds one tag rather than opening the tag editor, so it isn't "Tags…".
     { id: 'tag', label: 'Add tag…', icon: MENU_ICON.tags, action: opts.onAddTag },
-    { id: 'remove', label: MENU_LABEL.removeFromBoard, icon: MENU_ICON.remove, danger: true, action: opts.onRemove },
     { id: 'div', label: '', divider: true },
     { id: 'move-heading', label: 'Move to column', heading: true },
     ...opts.columns.map((c) => ({
@@ -118,5 +125,7 @@ export function buildBulkCardContextMenu(opts: BulkCardMenuOpts): ContextMenuIte
       icon: MENU_ICON.moveTo,
       action: () => opts.onMoveTo(c.id),
     })),
+    { id: 'div-remove', label: '', divider: true },
+    { id: 'remove', label: MENU_LABEL.removeFromBoard, icon: MENU_ICON.remove, danger: true, action: opts.onRemove },
   ];
 }

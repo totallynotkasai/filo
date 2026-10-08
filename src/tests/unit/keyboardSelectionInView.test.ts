@@ -1,5 +1,7 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { revealOffset } from '@renderer/lib/canvas/revealRect';
+import { describe, it, expect, vi, afterEach, type Mock } from 'vitest';
+import { revealOffset, revealOnCanvas } from '@renderer/lib/canvas/revealRect';
+import { uiStore } from '@renderer/stores/ui.svelte';
+import type { ViewportRect } from '@renderer/stores/canvas.svelte';
 import { cardPosition, cardsOnScreen, focusCard, neighbourCard, type KanbanNavColumns } from '@renderer/lib/kanban/kanbanKeyboardNav';
 import { buildCardContextMenu, cardMenuPoint } from '@renderer/lib/kanban/kanbanContextMenus';
 
@@ -9,7 +11,7 @@ import { buildCardContextMenu, cardMenuPoint } from '@renderer/lib/kanban/kanban
  * And one card can be moved to another column without a drag.
  */
 
-const VIEW = { left: 0, top: 0, right: 1000, bottom: 600, width: 1000, height: 600 };
+const VIEW = { x: 0, y: 0, width: 1000, height: 600 };
 
 describe('revealOffset: how far the Mind Map view moves to show a tile', () => {
   it('leaves the view alone for a tile already in it', () => {
@@ -25,6 +27,53 @@ describe('revealOffset: how far the Mind Map view moves to show a tile', () => {
 
   it('lines a tile bigger than the view up with its top-left edge', () => {
     expect(revealOffset(VIEW, { x: 500, y: 100, width: 2000, height: 100 })).toEqual({ dx: 460, dy: 0 });
+  });
+});
+
+describe('revealOnCanvas: a tile the keys select or N makes shows clear of the docked sidebar (E-11)', () => {
+  function canvasAt(scale: number): { viewportRect: ViewportRect; viewportScreenLeft: number; scale: number; panBy: Mock<(dx: number, dy: number) => void> } {
+    const width = 1600 / scale;
+    const height = 900 / scale;
+    return {
+      viewportRect: { left: 0, top: 0, right: width, bottom: height, width, height },
+      viewportScreenLeft: 0,
+      scale,
+      panBy: vi.fn<(dx: number, dy: number) => void>(),
+    };
+  }
+
+  it('pans a tile under the sidebar out from under it, and leaves one beside it alone', () => {
+    const width = window.innerWidth;
+    const stop = uiStore.trackWindowWidth();
+    try {
+      uiStore.setSidebarFloating(false);
+      uiStore.setSidebarOpen(true);
+      // 1,600 px: the 240 px sidebar lies over the canvas's left edge.
+      Object.defineProperty(window, 'innerWidth', { value: 1600, configurable: true });
+      window.dispatchEvent(new Event('resize'));
+      const canvas = canvasAt(1);
+      revealOnCanvas(canvas, { x: 100, y: 100, width: 200, height: 100 });
+      expect(canvas.panBy).toHaveBeenCalledTimes(1);
+      // To 280: the sidebar's 240 px and the 40 px margin.
+      expect(canvas.panBy.mock.calls[0]![0]).toBe(180);
+      expect(Math.abs(canvas.panBy.mock.calls[0]![1] as number)).toBe(0);
+      const beside = canvasAt(1);
+      revealOnCanvas(beside, { x: 300, y: 100, width: 200, height: 100 });
+      expect(beside.panBy).not.toHaveBeenCalled();
+      // Zoomed out to 50%, the sidebar covers 480 canvas units.
+      const half = canvasAt(0.5);
+      revealOnCanvas(half, { x: 100, y: 100, width: 200, height: 100 });
+      expect(half.panBy.mock.calls[0]![0]).toBe(210);
+      // Hidden, it covers nothing.
+      uiStore.setSidebarOpen(false);
+      const hidden = canvasAt(1);
+      revealOnCanvas(hidden, { x: 100, y: 100, width: 200, height: 100 });
+      expect(hidden.panBy).not.toHaveBeenCalled();
+    } finally {
+      stop();
+      uiStore.setSidebarOpen(true);
+      Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+    }
   });
 });
 
@@ -95,7 +144,7 @@ describe('a single card\'s menu: Move to column', () => {
       moveTargets: [{ id: 'doing', title: 'Doing' }, { id: 'done', title: 'Done' }],
       onMoveTo,
     });
-    expect(items.filter((i) => !i.divider).map((i) => i.label)).toEqual(['Style…', 'Remove from board', 'Move to column', 'Doing', 'Done']);
+    expect(items.filter((i) => !i.divider).map((i) => i.label)).toEqual(['Style…', 'Move to column', 'Doing', 'Done', 'Remove from board']);
     items.find((i) => i.label === 'Done')?.action?.();
     expect(onMoveTo).toHaveBeenCalledWith('done');
   });

@@ -32,10 +32,15 @@ export function framesInside(outer: Frame, frames: readonly Frame[]): Frame[] {
 /**
  * The frames in the order they are drawn: larger first, so a frame inside
  * another is painted (and hit) above it, whichever was made first. Frames of
- * the same size keep their order in the board.
+ * the same size keep their order in the board. A frame inside a collapsed
+ * frame is left out: folding a frame hides what it holds, its frames as well
+ * as its tiles, so none is drawn as an empty box over the folded one or
+ * takes a click there.
  */
 export function framesInPaintOrder(frames: readonly Frame[]): Frame[] {
+  const folded = frames.filter((f) => f.collapsed);
   return frames
+    .filter((frame) => !folded.some((outer) => outer.id !== frame.id && holds(outer, frame)))
     .map((frame, index) => ({ frame, index }))
     .sort((a, b) => area(b.frame) - area(a.frame) || a.index - b.index)
     .map(({ frame }) => frame);

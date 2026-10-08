@@ -589,11 +589,15 @@ the document.
 (`isLossyMarkdownRoundTrip`), the note opens **read-only**: the editor is
 non-editable and toolbar commands are refused (a read-only note that only
 refused the save would silently discard what was typed). The banner names the
-first line a save would change ("Line 12 would change from … to …", "Line 7
-(…) would be dropped", "Saving would add a blank line above line 4") and
-offers **Edit in Raw view** (opens the whole file with that line selected, to
-fix by hand) and **Take ownership**, which re-enables editing after a confirm
-listing up to three lines that will change; the next save then rewrites the
+change that makes the note read-only: the first block a save would show
+differently, as markdown-it reads both (`lib/editor/lossyCause.ts`). A block
+that would be split, joined or turned into another kind is said so ("Line 15:
+this list would be split into a list and a checklist"); otherwise the line
+that changes inside it ("Line 12 would change from … to …", "Line 7 (…) would
+be dropped"). Blank lines a save only adds between blocks come after it. The
+banner offers **Edit in Raw view** (opens the whole file at that line, to fix
+by hand) and **Take ownership**, which re-enables editing after a confirm
+listing up to three changes, the cause first; the next save then rewrites the
 formatting Filo can't preserve.
 
 **How "would change" is decided.** Filo serialises the loaded note and
@@ -625,7 +629,7 @@ Formats that still trigger read-only (a save would change what the note says):
 - a **tight** list that mixes bullets and checklist items (`- a` then
   `- [ ] b`), from another app: it loads as two lists (no filler checkbox),
   and Filo would write them as two (`- a`, blank line, `* [ ] b`); the banner
-  names the blank line it would add;
+  says the list would be split into a list and a checklist;
 - a list item an earlier Filo aligned (below).
 
 No longer read-only: filenames, bare domains, emails and bare URLs

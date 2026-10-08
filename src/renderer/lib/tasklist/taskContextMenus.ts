@@ -31,7 +31,7 @@ export function buildTaskContextMenu(opts: TaskMenuOpts): ContextMenuItem[] {
   if (opts.onCopyLink) items.push({ id: 'copy-link', label: copyLinkLabel('task'), icon: MENU_ICON.link, action: opts.onCopyLink });
   items.push({ id: 'edit', label: 'Rename task', icon: MENU_ICON.rename, action: opts.onRename });
   if (opts.onAddSubtask) {
-    items.push({ id: 'add-subtask', label: 'Add subtask', icon: MENU_ICON.add, action: opts.onAddSubtask });
+    items.push({ id: 'add-subtask', label: 'New subtask', icon: MENU_ICON.add, action: opts.onAddSubtask });
   }
   items.push(
     { id: 'toggle', label: opts.completed ? 'Mark incomplete' : 'Mark complete', icon: 'M20 6L9 17l-5-5', action: opts.onToggleComplete },

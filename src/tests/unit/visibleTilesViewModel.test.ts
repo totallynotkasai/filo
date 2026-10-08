@@ -97,4 +97,22 @@ describe('VisibleTilesViewModel.visibleTiles (Audit-10 M6)', () => {
       runningTimerTiles.delete('t');
     }
   });
+
+  it('keeps the tile holding the keyboard focus mounted off screen, until the focus moves on', () => {
+    const tiles = { a: tile('a'), f: tile('f') };
+    const vm = makeViewModel(tiles, ['a']);
+    const shell = document.createElement('div');
+    shell.setAttribute('data-canvas-tile-id', 'f');
+    const inner = document.createElement('div');
+    shell.appendChild(inner);
+
+    vm.focusMovedTo(inner);
+    expect(vm.visibleTiles.map((x) => x.id)).toEqual(['a', 'f']);
+    // Focus to the canvas (no tile), or out of the page.
+    vm.focusMovedTo(document.createElement('div'));
+    expect(vm.visibleTiles.map((x) => x.id)).toEqual(['a']);
+    vm.focusMovedTo(inner);
+    vm.focusMovedTo(null);
+    expect(vm.visibleTiles.map((x) => x.id)).toEqual(['a']);
+  });
 });

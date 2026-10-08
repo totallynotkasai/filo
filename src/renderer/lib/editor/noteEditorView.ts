@@ -88,12 +88,19 @@ export class NoteEditorView {
 
   /** Shows the note at `relPath` (or nothing). Idempotent for the same note. */
   show(relPath: string): void {
+    // A rename sweep may already have moved the note this view shows to the
+    // new path, carrying the view along: then there is nothing to leave, and
+    // the keystrokes typed into it belong to it there. Serialising against the
+    // old path would find no note and, clearing the idle timer, leave them
+    // unsaved until the next key.
+    let moved = false;
     if (this.path && vaultPath(this.path) !== vaultPath(relPath)) {
-      this.serialize();
-      // A rename sweep may already have moved the old note to the new path;
-      // then there is nothing to leave.
-      const old = noteStore.get(this.path);
-      if (old && vaultPath(old.relPath) === vaultPath(this.path)) noteStore.release(this.path, this.viewId);
+      moved = noteStore.get(relPath)?.views.has(this.viewId) === true;
+      if (!moved) {
+        this.serialize();
+        const old = noteStore.get(this.path);
+        if (old && vaultPath(old.relPath) === vaultPath(this.path)) noteStore.release(this.path, this.viewId);
+      }
     }
     this.path = relPath;
     if (relPath) {
@@ -103,6 +110,7 @@ export class NoteEditorView {
         unserialisedBody: () => (this.unserialised ? this.refusedBody : null),
       });
     }
+    if (moved) this.serialize();
   }
 
   /** Stops showing the note (component destroy). Unsaved keystrokes are kept. */

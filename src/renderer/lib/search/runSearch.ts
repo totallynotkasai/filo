@@ -3,8 +3,8 @@
  *
  * Walks every loaded tile across every board in the active vault, plus
  * every note that sits on no board, and produces a flat list of
- * `SearchMatch` records ordered for deterministic cycling through Find /
- * Find All.
+ * `SearchMatch` records ordered for deterministic cycling through Find and
+ * for the panel's list.
  *
  * Sources of truth:
  *  - File-backed matches (Text Tile body, frontmatter, headings) come from
@@ -46,7 +46,7 @@ import { isStaleInlineCopy } from '../boards/tileDefBuilder';
 export interface SearchMatch {
   /** Owning board ID; '' for a note on no board. */
   boardId: string;
-  /** Owning board name (resolved at query time for the Find All popup); '' for a note on no board. */
+  /** Owning board name (resolved at query time, for the panel's list); '' for a note on no board. */
   boardName: string;
   /**
    * Tile that exposes this match; '' for a note on no board, which Find
@@ -69,10 +69,8 @@ export interface SearchMatch {
   matchText: string;
   /** Where the match was found. Drives how the match is highlighted. */
   matchKind: 'body' | 'title';
-  /** ±40-char context window around the match for the Find All popup. */
+  /** ±40-char context window around the match, for the panel's list. */
   snippet: string;
-  /** Tags on the file (frontmatter) — surfaced in the Find All popup. */
-  tags: readonly string[];
   /**
    * A body match that falls in Markdown syntax (a list marker, a rule or
    * table delimiter row, a link address, an HTML tag): Find shows it,
@@ -318,8 +316,8 @@ function compareMatches(a: SearchMatch, b: SearchMatch): number {
 /**
  * Hard ceiling on the number of matches surfaced in one query. Prevents the
  * panel from freezing on a one-character query against a 10 000-file vault
- * (which could produce millions of body hits). Find All shows the count
- * with "+ more" when the cap is hit; the user can refine the query.
+ * (which could produce millions of body hits). The panel says when the cap
+ * is hit, and the user can refine the query.
  */
 export const MAX_MATCHES = 5000;
 
@@ -406,7 +404,6 @@ export function runVaultSearch(
           matchText: off.text,
           matchKind: 'title',
           snippet: snippetAround(t.title, off.start, off.end),
-          tags: t.tags,
         });
       }
     }
@@ -419,7 +416,7 @@ export function runVaultSearch(
     if (t.type !== 'text') continue;
     if (scannedFiles.has(t.filePath)) {
       // Already produced body matches via another tile on a different board.
-      // The Find All popup intentionally lists those matches under the FIRST
+      // The panel's list intentionally shows those matches under the FIRST
       // tile encountered — listing them again under each placement would
       // multiply the result count without adding information.
       continue;
@@ -443,7 +440,6 @@ export function runVaultSearch(
         matchText: off.text,
         matchKind: 'body',
         snippet: snippetAround(t.metadata.content, off.start, off.end),
-        tags: t.tags,
         ...(inSyntax ? { inSyntax } : {}),
       });
     }
@@ -466,7 +462,6 @@ function toTitleMatch(t: TileEnumeration, start: number, end: number, text: stri
     matchText: text,
     matchKind: 'title',
     snippet: t.title,
-    tags: t.tags,
   };
 }
 

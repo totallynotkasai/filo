@@ -41,6 +41,7 @@
   import { isEditableTextTarget, wantsNativeTextMenu } from '../../lib/utils/editableTarget';
   import { handleListKeyNav, focusFirstItem } from '../../lib/utils/listKeyNav';
   import { tick } from 'svelte';
+  import { plural } from '../../lib/utils/plural';
 
   type Priority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
 
@@ -624,7 +625,7 @@
           bind:this={columnMenuEl}
           onkeydown={onColumnMenuKeydown}
         >
-          <button role="menuitem" class="column-menu-item" onclick={() => { showMenu = false; onAddTile(); }}>Add Card</button>
+          <button role="menuitem" class="column-menu-item" onclick={() => { showMenu = false; onAddTile(); }}>New card</button>
           <button role="menuitem" class="column-menu-item" onclick={(e) => { showMenu = false; const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onOpenColumnStyle?.(r.left, r.bottom + 4); }}>Style</button>
           <button role="menuitem" class="column-menu-item" onclick={() => { showMenu = false; startEditTitle(); }}>Rename</button>
           <button role="menuitem" class="column-menu-item" onclick={() => { showMenu = false; onToggleCollapse(); }}>
@@ -732,10 +733,10 @@
           <div class="column-empty-state" aria-live="polite">
             {#if filterActive && totalCount > 0}
               <p class="empty-title">No matches</p>
-              <p class="empty-hint">{totalCount} tile(s) hidden by current filter.</p>
+              <p class="empty-hint">{plural(totalCount, 'card')} hidden by the current filter.</p>
             {:else}
               <p class="empty-title">Empty column</p>
-              <p class="empty-hint">Drop a file or click + to add a card.</p>
+              <p class="empty-hint">Drop a file here, or click + for a new card.</p>
             {/if}
           </div>
         {/if}
@@ -793,7 +794,7 @@
           <line x1="12" y1="5" x2="12" y2="19" />
           <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
-        Add Card
+        New card
       </button>
     </div>
   {/if}
@@ -1117,7 +1118,7 @@
     flex-direction: column;
     gap: 6px;
     min-height: 4px; /* gives dnd-action a positive bounding box when empty */
-    flex-shrink: 0; /* that min-height would let a long list shrink and overflow onto Add Card */
+    flex-shrink: 0; /* that min-height would let a long list shrink and overflow onto New card */
   }
 
   .column-cards-zone.is-empty {

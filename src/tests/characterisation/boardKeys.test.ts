@@ -30,11 +30,13 @@ import {
 } from './harness/actions';
 import { focusPane, openSearchPanel, pressEscape, searchPanelOpen } from './harness/interfaceChrome';
 import {
+  addTaskListSection,
   cardByTitle,
   clickCard,
   collapseKanbanColumn,
   columnCardTitles,
   drawnCardTitles,
+  dragWrapperTabStops,
   drawnTasks,
   findOnKanban,
   focusKanbanBoard,
@@ -251,6 +253,24 @@ describe('Task List keys', () => {
     expect(await pressOnTask(app, 'Alpha', 'Tab')).toBe(false);
     // Neither has the first subtask under its parent.
     expect(await pressOnTask(app, 'Alpha - Subtask 1', 'Tab')).toBe(false);
+  });
+});
+
+describe('Tab stops', () => {
+  it('Tab stops on the rows, cards and their controls, never on a drag zone or wrapper', async () => {
+    const app = await startApp();
+    await createBoard(app, 'tasklist');
+    await quickAddTask(app, 'Alpha');
+    await quickAddTask(app, 'Bravo');
+    await addTaskListSection(app);
+    expect(taskItem(app, 'Alpha').tabIndex).toBe(0);
+    expect(dragWrapperTabStops(app)).toEqual([]);
+
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    await addKanbanColumn(app);
+    await addKanbanCard(app, 0, { title: 'Alpha card' });
+    expect(dragWrapperTabStops(app)).toEqual([]);
   });
 });
 

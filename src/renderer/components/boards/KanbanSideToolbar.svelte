@@ -661,7 +661,7 @@
         <p class="save-view-hint">
           Captures current sort
           <strong>({activeSortBy})</strong>,
-          {activeFilterTags.length} tag filter(s){activeFilterProp ? `, and 1 property filter` : ''}.
+          {activeFilterTags.length} tag {activeFilterTags.length === 1 ? 'filter' : 'filters'}{activeFilterProp ? `, and 1 property filter` : ''}.
         </p>
       </div>
       <div class="save-view-actions">

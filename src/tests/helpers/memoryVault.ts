@@ -52,6 +52,13 @@ export interface MemoryVault {
 
 const key = (rel: string): string => rel.replace(/\\/g, '/').toLowerCase();
 
+/**
+ * Trash ids never repeat, as Filo's own (a timestamp and a counter) don't:
+ * state keyed by trash id (where a restore landed) must not carry one test's
+ * entry into the next test's vault.
+ */
+let trashSeq = 0;
+
 export function installMemoryVault(initial: Record<string, string> = {}, root = '/vault'): MemoryVault {
   const files = new Map<string, string>();
   const mtimes = new Map<string, number>();
@@ -60,7 +67,6 @@ export function installMemoryVault(initial: Record<string, string> = {}, root = 
   const failures = new Map<string, string>();
   const readFailures = new Map<string, string>();
   const trashFailures = new Map<string, string>();
-  let trashSeq = 0;
   const enc = new TextEncoder();
   const put = (rel: string, text: string): void => {
     files.set(key(rel), text);

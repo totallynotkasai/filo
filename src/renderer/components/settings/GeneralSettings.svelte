@@ -12,6 +12,7 @@
   import { fontFromStack, fontStack } from '../../../shared/fontStack';
   import { GENERAL_SETTINGS_DEFAULTS } from '../../../shared/generalSettingsDefaults';
   import { registerImportedFonts } from '../../lib/fonts/importedFonts';
+  import { plural } from '../../lib/utils/plural';
 
   // Local state derived from project settings
   let settings = $derived(vaultStore.project?.settings?.general ?? defaultProjectSettings().general);
@@ -228,7 +229,7 @@
       const added = loaded.map((font) => font.name).filter((name) => !names.includes(name));
       if (added.length > 0) vaultStore.project.settings.general.systemFonts = [...names, ...added];
       vaultStore.markMetaDirty();
-      uiStore.toast(`Imported ${loaded.length} font(s)`, 'success');
+      uiStore.toast(`Imported ${plural(loaded.length, 'font')}`, 'success');
     } catch (err) {
       reportError('GeneralSettings.font-import', err, 'Font import failed');
     }

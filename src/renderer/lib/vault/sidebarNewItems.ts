@@ -1,7 +1,7 @@
 /**
- * Making a note or a folder from the vault sidebar: its toolbar's New Folder,
- * and New note / New folder on a folder's menu or on the empty space below
- * the files (the vault's top).
+ * Making a note or a folder from the vault sidebar: its toolbar's New button
+ * (a note or a folder), and New note / New folder on a folder's menu or on
+ * the empty space below the files (the vault's top).
  *
  * What is made shows at once: the tag filter and the name search are cleared
  * first (an empty folder or an "Untitled" note matches neither), and the

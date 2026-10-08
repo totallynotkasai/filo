@@ -552,8 +552,8 @@
     <button
       class="task-add-subtask-btn"
       onclick={(e) => { e.stopPropagation(); onAddSubtask?.(); }}
-      title="Add subtask"
-      aria-label="Add subtask to {tile.title}"
+      title="New subtask"
+      aria-label="New subtask under {tile.title}"
     >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <line x1="12" y1="5" x2="12" y2="19" />

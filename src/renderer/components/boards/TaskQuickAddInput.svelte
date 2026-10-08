@@ -21,7 +21,7 @@
   let {
     accentColor,
     onSubmit,
-    placeholder = 'Add a task — try "Submit report tomorrow !!high #work"',
+    placeholder = 'New task — try "Submit report tomorrow !!high #work"',
     autoFocus = false,
     inputRef = $bindable(),
   }: {
@@ -96,8 +96,8 @@
       class="quick-add-submit"
       onclick={submit}
       disabled={!parsed.title.trim()}
-      title="Add task (Enter)"
-      aria-label="Add task"
+      title="New task (Enter)"
+      aria-label="New task"
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
         <line x1="12" y1="5" x2="12" y2="19" />

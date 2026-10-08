@@ -70,6 +70,10 @@ export interface BlockTokenizer {
  * then survive reopening. Those at its start don't: under frontmatter a blank
  * line is the usual gap below the block, which a note's first empty
  * paragraph would look like (KNOWN_LIMITATIONS).
+ *
+ * Lines with text that no block holds are kept as written, as blocks are: a
+ * link reference definition (`[m]: https://…`) gives markdown-it no token,
+ * yet it is part of the note, and its links resolve only while it is there.
  */
 export function encodeEmptyParagraphs(body: string, tokenizer: BlockTokenizer): string {
   if (!body) return body;
@@ -94,25 +98,26 @@ export function encodeEmptyParagraphs(body: string, tokenizer: BlockTokenizer): 
       return [start, last];
     });
   if (blocks.length === 0) return body;
-  const atEnd = emptyParagraphsAtEnd(lines, body.endsWith('\n'), blocks[blocks.length - 1]![1]);
-  if (blocks.length < 2 && atEnd === 0) return body;
+  const units = withTextNoBlockHolds(blocks, lines);
+  const atEnd = emptyParagraphsAtEnd(lines, body.endsWith('\n'), units[units.length - 1]![1]);
+  if (units.length < 2 && atEnd === 0) return body;
 
   const segments: string[] = [];
-  if (blocks.length < 2) {
-    // One block: everything up to its end as written (a link reference
-    // definition above it stays), then the empty paragraphs after it.
-    segments.push(lines.slice(0, blocks[0]![1]).join('\n'));
+  if (units.length < 2) {
+    // One block: everything up to its end as written, then the empty
+    // paragraphs after it.
+    segments.push(lines.slice(0, units[0]![1]).join('\n'));
   } else {
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i]!; // i < blocks.length
+    for (let i = 0; i < units.length; i++) {
+      const unit = units[i]!; // i < units.length
       if (i > 0) {
-        const gap = block[0] - blocks[i - 1]![1]; // i > 0 ⇒ i-1 in range
+        const gap = unit[0] - units[i - 1]![1]; // i > 0 ⇒ i-1 in range
         for (let extra = 1; extra < gap; extra++) segments.push(EMPTY_PARAGRAPH_SENTINEL);
       }
-      segments.push(lines.slice(block[0], block[1]).join('\n'));
+      segments.push(lines.slice(unit[0], unit[1]).join('\n'));
     }
   }
-  const between = blocks.length < 2 ? body : segments.join('\n\n');
+  const between = units.length < 2 ? body : segments.join('\n\n');
   if (atEnd === 0) return between;
   for (let extra = 0; extra < atEnd; extra++) segments.push(EMPTY_PARAGRAPH_SENTINEL);
   const encoded = segments.join('\n\n');
@@ -127,10 +132,36 @@ function isBlank(line: string | undefined): boolean {
 }
 
 /**
+ * `blocks` (start and end lines, in order) with each run of lines holding
+ * text that lies outside every block added as a block of its own, in place.
+ */
+function withTextNoBlockHolds(blocks: ReadonlyArray<[number, number]>, lines: readonly string[]): Array<[number, number]> {
+  const units: Array<[number, number]> = [];
+  const addRuns = (from: number, to: number): void => {
+    let i = from;
+    while (i < to) {
+      if (isBlank(lines[i])) {
+        i++;
+        continue;
+      }
+      const start = i;
+      while (i < to && !isBlank(lines[i])) i++;
+      units.push([start, i]);
+    }
+  };
+  let next = 0;
+  for (const block of blocks) {
+    addRuns(next, block[0]);
+    units.push(block);
+    next = Math.max(next, block[1]);
+  }
+  addRuns(next, lines.length);
+  return units;
+}
+
+/**
  * How many empty paragraphs the blank lines after the last block (ending at
- * `lastBlockEnd`) stand for. None when anything but blank lines follows it: a
- * line no block holds, as a link reference definition is, keeps the body as
- * written.
+ * `lastBlockEnd`) stand for. None when anything but blank lines follows it.
  */
 function emptyParagraphsAtEnd(lines: readonly string[], endsWithNewline: boolean, lastBlockEnd: number): number {
   const count = endsWithNewline ? lines.length - 1 : lines.length;

@@ -5,7 +5,7 @@ import type { SearchMatch } from '@renderer/lib/search/runSearch';
 function match(over: Partial<SearchMatch>): SearchMatch {
   return {
     boardId: 'b1', boardName: 'Plot', tileId: 't1', tileTitle: 'Siege', tileType: 'text', filePath: 'Siege.md',
-    matchStart: 0, matchEnd: 5, matchText: 'walls', matchKind: 'body', snippet: 'The walls held', tags: [],
+    matchStart: 0, matchEnd: 5, matchText: 'walls', matchKind: 'body', snippet: 'The walls held',
     ...over,
   };
 }

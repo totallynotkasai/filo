@@ -2,6 +2,7 @@ import { uiStore } from '../../stores/ui.svelte';
 import { fileTagsStore } from '../../stores/fileTags.svelte';
 import { vaultIndexStore } from '../../stores/vaultIndex.svelte';
 import { isMergingRename, removeTagWithUndo, renameTagWithUndo } from '../../stores/tagUndo.svelte';
+import { plural } from '../utils/plural';
 
 /**
  * Confirm-then-run wrappers for the vault-wide tag actions in the Tags
@@ -9,10 +10,6 @@ import { isMergingRename, removeTagWithUndo, renameTagWithUndo } from '../../sto
  * which blocks the renderer event loop (and every debounced write timer with
  * it) and can't say what the change will touch.
  */
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
-}
 
 /**
  * Deletes `name` from every note, tile and attachment after a danger confirm

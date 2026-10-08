@@ -10,8 +10,9 @@ import type {
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
 import { NewNoteUndo } from './newNoteUndo';
-import { offerUndoToTrashList, restoreFiles, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
+import { offerUndoToTrashList, restoreFiles, sayLeftOff, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
+import { samePath } from '../lib/utils/path';
 
 // ── Kanban Commands ──
 //
@@ -57,7 +58,7 @@ export class AddCardCommand extends Command {
     this.def = this.snapshot(def);
     this.position = position;
     this.style = style ? this.snapshot(style) : style;
-    this.description = `Add card "${defTitle(def)}"`;
+    this.description = `New card "${defTitle(def)}"`;
   }
 
   execute(): void | Promise<void> {
@@ -182,7 +183,9 @@ export class DeleteCardCommand extends Command {
       const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
       this.lastUndoCompletion = prior.then(async () => {
         if (!this.vaultRoot || this.trashed.length === 0) return;
-        const restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteCard.undo');
+        const taken: string[] = [];
+        const restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteCard.undo', taken);
+        if (this.leaveOff(taken)) return;
         this.trashed = stillTrashed(this.trashed, restored);
         const moved = restored.find((r) => r.restoredPath !== r.rel);
         if (moved) {
@@ -195,6 +198,20 @@ export class DeleteCardCommand extends Command {
       await this.lastUndoCompletion;
     }
     this.restorePlacement();
+  }
+
+  /**
+   * The note left Filo's trash some other way and another file has its name
+   * now (`taken`): the card stays off, since it would show that file, and the
+   * step forgets the note, so a redo can't trash the other file.
+   */
+  private leaveOff(taken: readonly string[]): boolean {
+    if (!this.filePath || !taken.some((p) => samePath(p, this.filePath ?? ''))) return false;
+    sayLeftOff(taken, 'card');
+    this.filePath = null;
+    this.trashed = [];
+    this.snapshotDef = null;
+    return true;
   }
 
   private restorePlacement(): void {

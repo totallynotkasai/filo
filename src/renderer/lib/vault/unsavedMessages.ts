@@ -8,6 +8,7 @@
  * elsewhere), or a note Filo won't overwrite. Pure: no IPC, stores or DOM.
  */
 import { vaultPath } from '../../../shared/vaultPath';
+import { plural } from '../utils/plural';
 
 /** Why a change isn't on disk. */
 export type UnsavedCause =
@@ -53,10 +54,6 @@ const CAUSE_TEXT: Record<UnsavedCause, string> = {
   'non-utf8': "it isn't UTF-8 text, so Filo won't overwrite it",
   'write-failed': "the file couldn't be written (another program, such as OneDrive or antivirus, may be holding it)",
 };
-
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
 /** One line per path with its reason, capped at {@link MAX_LISTED}. */
 function unsavedListText(items: readonly UnsavedItem[]): string {

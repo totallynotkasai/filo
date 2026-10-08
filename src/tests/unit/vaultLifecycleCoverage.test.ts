@@ -52,6 +52,7 @@ const EXEMPT_MODULES = new Set([
   'src/renderer/lib/kanban/kanbanFiltersAndSort.svelte.ts',
   'src/renderer/lib/kanban/kanbanMultiSelect.svelte.ts',
   'src/renderer/lib/mindmap/marqueeSelectionController.svelte.ts',
+  'src/renderer/lib/mindmap/visibleTilesViewModel.svelte.ts',
   'src/renderer/lib/tasklist/filtersAndViews.svelte.ts',
   'src/renderer/lib/tasklist/multiSelectController.svelte.ts',
   'src/renderer/lib/tasklist/taskDragController.svelte.ts',

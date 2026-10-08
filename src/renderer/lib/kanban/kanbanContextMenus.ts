@@ -82,7 +82,7 @@ interface ColumnMenuOpts {
 
 export function buildColumnContextMenu(opts: ColumnMenuOpts): ContextMenuItem[] {
   return [
-    { id: 'add-tile', label: 'Add card', icon: MENU_ICON.add, action: opts.onAddCard },
+    { id: 'add-tile', label: 'New card', icon: MENU_ICON.add, action: opts.onAddCard },
     { id: 'rename', label: 'Rename column', icon: MENU_ICON.rename, action: opts.onRename },
     { id: 'style', label: MENU_LABEL.style, icon: STYLE_ICON_PATH, action: opts.onStyle },
     {

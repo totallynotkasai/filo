@@ -194,6 +194,24 @@ describe('DeleteTaskCommand optional backing-file delete', () => {
     expect([...h.vault.trash.values()].map((t) => t.originalPath)).toEqual([beside]);
   });
 
+  it('with file options: gone from the trash some other way while a newer note took the name, the task stays off and a redo leaves that note alone', async () => {
+    hydrateTaskBoard();
+    const h = installVault({ [REL]: 'original\n' });
+    const cmd = new DeleteTaskCommand('tl', 't1', { filePath: REL, vaultRoot: '/vault' });
+    await cmd.execute();
+    h.vault.trash.clear();
+    h.vault.writeExternally(REL, 'newcomer\n');
+
+    await cmd.undo();
+    expect(placementIds()).not.toContain('t1');
+    expect(uiStore.toast).toHaveBeenCalledWith(
+      `"${REL}" is no longer in Filo's trash, and another file has that name now, so its task was left off.`, 'warning', 8000,
+    );
+    await cmd.execute();
+    expect(h.vault.read(REL)).toBe('newcomer\n');
+    expect(h.vault.trash.size).toBe(0);
+  });
+
   it('with file options: a failed trash move leaves the .md in place and reports it', async () => {
     hydrateTaskBoard();
     const h = installVault({ [REL]: 'kept' });

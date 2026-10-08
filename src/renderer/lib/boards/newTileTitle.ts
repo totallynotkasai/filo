@@ -3,7 +3,7 @@
  * selected for editing, so typing names it. So does the tab of a note made
  * with New note (keyed by the tab's id).
  *
- * Without this, focus stayed on the button that made it (Kanban's Add Card,
+ * Without this, focus stayed on the button that made it (Kanban's New card,
  * which the space bar then pressed again) or fell to the page (the Mind Map,
  * whose single-letter keys then made more tiles, each with an empty note).
  *

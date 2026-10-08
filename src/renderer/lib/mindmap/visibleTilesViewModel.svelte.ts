@@ -56,8 +56,26 @@ export class VisibleTilesViewModel {
     for (const id of runningTimerTiles) {
       if (this.deps.board.tiles[id]) visible.add(id);
     }
+    // And the tile holding the keyboard focus: culled, its element would take
+    // the focus out of the canvas to the page, where the board's keys (N, C,
+    // Enter, the arrows) don't act.
+    const focused = this.focusedTileId;
+    if (focused && this.deps.board.tiles[focused]) visible.add(focused);
     return visible;
   });
+
+  /** The tile holding the keyboard focus, if any (`focusMovedTo`). */
+  private focusedTileId = $state<string | null>(null);
+
+  /**
+   * The board's focusin (the element focused) and focusout (the element the
+   * focus goes to, null when it leaves the page): notes which tile, if any,
+   * now holds the focus.
+   */
+  focusMovedTo(target: EventTarget | null): void {
+    const shell = target instanceof Element ? target.closest('[data-canvas-tile-id]') : null;
+    this.focusedTileId = shell?.getAttribute('data-canvas-tile-id') ?? null;
+  }
 
   hiddenByFrame = $derived(framesStore.hiddenTileIds);
 

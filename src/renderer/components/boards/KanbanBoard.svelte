@@ -896,6 +896,11 @@
         type: 'kanban-columns',
         dropTargetStyle: {},
         transformDraggedElement: dragController.transformDraggedColumn,
+        // A column drag starts only from a pointer on its header, so the
+        // zone and the column wrappers are no Tab stops (the header's own
+        // controls are), as in the sections and rows of a Task List.
+        zoneTabIndex: -1,
+        zoneItemTabIndex: -1,
       }}
       onconsider={dragController.onConsiderColumns}
       onfinalize={dragController.onFinalizeColumns}

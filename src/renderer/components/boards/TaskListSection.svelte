@@ -313,6 +313,10 @@
           flipDurationMs: 220,
           dropTargetStyle: {},
           transformDraggedElement: controllers.drag.transformDraggedRow,
+          // A drag starts only from a pointer on the row, so the zone and the
+          // row wrappers are no Tab stops; each row's `.task-item` is.
+          zoneTabIndex: -1,
+          zoneItemTabIndex: -1,
         }}
         use:controllers.drag.clearStaleDndRowStyles={rowItems}
         onconsider={(e) => controllers.drag.onConsiderRows(zoneId, e)}
@@ -363,10 +367,10 @@
           <div class="empty-group">No tasks</div>
         {/if}
       </div>
-      <!-- Footer "Add task" button — the only per-section creation
+      <!-- Footer "New task" button — the only per-section creation
            affordance (no header "+" / inline quick-add). Users who want token parsing use the
            board-level quick-add at the top. Sets
-           `lastTargetedSectionId` here so the next sidebar "Add Task"
+           `lastTargetedSectionId` here so the next sidebar "New task"
            click also lands in this section — explicit intent, not
            inferred from a pointerdown anywhere. -->
       <button
@@ -378,13 +382,13 @@
           lastTargetedSectionId = sid;
           void callbacks.addTaskToSection(sid);
         }}
-        aria-label="Add task to {section.title}"
+        aria-label="New task in {section.title}"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <line x1="12" y1="5" x2="12" y2="19" />
           <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
-        <span>Add task</span>
+        <span>New task</span>
       </button>
     </div>
   {/if}
@@ -568,7 +572,7 @@
     flex-shrink: 0;
   }
 
-  /* Footer "Add task" button — one-shot create at end-of-section. Distinct
+  /* Footer "New task" button — one-shot create at end-of-section. Distinct
      from the header "+" (which opens the inline quick-add input): this button
      creates a default-named task immediately. Sits below the rows so the
      user's eye lands on it after scanning the section. Shape mirrors

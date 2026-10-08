@@ -21,6 +21,7 @@ import { detectConflictCopyPath } from '@shared/conflictCopy';
 import { safeFileName } from '@shared/fileNames';
 import { boardNameFromPath } from './boardNaming';
 import { isStaleInlineCopy } from './tileDefBuilder';
+import { plural } from '../utils/plural';
 
 // allow-module-state: immutable lookup table derived from a build-time constant
 const TILE_TYPE_SET: ReadonlySet<string> = new Set(TILE_TYPES);
@@ -700,16 +701,16 @@ export async function loadBoard(
     const boardName = data.board.name || relPath;
     const parts: string[] = [];
     if (orphanReport.orphanConnections.length > 0) {
-      parts.push(`${orphanReport.orphanConnections.length} orphan connection(s)`);
+      parts.push(plural(orphanReport.orphanConnections.length, 'connection') + ' to a tile that no longer exists');
     }
     if (orphanReport.framesWithStrippedTileIds.length > 0) {
-      parts.push(`orphan tile refs in ${orphanReport.framesWithStrippedTileIds.length} frame(s)`);
+      parts.push(`links to missing tiles in ${plural(orphanReport.framesWithStrippedTileIds.length, 'frame')}`);
     }
     if (orphanReport.droppedKanbanDuplicates.length > 0) {
-      parts.push(`${orphanReport.droppedKanbanDuplicates.length} card(s) listed twice`);
+      parts.push(`${plural(orphanReport.droppedKanbanDuplicates.length, 'card')} listed twice`);
     }
     if (orphanReport.droppedTaskListDuplicates.length > 0) {
-      parts.push(`${orphanReport.droppedTaskListDuplicates.length} task(s) listed twice`);
+      parts.push(`${plural(orphanReport.droppedTaskListDuplicates.length, 'task')} listed twice`);
     }
     const summary = parts.join(', ');
     const snapshotHint = snapshotPath

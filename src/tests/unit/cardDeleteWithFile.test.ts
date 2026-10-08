@@ -78,6 +78,26 @@ describe('DeleteCardCommand with the note', () => {
     expect(vault.read(REL)).toBeUndefined();
   });
 
+  it('a note gone from the trash some other way, its name taken by another note: the card stays off, and a redo leaves that note alone', async () => {
+    hydrateKanban();
+    const vault = installMemoryVault({ [REL]: 'the card\'s note', 'Board/Other.md': 'other' });
+    const cmd = new DeleteCardCommand('kb', 'c1', { filePath: REL, vaultRoot: '/vault' });
+    await cmd.execute();
+    vault.trash.clear();
+    vault.writeExternally(REL, 'a different note');
+
+    await cmd.undo();
+    expect(cardIds()).toEqual(['c2']);
+    expect(uiStore.toast).toHaveBeenCalledWith(
+      `"${REL}" is no longer in Filo's trash, and another file has that name now, so its card was left off.`, 'warning', 8000,
+    );
+    await cmd.execute();
+    expect(vault.read(REL)).toBe('a different note');
+    expect(vault.trash.size).toBe(0);
+    await cmd.undo();
+    expect(cardIds()).toEqual(['c2']);
+  });
+
   it('without the note, removes only the card and touches no file', async () => {
     hydrateKanban();
     const vault = installMemoryVault({ [REL]: 'kept' });

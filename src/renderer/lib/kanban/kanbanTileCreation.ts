@@ -178,7 +178,7 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       new AddCardCommand(board.id, targetColumnId, def, placements.length),
     );
     tickAndPersist();
-    // Typing next names the card, instead of pressing Add Card again; a
+    // Typing next names the card, instead of pressing New card again; a
     // filter that would hide it lets it through until the title is done.
     editTitleWhenShown(tileId, showWhileNamed(tileId, targetColumnId));
     const columnTitle = columns.find((c) => c.id === targetColumnId)?.title ?? 'column';

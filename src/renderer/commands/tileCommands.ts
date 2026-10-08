@@ -11,11 +11,12 @@ import { cloneTile } from '../lib/utils/cloneTile';
 import { samePath } from '../lib/utils/path';
 import { vaultPath } from '../../shared/vaultPath';
 import { DeleteCardCommand } from './kanbanCommands';
-import { offerUndoToTrashList, restoreFiles, retargetPath, stillTrashed, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
+import { offerUndoToTrashList, restoreFiles, retargetPath, sayLeftOff, stillTrashed, trashFiles, type RestoredItem, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
 import { captureTileMemberships, restoreTileMemberships, type TileMemberships } from '../lib/boards/tileMemberships';
 import { NewNoteUndo } from './newNoteUndo';
 import { applyKeyDelta, keyDelta, type KeyDelta } from './keyDelta';
+import { plural } from '../lib/utils/plural';
 
 // ── Tile Commands ──
 
@@ -319,7 +320,7 @@ export class DeleteTilesCommand extends Command {
 
   constructor(tileIds: string[], options: DeleteTilesOptions = {}) {
     super();
-    this.description = `Delete ${tileIds.length} tile(s)`;
+    this.description = `Delete ${plural(tileIds.length, 'tile')}`;
     // allow-shallow: primitive strings.
     this.filePaths = options.filePaths ? [...options.filePaths] : [];
     this.vaultRoot = options.vaultRoot;
@@ -425,7 +426,9 @@ export class DeleteTilesCommand extends Command {
     this.lastUndoCompletion = prior.then(async () => {
       let restored: RestoredItem[] = [];
       if (this.vaultRoot && this.trashed.length > 0) {
-        restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteTiles.undo');
+        const taken: string[] = [];
+        restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteTiles.undo', taken);
+        this.leaveOff(taken);
         this.trashed = stillTrashed(this.trashed, restored);
         // A redo must trash the restored copy, not a newer file that took
         // the old name meanwhile.
@@ -437,6 +440,23 @@ export class DeleteTilesCommand extends Command {
       this.restorePlacements(restored);
     });
     await this.lastUndoCompletion;
+  }
+
+  /**
+   * Forgets the tiles whose file left Filo's trash some other way while
+   * another file took its name (`taken`): put back, a tile would show that
+   * file, and a redo would trash it. The step goes on with the rest.
+   */
+  private leaveOff(taken: readonly string[]): void {
+    if (taken.length === 0) return;
+    const gone = (p: string | undefined): boolean => !!p && taken.some((t) => samePath(t, p));
+    const keep = this.tiles.map((t) => !gone('filePath' in t && typeof t.filePath === 'string' ? t.filePath : undefined));
+    sayLeftOff(taken, this.kanbanCards.length > 0 ? 'card' : 'tile');
+    // One card snapshot per tile, in the same order.
+    if (this.kanbanCards.length > 0) this.kanbanCards = this.kanbanCards.filter((_, i) => keep[i]);
+    this.tiles = this.tiles.filter((_, i) => keep[i]);
+    this.filePaths = this.filePaths.filter((p) => !gone(p));
+    this.trashed = this.trashed.filter((t) => !gone(t.rel));
   }
 
   private restorePlacements(restored: RestoredItem[] = []): void {
@@ -536,7 +556,7 @@ export class MoveTilesCommand extends Command {
     // allow-shallow: Map values are `{ before: {x,y}, after: {x,y} }` —
     // primitives all the way down, so the Map copy detaches enough.
     this.positions = new Map(positions);
-    this.description = `Move ${positions.size} tile(s)`;
+    this.description = `Move ${plural(positions.size, 'tile')}`;
     const movedIds = new Set(positions.keys());
     this.frameTileIdsBefore = new Map();
     for (const f of boardStore.frames) {
@@ -811,7 +831,7 @@ export class AlignTilesCommand extends Command {
     // allow-shallow: Map values are `{ before: {x,y}, after: {x,y} }` —
     // primitives only.
     this.positionMap = new Map(positionMap);
-    this.description = `Align ${positionMap.size} tile(s)`;
+    this.description = `Align ${plural(positionMap.size, 'tile')}`;
   }
 
   execute() {
@@ -845,7 +865,7 @@ export class LayoutTilesCommand extends Command {
     this.targetBoardId = boardId ?? boardStore.current?.id ?? '';
     // allow-shallow: Map values are primitives-only `{ before: {x,y}, after: {x,y} }`.
     this.positionMap = new Map(positionMap);
-    this.description = description || `Layout ${positionMap.size} tile(s)`;
+    this.description = description || `Lay out ${plural(positionMap.size, 'tile')}`;
   }
 
   execute() {
@@ -887,7 +907,7 @@ export class ToggleFadeCommand extends Command {
     this.tileIds = [...tileIds];
     this.targetFaded = targetFaded;
     this.description = description
-      ?? `${targetFaded ? 'Fade' : 'Unfade'} ${tileIds.length} tile(s)`;
+      ?? `${targetFaded ? 'Fade' : 'Unfade'} ${plural(tileIds.length, 'tile')}`;
     this.previousStates = new Map();
     for (const id of tileIds) {
       const tile = boardStore.getTile(id);
@@ -931,8 +951,8 @@ export class ToggleLockCommand extends Command {
     this.previousStates = new Map(previousStates);
     this.nextLocked = nextLocked;
     this.description = nextLocked
-      ? `Lock ${previousStates.size} tile(s)`
-      : `Unlock ${previousStates.size} tile(s)`;
+      ? `Lock ${plural(previousStates.size, 'tile')}`
+      : `Unlock ${plural(previousStates.size, 'tile')}`;
   }
 
   execute() {
@@ -976,7 +996,7 @@ export class ToggleFramelessCommand extends Command {
     this.tileIds = [...tileIds];
     this.targetFrameless = targetFrameless;
     this.description = description
-      ?? `${targetFrameless ? 'Hide frame on' : 'Show frame on'} ${tileIds.length} tile(s)`;
+      ?? `${targetFrameless ? 'Hide frame on' : 'Show frame on'} ${plural(tileIds.length, 'tile')}`;
     this.previousStates = new Map();
     for (const id of tileIds) {
       const tile = boardStore.getTile(id);

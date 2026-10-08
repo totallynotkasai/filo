@@ -17,6 +17,7 @@
 
 import type { FileChangeType } from '../../../main/services/fileWatcherTypes';
 import { reportError } from '../utils/errorBus';
+import { plural } from '../utils/plural';
 
 export interface ExternalChangeEvent {
   /** The watcher classification — drives dispatch. */
@@ -196,7 +197,7 @@ export async function dispatchExternalChangeBatch(
         reportError(
           'externalChangeRegistry',
           err,
-          `Batched reconciler for "${kind}" threw on a batch of ${bucket.length} event(s)`,
+          `Batched reconciler for "${kind}" threw on a batch of ${plural(bucket.length, 'event')}`,
         );
       }
       continue;

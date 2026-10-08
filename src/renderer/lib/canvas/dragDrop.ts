@@ -18,6 +18,7 @@ import { AddTilesCommand } from '../../commands/index';
 // view. The action takes the pane's BoardScope and creates against
 // `scope.board`/`scope.canvas`.
 import { setActiveScope, type BoardScope, type BoardScopeBoard } from '../boards/boardScope.svelte';
+import { plural } from '../utils/plural';
 
 /**
  * Drag-and-drop action — handles OS file drops onto the canvas.
@@ -126,7 +127,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
         reportError('canvas.vault-drop', err, 'Failed to import vault file onto the canvas');
       }
       if (dropTiles.length > 0) {
-        historyStore.pushWithoutExecute(new AddTilesCommand(dropTiles, `Drop ${dropTiles.length} tile(s)`));
+        historyStore.pushWithoutExecute(new AddTilesCommand(dropTiles, `Drop ${plural(dropTiles.length, 'tile')}`));
       }
       return;
     }
@@ -265,7 +266,7 @@ export function dragDropAction(node: HTMLElement, scope: BoardScope) {
       }
     }
     if (dropTiles.length > 0) {
-      historyStore.pushWithoutExecute(new AddTilesCommand(dropTiles, `Drop ${dropTiles.length} tile(s)`));
+      historyStore.pushWithoutExecute(new AddTilesCommand(dropTiles, `Drop ${plural(dropTiles.length, 'tile')}`));
     }
   }
 

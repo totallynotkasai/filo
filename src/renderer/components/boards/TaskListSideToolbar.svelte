@@ -3,7 +3,7 @@
    * TaskListSideToolbar — the side toolbar for the Task List board.
    *
    * Buttons:
-   *   - Add Task
+   *   - New task
    *   - Group By  (Status / Priority / Tag / Due Date / None)
    *   - Sort By   (Title / Created / Due Date / Priority / Manual)
    *   - Filter    (Tag multi / Status / Priority / Show Completed)
@@ -229,7 +229,7 @@
   oncontextmenu={toolbar.oncontextmenu}
   title={toolbar.pinned ? undefined : 'Drag to move. Right-click background to reset position.'}
 >
-  <button class="toolbar-btn" onclick={onAddTask} title="Add Task" aria-label="Add task">
+  <button class="toolbar-btn" onclick={onAddTask} title="New task" aria-label="New task">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
       <line x1="12" y1="5" x2="12" y2="19" />
       <line x1="5" y1="12" x2="19" y2="12" />

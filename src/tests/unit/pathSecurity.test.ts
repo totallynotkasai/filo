@@ -383,6 +383,24 @@ describe('isPrivateUrl', () => {
     expect(isPrivateUrl('http://[fe80::1]')).toBe(true);
   });
 
+  it('flags the whole unique-local (fc00::/7) and link-local (fe80::/10) ranges', () => {
+    for (const host of ['fc12::1', 'fcff:1::1', 'fd00::1', 'fdab:cd::1', 'fe90::1', 'febf::1', 'FE80::1', '0:0:0:0:0:0:0:1', '::']) {
+      expect(isPrivateUrl(`https://[${host}]/`), host).toBe(true);
+    }
+    // Just outside both ranges.
+    for (const host of ['fb00::1', 'fe00::1', 'fec0::1', 'ff02::1', '2001:db8::1']) {
+      expect(isPrivateUrl(`https://[${host}]/`), host).toBe(false);
+    }
+  });
+
+  it('reads only the host: an address in the path, query or fragment says nothing', () => {
+    expect(isPrivateUrl('https://192.168.1.1/?x=[::8.8.8.8]')).toBe(true);
+    expect(isPrivateUrl('https://127.0.0.1/admin#[::ffff:8.8.8.8]')).toBe(true);
+    expect(isPrivateUrl('https://user:[::ffff:8.8.8.8]@10.0.0.1/')).toBe(true);
+    expect(isPrivateUrl('https://example.com/[::ffff:127.0.0.1]')).toBe(false);
+    expect(isPrivateUrl('https://example.com/?u=http://[fc12::1]/')).toBe(false);
+  });
+
   it('does NOT flag public addresses', () => {
     expect(isPrivateUrl('https://example.com')).toBe(false);
     expect(isPrivateUrl('https://1.1.1.1')).toBe(false);

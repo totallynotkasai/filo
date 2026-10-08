@@ -96,7 +96,7 @@ describe('Kanban menus', () => {
   it('column: Style… and sentence-case labels', () => {
     const base = { onAddCard: noop, onRename: noop, onStyle: noop, onToggleCollapse: noop, onEditWip: noop, onDelete: noop };
     expect(labels(buildColumnContextMenu({ ...base, collapsed: false, wipLimit: null }))).toEqual([
-      'Add card', 'Rename column', 'Style…', 'Collapse', 'Set WIP limit…', 'Delete column',
+      'New card', 'Rename column', 'Style…', 'Collapse', 'Set WIP limit…', 'Delete column',
     ]);
     const withWip = labels(buildColumnContextMenu({ ...base, collapsed: true, wipLimit: 4 }));
     expect(withWip).toContain('WIP limit: 4…');
@@ -126,7 +126,7 @@ describe('Task List menus', () => {
   it('task: shared items in the shared order, Remove then Delete from vault… last', () => {
     const items = taskMenu();
     expect(labels(items)).toEqual([
-      'Open as document', 'Rename task', 'Add subtask', 'Mark complete', 'Cycle priority', 'Tags…',
+      'Open as document', 'Rename task', 'New subtask', 'Mark complete', 'Cycle priority', 'Tags…',
       'Move to: Later', 'Remove from board', 'Delete from vault…',
     ]);
     expect(inSharedOrder(items)).toBe(true);

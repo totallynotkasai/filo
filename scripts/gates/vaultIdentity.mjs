@@ -102,6 +102,7 @@ const LIFECYCLE_EXEMPT = new Map([
   ['src/renderer/lib/kanban/kanbanFiltersAndSort.svelte.ts', 'per-board state'],
   ['src/renderer/lib/kanban/kanbanMultiSelect.svelte.ts', 'per-board state'],
   ['src/renderer/lib/mindmap/marqueeSelectionController.svelte.ts', 'per-board controller'],
+  ['src/renderer/lib/mindmap/visibleTilesViewModel.svelte.ts', 'per-pane view model (made by each mounted Mind Map; goes with it)'],
   ['src/renderer/lib/tasklist/filtersAndViews.svelte.ts', 'per-board state'],
   ['src/renderer/lib/tasklist/multiSelectController.svelte.ts', 'per-board state'],
   ['src/renderer/lib/tasklist/taskDragController.svelte.ts', 'per-board controller'],

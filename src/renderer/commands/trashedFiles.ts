@@ -102,8 +102,15 @@ export async function trashFiles(
  * if it is still there; a file that is merely at the old path is not taken for
  * it (it may be a new note of the same name). Returns where each item landed;
  * the others are reported.
+ *
+ * A caller that puts tiles back passes `nameTaken`: the old paths of items
+ * gone from the trash some other way (emptied, or restored on another
+ * machine) where another file has the name now are collected there, not
+ * reported. A tile put back there would show that other file, and a redo
+ * would trash it, so the caller leaves those tiles off and says so
+ * (`sayLeftOff`).
  */
-export async function restoreFiles(vaultRoot: string, items: TrashedItem[], context: string): Promise<RestoredItem[]> {
+export async function restoreFiles(vaultRoot: string, items: TrashedItem[], context: string, nameTaken?: string[]): Promise<RestoredItem[]> {
   const identity = captureVaultIdentity();
   const restored: RestoredItem[] = [];
   const failed: string[] = [];
@@ -123,6 +130,10 @@ export async function restoreFiles(vaultRoot: string, items: TrashedItem[], cont
           continue;
         }
         failed.push(item.rel);
+        if (nameTaken && (await window.filo.invoke('vault:file-exists', vaultRoot, item.rel).catch(() => false))) {
+          nameTaken.push(item.rel);
+          continue;
+        }
         uiStore.toast(`"${item.rel}" is no longer in Filo's trash, so it wasn't brought back.`, 'warning', 6000);
         continue;
       }
@@ -153,6 +164,18 @@ export async function restoreFiles(vaultRoot: string, items: TrashedItem[], cont
     );
   }
   return restored;
+}
+
+/** Tells the user which items an undo left off, because their file's name is another file's now. */
+export function sayLeftOff(paths: readonly string[], what: string): void {
+  if (paths.length === 0) return;
+  const names = paths.map((p) => `"${p}"`).join(', ');
+  const one = paths.length === 1;
+  uiStore.toast(
+    `${names} ${one ? 'is' : 'are'} no longer in Filo's trash, and another file has ${one ? 'that name' : 'those names'} now, so ${one ? `its ${what} was` : `their ${what}s were`} left off.`,
+    'warning',
+    8000,
+  );
 }
 
 // allow-module-state: keyed by command objects, which leave with the history at a vault swap

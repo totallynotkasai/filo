@@ -65,7 +65,7 @@ export async function findOnKanban(app: CharApp, query: string): Promise<void> {
   await settle(300);
 }
 
-/** Add Card on a column → Text, and leave its title open (it opens by itself). */
+/** New card on a column → Text, and leave its title open (it opens by itself). */
 export async function startKanbanCard(app: CharApp, columnIndex = 0): Promise<void> {
   click($$(app.el, '.kanban-column button.add-tile-btn')[columnIndex] as HTMLElement);
   await settle();
@@ -99,6 +99,25 @@ export function columnCardTitles(app: CharApp, index: number): string[] {
 /** The cards the Tab key stops on (every card is focusable; only these are in the Tab order). */
 export function tabbableCards(app: CharApp): string[] {
   return $$(app.el, '.tile-drop-zone').filter((z) => z.tabIndex === 0).map((z) => (z.querySelector('.tile-title')?.textContent ?? '').trim());
+}
+
+/**
+ * The drag zones and drag wrappers Tab would stop on (a Task List's section
+ * list, sections, row zones and row wrappers; a Kanban board's column list
+ * and column wrappers), by class. None of them does anything there.
+ */
+export function dragWrapperTabStops(app: CharApp): string[] {
+  const zones = $$(app.el, '.tasklist-section-dnd, .row-dnd-zone, .kanban-columns');
+  const wrappers = zones.flatMap((z) => Array.from(z.children) as HTMLElement[]);
+  return [...zones, ...wrappers].filter((el) => el.tabIndex === 0).map((el) => el.className.split(' ')[0] ?? el.tagName);
+}
+
+/** Adds a section to the Task List from its Add section button. */
+export async function addTaskListSection(app: CharApp): Promise<void> {
+  const before = $$(app.el, '.tasklist-section').length;
+  click($(app.el, '.add-section-btn'));
+  await waitFor(() => $$(app.el, '.tasklist-section').length > before, 'a new section');
+  await settle();
 }
 
 // ── Task List ────────────────────────────────────────────────────────────────

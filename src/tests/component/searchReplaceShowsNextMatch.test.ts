@@ -256,7 +256,7 @@ describe('Search panel: single Replace shows the match it will change next', () 
     };
 
     clickReplace();
-    await vi.waitFor(() => expect(warnings().some((w) => w.startsWith('Replace skipped 1 file(s)'))).toBe(true));
+    await vi.waitFor(() => expect(warnings().some((w) => w.startsWith('Replace skipped 1 note'))).toBe(true));
     await pause(50);
     flushSync();
     expect(files['a.md']).toBe('frodo, edited');

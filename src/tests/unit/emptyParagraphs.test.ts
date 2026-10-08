@@ -92,6 +92,25 @@ describe('empty paragraphs — full editor round-trip', () => {
     expect(list.html.endsWith('<p></p>')).toBe(true);
   });
 
+  it('a reference link whose definition sits between paragraphs keeps its address, shown and saved', () => {
+    const ed = makeEditor();
+    try {
+      loadMarkdownIntoEditor(ed, 'See [the map][m] here.\n\n[m]: https://example.com/map\n\nNext paragraph.\n');
+      const links: string[] = [];
+      ed.state.doc.descendants((n) => {
+        for (const m of n.marks) if (m.type.name === 'link') links.push(String(m.attrs.href));
+      });
+      expect(links).toEqual(['https://example.com/map']);
+      // Two paragraphs, no empty one where the definition stood.
+      expect(ed.state.doc.childCount).toBe(2);
+      // A save (after Take ownership: the definition itself can't be kept)
+      // writes the link inline, with its address.
+      expect(editorMarkdown(ed)).toBe('See [the map](https://example.com/map) here.\n\nNext paragraph.');
+    } finally {
+      ed.destroy();
+    }
+  });
+
   it("a file's own final newline, or one blank line after the text, opens with no empty line at the end", () => {
     for (const body of ['A\n', 'A\n\n', 'A\n\nB\n', 'A\n\nB\n\n']) {
       const ed = makeEditor();
@@ -162,9 +181,24 @@ describe('empty paragraphs — encodeEmptyParagraphs (real markdown-it)', () => 
     );
   });
 
-  it('leaves the end as written when a line no block holds follows the last block', () => {
-    const body = 'See [x].\n\n[x]: https://example.com\n\n\n';
-    expect(encodeEmptyParagraphs(body, md)).toBe(body);
+  it('keeps a link reference definition between blocks, and reads the gaps around it as around a block', () => {
+    expect(encodeEmptyParagraphs('See [m] here.\n\n[m]: https://example.com/map\n\nNext.\n', md)).toBe(
+      'See [m] here.\n\n[m]: https://example.com/map\n\nNext.',
+    );
+    expect(encodeEmptyParagraphs('A [m].\n\n\n[m]: https://e.com\n[n]: https://f.com "F"\n\n\nB', md)).toBe(
+      `A [m].\n\n${S}\n\n[m]: https://e.com\n[n]: https://f.com "F"\n\n${S}\n\nB`,
+    );
+  });
+
+  it('keeps a link reference definition above the first of several blocks', () => {
+    expect(encodeEmptyParagraphs('[x]: https://example.com\n\nSee [x].\n\n\nMore.', md)).toBe(
+      `[x]: https://example.com\n\nSee [x].\n\n${S}\n\nMore.`,
+    );
+  });
+
+  it('keeps a definition after the last block, and the blank lines after it as after a block', () => {
+    expect(encodeEmptyParagraphs('See [x].\n\n[x]: https://example.com\n', md)).toBe('See [x].\n\n[x]: https://example.com');
+    expect(encodeEmptyParagraphs('See [x].\n\n[x]: https://example.com\n\n\n', md)).toBe(`See [x].\n\n[x]: https://example.com\n\n${S}`);
   });
 
   it('never puts a sentinel inside a code fence left open to the end', () => {

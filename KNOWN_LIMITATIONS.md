@@ -622,7 +622,10 @@ Formats that still trigger read-only (a save would change what the note says):
 - HTML comments and block HTML (`<div>`, another app's `<p align="center">`),
   which the editor drops;
 - link reference definitions (`[1]: https://…`), used or not: they render
-  nothing, and a save would drop them (a used one's link written inline);
+  nothing, and a save would drop them. A used one's link is shown and works
+  wherever its definition stands (above, between or below the paragraphs),
+  and after **Take ownership** it is written inline with its address
+  (`[the map](https://…)`); a definition nothing uses is lost;
 - inline code inside bold, italic or a link (``**`npm run`**``,
   ``[`CLAUDE.md`](CLAUDE.md)``): the editor's inline code can't carry other
   formatting, so a save would drop the bold or the link from it;

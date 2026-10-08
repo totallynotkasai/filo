@@ -6,7 +6,7 @@
  */
 import type { Editor } from '@tiptap/core';
 import { EditorView } from '@codemirror/view';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { osFilePaths } from './mainBridge';
 import { settle, waitFor, quiesce, type CharApp } from './app';
@@ -439,7 +439,7 @@ export async function addKanbanColumn(app: CharApp): Promise<void> {
   await quiesce(300);
 }
 
-/** Kanban column "Add Card" → Text. Returns the new card note's path. */
+/** Kanban column "New card" → Text. Returns the new card note's path. */
 export async function addKanbanCard(app: CharApp, columnIndex = 0, opts: NewTitle = {}): Promise<string> {
   const before = app.userFiles();
   click($$(app.el, '.kanban-column button.add-tile-btn')[columnIndex]);
@@ -629,10 +629,10 @@ export async function indentTask(row: HTMLElement, outdent = false): Promise<voi
   await quiesce(600);
 }
 
-/** A task's context menu → Add subtask. */
+/** A task's context menu → New subtask. */
 export async function addSubtask(app: CharApp, row: HTMLElement): Promise<void> {
   await rightClick(row.querySelector('.task-title') ?? row);
-  await chooseMenuItem(app, 'Add subtask');
+  await chooseMenuItem(app, 'New subtask');
   await quiesce(400);
 }
 
@@ -852,6 +852,14 @@ export function trashedPaths(app: CharApp): string[] {
     out.push((JSON.parse(readFileSync(manifest, 'utf-8')) as { originalPath: string }).originalPath);
   }
   return out.sort();
+}
+
+/**
+ * Filo's trash is emptied where this Filo doesn't see it (another machine of a
+ * synced vault): its entries go from disk.
+ */
+export function emptyTrashElsewhere(app: CharApp): void {
+  rmSync(join(app.root, '.filo', 'trash'), { recursive: true, force: true });
 }
 
 /** The text of every board file in the vault, read from disk. */
@@ -1416,7 +1424,7 @@ export async function clashingShortcuts(): Promise<string[]> {
   return [...byChord].filter(([, names]) => names.length > 1).map(([chord, names]) => `${chord}: ${names.join(', ')}`);
 }
 
-/** Which new-card picker options are showing (Kanban "Add Card" / Ctrl+N). */
+/** Which new-card picker options are showing (Kanban "New card" / Ctrl+N). */
 export function newCardPickerShown(app: CharApp): boolean {
   return $$(app.el, 'button.kn-option').length > 0;
 }

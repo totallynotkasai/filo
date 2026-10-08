@@ -12,8 +12,9 @@ import type {
 } from '../schema/placement';
 import { NoteFieldCommand } from './noteFieldCommand';
 import { NewNoteUndo } from './newNoteUndo';
-import { offerUndoToTrashList, restoreFiles, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
+import { offerUndoToTrashList, restoreFiles, sayLeftOff, stillTrashed, trashFiles, type DeleteWithFileOptions, type TrashedItem } from './trashedFiles';
 import type { DrainToken } from '../lib/vault/vaultOperations';
+import { samePath } from '../lib/utils/path';
 import { applyMove, layoutOf, movedTasks, regroup, type SectionKey, type TaskLayout } from '../lib/tasklist/sectionMembership';
 
 // ── Task List Commands ──
@@ -166,7 +167,7 @@ export class AddTaskCommand extends Command {
     this.targetSectionId = targetSectionId;
     this.seedBackingFile = seedBackingFile;
     this.parentTileId = parentTileId;
-    this.description = `Add task "${defTitle(def)}"`;
+    this.description = `New task "${defTitle(def)}"`;
   }
 
   async execute(): Promise<void> {
@@ -328,7 +329,9 @@ export class DeleteTaskCommand extends Command {
     const prior = Promise.allSettled([this.lastExecuteCompletion, this.lastUndoCompletion]);
     this.lastUndoCompletion = prior.then(async () => {
       if (this.vaultRoot && this.trashed.length > 0) {
-        const restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteTask.undo');
+        const taken: string[] = [];
+        const restored = await restoreFiles(this.vaultRoot, this.trashed, 'deleteTask.undo', taken);
+        if (this.leaveOff(taken)) return;
         this.trashed = stillTrashed(this.trashed, restored);
         const moved = restored.find((r) => r.restoredPath !== r.rel);
         if (moved) {
@@ -343,6 +346,20 @@ export class DeleteTaskCommand extends Command {
     });
     await this.lastUndoCompletion;
     this.restorePlacement();
+  }
+
+  /**
+   * The note left Filo's trash some other way and another file has its name
+   * now (`taken`): the task stays off, since it would show that file, and the
+   * step forgets the note, so a redo can't trash the other file.
+   */
+  private leaveOff(taken: readonly string[]): boolean {
+    if (!this.filePath || !taken.some((p) => samePath(p, this.filePath ?? ''))) return false;
+    sayLeftOff(taken, 'task');
+    this.filePath = null;
+    this.trashed = [];
+    this.snapshotDef = null;
+    return true;
   }
 
   private restorePlacement(): void {

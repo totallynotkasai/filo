@@ -1,7 +1,7 @@
 /**
  * Templates as a user picks them: Ctrl+T (the Template Browser) on any
  * board, the New Tab menu's "New board from template…", and a Kanban
- * column's Add Card → From Template….
+ * column's New card → From Template….
  */
 import { settle, waitFor, quiesce, type CharApp } from './app';
 import { $, $$, click, findByText, pressShortcut } from './actions';
@@ -106,7 +106,7 @@ export async function insertLayoutTemplate(name: string): Promise<void> {
   await quiesce(1000);
 }
 
-/** The templates a Kanban column's Add Card → From Template… lists (then closes it). */
+/** The templates a Kanban column's New card → From Template… lists (then closes it). */
 export async function kanbanCardTemplates(app: CharApp, columnIndex: number): Promise<string[]> {
   click($$(app.el, '.kanban-column button.add-tile-btn')[columnIndex]!);
   await settle();
@@ -122,7 +122,7 @@ export async function kanbanCardTemplates(app: CharApp, columnIndex: number): Pr
   return names;
 }
 
-/** A Kanban column's Add Card → From Template… → the template named `name`. */
+/** A Kanban column's New card → From Template… → the template named `name`. */
 export async function addKanbanCardFromTemplate(app: CharApp, columnIndex: number, name: string): Promise<void> {
   click($$(app.el, '.kanban-column button.add-tile-btn')[columnIndex]!);
   await settle();

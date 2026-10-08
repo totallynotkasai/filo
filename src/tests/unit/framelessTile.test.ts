@@ -113,8 +113,8 @@ describe('ToggleFramelessCommand', () => {
 
   it('description defaults to the count + direction', () => {
     activate([makeImageTile('a', false)]);
-    expect(new ToggleFramelessCommand(['a'], true).description).toBe('Hide frame on 1 tile(s)');
-    expect(new ToggleFramelessCommand(['a'], false).description).toBe('Show frame on 1 tile(s)');
+    expect(new ToggleFramelessCommand(['a'], true).description).toBe('Hide frame on 1 tile');
+    expect(new ToggleFramelessCommand(['a'], false).description).toBe('Show frame on 1 tile');
   });
 
   it('filters out tiles that no longer exist on execute and undo', () => {

@@ -23,7 +23,7 @@
    *     applies to every tile in the set.
    *   - File path: pass `filePath`. Reads/writes via `addTagToPath` /
    *     `removeTagFromPath` (three-sink write driven by the path). Used by
-   *     the sidebar file editor and the Document board.
+   *     the sidebar (a row's tag button and its menu's Tags item).
    */
   let { tileId, tileIds, filePath, onClose }: {
     tileId?: string;

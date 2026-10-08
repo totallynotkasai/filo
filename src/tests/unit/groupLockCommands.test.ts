@@ -185,9 +185,9 @@ describe('ToggleLockCommand', () => {
 
   it('description reflects direction and count', () => {
     const lock = new ToggleLockCommand(new Map([['a', false], ['b', false]]), true);
-    expect(lock.description).toBe('Lock 2 tile(s)');
+    expect(lock.description).toBe('Lock 2 tiles');
     const unlock = new ToggleLockCommand(new Map([['a', true]]), false);
-    expect(unlock.description).toBe('Unlock 1 tile(s)');
+    expect(unlock.description).toBe('Unlock 1 tile');
   });
 
   it('snapshots the Map so caller mutation does not leak in', () => {

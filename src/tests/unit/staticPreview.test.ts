@@ -99,6 +99,12 @@ describe('renderNotePreviewHtml', () => {
     expect(d.innerHTML).not.toContain(EMPTY_PARAGRAPH_SENTINEL);
   });
 
+  it('resolves a reference link whose definition sits between paragraphs, as the editor does', () => {
+    const d = dom(renderNotePreviewHtml('See [the map][m] here.\n\n[m]: https://example.com/map\n\nNext paragraph.\n'));
+    expect(d.querySelector('a')?.getAttribute('href')).toBe('https://example.com/map');
+    expect([...d.querySelectorAll('p')].map((p) => p.textContent)).toEqual(['See the map here.', 'Next paragraph.']);
+  });
+
   it('returns the same HTML for the same body', () => {
     const body = 'cached **body**\n';
     expect(renderNotePreviewHtml(body)).toBe(renderNotePreviewHtml(body));

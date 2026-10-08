@@ -3,7 +3,7 @@
  *
  * Drives the Search panel: holds the query, derives matches from the
  * vault index + board cache, owns the current-match cursor, and exposes
- * Find / Find All / Replace / Replace All entry points.
+ * Find / Replace / Replace All entry points.
  *
  * State is intentionally session-scoped — search is a transient UI mode.
  *

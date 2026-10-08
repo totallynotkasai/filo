@@ -5,6 +5,7 @@ import { freshVault, launchBuilt, makeTemp, newBoard, openNoteByName, quitLikeUs
  * The Mind Map and a Document tab on a 1,366 px laptop, in the built app:
  * N beside a tile off screen brings the new tile into view with its title
  * open, and an arrow key brings a tile out from under the docked sidebar; a
+ * clicked tile panned out of view keeps the board's keys working; a
  * note zoomed to 150% (Ctrl and + on the number pad, Ctrl+Shift+=) starts
  * clear of the sidebar; a sidebar row's name uses the row's width while its
  * buttons are hidden.
@@ -98,6 +99,33 @@ test('Mind Map at 1,366 px: N beside a tile off screen shows the new tile, title
     const revealed = await tilePlace(win, 'Anchor');
     expect(revealed.left, 'the tile the arrow selected, clear of the sidebar').toBeGreaterThanOrEqual(revealed.sidebarRight);
     await win.screenshot({ path: info.outputPath('arrow-revealed.png') });
+  } finally {
+    expect((await quitLikeUser(launched)).outcome).toBe('exited');
+  }
+});
+
+test('a tile clicked, then panned out of view, keeps the focus in the board: N still makes a tile beside it', async () => {
+  const launched = await launchBuilt(freshVault(root, 'FocusVault'));
+  const { win } = launched;
+  try {
+    await setWidth(launched, 1366);
+    await newBoard(win, 'Mind Map');
+    await expect(win.locator('.mindmap-board').first()).toBeVisible({ timeout: 20_000 });
+    await newTextTile(win, 'Anchor');
+
+    // A click on the tile selects it and puts the focus in it.
+    await win.locator('.mindmap-board .tile-container', { hasText: 'Anchor' }).locator('.tile-title').click();
+    await expect(win.locator('.mindmap-board .tile-container.selected .tile-title')).toHaveText('Anchor');
+    for (let i = 0; i < 4; i++) await panSideways(win, 2000);
+    const off = await tilePlace(win, 'Anchor');
+    expect(Number.isNaN(off.right) || off.right < 0 || off.left > off.viewRight, 'Anchor out of view').toBe(true);
+    expect(await win.evaluate(() => document.activeElement?.closest('.mindmap-board') !== null), 'the focus still in the board').toBe(true);
+
+    await win.keyboard.press('n');
+    await expect(win.locator('.tile-title-editor .ProseMirror')).toBeFocused({ timeout: 10_000 });
+    await win.keyboard.type('Beta');
+    await win.keyboard.press('Enter');
+    await expect(win.locator('.mindmap-board .tile-title', { hasText: 'Beta' })).toHaveCount(1);
   } finally {
     expect((await quitLikeUser(launched)).outcome).toBe('exited');
   }

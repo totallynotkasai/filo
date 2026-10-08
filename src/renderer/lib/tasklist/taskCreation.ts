@@ -239,8 +239,8 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
   }
 
   /**
-   * Where a task added from the board (Add Task, Ctrl+N, quick add) goes: the
-   * section last added to (footer "Add task", a move), while it exists, else
+   * Where a task added from the board (New task, Ctrl+N, quick add) goes: the
+   * section last added to (footer "New task", a move), while it exists, else
    * the FIRST section. Most users expect a new task at the top of the list,
    * not in the last section (often "Done", and often folded).
    */
@@ -284,7 +284,7 @@ export function makeTaskCreator(deps: TaskCreationDeps): TaskCreator {
     // Materialise the default section *before* the await so we carry a real
     // section id across the seed; the index itself is recomputed afterwards
     // (same TOCTOU fix as createTaskInSection). With no section named, the
-    // rule Add Task uses.
+    // rule New task uses.
     const wanted = targetSectionId ?? defaultTargetSection();
     const resolvedTargetId = wanted === defaultSectionId ? ensureDefaultSectionMaterialized() : wanted;
     // A folded section opens first (its own undo step, undone after the add),

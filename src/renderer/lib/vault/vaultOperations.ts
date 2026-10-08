@@ -45,6 +45,7 @@ import { currentVaultGeneration } from './vaultIdentity';
 import { getActiveVaultPath } from './activeVaultPath';
 import { noteRestored } from './restoredItems';
 import { vaultPath } from '@shared/vaultPath';
+import { plural } from '../utils/plural';
 import type {
   ChannelArgs,
   ChannelResult,
@@ -83,7 +84,7 @@ export class PendingWritesFailedError extends Error {
       results.misc.failed.length +
       results.config.failed.length;
     super(
-      `Pending writes failed (${totalFailed} file(s)): refusing to proceed with disk-shape change.`,
+      `Pending writes failed (${plural(totalFailed, 'file')}): refusing to proceed with disk-shape change.`,
     );
     this.name = 'PendingWritesFailedError';
     this.results = results;

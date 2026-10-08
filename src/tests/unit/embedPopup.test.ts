@@ -33,6 +33,11 @@ describe('embedPopupTarget', () => {
 
   it('drops a second link within a second of the first', () => {
     expect(embedPopupTarget('https://example.com/', NOW, NOW - 10, isPrivateUrl)).toBeNull();
+  });
+
+  it('a private host stays refused whatever its query or fragment holds', () => {
+    expect(embedPopupTarget('https://192.168.1.1/setup?a=[::8.8.8.8]', NOW, 0, isPrivateUrl)).toBeNull();
+    expect(embedPopupTarget('https://[fd12::1]/#[::ffff:8.8.8.8]', NOW, 0, isPrivateUrl)).toBeNull();
     expect(embedPopupTarget('https://example.com/', NOW, NOW - EMBED_POPUP_MIN_GAP_MS, isPrivateUrl)).toBe('https://example.com/');
   });
 });

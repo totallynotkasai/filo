@@ -590,7 +590,7 @@
 
   /**
    * Tracks the section the user last interacted with (added a task to, dropped
-   * into, or pointer-pressed inside). The global sidebar "Add Task" button
+   * into, or pointer-pressed inside). The side toolbar's "New task" button
    * uses this to decide where to land instead of always appending to the
    * end-of-board (which forced new tasks into the visually-last section, the
    * "most recent section" bug). Reset to `null` when the active board
@@ -1244,7 +1244,7 @@
             dragDisabled: sectionDragDisabled,
             flipDurationMs: 220,
             type: 'tasklist-sections',
-            dropTargetStyle: {},
+            dropTargetStyle: {}, zoneTabIndex: -1, zoneItemTabIndex: -1,
             transformDraggedElement: transformDraggedSection,
           }}
           onconsider={onConsiderSections}
@@ -1281,7 +1281,7 @@
           </p>
           <div class="empty-actions">
             <button class="empty-add-btn" onclick={() => filters.clearAllFilters()}>Clear filters</button>
-            <button class="empty-add-btn ghost" onclick={addTask}>Add task</button>
+            <button class="empty-add-btn ghost" onclick={addTask}>New task</button>
           </div>
         </div>
       {/if}

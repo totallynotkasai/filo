@@ -16,6 +16,7 @@ import { DeleteTaskCommand } from './taskCommands';
 import { restoreClearedPins, type ClearedPin } from '../lib/vault/folderPins';
 import { clearDefaultImages, restoreDefaultImages, type ClearedDefaultImage } from '../stores/globalDefaultImages';
 import { captureTileMemberships, restoreTileMemberships, type TileMemberships } from '../lib/boards/tileMemberships';
+import { plural } from '../lib/utils/plural';
 
 /**
  * Opens a notice when one or more rollback children threw inside
@@ -345,7 +346,7 @@ export class CascadeDeleteCommand extends Command {
     const totalTiles = Object.values(byBoard).reduce((sum, t) => sum + t.length, 0);
     this.description = this.itemRel
       ? `Delete "${this.itemRel}"`
-      : `Cascade-delete ${totalTiles} tile(s)`;
+      : `Delete ${plural(totalTiles, 'tile')}`;
   }
 
   private snapshotPlacements(boardId: string, tiles: Tile[]): void {

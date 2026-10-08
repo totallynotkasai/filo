@@ -40,6 +40,7 @@ import { splitFrontmatterSource } from '../lib/vault/frontmatterRead';
 import { noteTextHash } from '../lib/notes/noteFile';
 import { ONLY_SYNTAX_MATCHES, SYNTAX_KINDS, TOO_MANY_TO_REPLACE } from '../lib/search/replaceAllText';
 import { markdownSyntaxRanges, overlapsSyntax } from '../lib/search/markdownSyntax';
+import { plural } from '../lib/utils/plural';
 
 /** One replacement: at `start` (in the file before the replace), `before` became `after`. */
 export interface Splice {
@@ -202,7 +203,7 @@ export class ReplaceAllCommand extends Command {
     this.vaultRoot = vaultRoot;
     this.plans = this.snapshot(plans);
     const totalCount = plans.reduce((n, p) => n + p.splices.length, 0);
-    this.description = `Replace ${totalCount} occurrence(s) across ${plans.length} file(s)`;
+    this.description = `Replace ${plural(totalCount, 'match', 'matches')} in ${plural(plans.length, 'note')}`;
   }
 
   async execute(): Promise<void> {
@@ -273,7 +274,7 @@ export class ReplaceAllCommand extends Command {
       const sample = busy.slice(0, 3).join(', ');
       const more = busy.length > 3 ? `, +${busy.length - 3} more` : '';
       uiStore.toast(
-        `Left ${busy.length} file(s) alone because an edit to them isn't saved yet (${sample}${more}). Save or resolve it, then run Replace All again.`,
+        `Left ${plural(busy.length, 'note')} alone because an edit to ${busy.length === 1 ? 'it' : 'them'} isn't saved yet (${sample}${more}). Save or resolve it, then run Replace All again.`,
         'warning',
         8000,
       );
@@ -282,7 +283,7 @@ export class ReplaceAllCommand extends Command {
       const sample = failed.slice(0, 3).join(', ');
       const more = failed.length > 3 ? `, +${failed.length - 3} more` : '';
       uiStore.toast(
-        `${failed.length} file(s) failed to write (${sample}${more}). Vault may be in an inconsistent state.`,
+        `${plural(failed.length, 'note')} couldn't be written (${sample}${more}). Vault may be in an inconsistent state.`,
         'error',
         6000,
       );
@@ -295,7 +296,7 @@ export class ReplaceAllCommand extends Command {
     const sample = skipped.slice(0, 3).join(', ');
     const more = skipped.length > 3 ? `, +${skipped.length - 3} more` : '';
     uiStore.toast(
-      `${verb} ${skipped.length} file(s) ${why} (${sample}${more}) to avoid overwriting newer edits.`,
+      `${verb} ${plural(skipped.length, 'note')} ${why} (${sample}${more}) to avoid overwriting newer edits.`,
       'warning',
       6000,
     );
@@ -334,7 +335,7 @@ export async function runReplaceAllCommand(): Promise<void> {
   if (!result.ok) {
     const sample = result.failedPaths.slice(0, 3).join(', ');
     uiStore.toast(
-      `Replace All aborted — could not read ${result.failedPaths.length} file(s) (${sample}). No changes made.`,
+      `Replace All aborted — couldn't read ${plural(result.failedPaths.length, 'note')} (${sample}). No changes made.`,
       'error',
       6000,
     );

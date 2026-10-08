@@ -605,6 +605,8 @@
   onpointercancel={() => marquee.handlePointerCancel()}
   oncontextmenu={handleContextMenu}
   onclick={handleCanvasClick}
+  onfocusin={(e) => viewModel.focusMovedTo(e.target)}
+  onfocusout={(e) => viewModel.focusMovedTo(e.relatedTarget)}
 >
   <!-- Background pattern (sits OUTSIDE the canvas transform so it scales
        via background-size rather than CSS transform — avoids the 40000px

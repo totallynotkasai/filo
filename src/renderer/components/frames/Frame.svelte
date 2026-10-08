@@ -141,8 +141,6 @@
     `z-index: var(--z-frame)`,
     `--frame-header-bg: ${withOpacity(resolved.headerColor, resolved.backgroundOpacity)}`,
     `--frame-body-bg: ${withOpacity(resolved.bodyColor, resolved.backgroundOpacity)}`,
-    `--frame-bg-opacity: ${resolved.backgroundOpacity}`,
-    `--frame-border-color: ${resolved.borderColor || 'var(--ui-border)'}`,
     `border: ${resolved.borderWidth}px ${resolved.borderStyle} ${resolved.borderColor || 'var(--ui-border)'}`,
     `border-radius: ${borderRadius}`,
     // Drives `box-shadow: var(--frame-shadow, none)` in the CSS rule. We

@@ -415,7 +415,7 @@ describe('CascadeDeleteCommand', () => {
       { a: [tilesA.t_a], b: [tilesB.t_b] },
       [],
     );
-    expect(cmd.description).toBe('Cascade-delete 2 tile(s)');
+    expect(cmd.description).toBe('Delete 2 tiles');
     const named = new CascadeDeleteCommand({}, [], { trashed: { rel: 'A.md', trashId: 'x' } });
     expect(named.description).toBe('Delete "A.md"');
   });

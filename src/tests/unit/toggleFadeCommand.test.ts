@@ -85,8 +85,8 @@ describe('ToggleFadeCommand', () => {
 
   it('description defaults to the count + direction', () => {
     activate([makeTile('a', false)]);
-    expect(new ToggleFadeCommand(['a'], true).description).toBe('Fade 1 tile(s)');
-    expect(new ToggleFadeCommand(['a'], false).description).toBe('Unfade 1 tile(s)');
+    expect(new ToggleFadeCommand(['a'], true).description).toBe('Fade 1 tile');
+    expect(new ToggleFadeCommand(['a'], false).description).toBe('Unfade 1 tile');
   });
 
   it('honours a custom description', () => {

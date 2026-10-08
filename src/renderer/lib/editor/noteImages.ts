@@ -3,6 +3,7 @@ import { Image } from '@tiptap/extension-image';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { toMediaUrl } from '../utils/mediaUrl';
 import { toPosix } from '../utils/path';
+import { keepEscapedCharactersInImageAlt } from './imageAlt';
 
 /**
  * Images a note shows, from the vault.
@@ -89,8 +90,21 @@ function showImage(img: HTMLImageElement, node: ProseMirrorNode, editor: Editor)
   }
 }
 
-/** TipTap's image, shown from the vault. */
+/** TipTap's image, shown from the vault, its alt text read as written (`imageAlt.ts`). */
 export const NoteImage = Image.extend({
+  addStorage() {
+    return {
+      markdown: {
+        // tiptap-markdown keeps its own image writer (it merges this over its
+        // default); only the parse gains the alt-text rule.
+        parse: {
+          setup(md: Parameters<typeof keepEscapedCharactersInImageAlt>[0]): void {
+            keepEscapedCharactersInImageAlt(md);
+          },
+        },
+      },
+    };
+  },
   addNodeView() {
     return ({ node, editor }) => {
       const img = document.createElement('img');

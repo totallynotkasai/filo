@@ -25,6 +25,7 @@
   import { centreIn, placeClear, tileRects } from '../../lib/canvas/newTilePlacement';
   import { newTileView } from '../../lib/canvas/newTileView';
   import { toggleGroupSelection } from '../../lib/mindmap/selectionActions';
+  import { plural } from '../../lib/utils/plural';
 
   let showNewTileMenu = $state(false);
   let showManageMenu = $state(false);
@@ -179,7 +180,7 @@
       new ToggleFadeCommand(
         tiles.map((t) => t.id),
         anyNotFaded,
-        `${anyNotFaded ? 'Fade' : 'Unfade'} ${tiles.length} tile(s)`,
+        `${anyNotFaded ? 'Fade' : 'Unfade'} ${plural(tiles.length, 'tile')}`,
       ),
     );
   }

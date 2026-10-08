@@ -135,15 +135,14 @@
     return group?.displayIndex ?? null;
   });
 
-  // Body inline style (background + optional Dynamic Contrast Text colour
-  // exposed as a CSS custom property for descendants to opt into).
+  // Body inline style: background, and the optional Dynamic Contrast Text
+  // colour, which the body's text inherits.
   let bodyStyle = $derived(
     [
       `background: ${frameless ? 'transparent' : (resolved.bodyColor || 'var(--tile-body-bg)')}`,
       // Frameless: blank the image-letterbox backing so the image shows with
       // no grey bars (ImageTile reads `--image-tile-bg`).
       frameless ? '--image-tile-bg: transparent' : '',
-      resolved.bodyTextColor ? `--body-text-color: ${resolved.bodyTextColor}` : '',
       resolved.bodyTextColor ? `color: ${resolved.bodyTextColor}` : '',
     ].filter(Boolean).join('; ')
   );

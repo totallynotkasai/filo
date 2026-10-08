@@ -2,6 +2,7 @@ import MarkdownIt from 'markdown-it';
 import { sanitizeNoteHtml } from '../utils/sanitizeHtml';
 import { renderSoftBreaksAsNodes } from './softBreak';
 import { noteImageUrl } from './noteImages';
+import { keepEscapedCharactersInImageAlt } from './imageAlt';
 import { toPosix } from '../utils/path';
 import { EMPTY_PARAGRAPH_SENTINEL, encodeEmptyParagraphs } from './emptyParagraphs';
 
@@ -25,6 +26,8 @@ import { EMPTY_PARAGRAPH_SENTINEL, encodeEmptyParagraphs } from './emptyParagrap
 const md = new MarkdownIt({ html: true, linkify: false, breaks: false });
 // A single newline inside a paragraph shows as a line break, as in the editor.
 renderSoftBreaksAsNodes(md);
+// An image's alt text as the editor reads it.
+keepEscapedCharactersInImageAlt(md);
 
 /** Rendered previews by note folder and body text; a board re-renders the same bodies on every open. */
 const CACHE_LIMIT = 1000;

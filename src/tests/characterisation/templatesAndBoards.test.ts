@@ -20,6 +20,7 @@ import {
   closeModal,
   createBoard,
   deleteTileAndFile,
+  emptyTrashElsewhere,
   errorToasts,
   kanbanCards,
   mindMapTiles,
@@ -242,6 +243,54 @@ describe('Delete tile and file, then Settings → Trash', () => {
     expect(app.read(restored)).toBe(original);
     expect(app.read(elves)).toContain('A different note');
     expect(Object.values(mindMapFile(app).tileDefs).map((d) => d.filePath)).toEqual([restored]);
+  });
+});
+
+describe('an undo whose note left the trash some other way', () => {
+  it('while a new note took the name: the tile stays off, says so, and a redo leaves the new note alone', async () => {
+    const app = await startApp({ 'Book.md': 'Text\n' });
+    await createBoard(app, 'mindmap');
+    await addMindMapTextTile(app, { title: 'Elves' });
+    await addMindMapTextTile(app, { title: 'Dwarves' });
+    await quiesce(800);
+    const elves = app.userFiles().find((f) => f.endsWith('/Elves.md'))!;
+    const elvesTile = mindMapTiles(app).find((t) => t.title === 'Elves')!;
+
+    await deleteTileAndFile(app, elvesTile.el);
+    await waitFor(() => !app.exists(elves), 'the note in the trash');
+    emptyTrashElsewhere(app);
+    app.writeExternally(elves, '---\ntitle: Elves\n---\nA different note\n');
+    await quiesce(800);
+
+    await undo(app);
+    await quiesce(800);
+    expect(mindMapTiles(app).map((t) => t.title)).toEqual(['Dwarves']);
+    expect(Object.values(mindMapFile(app).tileDefs).map((d) => d.filePath)).not.toContain(elves);
+    expect(toastTexts()).toContain(`"${elves}" is no longer in Filo's trash, and another file has that name now, so its tile was left off.`);
+
+    await redo(app);
+    await quiesce(800);
+    expect(app.read(elves)).toContain('A different note');
+    expect(trashedPaths(app)).toEqual([]);
+    expect(mindMapTiles(app).map((t) => t.title)).toEqual(['Dwarves']);
+  });
+
+  it("with the name still free, a card's undo says its note wasn't brought back, as before", async () => {
+    const app = await startApp({ 'Book.md': 'Text\n' });
+    await createBoard(app, 'kanban');
+    await addKanbanColumn(app);
+    const rel = await addKanbanCard(app, 0, { title: 'Siege' });
+    await rightClick(cardByTitle(app, 'Siege'));
+    await chooseMenuItem(app, 'Delete from vault…');
+    await answerConfirm(app, { confirm: true });
+    await waitFor(() => !app.exists(rel), 'the note in the trash');
+    emptyTrashElsewhere(app);
+    await quiesce(500);
+
+    await undo(app);
+    await quiesce(800);
+    expect(toastTexts()).toContain(`"${rel}" is no longer in Filo's trash, so it wasn't brought back.`);
+    expect(toastTexts().some((t) => t.includes('left off'))).toBe(false);
   });
 });
 

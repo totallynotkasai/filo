@@ -676,25 +676,37 @@ export function extractEmbeddedIPv4(ip6: string): string | null {
   return null;
 }
 
+/**
+ * True for an IPv6 address that never leaves the user's own machine or
+ * network: unspecified (`::`), loopback (`::1`), unique local (fc00::/7) or
+ * link-local (fe80::/10). Read from the parsed hextets, so every spelling of
+ * the same address (`0:0:0:0:0:0:0:1`, `FD12::1`) is classified alike.
+ */
+function isPrivateIPv6(ip6: string): boolean {
+  const h = parseIPv6ToHextets(ip6);
+  if (!h) return false;
+  const [h0 = 0, , , , , , , h7 = 0] = h;
+  if (h.slice(0, 7).every((x) => x === 0) && (h7 === 0 || h7 === 1)) return true;
+  return (h0 & 0xfe00) === 0xfc00 || (h0 & 0xffc0) === 0xfe80;
+}
+
+/**
+ * True when the URL's host is a private, loopback or link-local address (or
+ * `localhost`), or the URL doesn't parse. Only the host is read: an address
+ * written in the path, query, fragment or user info says nothing about where
+ * the URL goes. No DNS here: a name that resolves to a private address is
+ * the callers' concern (`publicHttp.ts` checks the address it connects to).
+ */
 export function isPrivateUrl(urlString: string): boolean {
   try {
-    // IPv4-mapped (`::ffff:1.2.3.4`) and IPv4-compatible (`::1.2.3.4`)
-    // IPv6 forms embed a dotted-quad, which Node's URL parser rewrites to
-    // hex (`::ffff:a00:1`). Inspect the raw URL string FIRST for the literal
-    // mapped form and classify the embedded v4, so public addresses
-    // (`::ffff:8.8.8.8`) aren't over-blocked.
-    const rawMapped = /\[(?:::ffff:|::)(\d{1,3}(?:\.\d{1,3}){3})\]/i.exec(urlString);
-    if (rawMapped) {
-      return isPrivateUrl(`http://${rawMapped[1]}`);
-    }
-
     const { hostname } = new URL(urlString);
     const ip6 = hostname.startsWith('[') && hostname.endsWith(']')
       ? hostname.slice(1, -1)
       : hostname;
     // Decode IPv4-mapped, IPv4-compatible and NAT64 (`64:ff9b::/96`) IPv6
-    // forms — including compressed-HEX encodings an attacker can supply
-    // directly — to their embedded dotted-quad and classify by THAT. A
+    // forms to their embedded dotted-quad and classify by THAT. Node's URL
+    // parser writes a mapped dotted-quad in hex (`::ffff:a00:1`), and an
+    // attacker can supply the hex directly, so both spellings land here. A
     // hex-encoded PUBLIC address stays allowed (`::ffff:808:808` → `8.8.8.8`).
     const embeddedV4 = extractEmbeddedIPv4(ip6);
     if (embeddedV4) {
@@ -714,11 +726,7 @@ export function isPrivateUrl(urlString: string): boolean {
       // CGNAT range 100.64.0.0/10 (RFC 6598) and 0.0.0.0/8.
       /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(normalised) ||
       /^0\./.test(normalised) ||
-      ip6 === '::1' ||
-      ip6 === '::' ||
-      /^fc00:/i.test(ip6) ||
-      /^fd[0-9a-f]{2}:/i.test(ip6) || // fd00::/8 — the rest of the IPv6 ULA range
-      /^fe80:/i.test(ip6)
+      isPrivateIPv6(ip6)
     );
   } catch (err) {
     console.warn('[pathSecurity] isPrivateUrl: unparseable URL, treating as private', { urlString, err });

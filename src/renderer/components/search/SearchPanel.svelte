@@ -3,7 +3,6 @@
   import { uiStore } from '../../stores/ui.svelte';
   import { navigateToTile } from '../../lib/utils/navigation.svelte';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
-  import SearchFindAllPopup from './SearchFindAllPopup.svelte';
   import IconButton from '../shared/IconButton.svelte';
   import { replaceableMatches } from '../../lib/search/runSearch';
   import { replaceAllConfirmBody, searchedText, ONLY_SYNTAX_MATCHES, TOO_MANY_TO_REPLACE } from '../../lib/search/replaceAllText';
@@ -40,7 +39,6 @@
   let dragOffsetX = 0;
   let dragOffsetY = 0;
 
-  let findAllOpen = $state(false);
   // No focus trap: the panel is a floating overlay, not a modal. The user
   // must remain free to click the canvas behind it to verify a match
   // visually before pressing Replace. ESC closes the panel; Tab cycles
@@ -48,10 +46,7 @@
   // back into a modal cycle.
 
   $effect(() => {
-    if (!searchStore.open) {
-      findAllOpen = false;
-      return;
-    }
+    if (!searchStore.open) return;
     // First render after open — focus the find input. Wait one microtask
     // so bind:this has populated.
     queueMicrotask(() => {
@@ -394,14 +389,6 @@
         </IconButton>
         <button
           type="button"
-          class="text-btn"
-          onclick={() => (findAllOpen = true)}
-          disabled={searchStore.matches.length === 0}
-        >
-          Find All
-        </button>
-        <button
-          type="button"
           class="text-btn toggle"
           aria-pressed={searchStore.mode === 'replace'}
           onclick={toggleReplace}
@@ -522,9 +509,6 @@
     {/if}
   </section>
 
-  {#if findAllOpen}
-    <SearchFindAllPopup onclose={() => (findAllOpen = false)} />
-  {/if}
 {/if}
 
 <style>

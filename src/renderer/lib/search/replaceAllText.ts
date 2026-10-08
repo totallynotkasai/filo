@@ -4,15 +4,12 @@
  */
 
 import type { ParsedQuery } from './queryParser';
+import { plural } from '../utils/plural';
 
 /** Replace All refuses a result list cut short at the match cap. */
 export const TOO_MANY_TO_REPLACE = 'Too many matches to replace safely; narrow the search.';
 
 const NAMED_FILES = 5;
-
-function plural(n: number, word: string, many = `${word}s`): string {
-  return `${n} ${n === 1 ? word : many}`;
-}
 
 /** What Replace leaves alone inside a note, in the user's words. */
 export const SYNTAX_KINDS = 'list markers, rules, table lines, link addresses and HTML tags';

@@ -27,6 +27,7 @@
   } from '../../lib/templates/templateService';
   import type { LayoutTemplate } from '../../schema/index';
   import type { LayoutTemplateRecord } from '../../lib/templates/layoutTemplateStore';
+  import { plural } from '../../lib/utils/plural';
 
   /**
    * Unified Template Browser. Two sections:
@@ -382,7 +383,7 @@
                     {record.template.name}
                   </span>
                 {/if}
-                <span class="layout-info">{record.template.tiles.length} tile(s)</span>
+                <span class="layout-info">{plural(record.template.tiles.length, 'tile')}</span>
               </div>
 
               {#if renameError && renaming === record.template.id}

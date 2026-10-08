@@ -102,6 +102,7 @@ import { exclusiveVaultLifecycle, vaultLifecycleBusy } from './vaultLifecycleGua
 import { enqueueRenameQueueWork, resetRenameQueue } from './vaultRenameQueue';
 import { awaitHistoryWithNotice } from '../lib/vault/historySettleNotice';
 import { announceNewLoadFailureSnapshots, type OpenRecoveryContext } from '../lib/vault/recoveryCopies';
+import { plural } from '../lib/utils/plural';
 
 /**
  * Vault store — owns the open vault's lifecycle (open/close/save), the
@@ -532,7 +533,7 @@ async function runRecoverySequencer(newVaultPath: string, opened?: OpenRecoveryC
       const locations = quitFailure.files.map((f) => f.preservedPath).join('\n');
       uiStore.pushToast({
         text:
-          `Filo couldn't fully save ${quitFailure.files.length} file(s) before the last quit. ` +
+          `Filo couldn't fully save ${plural(quitFailure.files.length, 'file')} before the last quit. ` +
           `The unsaved bytes were preserved on disk — recover or delete them:\n${locations}`,
         type: 'error',
         duration: 0,

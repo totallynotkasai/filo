@@ -20,7 +20,7 @@
   import { resolveTitleCommitValues, visibleTitleHtml, type ResolvedTitleCommit } from '../../lib/editor/titleCommit';
   import { historyStore } from '../../stores/history.svelte';
   import { registerComponentFlush } from '../../lib/boards/componentFlush';
-  import { takeTitleEdit } from '../../lib/boards/newTileTitle';
+  import { newTitleEditEnded, takeTitleEdit } from '../../lib/boards/newTileTitle';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
   import { recreateMissingNote } from '../../lib/notes/recreateNote';
   import { withPlaceholderRename } from '../../lib/notes/placeholderNames';
@@ -134,11 +134,13 @@
 
   async function commitTitleEdit() {
     const snap = snapshotEditorTitle();
+    const wasNew = editingNewTile;
     destroyTitleEditor();
     isEditing = false;
     editingNewTile = false;
-    if (!snap) return;
-    await applyTitleCommit(snap, false);
+    if (snap) await applyTitleCommit(snap, false);
+    // Told once the title is saved, so a filter judges the tile by its new title.
+    if (wasNew) newTitleEditEnded(tile.id);
   }
 
   /**
@@ -180,6 +182,7 @@
   function cancelTitleEdit() {
     destroyTitleEditor();
     isEditing = false;
+    if (editingNewTile) newTitleEditEnded(tile.id);
     editingNewTile = false;
   }
 
@@ -256,6 +259,7 @@
       const snap = uncommittedTitle();
       destroyTitleEditor();
       if (snap) queueMicrotask(() => void applyTitleCommit(snap, true));
+      if (editingNewTile) newTitleEditEnded(tile.id);
     };
   });
 

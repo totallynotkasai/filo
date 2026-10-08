@@ -173,6 +173,12 @@ export function rebuildPlacementsFromDndItems(args: {
     const end = sortedSections[i + 1]?.position ?? placements.length;
     fallbackSlice.set(s.id, placements.slice(start, end));
   }
+  const realSectionById = new Map(sections.map((s) => [s.id, s]));
+  // A drawn id that is neither a real section nor the leading bucket is the
+  // board's stand-in "Task List" section (a board with no sections), which
+  // holds every task no real section owns: the leading bucket's.
+  const sliceBefore = (sid: string): TaskPlacement[] =>
+    fallbackSlice.get(sid) ?? (realSectionById.has(sid) ? [] : (fallbackSlice.get(leadingSectionId) ?? []));
 
   // The mirrors hold only the rows on screen. Rows hidden by a collapsed
   // parent, "Show completed" off, a smart list or a filter are in no mirror,
@@ -184,7 +190,6 @@ export function rebuildPlacementsFromDndItems(args: {
 
   const nextPlacements: TaskPlacement[] = [];
   const nextSections: TaskListSection[] = [];
-  const realSectionById = new Map(sections.map((s) => [s.id, s]));
   const emitted = new Set<string>();
   let cursor = 0;
 
@@ -196,9 +201,9 @@ export function rebuildPlacementsFromDndItems(args: {
       const visible = items
         .map((it) => placementByTileId.get(it.id))
         .filter((p): p is TaskPlacement => p !== undefined);
-      slice = withHiddenRows(visible, fallbackSlice.get(sid) ?? [], onScreen);
+      slice = withHiddenRows(visible, sliceBefore(sid), onScreen);
     } else {
-      slice = fallbackSlice.get(sid) ?? [];
+      slice = sliceBefore(sid);
     }
     slice = slice.filter((p) => {
       if (emitted.has(p.tileId)) return false;

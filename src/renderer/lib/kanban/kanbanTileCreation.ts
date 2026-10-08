@@ -36,6 +36,17 @@ export interface KanbanTileCreationDeps {
   getTemplatePickerColumnId: () => string | null;
   tickAndPersist: () => void;
   announce: (message: string) => void;
+  /**
+   * Shows a card through the filters and the find bar until the returned
+   * function is called (`KanbanFiltersAndSort.showWhileNamed`).
+   */
+  showWhileNamed: (tileId: string) => () => void;
+  /** Whether the board draws the card now (`cardsOnScreen`). */
+  isShown: (tileId: string) => boolean;
+  /** The card's title as the board shows it, once it is on the board. */
+  titleOf: (tileId: string) => string | undefined;
+  /** Moves focus from inside the board to the board itself, before a card it is on leaves the screen. */
+  keepFocusOnBoard: () => void;
 }
 
 export interface KanbanTileCreator {
@@ -69,6 +80,39 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
     tickAndPersist,
     announce,
   } = deps;
+
+  /**
+   * Says where a new card went when the board doesn't draw it (a filter, the
+   * find bar, a collapsed column), as the Task List does, instead of letting
+   * it vanish.
+   */
+  function sayIfHidden(tileId: string, columnId: string): void {
+    if (deps.isShown(tileId)) return;
+    const column = getBoard()?.columns.find((c) => c.id === columnId);
+    const title = deps.titleOf(tileId);
+    const what = title ? `"${title}"` : 'A new card';
+    const where = column ? ` to "${column.title}"` : '';
+    const why = column?.collapsed ? ', which is collapsed.' : ', but the filters hide it.';
+    uiStore.toast(`${what} was added${where}${why}`, 'info', 4000);
+    deps.keepFocusOnBoard();
+  }
+
+  /**
+   * A new card a filter would hide stays on screen while it is named; the
+   * returned function lets it go once its title is done. A collapsed column
+   * draws no card, so that one is said at once.
+   */
+  function showWhileNamed(tileId: string, columnId: string): () => void {
+    if (getBoard()?.columns.find((c) => c.id === columnId)?.collapsed) {
+      sayIfHidden(tileId, columnId);
+      return () => {};
+    }
+    const release = deps.showWhileNamed(tileId);
+    return () => {
+      release();
+      sayIfHidden(tileId, columnId);
+    };
+  }
 
   async function createTile(type: KanbanNewTileType): Promise<void> {
     const board = getBoard();
@@ -133,8 +177,9 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
       new AddCardCommand(board.id, targetColumnId, def, placements.length),
     );
     tickAndPersist();
-    // Typing next names the card, instead of pressing Add Card again.
-    editTitleWhenShown(tileId);
+    // Typing next names the card, instead of pressing Add Card again; a
+    // filter that would hide it lets it through until the title is done.
+    editTitleWhenShown(tileId, showWhileNamed(tileId, targetColumnId));
     const columnTitle = columns.find((c) => c.id === targetColumnId)?.title ?? 'column';
     announce(`Card added to ${columnTitle}`);
   }
@@ -188,11 +233,14 @@ export function makeKanbanTileCreator(deps: KanbanTileCreationDeps): KanbanTileC
 
     const columns = board.columns;
     const placements = (columns.find((c) => c.id === targetColumnId)?.tilePlacements ?? []) as KanbanTilePlacement[];
-    historyStore.execute(
+    // A refused add has said so already (the history store's toast).
+    const added = await historyStore.execute(
       new AddCardCommand(board.id, targetColumnId, def, placements.length),
-    );
+    ).then(() => true, () => false);
     tickAndPersist();
+    if (!added) return;
     uiStore.toast(`Created card from template "${ref.name}"`, 'success', 1800);
+    sayIfHidden(def.id, targetColumnId);
   }
 
   return { createTile, createTileFromTemplate };

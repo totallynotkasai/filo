@@ -1,7 +1,7 @@
 # Audit-29 implementation plan (draft, 2026-10-08)
 
 - **Source:** [AUDIT29_FULL_AUDIT_2026-10-08.md](AUDIT29_FULL_AUDIT_2026-10-08.md). Finding IDs (A-01, C-08 …) refer to it. Write "Audit-29 A-01" in commit messages, since Audit-28 used the same letters.
-- **Status:** in progress. Phases 0, 1 and 2 done 2026-10-08 (outcomes in section 4). Decided: D1 (a), tight paragraphs; D3 (`npm run preview`, then `npm start`; no dev guard); D4 (push now, for Phase 0; Phases 1 and 2 stay on this PC); D5 (follow a note moved and edited at once as a move). D2 and D6 to D8 still have only their defaults.
+- **Status:** in progress. Phases 0, 1, 2 and 3 done 2026-10-08 (outcomes in section 4). Decided: D1 (a), tight paragraphs; D2 (Tab one level in, under the nearest row above at its level); D3 (`npm run preview`, then `npm start`; no dev guard); D4 (push now, for Phase 0; Phases 1 to 3 stay on this PC); D5 (follow a note moved and edited at once as a move); for 3.3, a new card a filter would hide stays on screen until it is named. D6 to D8 still have only their defaults.
 - **Scores:** out of 10, as in the report. **Hard:** 0/10 = minutes, 5/10 = a few days with tests, 10/10 = weeks.
 
 ## 1. How this plan works
@@ -314,3 +314,54 @@ DOM nodes (1,789) and event listeners (170) stayed the same throughout. The firs
 - BL-09 gains a case: the Chromium spec "ArrowDown and ArrowUp keep the column" failed once in the first full `ci:verify` of this phase (the caret still on its first line when the wait ran out), then passed 3 of 3 alone. No editor code changed in this phase.
 
 **For you:** close Filo if it's open, then run `npm run preview` once. Settings should read `Filo 0.2.3 (<commit>)`. On the days after, open Filo with `npm start`. Your agent can now move and edit notes while Filo is open; if it moves a note you were typing in, you'll get one Reload / Keep mine question on the moved note.
+
+### Phase 3 (done 2026-10-08)
+
+**Decisions taken:** D2, the default: Tab indents one level, under the nearest row above at the same level, and a refused indent lets Tab move focus on. For 3.3 you chose the second option the plan offered: a new card a filter would hide stays on screen until it is named. Phase 3 stays on this PC with Phases 1 and 2: committed, not pushed.
+
+**What changed**
+
+| # | Change |
+|---|---|
+| 3.1 (size) | The Kanban board's own keys moved to new `lib/kanban/kanbanBoardKeys.ts`, and its two "cards on screen" lists became one function, `cardsOnScreen` (`kanbanKeyboardNav.ts`), which the arrows and Shift-click ranges both read. The new-card handling went to `kanbanTileCreation.ts`. `KanbanBoard.svelte` went from 985 to 943 lines of code. |
+| 3.2 (E-02) | `cardsOnScreen` gives a collapsed column no cards, so a Shift-click range and the arrows skip it. |
+| 3.3 (E-05) | A card added while the find bar or a filter would hide it is let through the filter (`KanbanFiltersAndSort.showWhileNamed`) until its title edit ends, so it shows with its title open and typing names it. Then, if the filter hides it, a toast says so, as on the Task List ("'Zulu' was added to 'Doing', but the filters hide it."), and focus goes back to the board. `newTileTitle.ts` now tells its caller when the edit it opened ends (`newTitleEditEnded`, from `TileHeader`), or at once when no header took it within 2 s. |
+| 3.4 (E-06) | The arrows move keyboard focus to the card they select, and only that card is a Tab stop (svelte-dnd-action's own tab stops on every card and every column's card zone are off: `zoneItemTabIndex` / `zoneTabIndex`). The menu key or Shift+F10 then opens the card's menu on the card (`cardMenuPoint`), and Move to column moves it. The comment in `kanbanContextMenus.ts` now says what the code does. |
+| 3.5 (E-03) | Alt+Up / Alt+Down move a task, with its subtasks, past the row drawn above or below it at the same level (new `lib/tasklist/rowMoves.ts`), then rebuild the list from the order as drawn, as a drop does (`rebuildPlacementsFromDndItems`). Under a sort other than Manual, that order becomes the manual order in one undo step with the switch, with the existing toast. Focus stays on the moved task. |
+| 3.6 (E-04, D2) | Tab indents one level, under the row above at the same level (`indentParentFor`); a refused indent still says why but no longer swallows the key. Design doc updated. |
+| 3.7 (E-01) | The Task List's Escape listener prevents the key only when it cancelled a drag, so Escape closes the Search panel with focus on a row, and in a split view next to a Task List. |
+| 3.8 (E-07) | The Task List's commands moved to new `lib/tasklist/taskListShortcuts.ts`; the bare N acts only with focus in the board (`focusIsInBoard`), as on Kanban and the Mind Map. |
+| 3.9 (E-13) | Help → Shortcuts lists every key by area: "Everywhere", then Mind Map, Kanban and Task List (each board's commands whether or not one is open, then the fixed keys of its rows or cards), then Text (the editor's keys). A board's command can be rebound with no board of that kind open; a rebind is refused only where keys would collide (`lib/settings/shortcutHelp.ts`). The lists are in new `constants/shortcutReference.ts`, which the board modules register from. The stale comment in `KanbanBoard.svelte` is fixed. Design doc updated. |
+| 3.10 (BL-35) | The Table of Contents' header has a fold button: folded, only the header shows. The choice is saved on the board (`settings.tocFolded`, optional, so no format change) as one undo step, as a section's fold is. With nothing saved and the panel never moved, it opens folded where its first place would cover the list (`tocFitsBeside`), its header just under the quick-add box. BL-35 leaves the backlog. |
+
+Version 0.2.4.
+
+**Deviations from the plan**
+
+1. **Alt+Up / Alt+Down moved the wrong task (3.5, found and fixed).** The board's capture-phase key handler took ArrowUp and ArrowDown whatever the modifiers, moving focus to the next row before the Alt+Up command ran, so the command moved the row above the one the user was on. The finder's repro called the move directly, so it missed this; the new characterisation spec presses the keys. Bare arrows only move focus now.
+2. **Two drag bugs on a Task List with no sections (found while building 3.5, fixed).** Such a board draws one stand-in section, whose id is no real section's. A drop there lost any row not on screen (a folded parent's subtask, a completed task with Show completed off), so the drag was refused with "the list changed during the drag"; and a multi-row drop always went to the end of the list. The rebuild now treats the stand-in section as holding the tasks no real section owns, as the leading bucket does, and so does the multi-row drop. Alt+Up uses the same rebuild.
+3. **Tab stays inside its group (3.6).** Under a Group By, the first row of a group has no row at its level above it, so Tab there moves focus on, and Alt+Up / Alt+Down stop at the group's edge, rather than nesting a task under, or moving it past, a task in another group (which the grouping would put back).
+4. **A card added to a collapsed column, and a card made from a template, say where they went too (3.3).** The same "disappears without a word" as E-05: a card added to a collapsed column (from its menu or N) says "…, which is collapsed." at once; a template card the filter hides says so.
+5. **More Kanban keyboard fixes in 3.4:** Enter on a button inside the board (Add Column, a card's date button) opened the selected card instead of pressing the button; it now opens a card only from the board or a card. Delete moves focus to the board before the card goes, so the keys go on working. The arrows set the Shift-click anchor. An arrow from a selected card that is no longer drawn starts at the first card (it did nothing).
+6. **The arrows bring a card clear of the docked sidebar (found in the built app).** After ArrowRight then ArrowLeft, the board stayed scrolled so the focused card's left edge sat under the docked sidebar lying over the board (scrolling into view didn't know about it). The board's scroll padding now matches the space the sidebar covers, and the side toolbar's on the right.
+7. **The row keys stay the views' own keys (3.9).** The plan said "registered commands where they can be". Registering the arrows, Space, Delete or Enter would change which handler takes a key on every board, the "who handles this key" rule that report section 5 proposes and no phase schedules. Help lists them as fixed keys instead, and its hint says they can't be rebound. The Mind Map's commands now show with no Mind Map open too.
+8. **One test harness fix.** The characterisation harness picked "the active tab" with a selector that also matched the Task List's smart-list tabs, so splitting a Task List's tab failed. It now looks in the tab bar.
+
+**New characterisation spec** `boardKeys.test.ts` (11 cases, registered in the `characterisation-suite` gate), through the whole app: a collapsed column in a Shift-click range and under ArrowRight; the arrows, the menu key and Move to column; a card added while the find bar hides it, named to something it hides and to something it shows; Escape and the Search panel on a Task List row, on Kanban and in a split view; N from a sidebar row; Alt+Up under the priority sort and past a task with subtasks; Tab one level in, and refused; the Table of Contents' fold saved on the board. **All 11 fail on the code before this phase** (run in a worktree of b4034d8).
+
+**New E2E spec** `boardKeys.e2e.ts` (3 tests) on the built app, where Chromium itself turns the menu key and Shift+F10 into a menu at the focused card: the collapsed column, the arrows, both keys, the menu on the card and Move to column; Alt+Up and Tab on a Task List under the priority sort; the Table of Contents folded at 1,280 px, clear of the quick-add box, and unfolded by its button.
+
+**Unit tests:** `rowMoves.test.ts`, `taskListKeyboardNav.test.ts` (from the finder's repro), `kanbanBoardKeys.test.ts`, `shortcutHelp.test.ts`, and new cases in `blockMove`, `taskDragHiddenRows`, `kanbanFiltersAndSort`, `keyboardSelectionInView`, `newTileTitle`, `tocPlacement` and `shortcutsListOnce`. `taskIndentRules.test.ts` pinned the old Tab rule; it now pins D2's.
+
+**Checks**
+
+| Check | Result |
+|---|---|
+| `ci:verify`, main checkout (Phase 3 complete, version 0.2.4) | Green in 331 s: lint, knip, svelte-check (923 files, 0 errors), main typecheck, 884 test files (8,696 passed, 5 skipped), build, 91/91 gates. An earlier run, before deviation 6 and the split-view case, was green too. |
+| E2E with `FILO_E2E_SCALE=1` | 50/50 in 3.6 min (the 47 before plus `boardKeys.e2e.ts`'s 3), the axe scan and the scale budgets in. |
+| Hands-on, the built app | Through `boardKeys.e2e.ts`'s screenshots (`dist/`, a scratch profile): the focused card's ring, the menu key's menu on the card, the folded Table of Contents at 1,280 px beside the smart-list tabs. Deviation 6 was found there. A probe listing every focusable element on a Task List and a Kanban board found BL-47. |
+| Corpus | Not run: nothing in the editor or Markdown writing changed. |
+
+**New findings:** BL-47 (backlog): svelte-dnd-action leaves a Tab stop on every Task List section, section and row zone and row wrapper, and every Kanban column wrapper, none of which does anything there (Impact 1/10, Hard 1/10). This phase turned them off for Kanban's cards only.
+
+**For you:** close Filo if it's open, then run `npm run preview` once. Settings should read `Filo 0.2.4 (<commit>)`. Then try a Kanban board from the keyboard: click the board, press the arrows to move between cards, and the menu key (or Shift+F10) to move one to another column. On a Task List, Alt+Up / Alt+Down move the task you're on, and Tab nests it under the task above at its level. Help → Shortcuts now lists every key. On the days after, open Filo with `npm start`.

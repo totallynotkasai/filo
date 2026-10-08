@@ -290,7 +290,7 @@ export async function chooseRawConflict(app: CharApp, label: 'Use the new versio
 
 /** Close the active tab from its close button. */
 export async function closeActiveTab(app: CharApp): Promise<void> {
-  const active = $(app.el, '.tab.active, .tab[aria-selected="true"]');
+  const active = $(app.el, '.tab-bar .tab.active, .tab-bar .tab[aria-selected="true"]');
   const btn = active.querySelector('.tab-close, button[aria-label^="Close"]') as HTMLElement | null;
   if (!btn) throw new Error('active tab has no close button');
   click(btn);
@@ -299,7 +299,7 @@ export async function closeActiveTab(app: CharApp): Promise<void> {
 
 /** The name the active tab shows. */
 export function activeTabName(app: CharApp): string {
-  const active = $(app.el, '.tab.active, .tab[aria-selected="true"]');
+  const active = $(app.el, '.tab-bar .tab.active, .tab-bar .tab[aria-selected="true"]');
   return (active.getAttribute('title') ?? '').replace(/ \([a-z]+\) — .*$/, '');
 }
 
@@ -322,7 +322,7 @@ export async function retryUnloadedBoardTab(app: CharApp): Promise<void> {
 
 /** Right-click the active tab → Split Right. */
 export async function splitActiveTabRight(app: CharApp): Promise<void> {
-  contextMenu($(app.el, '.tab.active, .tab[aria-selected="true"]'));
+  contextMenu($(app.el, '.tab-bar .tab.active, .tab-bar .tab[aria-selected="true"]'));
   await settle();
   await chooseMenuItem(app, 'Split Right');
   await waitFor(() => $$(app.el, '.pane-view').length === 2, 'two panes');
@@ -1026,7 +1026,7 @@ export async function clickTagPopupItem(title: string): Promise<void> {
 
 /** The board type the active tab shows (`mindmap`, `kanban`, `tasklist`, `document`). */
 export function activeTabKind(app: CharApp): string {
-  const active = $(app.el, '.tab.active, .tab[aria-selected="true"]');
+  const active = $(app.el, '.tab-bar .tab.active, .tab-bar .tab[aria-selected="true"]');
   return /\(([a-z]+)\)/.exec(active.getAttribute('title') ?? '')?.[1] ?? '';
 }
 
@@ -1385,9 +1385,19 @@ export async function shortcutsListed(app: CharApp): Promise<string[]> {
   click($(app.el, '.side-btn[title="Help"]'));
   await waitFor(() => document.querySelector('.shortcut-row') !== null, 'the shortcuts list');
   const rows = $$(document, '.shortcut-row').map((r) =>
-    `${(r.querySelector('.shortcut-desc')?.textContent ?? '').trim()}: ${(r.querySelector('.shortcut-key-btn, .shortcut-key')?.textContent ?? '').trim()}`);
+    `${helpRowLabel(r)}: ${(r.querySelector('.shortcut-key-btn, .shortcut-key')?.textContent ?? '').trim()}`);
   await closeModal();
   return rows;
+}
+
+/**
+ * A Help → Shortcuts row as it reads with its heading: a board's row
+ * under "Kanban" reads "Kanban: Add column"; one under "Everywhere", its label.
+ */
+export function helpRowLabel(row: Element): string {
+  const label = (row.querySelector('.shortcut-desc')?.textContent ?? '').trim();
+  const area = (row.closest('[data-area]') as HTMLElement | null)?.dataset.area;
+  return area && area !== 'Everywhere' ? `${area}: ${label}` : label;
 }
 
 /**
@@ -1437,7 +1447,7 @@ export function kanbanColumnsDragActive(app: CharApp): number {
 
 /** The labels the active tab's context menu offers. */
 export async function activeTabMenuLabels(app: CharApp): Promise<string[]> {
-  contextMenu($(app.el, '.tab.active, .tab[aria-selected="true"]'));
+  contextMenu($(app.el, '.tab-bar .tab.active, .tab-bar .tab[aria-selected="true"]'));
   await settle();
   const labels = $$(app.el, '.context-menu .menu-item, .context-menu [role="menuitem"]')
     .map((e) => (e.textContent ?? '').trim())
@@ -1449,7 +1459,7 @@ export async function activeTabMenuLabels(app: CharApp): Promise<string[]> {
 
 /** Right-click the active tab → Rename Board, type `name`, press Enter. */
 export async function renameActiveTab(app: CharApp, name: string): Promise<void> {
-  contextMenu($(app.el, '.tab.active, .tab[aria-selected="true"]'));
+  contextMenu($(app.el, '.tab-bar .tab.active, .tab-bar .tab[aria-selected="true"]'));
   await settle();
   await chooseMenuItem(app, 'Rename Board');
   const input = $(app.el, '.tab input') as HTMLInputElement;

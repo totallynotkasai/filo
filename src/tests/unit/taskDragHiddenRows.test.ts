@@ -166,6 +166,32 @@ describe('Task List drag keeps hidden rows', () => {
     expect(seq(reorders[0]!.nextPlacements)).toEqual(['h', 'c', 'a', 'b']);
   });
 
+  // A board with no sections draws one stand-in "Task List" section for all
+  // its tasks (its id is no real section's).
+  it('on a board with no sections, a drop keeps a hidden row', () => {
+    const { controller, reorders, toasts } = setup({
+      rows: [row('a'), row('done'), row('b')],
+      placements: [p('a', 0), p('done', 1), p('b', 2)],
+      sections: [],
+      visible: { __default__: ['a', 'b'] },
+    });
+    drop(controller, '__default__', '__default__', 'b', ['a', 'b'], ['b', 'a']);
+    expect(toasts).toEqual([]);
+    expect(seq(reorders[0]!.nextPlacements)).toEqual(['b', 'a', 'done']);
+  });
+
+  it('on a board with no sections, a multi-row drop lands where it was dropped, not at the end', () => {
+    const { controller, reorders } = setup({
+      rows: [row('a'), row('b'), row('c'), row('d')],
+      placements: [p('a', 0), p('b', 1), p('c', 2), p('d', 3)],
+      sections: [],
+      visible: { __default__: ['a', 'b', 'c', 'd'] },
+      selected: new Set(['c', 'd']),
+    });
+    drop(controller, '__default__', '__default__', 'c', ['a', 'b', 'c', 'd'], ['c', 'a', 'b', 'd']);
+    expect(seq(reorders[0]!.nextPlacements)).toEqual(['c', 'd', 'a', 'b']);
+  });
+
   it('a collapsed parent dragged below a sibling takes its subtasks along', () => {
     const { controller, reorders } = setup({
       rows: [row('a'), row('a1', 'a'), row('b'), row('c')],

@@ -215,7 +215,7 @@ export class KanbanMultiSelect {
     }
   }
 
-  openBulkContextMenu(e: MouseEvent, _tileId: string): void {
+  openBulkContextMenu(at: { x: number; y: number }, _tileId: string): void {
     void _tileId;
     // The menu has no submenus, so the move targets sit inline under their
     // own heading.
@@ -226,6 +226,6 @@ export class KanbanMultiSelect {
       onRemove: () => this.deleteSelectedTiles(),
       onMoveTo: (columnId) => this.moveSelectedTilesToColumn(columnId),
     });
-    uiStore.showContextMenu(e.clientX, e.clientY, items);
+    uiStore.showContextMenu(at.x, at.y, items);
   }
 }

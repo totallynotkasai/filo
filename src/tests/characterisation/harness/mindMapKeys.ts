@@ -6,13 +6,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { settle, waitFor, quiesce, type CharApp } from './app';
-import { $, $$, click, closeModal, revealInSidebar } from './actions';
+import { $, $$, click, closeModal, helpRowLabel, revealInSidebar } from './actions';
 
 /** Help → Shortcuts → click the binding of the row described `description` → press `key`. */
 export async function rebindInHelp(app: CharApp, description: string, key: string): Promise<void> {
   click($(app.el, '.side-btn[title="Help"]'));
   await waitFor(() => document.querySelector('.shortcut-row') !== null, 'the shortcuts list');
-  const row = $$(document, '.shortcut-row').find((r) => (r.querySelector('.shortcut-desc')?.textContent ?? '').trim() === description);
+  const row = $$(document, '.shortcut-row').find((r) => helpRowLabel(r) === description);
   if (!row) throw new Error(`no shortcut row "${description}"`);
   click($(row, '.shortcut-key-btn'));
   await settle();

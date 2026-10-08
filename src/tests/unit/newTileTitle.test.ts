@@ -4,7 +4,7 @@
  * board's single-letter keys act only while focus is inside the board.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { editTitleWhenShown, takeTitleEdit } from '@renderer/lib/boards/newTileTitle';
+import { editTitleWhenShown, newTitleEditEnded, takeTitleEdit } from '@renderer/lib/boards/newTileTitle';
 import { focusIsInBoard } from '@renderer/lib/utils/boardFocus';
 import { registerKanbanShortcuts } from '@renderer/lib/kanban/kanbanShortcuts';
 import { initKeyboardShortcuts, _resetForTests } from '@renderer/core/hotkeys';
@@ -27,6 +27,27 @@ describe('newTileTitle', () => {
     editTitleWhenShown('offscreen');
     vi.advanceTimersByTime(2500);
     expect(takeTitleEdit('offscreen')).toBe(false);
+  });
+
+  it('tells the caller once the edit its header opened ends', () => {
+    const done = vi.fn();
+    editTitleWhenShown('card', done);
+    expect(takeTitleEdit('card')).toBe(true);
+    expect(done).not.toHaveBeenCalled();
+    newTitleEditEnded('card');
+    expect(done).toHaveBeenCalledTimes(1);
+    newTitleEditEnded('card');
+    expect(done).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the caller at once when no header takes the request in time', () => {
+    vi.useFakeTimers();
+    const done = vi.fn();
+    editTitleWhenShown('collapsed', done);
+    vi.advanceTimersByTime(2100);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(takeTitleEdit('collapsed')).toBe(false);
+    expect(done).toHaveBeenCalledTimes(1);
   });
 });
 

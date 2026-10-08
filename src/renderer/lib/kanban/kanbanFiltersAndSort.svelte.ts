@@ -47,8 +47,20 @@ export class KanbanFiltersAndSort {
   activeSortBy = $state<KanbanSortBy>('manual');
   activeFilterMenu = $state(false);
   activeSortMenu = $state(false);
+  /**
+   * Cards just added and still being named: shown whatever the filters say,
+   * so the card the user made doesn't vanish before they can type its title
+   * (`showWhileNamed`).
+   */
+  readonly beingNamed = new SvelteSet<string>();
 
   constructor(private deps: KanbanFiltersAndSortDeps) {}
+
+  /** Shows `tileId` through the filters until the returned function is called. */
+  showWhileNamed(tileId: string): () => void {
+    this.beingNamed.add(tileId);
+    return () => { this.beingNamed.delete(tileId); };
+  }
 
   /**
    * Returns true if a tile passes all currently-active filters (tag,
@@ -145,7 +157,7 @@ export class KanbanFiltersAndSort {
     const allTilesById = this.deps.getAllTilesById();
     const filtered = all.filter((p) => {
       const tile = allTilesById[p.tileId];
-      return tile ? this.tileMatchesFilters(tile) : false;
+      return tile ? this.beingNamed.has(p.tileId) || this.tileMatchesFilters(tile) : false;
     });
     return this.sortPlacements(filtered, allTilesById);
   }

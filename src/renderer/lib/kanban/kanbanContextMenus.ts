@@ -18,7 +18,8 @@ interface CardMenuOpts {
 /**
  * One card's menu. Tags and Lock live on the card's own header, so the menu
  * keeps to what the header doesn't offer. "Move to column" moves the card
- * without a drag (from the keyboard too: the menu key on a selected card).
+ * without a drag, from the keyboard too: the arrow keys move focus to a
+ * card, and the menu key or Shift+F10 opens its menu (`cardMenuPoint`).
  */
 export function buildCardContextMenu(opts: CardMenuOpts): ContextMenuItem[] {
   const items: ContextMenuItem[] = [];
@@ -40,6 +41,23 @@ export function buildCardContextMenu(opts: CardMenuOpts): ContextMenuItem[] {
     );
   }
   return items;
+}
+
+/**
+ * Where a card's menu opens: at the pointer for a right-click. The menu key
+ * and Shift+F10 open it at the focused card, at a point the browser picks,
+ * which may lie at the card's edge or the page's corner: the menu then opens
+ * a little inside the card's top-left corner.
+ */
+export function cardMenuPoint(e: MouseEvent, card: Element | null): { x: number; y: number } {
+  const rect = card?.getBoundingClientRect();
+  if (!rect) return { x: e.clientX, y: e.clientY };
+  const onCard = e.clientX > rect.left && e.clientX < rect.right && e.clientY > rect.top && e.clientY < rect.bottom;
+  if (onCard) return { x: e.clientX, y: e.clientY };
+  return {
+    x: Math.round(rect.left + Math.min(24, rect.width / 2)),
+    y: Math.round(rect.top + Math.min(24, rect.height / 2)),
+  };
 }
 
 interface ColumnMenuOpts {

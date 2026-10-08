@@ -498,7 +498,10 @@ export class TaskDragController {
     // shuffle (anchor); non-anchor members are still in their source
     // sections' items mirrors.
     if (isMultiDrag) {
-      const realTargetSectionId = sectionId === snap.leadingSectionId ? null : sectionId;
+      // The leading bucket, and the stand-in "Task List" a board with no
+      // sections draws, hold the tasks no real section owns.
+      const realTargetSectionId =
+        sectionId === snap.leadingSectionId || !sections.some((s) => s.id === sectionId) ? null : sectionId;
       const descendantIds = blockIds.filter((id) => id !== draggedId);
       // `items` holds only the rows on screen, so its index isn't an offset
       // into the section's placements when rows are hidden.

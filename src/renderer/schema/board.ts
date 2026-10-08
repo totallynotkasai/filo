@@ -353,6 +353,9 @@ const TaskListSettingsSchema = BaseBoardSettingsSchema.extend({
       height: z.number().finite(),
     })
     .optional(),
+  // The Table of Contents folded to its header. Absent: folded at first only
+  // where it would open over the list (`tocFitsBeside`).
+  tocFolded: z.boolean().optional(),
 }).passthrough();
 
 /**

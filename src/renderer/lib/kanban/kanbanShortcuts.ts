@@ -12,7 +12,7 @@
  * stands aside off the Mind Map, so here it adds a card like N does.
  */
 import { registerCommandWithShortcut } from '../../core/commandRegistry';
-import type { ShortcutBinding } from '../../core/hotkeys';
+import { KANBAN_SHORTCUTS } from '../../constants/shortcutReference';
 import { focusIsInBoard } from '../utils/boardFocus';
 
 export interface KanbanShortcutDeps {
@@ -25,16 +25,18 @@ export interface KanbanShortcutDeps {
   addColumn(): void;
 }
 
+type KanbanCommandId = (typeof KANBAN_SHORTCUTS)[number]['id'];
+
 /** Registers the board's shortcuts; the returned function removes them. */
 export function registerKanbanShortcuts(deps: KanbanShortcutDeps): () => void {
   const ownsBareKeys = (): boolean => deps.isActivePane() && focusIsInBoard(deps.boardRoot());
-  const shortcuts: Array<[string, string, ShortcutBinding, () => void, () => boolean]> = [
-    ['kanban:add-tile', 'Kanban: Add tile', { key: 'n' }, deps.addCard, ownsBareKeys],
-    ['kanban:new-card', 'Kanban: New card', { key: 'n', ctrl: true }, deps.addCard, deps.isActivePane],
-    ['kanban:add-column', 'Kanban: Add column', { key: 'n', shift: true }, deps.addColumn, ownsBareKeys],
-  ];
-  const unregister = shortcuts.map(([name, label, binding, execute, enabled]) =>
-    registerCommandWithShortcut({ name, label, description: label, binding, enabled, execute }));
+  const run: Record<KanbanCommandId, { execute: () => void; enabled: () => boolean }> = {
+    'kanban:add-tile': { execute: deps.addCard, enabled: ownsBareKeys },
+    'kanban:new-card': { execute: deps.addCard, enabled: deps.isActivePane },
+    'kanban:add-column': { execute: deps.addColumn, enabled: ownsBareKeys },
+  };
+  const unregister = KANBAN_SHORTCUTS.map(({ id, label, binding }) =>
+    registerCommandWithShortcut({ name: id, label, description: label, binding, ...run[id] }));
   return () => {
     for (const off of unregister) off();
   };

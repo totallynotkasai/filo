@@ -4,13 +4,12 @@
     getDefaultBinding,
     getHotkeyOverrides,
     setHotkeyOverride,
-    findBindingConflict,
     formatShortcut,
     bindingFromEvent,
     saveHotkeyOverrides,
-    type Shortcut,
     type ShortcutBinding,
   } from '../../core/hotkeys';
+  import { helpBindingConflict, helpDefaultBinding, helpSections } from '../../lib/settings/shortcutHelp';
   import { vaultStore } from '../../stores/vault.svelte';
   import { uiStore } from '../../stores/ui.svelte';
 
@@ -34,23 +33,11 @@
     { term: 'Tabs', definition: 'Tabs are used to organize boards and switch between them. The Tab Bar is located at the bottom of the screen. Use the Board Browser button to quickly open and close tabs.' },
   ];
 
-  // Shortcuts that aren't wired through the registry but are documented for users
-  // (text-formatting handled by Tiptap, gesture-based interactions).
-  const supplementalShortcuts: Array<{ keys: string; description: string }> = [
-    { keys: 'Ctrl+Shift+Arrow', description: 'Add the nearest tile in that direction to the selection (Mind Map)' },
-    { keys: 'Shift+Drag', description: 'Area Selection' },
-    { keys: 'Ctrl+B', description: 'Bold' },
-    { keys: 'Ctrl+I', description: 'Italic' },
-    { keys: 'Ctrl+U', description: 'Underline' },
-  ];
-
-  const registeredShortcuts = $derived.by(() => {
+  // Every key by area: the commands that work everywhere, then each board's
+  // (whether or not one is open) with its fixed keys, then the text's.
+  const sections = $derived.by(() => {
     void revision;
-    // A board shown in two split panes registers its commands once per pane;
-    // the list names each command once (a rebind applies to both).
-    const keyOf = (s: Shortcut): string => s.commandId ?? s.description;
-    const all = getAllShortcuts();
-    return all.filter((s, i) => all.findIndex((o) => keyOf(o) === keyOf(s)) === i);
+    return helpSections(getAllShortcuts(), getHotkeyOverrides());
   });
 
   const overrides = $derived.by(() => {
@@ -58,8 +45,13 @@
     return getHotkeyOverrides();
   });
 
-  function isOverridden(s: Shortcut): boolean {
-    return Boolean(s.commandId && overrides[s.commandId]);
+  function isOverridden(commandId: string): boolean {
+    return Boolean(overrides[commandId]);
+  }
+
+  /** The command `binding` would collide with if `commandId` took it, or null. */
+  function conflictFor(binding: ShortcutBinding, commandId: string): string | null {
+    return helpBindingConflict(binding, commandId, getAllShortcuts(), getHotkeyOverrides());
   }
 
   function commitChange() {
@@ -116,14 +108,9 @@
       return;
     }
 
-    const conflict = findBindingConflict(binding, capturingCommandId);
+    const conflict = conflictFor(binding, capturingCommandId);
     if (conflict) {
-      // Look up the conflicting shortcut's description for a friendlier label.
-      const conflictShortcut = getAllShortcuts().find(
-        (s) => (s.commandId ?? s.description) === conflict,
-      );
-      const conflictLabel = conflictShortcut?.description ?? conflict;
-      captureError = `${formatShortcut(binding)} is already bound to "${conflictLabel}". Change or reset that shortcut below first, then try again.`;
+      captureError = `${formatShortcut(binding)} is already bound to "${conflict}". Change or reset that shortcut below first, then try again.`;
       return;
     }
 
@@ -135,9 +122,9 @@
   }
 
   async function resetBinding(commandId: string) {
-    const def = getDefaultBinding(commandId);
+    const def = helpDefaultBinding(commandId, getDefaultBinding(commandId));
     if (!def) return;
-    const conflict = findBindingConflict(def, commandId);
+    const conflict = conflictFor(def, commandId);
     if (conflict) {
       uiStore.toast(`Default ${formatShortcut(def)} is currently bound to ${conflict}.`, 'error', 2500);
       return;
@@ -176,62 +163,59 @@
 
   {#if activeTab === 'shortcuts'}
     <div class="shortcuts-content">
-      <p class="shortcuts-hint">Click a shortcut to rebind it. Press Escape to cancel.</p>
+      <p class="shortcuts-hint">Click a shortcut to rebind it. Press Escape to cancel. The keys of rows, cards and text can't be rebound.</p>
 
-      <div class="shortcut-section">
-        <h3 class="section-title">Registered</h3>
-        <div class="shortcut-list">
-          {#each registeredShortcuts as s (s.commandId ?? s.description)}
-            {@const capturing = capturingCommandId === s.commandId}
-            <div class="shortcut-row">
-              <span class="shortcut-desc">{s.description}</span>
-              <div class="shortcut-controls">
-                {#if s.commandId}
-                  <button
-                    class="shortcut-key-btn"
-                    class:capturing
-                    class:overridden={isOverridden(s)}
-                    onclick={() => capturing ? cancelCapture() : startCapture(s.commandId!)}
-                    title={capturing ? 'Press the new shortcut, or Escape to cancel' : 'Click to rebind'}
-                  >
-                    {capturing ? 'Press keys…' : formatShortcut(s)}
-                  </button>
-                  {#if isOverridden(s)}
+      {#if captureError}
+        <p class="capture-error" role="alert">{captureError}</p>
+      {/if}
+
+      {#each sections as section (section.title)}
+        <div class="shortcut-section" data-area={section.title}>
+          <h3 class="section-title">{section.title}</h3>
+          <div class="shortcut-list">
+            {#each section.commands as c (c.id)}
+              {@const capturing = capturingCommandId === c.id}
+              <div class="shortcut-row">
+                <span class="shortcut-desc">{c.label}</span>
+                <div class="shortcut-controls">
+                  {#if c.rebindable}
                     <button
-                      class="reset-btn"
-                      onclick={() => resetBinding(s.commandId!)}
-                      title="Reset to default"
-                      aria-label="Reset to default"
+                      class="shortcut-key-btn"
+                      class:capturing
+                      class:overridden={isOverridden(c.id)}
+                      onclick={() => capturing ? cancelCapture() : startCapture(c.id)}
+                      title={capturing ? 'Press the new shortcut, or Escape to cancel' : 'Click to rebind'}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/>
-                        <path d="M3 3v5h5"/>
-                      </svg>
+                      {capturing ? 'Press keys…' : formatShortcut(c.binding)}
                     </button>
+                    {#if isOverridden(c.id)}
+                      <button
+                        class="reset-btn"
+                        onclick={() => resetBinding(c.id)}
+                        title="Reset to default"
+                        aria-label="Reset to default"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                          <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/>
+                          <path d="M3 3v5h5"/>
+                        </svg>
+                      </button>
+                    {/if}
+                  {:else}
+                    <kbd class="shortcut-key">{formatShortcut(c.binding)}</kbd>
                   {/if}
-                {:else}
-                  <kbd class="shortcut-key">{formatShortcut(s)}</kbd>
-                {/if}
+                </div>
               </div>
-            </div>
-          {/each}
+            {/each}
+            {#each section.fixed as item (item.keys)}
+              <div class="shortcut-row fixed">
+                <span class="shortcut-desc">{item.description}</span>
+                <kbd class="shortcut-key">{item.keys}</kbd>
+              </div>
+            {/each}
+          </div>
         </div>
-        {#if captureError}
-          <p class="capture-error" role="alert">{captureError}</p>
-        {/if}
-      </div>
-
-      <div class="shortcut-section">
-        <h3 class="section-title">Other</h3>
-        <div class="shortcut-list">
-          {#each supplementalShortcuts as item (item.keys)}
-            <div class="shortcut-row">
-              <span class="shortcut-desc">{item.description}</span>
-              <kbd class="shortcut-key">{item.keys}</kbd>
-            </div>
-          {/each}
-        </div>
-      </div>
+      {/each}
     </div>
   {:else}
     <div class="about-content">

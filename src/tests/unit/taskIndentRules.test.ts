@@ -58,10 +58,13 @@ describe('Tab on a Task List row', () => {
   function setup(rows: TaskRow[], sections: TaskListSection[] = []) {
     const indent = vi.fn();
     const outdent = vi.fn();
+    const depth = (r: TaskRow): number => (r.parent ? 1 + depth(rows.find((x) => x.tile.id === r.parent)!) : 0);
     const nav = new TaskListKeyboardNav({
       getBoard: () => null,
       getRows: () => rows,
       getRenderedRows: () => rows,
+      getFlatSections: () => [{ sectionId: '__leading__', collapsed: false, entries: rows.map((r) => ({ row: r, depth: depth(r) })) }],
+      getLeadingSectionId: () => '__leading__',
       getPlacements: () => rows.map((r, i) => p(r.tile.id, i)),
       getSections: () => sections,
       getSortBy: () => 'manual',
@@ -100,12 +103,20 @@ describe('Tab on a Task List row', () => {
     expect(e.defaultPrevented).toBe(true);
   });
 
-  it('a refused indent says why and does not commit', () => {
-    const toast = vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
+  it('indents one level, under the row above at its level, not under that row\'s subtasks', () => {
     const { indent, els, press } = setup([task('a'), task('b', 'a'), task('c', 'b'), task('d')]);
     press(els.get('d')!);
+    expect(indent).toHaveBeenCalledWith('d', 'a');
+  });
+
+  it('a refused indent says why, does not commit, and lets Tab move focus on', () => {
+    const toast = vi.spyOn(uiStore, 'toast').mockImplementation(() => '');
+    // c is a sub-subtask: its sibling c2 can't go under it (a fourth level).
+    const { indent, els, press } = setup([task('a'), task('b', 'a'), task('c', 'b'), task('c2', 'b')]);
+    const e = press(els.get('c2')!);
     expect(indent).not.toHaveBeenCalled();
     expect(toast.mock.calls[0]?.[0]).toMatch(/Maximum/);
+    expect(e.defaultPrevented).toBe(false);
   });
 
   it('Tab on the first row, and Shift+Tab on a top-level row, move focus as usual', () => {

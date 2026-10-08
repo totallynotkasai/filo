@@ -117,3 +117,21 @@ describe('Kanban sort by title', () => {
     expect(ctl.sortPlacements(placements, tiles).map((p) => p.tileId)).toEqual(['chapter 1', 'Chapter 2', 'Chapter 10']);
   });
 });
+
+describe('a new card being named shows through the find bar (E-05)', () => {
+  it('stays in its column until its title is done, then the find bar decides again', () => {
+    const tiles = { a: tile('Alpha'), n: tile('New Card') };
+    const columns = [{ id: 'col', title: 'To do', tilePlacements: [{ tileId: 'a', position: 0 }, { tileId: 'n', position: 1 }] }];
+    const ctl = new KanbanFiltersAndSort({
+      getBoardColumns: () => columns as never,
+      getAllTilesById: () => tiles,
+      getFindQuery: () => 'Alpha',
+      getCacheVersion: () => 0,
+    });
+    expect(ctl.visiblePlacementsForColumn('col').map((p) => p.tileId)).toEqual(['a']);
+    const release = ctl.showWhileNamed('n');
+    expect(ctl.visiblePlacementsForColumn('col').map((p) => p.tileId)).toEqual(['a', 'n']);
+    release();
+    expect(ctl.visiblePlacementsForColumn('col').map((p) => p.tileId)).toEqual(['a']);
+  });
+});

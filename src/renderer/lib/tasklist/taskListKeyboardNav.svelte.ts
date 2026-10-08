@@ -28,15 +28,16 @@ import type {
   TaskListSection,
   TaskPlacement,
 } from '../../schema/index';
+import { tick } from 'svelte';
 import { historyStore } from '../../stores/history.svelte';
 import { uiStore } from '../../stores/ui.svelte';
 import { ReorderTaskWithinSectionCommand } from '../../commands/index';
 import { executeReorderSwitchingToManual } from './manualSortSwitch';
 import { isEditableTextTarget } from '../utils/editableTarget';
-import { collectDescendantIds } from './blockMove';
-import { sectionIdForPlacementIndex } from './sectionMath';
+import { rebuildPlacementsFromDndItems, sameTileIds, type RowDndItem } from './blockMove';
 import { indentProblem } from './indentRules';
-import { moveTaskBlock } from '../tasks/taskMove';
+import { drawnRows, indentParentFor, movedOrder } from './rowMoves';
+import type { FlatSection } from './taskListViewModel.svelte';
 import type { SortBy, TaskRow } from '../tasks/taskListModel';
 
 export interface TaskListKeyboardNavDeps {
@@ -44,6 +45,10 @@ export interface TaskListKeyboardNavDeps {
   getRows: () => TaskRow[];
   /** The rows on screen, top to bottom (`TaskListViewModel.renderedRows`). */
   getRenderedRows: () => TaskRow[];
+  /** Each section's rows as drawn (`TaskListViewModel.flatSections`). */
+  getFlatSections: () => FlatSection[];
+  /** The id the drawn leading "Unsectioned" bucket goes by. */
+  getLeadingSectionId: () => string;
   getPlacements: () => TaskPlacement[];
   getSections: () => TaskListSection[];
   getSortBy: () => SortBy;
@@ -110,11 +115,17 @@ export class TaskListKeyboardNav {
     if (next) this.focusRowById(next);
   }
 
+  /** The drawn section holding `tileId`, or undefined when it isn't drawn. */
+  private drawnSectionOf(tileId: string): FlatSection | undefined {
+    return this.deps.getFlatSections().find((s) => !s.collapsed && s.entries.some((e) => e.row.tile.id === tileId));
+  }
+
   /**
-   * Tab / Shift+Tab on a focused row. Returns false when there is nothing to
-   * indent or outdent (the first row, a row already under the one above, a
-   * top-level row on Shift+Tab): the key then moves focus as usual, so Tab
-   * never traps keyboard users on the list.
+   * Tab / Shift+Tab on a focused row. Tab indents one level, under the row
+   * drawn above at the same level (`indentParentFor`); Shift+Tab outdents a
+   * subtask. Returns false when the row doesn't move (no row at its level
+   * above it, a refused indent, a top-level row on Shift+Tab): the key then
+   * moves focus as usual, so Tab never traps keyboard users on the list.
    */
   indentFocused(row: TaskRow, outdent: boolean): boolean {
     if (outdent) {
@@ -122,14 +133,10 @@ export class TaskListKeyboardNav {
       this.deps.commitOutdent(row.tile.id);
       return true;
     }
-    // Indent under the row directly above the focused one on screen, by the
-    // same rules as a drag: same section, no cycle, three levels at most.
-    const ids = this.deps.getRenderedRows().map((r) => r.tile.id);
-    const idx = ids.indexOf(row.tile.id);
-    if (idx <= 0) return false;
-    const newParentId = ids[idx - 1];
-    if (!newParentId) return false; // idx > 0 and < ids.length; narrow for the type-checker
-    if (row.parent === newParentId) return false;
+    const section = this.drawnSectionOf(row.tile.id);
+    const newParentId = section ? indentParentFor(drawnRows(section.entries), row.tile.id) : null;
+    if (!newParentId || row.parent === newParentId) return false;
+    // The drag's rules too: same section, no cycle, three levels at most.
     const problem = indentProblem({
       rows: this.deps.getRows(),
       placements: this.deps.getPlacements(),
@@ -139,94 +146,61 @@ export class TaskListKeyboardNav {
     });
     if (problem) {
       uiStore.toast(problem, 'info', 1800);
-      return true;
+      return false;
     }
     this.deps.commitIndent(row.tile.id, newParentId);
     return true;
   }
 
   /**
-   * Move the focused row (with its descendants) by one position within its
-   * current section. Bound to Alt+Up / Alt+Down. Mirrors the drag-reorder UX
-   * at `commitReorder` — under a non-manual sort, silently switches to manual
-   * with an Undo toast that restores both the order and the prior sort mode.
+   * Alt+Up / Alt+Down: the focused row, with its subtasks, moves past the
+   * row drawn above or below it at the same level (`movedOrder`), so one
+   * press moves it one place on screen. The list is rebuilt from the order
+   * as drawn, as a drop rebuilds it: under a sort other than Manual, that
+   * order becomes the manual order, in one undo step with the switch to
+   * Manual and a toast that offers Undo. Returns false when the row can't
+   * move that way, which leaves the key alone.
    */
-  moveFocusedRow(direction: -1 | 1): void {
+  moveFocusedRow(direction: -1 | 1): boolean {
     const board = this.deps.getBoard();
-    if (!board) return;
     const focused = this.focusedTaskRow();
-    if (!focused) return;
+    if (!board || !focused) return false;
     const tileId = focused.tile.id;
+    const section = this.drawnSectionOf(tileId);
+    const order = section ? movedOrder(drawnRows(section.entries), tileId, direction) : null;
+    if (!section || !order) return false;
+
+    const flat = this.deps.getFlatSections();
+    const itemsBySection: Record<string, RowDndItem[]> = {};
+    for (const s of flat) {
+      itemsBySection[s.sectionId] = (s === section ? order : s.entries.map((e) => e.row.tile.id)).map((id) => ({ id }));
+    }
     const placements = this.deps.getPlacements();
-    const sections = this.deps.getSections();
-    const placementIdx = placements.findIndex((p) => p.tileId === tileId);
-    if (placementIdx < 0) return;
-
-    const sectionId = sectionIdForPlacementIndex(sections, placementIdx);
-    const sortedLive = [...sections].sort((a, b) => a.position - b.position);
-    let sectionStart = 0;
-    let sectionEnd = placements.length;
-    if (sectionId !== null) {
-      const sIdx = sortedLive.findIndex((s) => s.id === sectionId);
-      if (sIdx >= 0) {
-        sectionStart = sortedLive[sIdx]?.position ?? 0;
-        sectionEnd = sortedLive[sIdx + 1]?.position ?? placements.length;
-      }
-    } else {
-      sectionEnd = sortedLive[0]?.position ?? placements.length;
-    }
-    const sectionSize = sectionEnd - sectionStart;
-    const currentOffset = placementIdx - sectionStart;
-
-    const descendantIds = collectDescendantIds(this.deps.getRows(), tileId).filter((id) => id !== tileId);
-    // The reorder stays inside the current section, so only descendants
-    // whose placement actually sits in [sectionStart, sectionEnd) belong to the
-    // moving block. Counting ALL descendants (a leaf reachable via a legacy
-    // placement↔parent divergence could live in another section) would inflate
-    // blockSize and wrongly block an in-bounds move; the move itself likewise
-    // only shifts the in-section block.
-    const blockDescendantIds = descendantIds.filter((id) => {
-      const i = placements.findIndex((p) => p.tileId === id);
-      return i >= sectionStart && i < sectionEnd;
-    });
-    const blockSize = 1 + blockDescendantIds.length;
-
-    let targetOffset: number;
-    if (direction < 0) {
-      if (currentOffset <= 0) return;
-      targetOffset = currentOffset - 1;
-    } else {
-      if (currentOffset + blockSize >= sectionSize) return;
-      targetOffset = currentOffset + 1;
-    }
-
-    const beforeMove = this.deps.snapshotSections();
-    const { placements: nextPlacements, sections: nextSections } = moveTaskBlock({
+    const next = rebuildPlacementsFromDndItems({
       placements,
-      sections,
-      draggedId: tileId,
-      descendantIds: blockDescendantIds,
-      targetSectionId: sectionId,
-      insertOffset: targetOffset,
+      sections: this.deps.getSections(),
+      displaySectionIds: flat.map((s) => s.sectionId),
+      leadingSectionId: this.deps.getLeadingSectionId(),
+      itemsBySection,
     });
+    // A move never adds or drops a task.
+    if (!sameTileIds(placements, next.placements)) return false;
 
-    // Same-section reorder under a non-manual sort: switch to manual AND the
-    // reorder in one BatchCommand so a single Ctrl+Z reverses both.
-    const sortBy = this.deps.getSortBy();
     const reorderCmd = new ReorderTaskWithinSectionCommand(
       board.id,
-      beforeMove,
-      { sections: nextSections, tasks: nextPlacements },
+      this.deps.snapshotSections(),
+      { sections: next.sections, tasks: next.placements },
       direction,
     );
-    if (sortBy !== 'manual') {
-      executeReorderSwitchingToManual(reorderCmd, sortBy);
-    } else {
-      historyStore.execute(reorderCmd);
-    }
+    const sortBy = this.deps.getSortBy();
+    const done = sortBy !== 'manual'
+      ? executeReorderSwitchingToManual(reorderCmd, sortBy)
+      : historyStore.execute(reorderCmd);
     this.deps.tickAndPersist();
-    // Keep keyboard focus on the moved row.
-    queueMicrotask(() => this.focusRowById(tileId));
+    // Keyboard focus stays on the moved row. Moving a focused element in the
+    // page drops its focus, so it is given back once the row is in its place.
+    void done.catch(() => {}).then(() => tick()).then(() => this.focusRowById(tileId));
+    return true;
   }
 
   /**
@@ -249,12 +223,15 @@ export class TaskListKeyboardNav {
       }
       return;
     }
-    if (e.key === 'ArrowDown') {
+    // A bare arrow moves the focus; Alt+Up / Alt+Down are the move-task
+    // commands, which act on the row the focus is on now.
+    const bare = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+    if (e.key === 'ArrowDown' && bare) {
       e.preventDefault();
       this.moveFocus(1);
       return;
     }
-    if (e.key === 'ArrowUp') {
+    if (e.key === 'ArrowUp' && bare) {
       e.preventDefault();
       this.moveFocus(-1);
       return;

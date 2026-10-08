@@ -64,8 +64,7 @@
   import { onMount, onDestroy, untrack } from 'svelte';
   import { createAriaAnnouncer } from '../../lib/utils/ariaAnnouncer.svelte';
   import { dndzone, type DndEvent } from 'svelte-dnd-action';
-  import { registerCommandWithShortcut } from '../../core/commandRegistry';
-  import type { ShortcutBinding } from '../../core/hotkeys';
+  import { registerTaskListShortcuts } from '../../lib/tasklist/taskListShortcuts';
   import { moveTaskBlock } from '../../lib/tasks/taskMove';
   import { sectionIdForPlacementIndex } from '../../lib/tasklist/sectionMath';
   import {
@@ -779,7 +778,7 @@
         description,
       );
       if (!isCrossSection && sortBy !== 'manual') {
-        executeReorderSwitchingToManual(reorderCmd, sortBy);
+        void executeReorderSwitchingToManual(reorderCmd, sortBy);
       } else {
         historyStore.execute(reorderCmd);
       }
@@ -1043,6 +1042,8 @@
     getBoard: () => board,
     getRows: () => viewModel.rows,
     getRenderedRows: () => viewModel.renderedRows,
+    getFlatSections: () => viewModel.flatSections,
+    getLeadingSectionId: () => LEADING_SECTION_ID,
     getPlacements: () => placements,
     getSections: () => sections,
     getSortBy: () => sortBy,
@@ -1054,32 +1055,27 @@
   });
 
   onMount(() => {
-    // Ctrl+Enter and Ctrl+N (the Mind Map's New Tile, which stands aside off
-    // the Mind Map) create a blank task; Alt+Up / Alt+Down reorder within the
-    // section. Lock / style / collapse have no shortcut: they're invoked via
-    // row props (`onToggleLocked` / `onToggleSubtaskCollapsed`).
-    const newTask = (): void => { if (board) void addTask(); };
-    const shortcuts: Array<[string, string, string, ShortcutBinding, () => void]> = [
-      ['tasklist:focus-quick-add', 'Task List: Focus quick-add input', '', { key: 'n' }, () => quickAddInputEl?.focus()],
-      ['tasklist:select-all', 'Task List: Select all visible', '', { key: 'a', ctrl: true }, () => { if (board) multiSelect.selectAllVisible(); }],
-      ['tasklist:add-task', 'Task List: Add task', '', { key: 'Enter', ctrl: true }, newTask],
-      ['tasklist:new-task', 'Task List: New task', '', { key: 'n', ctrl: true }, newTask],
-      ['tasklist:move-up', 'Task List: Move task up', 'Task List: Move task up within section', { key: 'ArrowUp', alt: true }, () => keyboardNav.moveFocusedRow(-1)],
-      ['tasklist:move-down', 'Task List: Move task down', 'Task List: Move task down within section', { key: 'ArrowDown', alt: true }, () => keyboardNav.moveFocusedRow(1)],
-    ];
-    unregisterTaskListCommands = shortcuts.map(([name, label, description, binding, execute]) =>
-      registerCommandWithShortcut({ name, label, description: description || label, binding, enabled: isActivePane, execute }));
+    // Lock / style / collapse have no shortcut: they're invoked via row props
+    // (`onToggleLocked` / `onToggleSubtaskCollapsed`).
+    unregisterTaskListCommands = [registerTaskListShortcuts({
+      isActivePane,
+      boardRoot: () => scrollContainerEl,
+      focusQuickAdd: () => quickAddInputEl?.focus(),
+      selectAll: () => { if (board) multiSelect.selectAllVisible(); },
+      newTask: () => { if (board) void addTask(); },
+      moveTask: (direction) => keyboardNav.moveFocusedRow(direction),
+    })];
     // Recover from aborted section drags (Esc, Alt-Tab, window blur). The
     // gate flip alone is enough — the resync $effect tracks
     // `sectionDragDisabled` so flipping it true triggers a re-evaluation
     // that pulls the canonical order back from sectionedView. Also sweep
     // any stale inline styles svelte-dnd-action may have left on neighbour
     // sections so they don't end up invisible.
-    const cancelSectionDrag = () => {
+    const cancelSectionDrag = (): boolean => {
       // Skip the re-render-forcing recovery when no drag is in flight
       // (section drag active ⇔ `sectionDragDisabled` false; row drag ⇔ a live
       // `dragTileId`), so a bare Escape doesn't churn the list every keypress.
-      if (sectionDragDisabled && dragController.dragTileId === null) return;
+      if (sectionDragDisabled && dragController.dragTileId === null) return false;
       sectionDragDisabled = true;
       // Re-assign by identity so the `use:clearStaleDndStyles` action's
       // `update` callback fires on every section. Cancelled drags don't
@@ -1091,9 +1087,12 @@
       // of the row dndzones so `clearStaleDndRowStyles` runs on every
       // section's rows.
       dragController.cancelDrag();
+      return true;
     };
+    // Escape is taken only when it cancelled a drag: otherwise it is left for
+    // the next layer (the Search panel closes on an Escape nothing used).
     const onKeydownEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); cancelSectionDrag(); }
+      if (e.key === 'Escape' && cancelSectionDrag()) e.preventDefault();
     };
     window.addEventListener('dragend', cancelSectionDrag);
     window.addEventListener('pointercancel', cancelSectionDrag);

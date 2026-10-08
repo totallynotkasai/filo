@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { revealOffset } from '@renderer/lib/canvas/revealRect';
-import { cardPosition, neighbourCard, revealCard, type KanbanNavColumns } from '@renderer/lib/kanban/kanbanKeyboardNav';
-import { buildCardContextMenu } from '@renderer/lib/kanban/kanbanContextMenus';
+import { cardPosition, cardsOnScreen, focusCard, neighbourCard, type KanbanNavColumns } from '@renderer/lib/kanban/kanbanKeyboardNav';
+import { buildCardContextMenu, cardMenuPoint } from '@renderer/lib/kanban/kanbanContextMenus';
 
 /**
  * Keyboard selection is brought into view (E-18): the arrow keys selected a
@@ -51,17 +51,39 @@ describe('Kanban arrow keys', () => {
 
   afterEach(() => { document.body.innerHTML = ''; });
 
-  it('scrolls the card it lands on into view, to the nearest edge', () => {
+  it('focuses the card it lands on and scrolls it into view, to the nearest edge', () => {
     const root = document.createElement('div');
     const card = document.createElement('div');
+    card.className = 'tile-drop-zone';
     card.dataset.tileId = 'x';
+    card.tabIndex = -1;
     const scroll = vi.fn();
     card.scrollIntoView = scroll;
     root.appendChild(card);
     document.body.appendChild(root);
-    revealCard(root, 'x');
+    focusCard(root, 'x');
+    expect(document.activeElement).toBe(card);
     expect(scroll).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
-    expect(() => revealCard(root, 'missing')).not.toThrow();
+    expect(() => focusCard(root, 'missing')).not.toThrow();
+  });
+});
+
+describe('the cards on screen (E-02: a collapsed column draws none)', () => {
+  const shown: Record<string, string[]> = { todo: ['a'], doing: ['h1', 'h2'], done: ['g'] };
+  const columns = [{ id: 'todo' }, { id: 'doing', collapsed: true }, { id: 'done' }];
+
+  it('leave a collapsed column\'s cards out of the order a Shift-click range takes', () => {
+    const cards = cardsOnScreen(columns, (id) => shown[id] ?? []);
+    expect(cards.flat).toEqual(['a', 'g']);
+    expect(cards.ids).toEqual(['todo', 'doing', 'done']);
+    expect(cards.cardsIn('doing')).toEqual([]);
+  });
+
+  it('let ArrowRight and ArrowLeft skip the collapsed column', () => {
+    const cards = cardsOnScreen(columns, (id) => shown[id] ?? []);
+    expect(neighbourCard(cards, { columnId: 'todo', rowIdx: 0 }, 'ArrowRight')).toBe('g');
+    expect(neighbourCard(cards, { columnId: 'done', rowIdx: 0 }, 'ArrowLeft')).toBe('a');
+    expect(cardPosition(cards, 'h1')).toBeNull();
   });
 });
 
@@ -81,5 +103,18 @@ describe('a single card\'s menu: Move to column', () => {
   it('has no move items on a board with one column', () => {
     const items = buildCardContextMenu({ onStyle: vi.fn(), onRemove: vi.fn(), moveTargets: [], onMoveTo: vi.fn() });
     expect(items.some((i) => i.label === 'Move to column')).toBe(false);
+  });
+});
+
+describe('cardMenuPoint: where a card\'s menu opens (E-06)', () => {
+  const card = { getBoundingClientRect: () => ({ left: 100, top: 200, right: 400, bottom: 300, width: 300, height: 100 }) } as unknown as Element;
+
+  it('at the pointer for a right-click on the card', () => {
+    expect(cardMenuPoint(new MouseEvent('contextmenu', { clientX: 250, clientY: 260 }), card)).toEqual({ x: 250, y: 260 });
+  });
+
+  it('inside the card for the menu key, whose point may be off the card', () => {
+    expect(cardMenuPoint(new MouseEvent('contextmenu', { clientX: 0, clientY: 0 }), card)).toEqual({ x: 124, y: 224 });
+    expect(cardMenuPoint(new MouseEvent('contextmenu', { clientX: 100, clientY: 300 }), card)).toEqual({ x: 124, y: 224 });
   });
 });

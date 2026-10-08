@@ -110,7 +110,7 @@ export async function activeBoardRenameMessage(app: CharApp, name: string): Prom
 }
 
 async function openTabRename(app: CharApp): Promise<HTMLInputElement> {
-  dblclick($(app.el, '.tab.active, .tab[aria-selected="true"]'));
+  dblclick($(app.el, '.tab-bar .tab.active, .tab-bar .tab[aria-selected="true"]'));
   await waitFor(() => app.el.querySelector('input.tab-rename') !== null, 'tab rename input');
   return $(app.el, 'input.tab-rename') as HTMLInputElement;
 }

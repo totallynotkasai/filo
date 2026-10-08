@@ -272,6 +272,21 @@ describe('rebuildPlacementsFromDndItems', () => {
     expect(out.sections.map((x) => x.id)).toEqual(['B', 'A']);
   });
 
+  it('keeps a hidden row on a board with no sections (the drawn "Task List" stands for them all)', () => {
+    // b is hidden (a folded parent's subtask, or a completed task with Show
+    // completed off): it follows the row it followed, as in a real section.
+    const placements = [p('a'), p('b'), p('c')];
+    const out = rebuildPlacementsFromDndItems({
+      placements,
+      sections: [],
+      displaySectionIds: ['__default__'],
+      leadingSectionId: '__leading',
+      itemsBySection: { __default__: [item('c'), item('a')] },
+    });
+    expect(out.placements.map((x) => x.tileId)).toEqual(['c', 'a', 'b']);
+    expect(out.sections).toEqual([]);
+  });
+
   it('renumbers all placements to 0..n-1', () => {
     const placements = [
       { tileId: 'a', position: 99 },

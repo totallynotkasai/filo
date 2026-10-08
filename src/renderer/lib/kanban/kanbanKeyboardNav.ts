@@ -14,6 +14,31 @@ export interface KanbanNavColumns {
   cardsIn(columnId: string): readonly string[];
 }
 
+/** The cards on screen: each column's, and all of them in reading order. */
+export interface KanbanCardsOnScreen extends KanbanNavColumns {
+  /** Every card shown, column by column, left to right (Shift-click ranges). */
+  flat: string[];
+}
+
+/**
+ * The cards a board draws: each column's cards after the filters and sort
+ * (`shownIn`), and none for a collapsed column, whose cards aren't drawn.
+ * The arrow keys and Shift-click ranges both read this, so neither reaches a
+ * card the user can't see.
+ */
+export function cardsOnScreen(
+  columns: ReadonlyArray<{ id: string; collapsed?: boolean }>,
+  shownIn: (columnId: string) => readonly string[],
+): KanbanCardsOnScreen {
+  const byColumn = new Map<string, readonly string[]>();
+  for (const col of columns) byColumn.set(col.id, col.collapsed ? [] : shownIn(col.id));
+  return {
+    ids: columns.map((c) => c.id),
+    cardsIn: (columnId) => byColumn.get(columnId) ?? [],
+    flat: [...byColumn.values()].flat(),
+  };
+}
+
 /** The column a card is drawn in and its row there, or null. */
 export function cardPosition(cols: KanbanNavColumns, tileId: string): { columnId: string; rowIdx: number } | null {
   for (const columnId of cols.ids) {
@@ -43,9 +68,19 @@ export function neighbourCard(cols: KanbanNavColumns, from: { columnId: string; 
   return null;
 }
 
-/** Scrolls a board's card into view (the nearest edge; a card in view doesn't move). */
-export function revealCard(boardRoot: HTMLElement | null | undefined, tileId: string): void {
+/** A board's card element (the one that takes focus), or null when it isn't drawn. */
+export function cardElement(boardRoot: HTMLElement | null | undefined, tileId: string): HTMLElement | null {
   // Tile ids are nanoids: safe inside a quoted attribute selector.
-  const el = boardRoot?.querySelector<HTMLElement>(`[data-tile-id="${tileId}"]`);
+  return boardRoot?.querySelector<HTMLElement>(`.tile-drop-zone[data-tile-id="${tileId}"]`) ?? null;
+}
+
+/**
+ * Moves keyboard focus to a board's card and scrolls it into view (the
+ * nearest edge; a card in view doesn't move). Focus goes with the selection,
+ * so the menu key opens that card's menu and Tab leaves from there.
+ */
+export function focusCard(boardRoot: HTMLElement | null | undefined, tileId: string): void {
+  const el = cardElement(boardRoot, tileId);
+  el?.focus({ preventScroll: true });
   el?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 }

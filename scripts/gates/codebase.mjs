@@ -20,7 +20,7 @@ const LOC_LIMIT = 1000;
 // shrink, not grow; the remedy for an over-limit file is to split it, not to
 // raise its row. A file back within the limit leaves the list.
 const FILE_SIZE_ALLOWLIST = {
-  'src/renderer/components/boards/TaskListBoard.svelte': 1170,
+  'src/renderer/components/boards/TaskListBoard.svelte': 1169,
   'src/renderer/components/boards/KanbanSideToolbar.svelte': 1248,
   'src/renderer/components/boards/TaskItem.svelte': 1161,
 };
@@ -74,6 +74,7 @@ const CHARACTERISATION_SPECS = {
   'syncAndRecovery.test.ts': 10,
   'notesAndBoards.test.ts': 6,
   'agentReorganises.test.ts': 7,
+  'boardKeys.test.ts': 11,
 };
 
 // Board format v8: a def names its file and stores only visuals. These are

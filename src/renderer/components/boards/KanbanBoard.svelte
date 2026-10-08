@@ -32,7 +32,8 @@
   import KanbanSideToolbar from './KanbanSideToolbar.svelte';
   import KanbanNewTileModal from './KanbanNewTileModal.svelte';
   import TagPromptPopup from './TagPromptPopup.svelte';
-  import { cardPosition, neighbourCard, revealCard, type KanbanNavColumns } from '../../lib/kanban/kanbanKeyboardNav';
+  import { cardsOnScreen } from '../../lib/kanban/kanbanKeyboardNav';
+  import { makeKanbanBoardKeydown } from '../../lib/kanban/kanbanBoardKeys';
   import BoardBackground from '../canvas/BoardBackground.svelte';
   import {
     effectiveColumnStyle,
@@ -57,7 +58,6 @@
   import { KanbanSavedViews } from '../../lib/kanban/kanbanSavedViews.svelte';
   import { KanbanMultiSelect } from '../../lib/kanban/kanbanMultiSelect.svelte';
   import { KanbanDragController } from '../../lib/kanban/kanbanDragController.svelte';
-  import { isEditableTextTarget } from '../../lib/utils/editableTarget';
   import { registerKanbanShortcuts } from '../../lib/kanban/kanbanShortcuts';
   import KanbanFindBar from './KanbanFindBar.svelte';
   import KanbanTemplatePicker from './KanbanTemplatePicker.svelte';
@@ -422,6 +422,13 @@
     setTemplatePickerColumnId: (next) => { templatePickerColumnId = next; },
     tickAndPersist,
     announce,
+    showWhileNamed: (tileId) => filtersAndSort.showWhileNamed(tileId),
+    isShown: (tileId) => onScreen.flat.includes(tileId),
+    titleOf: (tileId) => allTilesById[tileId]?.title,
+    keepFocusOnBoard: () => {
+      const active = document.activeElement;
+      if (boardRootEl && (!active || active === document.body || boardRootEl.contains(active))) boardRootEl.focus({ preventScroll: true });
+    },
   });
 
   const createTile = tileCreator.createTile;
@@ -550,89 +557,24 @@
   const pickCoverImageForTile = fmWriter.pickCoverImageForTile;
   const clearCoverImageForTile = fmWriter.clearCoverImageForTile;
 
-  // ── Find bar shortcut (`/` when no input is focused) ──
+  // ── The board's own keys ("/", Escape, Delete, the arrows, Enter) ──
 
-  function handleBoardKeydown(e: KeyboardEvent) {
-    // Scope to this instance's DOM subtree — a multi-tab layout can mount
-    // more than one Kanban board, and a window-level listener would fire
-    // every mounted handler on every keypress. A key a global shortcut
-    // already handled (it called preventDefault) must not act twice.
-    if (e.defaultPrevented) return;
-    const tgt = e.target as Node | null;
-    if (!boardRootEl || !tgt || !boardRootEl.contains(tgt)) return;
-    if (e.key === '/' && !findBarOpen && !isEditableTextTarget(e.target)) {
-      e.preventDefault();
-      openFindBar();
-    }
-    if (e.key === 'Escape' && !isEditableTextTarget(e.target) && selectionStore.count > 0) {
-      e.preventDefault();
-      multiSelect.clearSelectionAndAnchor();
-    }
-    if ((e.key === 'Delete' || e.key === 'Backspace')
-        && !isEditableTextTarget(e.target)
-        && selectionStore.count > 0) {
-      e.preventDefault();
-      multiSelect.deleteSelectedTiles();
-    }
-
-    // Arrow nav across cards
-    // and columns. The focus model uses `selectionStore.selectedIds` as
-    // the focused card surface (single-selection only — shift-arrow extend
-    // is not implemented on Kanban yet). Arrow direction maps as:
-    //   • Up / Down  — neighbour card in the same column
-    //   • Left / Right — same-row card in the previous / next column
-    //                    (or first card in that column if the row index
-    //                    overshoots its placement count)
-    if (
-      !isEditableTextTarget(e.target)
-      && !e.ctrlKey
-      && !e.metaKey
-      && !e.altKey
-      && !e.shiftKey
-      && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')
-    ) {
-      const ids = [...selectionStore.selectedIds];
-      const flat = flatVisibleTileIds;
-      if (flat.length === 0) return;
-      const focusedId = ids[ids.length - 1];
-      const from = focusedId === undefined ? null : cardPosition(navColumns, focusedId);
-      // No card selected yet: the first one; else the neighbour (none at an edge).
-      const target = focusedId === undefined ? flat[0] : from ? neighbourCard(navColumns, from, e.key) : null;
-      if (target && target !== focusedId) {
-        e.preventDefault();
-        selectionStore.select(target);
-        revealCard(boardRootEl, target);
-        announce('Card focused');
-      }
-      return;
-    }
-
-    // Enter — open the focused card's backing document in a new tab.
-    if (
-      e.key === 'Enter'
-      && !isEditableTextTarget(e.target)
-      && !e.ctrlKey
-      && !e.metaKey
-      && !e.shiftKey
-      && !e.altKey
-      && selectionStore.count === 1
-    ) {
-      const ids = [...selectionStore.selectedIds];
-      const firstId = ids[0];
-      if (firstId === undefined) return; // count === 1 checked above
-      const tile = allTilesById[firstId];
-      if (!tile || tile.type !== 'text') return;
-      e.preventDefault();
-      openTileAsDocument(firstId);
-      return;
-    }
-  }
-
-  /** The cards each column shows, for the arrow keys (`kanbanKeyboardNav.ts`). */
-  const navColumns: KanbanNavColumns = {
-    get ids() { return columns.map((c) => c.id); },
-    cardsIn: (columnId) => filtersAndSort.visiblePlacementsForColumn(columnId).map((p) => p.tileId),
-  };
+  const handleBoardKeydown = makeKanbanBoardKeydown({
+    root: () => boardRootEl,
+    findBarOpen: () => findBarOpen,
+    openFindBar,
+    selection: selectionStore,
+    clearSelection: () => multiSelect.clearSelectionAndAnchor(),
+    removeSelected: () => multiSelect.deleteSelectedTiles(),
+    cards: () => onScreen,
+    arrowedTo: (tileId) => { multiSelect.lastSelectedTileId = tileId; },
+    openCard: (tileId) => {
+      if (allTilesById[tileId]?.type !== 'text') return false;
+      openTileAsDocument(tileId);
+      return true;
+    },
+    announce,
+  });
 
   // ── Tag editor event wiring ──
   //
@@ -826,23 +768,14 @@
   // ── Multi-select + bulk actions ──
   //
   // Selection anchor + bulk handlers live in `KanbanMultiSelect`.
-  // `flatVisibleTileIds` stays in the host because the derivation reads
-  // the host's filter/sort visible-placements view, which is itself
-  // computed inside the host's reactive scope.
 
-  /**
-   * Flat ordered list of visible tile IDs across every column. Drives
-   * Shift-click range selection — the user picks an anchor and any
-   * subsequent Shift-click selects every tile between the anchor and the
-   * new click in this iteration order.
-   */
-  let flatVisibleTileIds = $derived.by<string[]>(() => {
-    const out: string[] = [];
-    for (const col of columns) {
-      for (const p of filtersAndSort.visiblePlacementsForColumn(col.id)) out.push(p.tileId);
-    }
-    return out;
-  });
+  // The cards drawn, a collapsed column's none: the arrow keys and
+  // Shift-click ranges both follow this, so neither reaches a hidden card.
+  let onScreen = $derived(cardsOnScreen(
+    columns,
+    (columnId) => filtersAndSort.visiblePlacementsForColumn(columnId).map((p) => p.tileId),
+  ));
+  let flatVisibleTileIds = $derived(onScreen.flat);
 
   // Board-wide placement lookup keyed by tileId. The Kanban render loop
   // uses this so the destination column can always resolve the dragged
@@ -919,10 +852,12 @@
 <!--
   Keyboard-operable Kanban.
   `role="application"` + `tabindex="0"` makes the surface a screen-reader
-  application widget; the per-handler keyboard shortcuts (N / Shift+N /
-  Arrow keys / Enter / Delete / Escape / "/") are documented inside
-  `handleBoardKeydown` above and registered through `commandRegistry` so
-  they appear in the Keyboard Shortcuts settings panel.
+  application widget. N, Shift+N and Ctrl+N are registered commands
+  (`kanbanShortcuts.ts`, rebindable in Help → Shortcuts); the arrows, Enter,
+  Delete, Escape and "/" are the board's own keys (`kanbanBoardKeys.ts`),
+  listed in Help as fixed keys. The scroll padding keeps a card the arrows
+  bring into view clear of what lies over the board: the vault sidebar on
+  the left (as the track's padding is), the side toolbar on the right.
 -->
 <div
   class="kanban-board"
@@ -931,6 +866,8 @@
   aria-label="Kanban board"
   aria-roledescription="Kanban board. Arrow keys navigate cards, Enter opens, N adds a card, Shift+N adds a column, Delete removes."
   tabindex="0"
+  style:scroll-padding-left="{24 + floatingShiftPx + dockedShiftPx}px"
+  style:scroll-padding-right="{uiStore.boardToolbarVisible ? 88 : 24}px"
   onclick={(e) => multiSelect.clearSelectionOnBoardClick(e)}
 >
   <BoardBackground
@@ -993,7 +930,7 @@
             onClearCoverImage={clearCoverImageForTile}
             onSetWipLimit={(limit) => setColumnWipLimit(column.id, limit)}
             onTileClick={(e, tileId) => multiSelect.handleTileClick(e, tileId)}
-            onBulkContextMenu={(e, tileId) => multiSelect.openBulkContextMenu(e, tileId)}
+            onBulkContextMenu={(at, tileId) => multiSelect.openBulkContextMenu(at, tileId)}
             onOpenAsDocument={openTileAsDocument}
             onMoveColumn={(dir) => moveColumnByKey(column.id, dir)}
             onOpenColumnStyle={(mx, my) => openColumnStyle(column, mx, my)}

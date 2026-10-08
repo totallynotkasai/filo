@@ -10,12 +10,13 @@
    * Always rendered — when the board has no sections the body shows an
    * empty-state CTA that materialises a new section. Internally, when
    * sections exist, it embeds the existing TaskListToc body for jump-link
-   * behaviour.
+   * behaviour. The header's button folds the panel to the header alone
+   * (settings.tocFolded), and it opens folded where it would cover the list.
    */
   import { getContext } from 'svelte';
   import { BOARD_SCOPE_KEY, type BoardScope } from '../../lib/boards/boardScope.svelte';
   import TaskListToc from './TaskListToc.svelte';
-  import { TOC_DEFAULTS, tocDefaultBounds } from '../../lib/tasklist/tocPlacement';
+  import { TOC_DEFAULTS, tocDefaultBounds, tocFitsBeside } from '../../lib/tasklist/tocPlacement';
   import { historyStore } from '../../stores/history.svelte';
   import { UpdateBoardSettingsCommand } from '../../commands/index';
 
@@ -35,9 +36,14 @@
   // Defaults sit just below the top-right corner, beside the list column
   // when it leaves room (`tocDefaultBounds`).
 
-  function defaultBounds() {
+  /** The list column's right edge, or null before it is laid out. */
+  function listRight(): number | null {
     const list = scrollContainerEl?.querySelector('.tasklist-content');
-    return tocDefaultBounds(window.innerWidth, list ? list.getBoundingClientRect().right : null);
+    return list ? list.getBoundingClientRect().right : null;
+  }
+
+  function defaultBounds() {
+    return tocDefaultBounds(window.innerWidth, listRight());
   }
 
   // Read persisted bounds from the active board's settings. Computed
@@ -63,6 +69,26 @@
   let bw = $state<number>(TOC_DEFAULTS.width);
   let bh = $state<number>(TOC_DEFAULTS.height);
 
+  // Folded to its header: as the board says, else folded at first where the
+  // panel's first place would cover the list (a laptop's width) and the user
+  // hasn't put it anywhere yet. Read once a board opens, so a window resized
+  // later never folds or unfolds it under the user.
+  const savedFolded = $derived(
+    (boardStore.current?.settings as { tocFolded?: boolean } | undefined)?.tocFolded,
+  );
+  let foldedAtFirst = $state(false);
+  const folded = $derived(savedFolded ?? foldedAtFirst);
+
+  /** Folds or unfolds the panel, remembered on the board (one undo step, as a section's fold is). */
+  function toggleFolded(): void {
+    const next = !folded;
+    boardStore.updateBoardSettingsWithHistory(
+      { tocFolded: next },
+      boardStore.current?.settings as Readonly<Record<string, unknown>> | undefined,
+      next ? 'Fold Table of Contents' : 'Show Table of Contents',
+    );
+  }
+
   // Reseed when the active board changes. Only when the *identity* flips so
   // an in-place settings write (from our own persist call) doesn't echo back
   // and jump the panel mid-drag.
@@ -72,8 +98,12 @@
     if (!persisted && !scrollContainerEl) return;
     activeBoardId = boardId;
     const next = persisted ?? defaultBounds();
+    foldedAtFirst = !persisted && !tocFitsBeside(window.innerWidth, listRight());
+    // Folded at first, the header sits under the quick-add box, beside the
+    // smart-list tabs, rather than over the box's end.
+    const quickAdd = foldedAtFirst ? scrollContainerEl?.querySelector('.tasklist-quick-add-wrap') : null;
     bx = next.x;
-    by = next.y;
+    by = quickAdd ? Math.max(next.y, Math.ceil(quickAdd.getBoundingClientRect().bottom + 8)) : next.y;
     bw = next.width;
     bh = next.height;
   });
@@ -236,7 +266,8 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="floating-toc-panel"
-  style="left: {bx}px; top: {by}px; width: {bw}px; height: {bh}px; z-index: calc(var(--z-sidebar) + 2);"
+  class:folded
+  style="left: {bx}px; top: {by}px; width: {bw}px; {folded ? '' : `height: ${bh}px; `}z-index: calc(var(--z-sidebar) + 2);"
   role="region"
   aria-label="Table of Contents"
 >
@@ -250,29 +281,46 @@
     title="Drag to move"
   >
     <span class="floating-toc-title">Table of Contents</span>
+    <button
+      class="floating-toc-fold"
+      onclick={toggleFolded}
+      aria-expanded={!folded}
+      aria-label={folded ? 'Show the table of contents' : 'Fold the table of contents'}
+      title={folded ? 'Show' : 'Fold'}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        {#if folded}
+          <polyline points="6 9 12 15 18 9" />
+        {:else}
+          <polyline points="18 15 12 9 6 15" />
+        {/if}
+      </svg>
+    </button>
   </div>
 
-  <div class="floating-toc-body">
-    {#if sections.length === 0}
-      <div class="toc-empty">
-        <p class="toc-empty-hint">No sections yet</p>
-        <button class="toc-add-section-btn" onclick={onAddSection}>+ Add section</button>
-      </div>
-    {:else}
-      <TaskListToc {sections} {scrollContainerEl} />
-    {/if}
-  </div>
+  {#if !folded}
+    <div class="floating-toc-body">
+      {#if sections.length === 0}
+        <div class="toc-empty">
+          <p class="toc-empty-hint">No sections yet</p>
+          <button class="toc-add-section-btn" onclick={onAddSection}>+ Add section</button>
+        </div>
+      {:else}
+        <TaskListToc {sections} {scrollContainerEl} />
+      {/if}
+    </div>
 
-  <div
-    class="floating-resize-handle"
-    class:resizing={isResizing}
-    onpointerdown={onResizeStart}
-    onpointermove={onResizeMove}
-    onpointerup={onResizeEnd}
-    onpointercancel={onResizeEnd}
-    aria-label="Resize Table of Contents panel"
-    role="separator"
-  ></div>
+    <div
+      class="floating-resize-handle"
+      class:resizing={isResizing}
+      onpointerdown={onResizeStart}
+      onpointermove={onResizeMove}
+      onpointerup={onResizeEnd}
+      onpointercancel={onResizeEnd}
+      aria-label="Resize Table of Contents panel"
+      role="separator"
+    ></div>
+  {/if}
 </div>
 
 <style>
@@ -289,12 +337,36 @@
 
   .floating-toc-header {
     flex: 0 0 auto;
-    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 6px 6px 12px;
     background: var(--ui-surface-hover, transparent);
     border-bottom: 1px solid var(--ui-border);
     cursor: grab;
     user-select: none;
     touch-action: none;
+  }
+  .floating-toc-panel.folded .floating-toc-header {
+    border-bottom: none;
+  }
+  .floating-toc-fold {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .floating-toc-fold:hover {
+    background: var(--ui-surface);
+    color: var(--text-primary);
   }
   .floating-toc-header:active {
     cursor: grabbing;

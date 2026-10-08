@@ -86,7 +86,7 @@ export async function startSidebarRename(app: CharApp, rel: string, newName: str
 
 /** Double-click the active tab, type `name`, press Enter (a board's rename), without waiting for it to finish. */
 export async function startActiveBoardRename(app: CharApp, name: string): Promise<void> {
-  dblclick($(app.el, '.tab.active, .tab[aria-selected="true"]'));
+  dblclick($(app.el, '.tab-bar .tab.active, .tab-bar .tab[aria-selected="true"]'));
   await waitFor(() => app.el.querySelector('input.tab-rename') !== null, 'tab rename input');
   const input = $(app.el, 'input.tab-rename') as HTMLInputElement;
   typeInto(input, name);

@@ -143,6 +143,10 @@ function kanbanCreator(board: KanbanBoardType) {
     getTemplatePickerColumnId: () => 'c1',
     tickAndPersist: () => {},
     announce: () => {},
+    showWhileNamed: () => () => {},
+    isShown: () => true,
+    titleOf: () => undefined,
+    keepFocusOnBoard: () => {},
   });
 }
 

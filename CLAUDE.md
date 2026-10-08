@@ -339,6 +339,7 @@ filo/
 │   │   │   ├── boardIcons.ts          # Each board type's icon path (New-board menu, sidebar file tree)
 │   │   │   ├── styleOptions.ts        # Style option lists, read from the `schema/styleEnums.ts` enums
 │   │   │   ├── menuVocabulary.ts      # Context-menu labels, icons, plural headings; order Open, Style, Tags, Lock, Remove, Delete
+│   │   │   ├── shortcutReference.ts   # Each board's commands (registered while it is mounted; listed in Help always) and the fixed keys of rows, cards and text
 │   │   │   ├── taskPriorities.ts      # Task / Kanban priority words and colours: the one vocabulary (Urgent, High, Medium, Low, No priority) for chips, menus, filters, groups and quick add
 │   │   │   └── vaultSidebarOptions.ts # Sidebar Sort By / Group By choices (sidebar menus + settings)
 │   │   │
@@ -450,7 +451,7 @@ filo/
 │   │   │   │   ├── boardNaming.ts     # A board's name is its .board.json stem: name rules, new-board place, folder-follow rule
 │   │   │   │   ├── newBoardPlace.ts   # Where a new board goes in the open vault, and whether its name is free there
 │   │   │   │   ├── seedTextFileForNewTile.ts # Creates the backing .md for a new text tile (false when a new note couldn't be made: the add takes the tile off, and its undo step goes)
-│   │   │   │   ├── newTileTitle.ts    # editTitleWhenShown / takeTitleEdit: a tile or card the user just made opens its title for typing (dropped if not shown within 2 s)
+│   │   │   │   ├── newTileTitle.ts    # editTitleWhenShown / takeTitleEdit: a tile or card the user just made opens its title for typing (dropped if not shown within 2 s); a caller hears when the title is done (newTitleEditEnded)
 │   │   │   │   ├── tileDefBuilder.ts  # Defs and inline tiles from runtime tiles; isStaleInlineCopy (a def beside an inline tile is skipped, and dropped at load)
 │   │   │   │   ├── textTilePath.ts
 │   │   │   │   ├── viewportCache.ts
@@ -547,13 +548,14 @@ filo/
 │   │   │   │   ├── frameDragCancel.ts # A frame drag torn down mid-gesture reverts the frame, the frames nested in it and their tiles
 │   │   │   │   └── nestedFrames.ts    # framesInside (a frame drag carries them), framesInPaintOrder (a frame inside another is drawn and hit above it)
 │   │   │   ├── kanban/                # Kanban-board logic
-│   │   │   │   ├── kanbanContextMenus.ts # Card / column / bulk menus
+│   │   │   │   ├── kanbanContextMenus.ts # Card / column / bulk menus; cardMenuPoint: the menu key opens a card's menu on the card
 │   │   │   │   ├── kanbanFrontmatterWriter.ts # Card field edits → note frontmatter deltas
 │   │   │   │   ├── kanbanDragController.svelte.ts, kanbanMultiSelect.svelte.ts
 │   │   │   │   ├── kanbanFiltersAndSort.svelte.ts, kanbanSavedViews.svelte.ts
 │   │   │   │   ├── checklistProgress.ts # The card checklist badge: task items only (`- [ ]` / `- [x]`), not a `[x]` in text or code
 │   │   │   │   ├── kanbanShortcuts.ts # The board's N / Shift+N / Ctrl+N commands; bare N and Shift+N only while focus is in the board
-│   │   │   │   ├── kanbanKeyboardNav.ts # Arrow keys over the cards as drawn; the card landed on is scrolled into view
+│   │   │   │   ├── kanbanKeyboardNav.ts # cardsOnScreen: the cards drawn (a collapsed column's none), for the arrows and Shift-click ranges; the card landed on takes focus and is scrolled into view
+│   │   │   │   ├── kanbanBoardKeys.ts # The board's own keys: "/", Escape, Delete, the arrows (focus goes with them), Enter
 │   │   │   │   └── kanbanTileCreation.ts, kanbanFileDropHandler.ts, kanbanInsertPosition.ts
 │   │   │   ├── tasklist/              # Task List logic
 │   │   │   │   ├── notesBox.svelte.ts # The row notes box draft; follows its note until the user types; an unsaved draft counts for leave / quit (rescue copy, held conflict; "Use theirs (discard mine)" keeps a copy in `.filo/recovery/<ts>-keep/` first); saves 1.5 s after typing stops, and Escape saves and closes it
@@ -565,7 +567,7 @@ filo/
 │   │   │   │   ├── frontmatterWriter.ts # Task field edits → note frontmatter deltas
 │   │   │   │   ├── indentRules.ts     # indentProblem: one indent rule for drag and Tab (section, cycle, 3 levels)
 │   │   │   │   ├── manualSortSwitch.ts # Reorder under a non-manual sort: one undo step, a toast whose Undo undoes only that step
-│   │   │   │   ├── tocPlacement.ts    # Where the Table of Contents first opens (beside the list when there is room)
+│   │   │   │   ├── tocPlacement.ts    # Where the Table of Contents first opens (beside the list when there is room; folded where there isn't)
 │   │   │   │   ├── fileDropHandler.ts # OS / sidebar file drop onto a Task List → tasks (a note already in the vault by its path)
 │   │   │   │   ├── datePickerViewState.svelte.ts # TaskDatePicker's shown month and keyboard day (re-seeds only when the value changes)
 │   │   │   │   ├── calendarGrid.ts    # The date picker's arithmetic: the locale's first weekday, the six-week grid, where a key moves the day
@@ -576,6 +578,8 @@ filo/
 │   │   │   │   ├── taskCreation.ts, taskDeletion.ts, sectionOps.ts, sectionMath.ts, blockMove.ts
 │   │   │   │   ├── taskDragController.svelte.ts, multiSelectController.svelte.ts, indentGesture.ts
 │   │   │   │   ├── taskListViewModel.svelte.ts # Rows → sections (a Group By groups inside each) → `flatSections` (the rows as drawn) → `renderedRows`, the order the keys, Tab, Shift-click and Ctrl+A follow
+│   │   │   │   ├── rowMoves.ts        # Alt+Up / Alt+Down and Tab read off the rows as drawn: past the row at the same level, with its subtasks; Tab one level in
+│   │   │   │   ├── taskListShortcuts.ts # The board's commands (N only with focus in the board, Ctrl+N, Ctrl+A, Alt+Up / Alt+Down)
 │   │   │   │   └── filtersAndViews.svelte.ts, taskListKeyboardNav.svelte.ts
 │   │   │   ├── tasks/                 # Task helpers shared by Kanban and Task List
 │   │   │   │   ├── frontmatterReaders.ts # Task fields read from a note's frontmatter
@@ -600,7 +604,8 @@ filo/
 │   │   │   │   ├── unappliedEditsPrompt.ts # settleUnappliedEdits: Apply / Discard / Cancel before a bulk action
 │   │   │   │   ├── settleOpenSettings.ts # Close / open another vault / quit ask about unapplied Settings and theme-editor edits first
 │   │   │   │   ├── confirmDiscardSettings.ts # Closing Settings with unapplied edits asks first
-│   │   │   │   └── settingsTabRequest.svelte.ts # openSettingsAt(tab): Settings opens on, or switches to, a tab (a notice's Open Recovery)
+│   │   │   │   ├── settingsTabRequest.svelte.ts # openSettingsAt(tab): Settings opens on, or switches to, a tab (a notice's Open Recovery)
+│   │   │   │   └── shortcutHelp.ts    # Help → Shortcuts by area; a board's commands rebindable with no board of that kind open, keys kept from colliding
 │   │   │   ├── fonts/
 │   │   │   │   └── importedFonts.ts   # `.filo/fonts/` registered with the page on every vault open
 │   │   │   ├── styles/                # Override-cascade resolver
@@ -730,7 +735,7 @@ filo/
 │   │       │   ├── RepeatPopup.svelte # The Repeat menu's "Every…": every N days, weeks, months or years
 │   │       │   ├── TaskBulkActionBar.svelte # Bulk verbs for the selected tasks
 │   │       │   ├── TaskListToc.svelte # Table of Contents body: section jump links, active header highlight
-│   │       │   ├── FloatingTocPanel.svelte # The Task List's draggable, resizable Table of Contents panel
+│   │       │   ├── FloatingTocPanel.svelte # The Task List's draggable, resizable Table of Contents panel; folds to its header (per board), folded at first where it would cover the list
 │   │       │   ├── ElementStylePopup.svelte # Style popup for a Kanban card / column, task or section
 │   │       │   ├── TaskListSideToolbar.svelte
 │   │       │   ├── SmartListTabs.svelte # Task List smart-list filter tabs
@@ -777,7 +782,7 @@ filo/
 │   │       │   ├── TrashSettings.svelte # Settings → Trash: Restore / Empty trash
 │   │       │   ├── RecoverySettings.svelte # Settings → Recovery: the copies in `.filo/recovery/` by kind (Open, Show in folder, Delete, Delete all)
 │   │       │   ├── VaultSidebarSettings.svelte # General → Vault Sidebar: name, colour, sort / group, extensions, Root Directory
-│   │       │   └── KeyboardShortcuts.svelte
+│   │       │   └── KeyboardShortcuts.svelte # Help: Shortcuts (by area, `shortcutHelp.ts`) and About
 │   │       ├── modals/                # Other modal dialogs
 │   │       │   ├── ProjectSettings.svelte  # Tabbed wrapper around settings/
 │   │       │   ├── BoardBrowser.svelte
@@ -1116,7 +1121,7 @@ Themes are colours only (`lib/themes/themeTokens.ts`): the user's font, sizes, U
 - **Unit tests (Vitest):** Cover all `lib/` modules. Stores should have unit tests for their logic. Target: every function in `lib/` has at least one test.
 - **Component tests (jsdom + Vitest):** `vitest.config.mts` has four projects: `unit` (`src/tests/unit/`), `component` (`src/tests/component/`, resolved with the `browser` export condition so Svelte 5 client `mount()` works), `characterisation` and `browser` (both below). Component tests mount the REAL components with [src/tests/component/helpers/mountEditor.ts](src/tests/component/helpers/mountEditor.ts) (`recordingFilo`, `mountTextTile`, `mountDocumentEditor`, `pressUndo`, `settle`, `drainDebounce`). All four projects run in `test:unit:strict`. Heavy interaction coverage still lives in Playwright E2E.
 - **Browser tests (Vitest browser mode):** the `browser` project runs `src/tests/browser/` in Playwright's headless Chromium, for what jsdom can't imitate: layout, the caret, the browser's own action for a key the editor doesn't take, and the engine's style serialiser. Install it once per machine (`npx playwright install --only-shell chromium`); GitHub's `verify` job installs it before `ci:verify`. It shares `src/tests/setup.ts`, which skips its one Node-only line there (and gives jsdom's `Range` empty client rects, which CodeMirror measures, and an inert `ResizeObserver`; Chromium has its own). The specs: every toolbar case saved and reopened (the jsdom suite's promise, in the engine Filo ships); rich paste from Word, Google Docs and web pages through the real paste (a span that sets no colour, font or size saves no bare `<span>`, the source's colour, font and pt sizes are dropped, highlights kept, Word's bullets a list, and the note reopens editable); formatting words one by one inside a bold phrase, and a word made bold with its space; scene breaks and markers typed with real keys; the list buttons on nested lists; the font size box and font names; table column widths; images in a note; a long note's save time; the colour spellings Chromium writes (`rgb(…)` for a picked hex, pinned until colours are written as picked); caret keys pressed for real with the app's stylesheet (Enter beside a soft break, Tab / Shift+Tab / Backspace, the arrows across a break); the Raw view (typing, its undo, Ctrl+S, Tab leaving, the find bar, a dropped file not read in, its box and colours, Edit in Raw view scrolling to the line, app shortcuts kept out); the Document tab's page view (every block inside a page's text area, at 150% and after an edit, a click and the arrow keys across a page gap, nothing in the note or its undo history); paragraph and list spacing in a tile, a card's preview and a Document tab at every Line Spacing (the Document tab's rules compiled from `DocumentEditor.svelte` by `svelte/compiler`, so the spec follows them), and Heading 3 on one line of a stat block; and lines pasted into a title as one line. Component tests reach the Raw view's CodeMirror through `src/tests/component/helpers/rawView.ts`. After a key that only moves the caret, a spec waits until the editor holds the caret the browser placed (`caretAt`): ProseMirror learns of the move from `selectionchange`, which keys sent back to back can beat. Failure screenshots go to `.vitest/` (git-ignored).
-- **Characterisation suite:** `src/tests/characterisation/` mounts the whole `App.svelte` against a real temp vault, with the real main-process IPC handlers behind `window.filo` (only the Electron shell is faked). The specs pin what the user sees (views, one model across views, frontmatter edits, renames, disk changes, delete + undo through the trash, tag undo, the tag row and raw view, bytes never written by looking, new cards and tiles taking what is typed, typed text saved on a pause or Ctrl+S, Reload keeping a copy) and call only the `harness/` adapter. When an internal API moves, update the harness, not the specs; the `characterisation-suite` gate enforces this. The one skip allowed is `it.skipIf(onLinux)` (`harness/platform.ts`), for the few cases that time out only on the Linux CI runner's file watcher; Filo targets Windows, where they run. `npm run scratch-vault` uses the same harness to build the dogfooding vault.
+- **Characterisation suite:** `src/tests/characterisation/` mounts the whole `App.svelte` against a real temp vault, with the real main-process IPC handlers behind `window.filo` (only the Electron shell is faked). The specs pin what the user sees (views, one model across views, frontmatter edits, renames, disk changes, delete + undo through the trash, tag undo, the tag row and raw view, bytes never written by looking, new cards and tiles taking what is typed, typed text saved on a pause or Ctrl+S, Reload keeping a copy, the Kanban and Task List keys following the screen) and call only the `harness/` adapter. When an internal API moves, update the harness, not the specs; the `characterisation-suite` gate enforces this. The one skip allowed is `it.skipIf(onLinux)` (`harness/platform.ts`), for the few cases that time out only on the Linux CI runner's file watcher; Filo targets Windows, where they run. `npm run scratch-vault` uses the same harness to build the dogfooding vault.
 - **E2E tests (Playwright):** `src/tests/e2e/*.e2e.ts` drive the **built** app (`dist/main/main.js`, so `npm run build` first) the way the user does, through [src/tests/e2e/helpers/app.ts](src/tests/e2e/helpers/app.ts): `launchBuilt` (fresh user-data dir, the folder picker and native message boxes stubbed in main, window restored and un-throttled), `quitLikeUser` (the window's close, so the quit flow runs), `openNoteByName`, `toasts`, `freshVault`, `generateVault(n)`, `hashVault`. A spec checks what is on screen or on disk, never a store; gate `e2e-drives-built-app` forbids `import('/src/…')` in the page. One worker (parallel Electron instances fight over `DevToolsActivePort`). The specs: editor fidelity (formatting reopens editable), the Kanban click, Syncthing-style deliveries, quit while minimized, no bytes written by looking (1,000 generated notes), a day's first use across launches, vault switch mid-edit and a BOM edit, crash recovery, keyboard access, the Search panel's close button and drag and Escape after a click outside it, the text right-click menu (main's menus captured, Insert Link opening the popup), laptop widths (the note clear of the sidebar, every formatting control on screen at 1,100, 1,280 and 1,366 px), a link copied from the sidebar pasted into a note (the machine's clipboard put back after), the Raw view (Edit in Raw view on the named line, the save on leaving and at quit, Ctrl+Z after an outside change saving no mix, its editor fetched only when it opens), a new card or tile typed into at once (no extra tiles or cards), a long note on page cards with no line in a gap, zoomed by the keys and Ctrl+wheel (and no cards with Page Layout set to one sheet), an axe scan of each view, the Raw view and its find bar included (injected into the page; colour contrast is `themeContrast.test.ts`'s job), and `scaleBudgets` (only with `FILO_E2E_SCALE=1`). The suite runs locally on Windows, not in GitHub CI. `FILO_E2E_MAIN` points the suite at another build, to see a spec fail where its bug is still present. `FILO_E2E_EXE` points it at a packaged `Filo.exe` (`win-unpacked/` from `npm run package:dir`): the installed app's asar and stricter CSP, with no `node_modules` beside it; run it after a change to packaging.
 - **Corpus check (by hand):** run it after any change to the editor, TipTap, markdown-it or prosemirror-markdown. `corpus:list` lists the repo's notes, a vaults folder and `node_modules` READMEs (de-duplicated by content; `--extra <dir>` adds any folder, e.g. one made by `scripts/perf/genVault.mjs`). `corpus:run` loads each note into a real editor and records its read-only verdict and what a save would write. Run it on the base commit too, with the same list: `git worktree add --detach <dir> <sha>`, a `node_modules` junction to this checkout's (PowerShell `New-Item -ItemType Junction`; unlink it with `cmd /c rmdir` before `git worktree remove`), and the runner and its config copied in when the base predates them. Then `corpus:compare`: it exits 1 when an output changed or a note became read-only, and counts notes edited between the runs apart.
 - **A second Markdown parser (micromark, tests only):** `markdownContentElsewhere.test.ts` renders every golden fixture as Filo saves it and every toolbar case's saved note with the note's own markdown-it and with micromark (CommonMark plus GitHub's tables, strikethrough and task lists), and both must show the same words, ticks and link addresses; for a fixture that opens editable, micromark must show the same before and after the save. A difference is a finding: fix the writer, or pin it under "known differences" with its backlog item. js-yaml plays the same oracle role for YAML.

@@ -90,6 +90,8 @@ function keyboardNav(vm: TaskListViewModel, commitIndent = vi.fn()): TaskListKey
     getBoard: () => ({ id: 'b' }) as never,
     getRows: () => vm.rows,
     getRenderedRows: () => vm.renderedRows,
+    getFlatSections: () => vm.flatSections,
+    getLeadingSectionId: () => '__leading__',
     getPlacements: () => vm.rows.map((r) => r.placement),
     getSections: () => [],
     getSortBy: () => 'priority',

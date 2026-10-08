@@ -7,7 +7,7 @@
    * `TileContainer`. Drag/drop reorders placements between columns; the
    * Add-Tile button opens the type-picker modal upstream.
    */
-  import { buildCardContextMenu, buildColumnContextMenu } from '../../lib/kanban/kanbanContextMenus';
+  import { buildCardContextMenu, buildColumnContextMenu, cardMenuPoint } from '../../lib/kanban/kanbanContextMenus';
   import { untrack, getContext } from 'svelte';
   import {
     dndzone,
@@ -240,7 +240,7 @@
      * of a multi-item selection. The parent owns the menu items so the move/
      * delete/tag handlers can reach board-level state.
      */
-    onBulkContextMenu: (e: MouseEvent, tileId: string) => void;
+    onBulkContextMenu: (at: { x: number; y: number }, tileId: string) => void;
     /**
      * Opens the tile's backing `.md` file as a Document board in a new tab.
      * Provided by the parent so the open path stays in one place. Only meaningful for text tiles;
@@ -415,6 +415,8 @@
 
   function handleTileContextMenu(e: MouseEvent, tileId: string) {
     if (wantsNativeTextMenu(e)) return;
+    // The menu key or Shift+F10 on a focused card opens its menu on the card.
+    const at = cardMenuPoint(e, e.currentTarget instanceof Element ? e.currentTarget : null);
     // Multi-select: when the right-clicked card is part of a selection of
     // 2+, defer to the parent's bulk menu (Move / Delete / Add tag against
     // every selected card). A right-click on a card OUTSIDE the current
@@ -423,13 +425,13 @@
     if (selectionStore.count > 1 && selectionStore.isSelected(tileId)) {
       e.preventDefault();
       e.stopPropagation();
-      onBulkContextMenu(e, tileId);
+      onBulkContextMenu(at, tileId);
       return;
     }
     e.preventDefault();
     e.stopPropagation();
-    const menuX = e.clientX;
-    const menuY = e.clientY;
+    const menuX = at.x;
+    const menuY = at.y;
     uiStore.showContextMenu(menuX, menuY, buildCardContextMenu({
       onOpenAsDocument: tilesById[tileId]?.type === 'text' ? () => onOpenAsDocument(tileId) : undefined,
       onCopyLink: copyCardLink(tileId),
@@ -467,6 +469,24 @@
   let visiblePlacements = $derived(
     placements.filter((p) => tilesById[p.tileId] !== undefined),
   );
+
+  // Every card takes focus (the arrow keys move it), but only the one the
+  // keys are on is a Tab stop, so Tab doesn't walk every card. The zone is
+  // told to make the cards untabbable (`zoneItemTabIndex`), and it sets them
+  // again whenever its options change: this runs after it.
+  let cardsZoneEl = $state<HTMLElement | null>(null);
+  let keyCardId = $derived([...selectionStore.selectedIds].at(-1) ?? null);
+  $effect(() => {
+    void cardItems;
+    void cardDragDisabled;
+    void cardFlipDurationMs;
+    const id = keyCardId;
+    for (const el of Array.from(cardsZoneEl?.children ?? [])) {
+      if (el instanceof HTMLElement && el.classList.contains('tile-drop-zone')) {
+        el.tabIndex = el.dataset.tileId === id ? 0 : -1;
+      }
+    }
+  });
 
   /**
    * Header pointerdown guard. The header is the only column drag handle, but
@@ -673,6 +693,7 @@
         class="column-cards-zone"
         class:is-empty={visiblePlacements.length === 0}
         data-column-id={column.id}
+        bind:this={cardsZoneEl}
         use:dndzone={{
           items: cardItems,
           type: 'kanban-cards',
@@ -680,6 +701,8 @@
           flipDurationMs: cardFlipDurationMs,
           dropTargetStyle: {},
           transformDraggedElement: transformDraggedCard,
+          zoneTabIndex: -1,
+          zoneItemTabIndex: -1,
         }}
         use:clearStaleDndCardStyles={cardItems}
         onconsider={onConsiderCards}
@@ -736,6 +759,7 @@
                   && placement.tileId !== dragTileId
                   && dragBlockIds.includes(placement.tileId)}
                 data-tile-id={placement.tileId}
+                aria-label={tile.title || 'Untitled card'}
                 onpointerdown={(e) => onCardPointerDown(e, placement.tileId, tile.locked === true)}
                 onclick={(e) => handleTileClick(e, placement.tileId)}
                 oncontextmenu={(e) => handleTileContextMenu(e, placement.tileId)}
@@ -1106,6 +1130,15 @@
 
   .tile-drop-zone.selected {
     box-shadow: 0 0 0 2px var(--accent-primary);
+  }
+
+  /* The card the keyboard is on; a click shows the selection ring alone. */
+  .tile-drop-zone:focus {
+    outline: none;
+  }
+  .tile-drop-zone:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 3px;
   }
 
   .tile-drop-zone.locked {

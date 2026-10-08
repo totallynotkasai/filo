@@ -43,3 +43,13 @@ export function tocDefaultBounds(viewportWidth: number, listRight: number | null
   const width = Math.min(TOC_DEFAULTS.width, rightEdge - x);
   return width >= TOC_DEFAULTS.minWidth ? { ...corner, x, width } : corner;
 }
+
+/**
+ * Whether the panel's first place (`tocDefaultBounds`) leaves the list
+ * uncovered. Where it doesn't (a laptop's width), the panel first opens
+ * folded to its header.
+ */
+export function tocFitsBeside(viewportWidth: number, listRight: number | null): boolean {
+  if (listRight === null) return true;
+  return tocDefaultBounds(viewportWidth, listRight).x >= listRight + TOC_DEFAULTS.gap;
+}

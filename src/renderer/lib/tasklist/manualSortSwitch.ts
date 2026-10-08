@@ -13,11 +13,12 @@ import { BatchCommand, UpdateBoardSettingsCommand } from '../../commands/index';
 import type { Command } from '../../commands/Command';
 import type { SortBy } from '../tasks/taskListModel';
 
-export function executeReorderSwitchingToManual(reorderCmd: Command, sortBy: SortBy): void {
+/** Runs the step; the promise settles once it has run (it rejects when the step was refused). */
+export function executeReorderSwitchingToManual(reorderCmd: Command, sortBy: SortBy): Promise<void> {
   const sortCmd = new UpdateBoardSettingsCommand({ sortBy: 'manual' }, { sortBy }, [], 'Switch to Manual sort');
   const batch = new BatchCommand('Reorder task (Manual sort)', [sortCmd, reorderCmd]);
   const boardId = historyStore.activeBoardId;
-  void historyStore.execute(batch);
+  const done = historyStore.execute(batch);
   uiStore.pushToast({
     text: 'Switched to Manual sort to reorder tasks',
     type: 'info',
@@ -36,4 +37,5 @@ export function executeReorderSwitchingToManual(reorderCmd: Command, sortBy: Sor
       },
     ],
   });
+  return done;
 }

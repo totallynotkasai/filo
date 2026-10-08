@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tocDefaultBounds, TOC_DEFAULTS } from '@renderer/lib/tasklist/tocPlacement';
+import { tocDefaultBounds, tocFitsBeside, TOC_DEFAULTS } from '@renderer/lib/tasklist/tocPlacement';
 
 /**
  * The Task List's Table of Contents first opens beside the list column when
@@ -22,5 +22,19 @@ describe('tocDefaultBounds', () => {
     const corner = { x: 1000 - 80 - 220, y: 100, width: 220, height: 320 };
     expect(tocDefaultBounds(1000, 900)).toEqual(corner);
     expect(tocDefaultBounds(1000, null)).toEqual(corner);
+  });
+});
+
+describe('tocFitsBeside (BL-35: the panel opens folded where it would cover the list)', () => {
+  it('is true where the panel sits beside the list or in a clear corner', () => {
+    expect(tocFitsBeside(1384, 1090)).toBe(true);
+    expect(tocFitsBeside(1920, 1300)).toBe(true);
+    expect(tocFitsBeside(1000, null)).toBe(true);
+  });
+
+  it('is false where its first place is over the list (a 1,280 px window)', () => {
+    // The list column, 800 px wide, centred in a 1,280 px workspace, ends at 1,064.
+    expect(tocFitsBeside(1280, 1064)).toBe(false);
+    expect(tocFitsBeside(1000, 900)).toBe(false);
   });
 });

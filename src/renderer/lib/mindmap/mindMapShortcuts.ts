@@ -12,7 +12,7 @@
  * them (the shortcut registry leaves editors and fields alone).
  */
 import { registerCommandWithShortcut } from '../../core/commandRegistry';
-import type { ShortcutBinding } from '../../core/hotkeys';
+import { MIND_MAP_SHORTCUTS } from '../../constants/shortcutReference';
 import { focusIsInBoard } from '../utils/boardFocus';
 import { isCanvasKeyBlocked } from './mindMapKeyboard';
 
@@ -33,6 +33,8 @@ export interface MindMapShortcutDeps {
   connectSelected(): void;
 }
 
+type MindMapCommandId = (typeof MIND_MAP_SHORTCUTS)[number]['id'];
+
 /** Registers the Mind Map's shortcuts; the returned function removes them. */
 export function registerMindMapShortcuts(deps: MindMapShortcutDeps): () => void {
   const one = (): boolean => deps.selectedCount() === 1;
@@ -43,14 +45,16 @@ export function registerMindMapShortcuts(deps: MindMapShortcutDeps): () => void 
   // presses a button); a key rebound in its place is checked the same way.
   const owns = (key: string, when: () => boolean) => (): boolean =>
     deps.isActivePane() && focusIsInBoard(deps.canvas()) && !isCanvasKeyBlocked(key, document.activeElement) && when();
-  const shortcuts: Array<[string, string, ShortcutBinding, () => void, () => boolean]> = [
-    ['mindmap:new-tile', 'Mind Map: New tile beside the selection', { key: 'n' }, deps.newTile, always],
-    ['mindmap:connect', 'Mind Map: Connect the selected tile', { key: 'c' }, deps.connectSelected, one],
-    ['mindmap:rename-tile', 'Mind Map: Rename the selected tile', { key: 'Enter' }, deps.renameSelected, one],
-    ['mindmap:remove-tiles', 'Mind Map: Remove the selected tiles', { key: 'Backspace' }, deps.removeSelected, some],
-  ];
-  const unregister = shortcuts.map(([name, label, binding, execute, when]) =>
-    registerCommandWithShortcut({ name, label, description: label, binding, enabled: owns(binding.key, when), execute }));
+  const run: Record<MindMapCommandId, { execute: () => void; when: () => boolean }> = {
+    'mindmap:new-tile': { execute: deps.newTile, when: always },
+    'mindmap:connect': { execute: deps.connectSelected, when: one },
+    'mindmap:rename-tile': { execute: deps.renameSelected, when: one },
+    'mindmap:remove-tiles': { execute: deps.removeSelected, when: some },
+  };
+  const unregister = MIND_MAP_SHORTCUTS.map(({ id, label, binding }) => {
+    const { execute, when } = run[id];
+    return registerCommandWithShortcut({ name: id, label, description: label, binding, enabled: owns(binding.key, when), execute });
+  });
   return () => {
     for (const off of unregister) off();
   };

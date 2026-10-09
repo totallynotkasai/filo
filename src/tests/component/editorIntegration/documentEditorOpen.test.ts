@@ -9,10 +9,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { editorMarkdown } from '@renderer/lib/editor/markdownSync';
 import {
+  drainUntilSettled,
   recordingFilo,
   mountDocumentEditor,
   pressUndo,
-  drainDebounce,
   captureConsoleErrors,
   resetEditorHarness,
   teardownEditorHarness,
@@ -38,7 +38,7 @@ describe('DocumentEditor open → close (editor integration)', () => {
       const m = await mountDocumentEditor({ docPath: 'Doc.md' });
       expect(m.proseMirror().textContent).toContain('Title');
       await m.unmount();
-      await drainDebounce();
+      await drainUntilSettled();
       expect(fs.writesTo('Doc.md')).toEqual([]);
       expect(fs.files.get('Doc.md')).toBe(note);
       expect(errors.lines.filter((l) => l.includes('effect_update_depth_exceeded'))).toEqual([]);
@@ -49,7 +49,7 @@ describe('DocumentEditor open → close (editor integration)', () => {
     const fs = recordingFilo({ 'Doc.md': NOTE_LF });
     const m = await mountDocumentEditor({ docPath: 'Doc.md' });
     pressUndo(m);
-    await drainDebounce();
+    await drainUntilSettled();
     expect(editorMarkdown(m.editor())).toContain('Title');
     expect(fs.writesTo('Doc.md')).toEqual([]);
     await m.unmount();

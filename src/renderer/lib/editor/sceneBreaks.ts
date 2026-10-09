@@ -2,6 +2,7 @@ import { Extension, InputRule } from '@tiptap/core';
 import { Fragment, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { closeHistory } from '@tiptap/pm/history';
 import { TextSelection, type EditorState } from '@tiptap/pm/state';
+import { isolateSelectedLines, splitsAtLines } from './lineBlocks';
 
 /**
  * Scene breaks and other lines typed as text, as Enter leaves them.
@@ -39,18 +40,62 @@ const YEAR_LIKE = /\d{3}/;
  * `rules` firing only on typed text, never on Enter: each pattern refuses text
  * ending in the newline Enter is run as, and text `refuse` matches at its
  * start. A pattern's groups are kept, which the rules read their level or
- * start number from.
+ * start number from. Each rule also fires at the start of a soft-broken line
+ * (`atLineStart`).
  */
 export function typedOnly(rules: readonly InputRule[], refuse?: RegExp): InputRule[] {
-  return rules.map((rule) => {
+  return rules.flatMap((rule) => {
     const find = rule.find;
-    if (!(find instanceof RegExp)) return rule;
+    if (!(find instanceof RegExp)) return [rule];
     const refused = refuse ? `(?!${refuse.source})` : '';
-    return new InputRule({
+    const typed = new InputRule({
       find: new RegExp(`(?![\\s\\S]*\\n$)${refused}(?:${find.source})`, find.flags),
       handler: rule.handler,
       undoable: rule.undoable,
     });
+    const lineStart = atLineStart(rule, find, refused);
+    return lineStart ? [typed, lineStart] : [typed];
+  });
+}
+
+/**
+ * `rule` for its marker typed at the start of a line joined to the one above
+ * by a soft break (a note from Keep, a plain-text paste, an agent).
+ *
+ * TipTap matches a rule against the block's text from its start to the caret,
+ * where a soft break reads as a newline, so a rule anchored at the block's
+ * start never fired there: `- ` stayed text, saved `\- `. This one matches
+ * after the block's last newline instead and, on a soft break only, makes the
+ * caret's line a block of its own first, as the toolbar does
+ * (`isolateSelectedLines`); then the rule acts on that block. The split is in
+ * the rule's own transaction, so Backspace straight after (TipTap's undo of an
+ * input rule) or Ctrl+Z gives back the typed marker with the lines joined.
+ *
+ * A hard break (Shift+Enter, which also reads as a newline) and a list item or
+ * table cell, where a split would change the list or the table, leave the
+ * marker as text, as before.
+ */
+function atLineStart(rule: InputRule, find: RegExp, refused: string): InputRule | null {
+  if (!find.source.startsWith('^')) return null;
+  return new InputRule({
+    // After a newline, with none from the match on: the caret's line only.
+    find: new RegExp(`(?<=\\n)(?![\\s\\S]*\\n)${refused}(?:${find.source.slice(1)})`, find.flags),
+    handler: (props) => {
+      const { state, range } = props;
+      const tr = state.tr;
+      const $start = tr.doc.resolve(range.from);
+      if ($start.nodeBefore?.type.name !== 'softBreak' || !splitsAtLines($start)) return null;
+      const before = tr.steps.length;
+      isolateSelectedLines(tr);
+      const split = tr.mapping.slice(before);
+      // The rule's state reads the split document once its `tr` is read again.
+      void state.tr;
+      const steps = tr.steps.length;
+      const done = rule.handler({ ...props, range: { from: split.map(range.from), to: split.map(range.to) } });
+      // A rule that changed nothing leaves no split behind: the marker stays text.
+      return done === null || tr.steps.length === steps ? null : done;
+    },
+    undoable: rule.undoable,
   });
 }
 

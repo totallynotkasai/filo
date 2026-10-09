@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+  drainDebounce,
+  drainUntilSettled,
+  drainUntilWritten,
   recordingFilo,
   mountTextTile,
   mountDocumentEditor,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
@@ -30,7 +32,7 @@ describe('an HR-leading body survives remounts (MD-3)', () => {
     const second = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     expect(second.proseMirror().textContent).toContain('Some intro');
     await second.unmount();
-    await drainDebounce();
+    await drainUntilSettled();
     expect(fs.files.get('Note.md')).toContain('Some intro');
   });
 
@@ -43,7 +45,7 @@ describe('an HR-leading body survives remounts (MD-3)', () => {
     const ed = doc.editor();
     ed.commands.focus('end');
     ed.commands.insertContent('!');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     const writes = fs.writesTo('Note.md');
     expect(writes.length).toBeGreaterThan(0);
     expect(writes[writes.length - 1].content).toContain('Some intro');

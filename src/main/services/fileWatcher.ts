@@ -26,6 +26,7 @@ import {
 import { shouldIgnorePath, classifyChange, isAttachmentByExtensionOnly } from './fileWatcherClassify';
 import { SuppressionWindows, type FileProbe } from './watcherSuppression';
 import { OwnMoves, moveCaches, moveRecords, putRecords, takeRecords } from './fileWatcherOwnMoves';
+import { Arrivals } from './fileWatcherArrivals';
 
 /**
  * Largest file the watcher hashes synchronously to tell Filo's own write from
@@ -159,6 +160,9 @@ export class FileWatcher {
    */
   private presence = new Map<VaultPath, boolean>();
 
+  /** Paths that appeared with nothing paired, for a note the walk finds gone (see fileWatcherArrivals.ts). */
+  private readonly arrivals = new Arrivals();
+
   /**
    * The tail of the notify-pass chain. Passes run one at a time: two passes
    * in flight at once could send their renames out of order, and a pass that
@@ -285,6 +289,7 @@ export class FileWatcher {
     if (!key) return;
     this.lastKnownSizes.set(key, bytes.length);
     this.presence.set(key, true);
+    this.arrivals.written(key, Date.now());
     const sha1 = sha1Hex(bytes);
     if (bytes.length <= WATCHER_HASH_MAX_BYTES) this.lastKnownHashes.set(key, sha1);
     else this.lastKnownHashes.delete(key);
@@ -351,6 +356,7 @@ export class FileWatcher {
   /** Filo renamed or moved `oldRel` (a file, or a folder with everything in it) to `newRel`. */
   noteOwnMove(oldRel: string, newRel: string): void {
     moveCaches({ knownDirs: this.knownDirs, lastKnownSizes: this.lastKnownSizes, lastKnownHashes: this.lastKnownHashes, presence: this.presence }, oldRel, newRel);
+    this.arrivals.move(oldRel, newRel);
     this.ownMoves.record(this.reconcileSnapshot, (snapshot) => moveRecords(snapshot, oldRel, newRel), newRel);
   }
 
@@ -385,6 +391,7 @@ export class FileWatcher {
     if (this.reconcileSnapshot) this.ownMoves.trashed.keep(trashId, takeRecords(this.reconcileSnapshot, rel));
     this.ownMoves.record(null, (snapshot) => { takeRecords(snapshot, rel); });
     this.setPresenceUnder(rel, false);
+    this.arrivals.forgetUnder(rel);
   }
 
   /** Filo brought `trashId` back from its trash to `rel`. */
@@ -392,7 +399,12 @@ export class FileWatcher {
     const records = this.ownMoves.trashed.take(trashId);
     if (records) {
       this.ownMoves.record(this.reconcileSnapshot, (snapshot) => putRecords(snapshot, rel, records), rel);
-      for (const suffix of records.keys()) this.presence.set(vaultPath(suffix ? `${rel}/${suffix}` : rel), true);
+      const now = Date.now();
+      for (const suffix of records.keys()) {
+        const key = vaultPath(suffix ? `${rel}/${suffix}` : rel);
+        this.presence.set(key, true);
+        this.arrivals.written(key, now);
+      }
     }
   }
 
@@ -634,6 +646,7 @@ export class FileWatcher {
     this.lastKnownHashes.clear();
     this.knownDirs.clear();
     this.presence.clear();
+    this.arrivals.clear();
     this.reconcileSnapshot = null;
     this.ownMoves.clear();
     this.reconcileInFlight = false;
@@ -719,29 +732,44 @@ export class FileWatcher {
         const synthesised: FileChangeEvent[] = [];
         // Vanished paths go first: the correlator pairs a case-only rename by
         // event order (earlier = old spelling), as the OS reports it live.
-        for (const [path] of previous) {
+        for (const [path, priorEntry] of previous) {
           if (this.aborted) return;
           if (current.has(path)) continue;
           if (shouldIgnorePath(path)) continue;
           if (this.suppression.isSuppressed(path, false)) continue;
+          const type = classifyChange(path);
+          // Only a note no event has already reported gone: one it has (a
+          // file renamed over another) is reported again here, and must not
+          // turn into a move now.
+          const key = vaultPath(path);
+          if (type === 'document' && this.presence.get(key) !== false) this.arrivals.walkFoundGone(key, priorEntry.seenAt);
           synthesised.push({
-            type: classifyChange(path),
+            type,
             filename: path,
             eventType: 'rename',
           });
         }
+        const tracksArrivals = this.arrivals.any();
         for (const [path, entry] of current) {
           if (this.aborted) return;
           if (shouldIgnorePath(path)) continue;
           if (this.suppression.isSuppressed(path, true, this.probeFile)) continue;
           const prior = previous.get(path);
           if (prior === undefined) {
+            const type = classifyChange(path);
+            // A path an event, Filo's write or a followed move already placed
+            // keeps what that said (an arrival, or none).
+            const key = vaultPath(path);
+            if (type === 'document' && this.presence.get(key) !== true) this.arrivals.walkFoundNew(key, entry.seenAt);
             synthesised.push({
-              type: classifyChange(path),
+              type,
               filename: path,
               eventType: 'rename',
             });
-          } else if (
+            continue;
+          }
+          if (tracksArrivals) this.arrivals.walked(vaultPath(path), entry.seenAt);
+          if (
             prior.mtimeMs !== entry.mtimeMs
             || prior.size !== entry.size
             // Hash differs even with identical mtime+size.
@@ -1033,16 +1061,24 @@ export class FileWatcher {
     }));
     if (this.aborted) return;
     const wasPresentBefore = (relPath: string): boolean => this.presence.get(vaultPath(relPath)) ?? false;
-    const { filtered: correlated, renames, conflicts, changedOnMove } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath), wasPresentBefore);
+    const arrivedSince = (present: string, missing: string): boolean => this.arrivals.arrivedSinceLastSeen(present, missing);
+    const { filtered: correlated, renames, conflicts, changedOnMove } = await correlateRenames(unique, exists, sizeOf, hashAsync, undefined, knownHostsFor(this.vaultPath), wasPresentBefore, arrivedSince);
     // Re-check after the only await: a vault swap inside the hash-probe
     // window must not send the OLD vault's events — the renderer's rename
     // queue captures vault identity at ARRIVAL, so a late send would drive
     // the rename cascade against the NEW vault's same-named files.
     if (this.aborted) return;
     announceSyncConflicts(this.vaultPath, unique, exists, conflicts); // sync conflict forks
-    // Where files are after this batch, for the next one's question.
+    // Where files are after this batch, for the next one's question, and
+    // which of them arrived (nothing paired with them, none known there).
+    const seenAt = Date.now();
     for (const c of correlated) {
-      if (c.type === 'document' || c.type === 'board' || c.type === 'attachment') this.presence.set(vaultPath(c.filename), exists(c.filename));
+      if (c.type !== 'document' && c.type !== 'board' && c.type !== 'attachment') continue;
+      const key = vaultPath(c.filename);
+      const there = exists(c.filename);
+      if (there) this.arrivals.sawPresent(key, this.presence.get(key) === true, seenAt);
+      else this.arrivals.sawGone(key);
+      this.presence.set(key, there);
     }
     // Move cached sizes + hashes onto the new path so a future delete of
     // the new path can still resolve, and drop the old-path entries. The walk
@@ -1054,6 +1090,7 @@ export class FileWatcher {
       this.ownMoves.record(this.reconcileSnapshot, (snapshot) => moveRecords(snapshot, r.oldPath, r.newPath), r.newPath);
       const oldKey = vaultPath(r.oldPath);
       const newKey = vaultPath(r.newPath);
+      this.arrivals.paired(oldKey, newKey);
       const cachedSize = this.lastKnownSizes.get(oldKey);
       this.lastKnownSizes.delete(oldKey);
       if (cachedSize !== undefined && !this.lastKnownSizes.has(newKey)) {
@@ -1081,6 +1118,7 @@ export class FileWatcher {
         }
       }
       filtered.push(c);
+      this.arrivals.sent(vaultPath(c.filename));
     }
     this.armHeldTimer();
 

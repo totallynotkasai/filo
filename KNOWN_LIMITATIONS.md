@@ -344,7 +344,8 @@ same-named attachment or board whose bytes changed in the move.
 
 The flip side of following a changed note: two unrelated notes of the same
 name, one deleted and the other created where no file was, in the same moment
-(or within the watcher's 1.5 s hold, #31), are followed as a move. Tiles of
+(or within the watcher's 1.5 s hold, or, for a note only the walk finds gone,
+since the walk last saw it: #31), are followed as a move. Tiles of
 the deleted note then show the new one; relink them. No text is lost: an
 unsaved edit meets the conflict question, which keeps both sides.
 
@@ -1152,7 +1153,16 @@ the old folder held is in the new one by name, even with files added or
 changed in the same moment. Otherwise its files are followed by the watcher's
 30 s walk, one by one, except a note whose save meets its file gone: the save
 asks for a walk at once (`vault:reconcile` with `{ now }`), so the note is
-followed within the 3 s wait.
+followed within the 3 s wait. The live watcher may report a moved note's new
+path before that walk finds its old one gone (an edit to it on Windows; on
+Linux, Node reports every file of a moved folder as new). The watcher then
+remembers the new path as having **arrived** (first seen holding a file where
+none was known, with nothing paired), and a same-named note the walk finds
+gone pairs with an arrival that came after the note was last seen (by a walk,
+an event, or Filo's own write), by its bytes or as a note moved and changed
+(`src/main/services/fileWatcherArrivals.ts`). A path that held a file at the
+last walk, that Filo wrote, or that an event saw change while it was already
+known still takes no move: that is a replace.
 
 **Impact:**
 - A move whose halves are further apart shows as a delete (the prompt keeps
@@ -1161,10 +1171,17 @@ followed within the 3 s wait.
   then writes the note back at its old place, a second copy beside the moved
   one.
 - A folder renamed while, in the same moment, one of its notes is edited and
-  another removed: the tree can't pair the folder (a name is missing), and by
-  the time the walk runs the watcher already knows the edited note's new path
-  as a file, so it reads as a new note, and the old one as deleted (the
-  "deleted" prompt if it had typing in it).
+  another removed is followed by the walk, not the tree: at once for a note
+  with typing in it (its save asks for the walk), otherwise when Filo's window
+  next takes the focus or at the 30 s walk. Until then its tabs and tiles
+  still name the old place. Only notes are followed this way; a board or
+  attachment in such a folder that changed in the same moment shows as a
+  delete plus a new file (#7).
+- The flip side: a note deleted where the live watcher can't see it (inside a
+  folder another program renamed or removed) while a same-named note was
+  created elsewhere since the walk last saw the first is followed as a move to
+  it (#7's flip side, over up to 30 s rather than 1.5 s). Relink the tiles; an
+  unsaved edit meets the Reload / Keep mine question, which keeps both sides.
 - An external delete of a note reaches the app about 1.5 s later than before.
 - A case-only rename (`Draft.md` → `draft.md`) made within about 7 s of a Filo
   write to the note is not reported at once (the echo window can't tell the

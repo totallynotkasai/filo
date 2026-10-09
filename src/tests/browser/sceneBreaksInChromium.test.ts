@@ -129,3 +129,71 @@ describe('markers typed with a space still start their block', () => {
     expect(ed.state.doc.child(1).textContent).toContain('* * *');
   });
 });
+
+/**
+ * A note whose lines are joined by single line breaks (Keep, a plain-text
+ * paste, an agent): "L1", "L2", "L3" in one paragraph, the caret put on line
+ * 2 at `offset` characters in.
+ */
+async function keepNoteAtLine2(offset = 0): Promise<Editor> {
+  const ed = makeEditor();
+  loadMarkdownIntoEditor(ed, 'L1\nL2\nL3');
+  ed.view.focus();
+  let firstBreak = -1;
+  ed.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'softBreak' && firstBreak < 0) firstBreak = pos;
+  });
+  ed.commands.setTextSelection(firstBreak + 1 + offset);
+  await new Promise((r) => setTimeout(r, 30));
+  return ed;
+}
+
+describe('a marker typed at the start of a soft-broken line starts that block on that line alone', () => {
+  const MARKERS: { keys: string; type: string; saved: string }[] = [
+    { keys: '- ', type: 'bulletList', saved: '- L2' },
+    { keys: '* ', type: 'bulletList', saved: '- L2' },
+    { keys: '+ ', type: 'bulletList', saved: '- L2' },
+    { keys: '1. ', type: 'orderedList', saved: '1. L2' },
+    { keys: '[[ ] ', type: 'taskList', saved: '- [ ] L2' },
+    { keys: '> ', type: 'blockquote', saved: '> L2' },
+    { keys: '# ', type: 'heading', saved: '# L2' },
+    { keys: '###### ', type: 'heading', saved: '###### L2' },
+  ];
+  for (const m of MARKERS) {
+    it(`${JSON.stringify(m.keys.replace('[[', '['))}: a ${m.type}, and lines 1 and 3 stay text`, async () => {
+      const ed = await keepNoteAtLine2();
+      await userEvent.keyboard(m.keys);
+      expect(blocks(ed)).toEqual(['paragraph: L1', `${m.type}: L2`, 'paragraph: L3']);
+      expect(expectReadsBack(ed)).toBe(`L1\n\n${m.saved}\n\nL3`);
+    });
+  }
+
+  it('the text typed after the marker goes into the new block', async () => {
+    const ed = await keepNoteAtLine2();
+    await userEvent.keyboard('- new ');
+    expect(blocks(ed)).toEqual(['paragraph: L1', 'bulletList: new L2', 'paragraph: L3']);
+  });
+
+  it('one Backspace straight after gives back "- " with the lines joined', async () => {
+    const ed = await keepNoteAtLine2();
+    await userEvent.keyboard('- ');
+    expect(ed.state.doc.childCount).toBe(3);
+    await userEvent.keyboard('{Backspace}');
+    expect(blocks(ed)).toEqual(['paragraph: L1- L2L3']);
+    expect(editorMarkdown(ed)).toBe('L1\n\\- L2\nL3');
+  });
+
+  it('Ctrl+Z gives back "- " with the lines joined', async () => {
+    const ed = await keepNoteAtLine2();
+    await userEvent.keyboard('- ');
+    await userEvent.keyboard('{Control>}z{/Control}');
+    expect(blocks(ed)).toEqual(['paragraph: L1- L2L3']);
+  });
+
+  it('"- " typed mid-line stays text', async () => {
+    const ed = await keepNoteAtLine2(1);
+    await userEvent.keyboard('- ');
+    expect(blocks(ed)).toEqual(['paragraph: L1L- 2L3']);
+    expectReadsBack(ed);
+  });
+});

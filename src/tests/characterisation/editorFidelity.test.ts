@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, quiesce, reopenVault, type CharApp } from './harness/app';
-import { $$, editors, openNoteFromSidebar, caretAfter, pressInEditor, typeKeys, leaveEditor, chooseTextStyle } from './harness/actions';
+import { $$, editors, openNoteFromSidebar, caretAfter, caretBefore, pressInEditor, typeKeys, leaveEditor, chooseTextStyle } from './harness/actions';
 import { documentBanners } from './harness/errorStates';
 
 type Editor = ReturnType<typeof editors>[number];
@@ -118,6 +118,25 @@ describe('lines written one per thought, and blank lines', () => {
     const again = await reopenNote(app, 'Stats.md');
     expect(documentBanners(app)).toEqual([]);
     expect(again.getJSON().content?.map((n) => n.type)).toEqual(['heading', 'paragraph']);
+  });
+
+  it('"- " typed at the start of one line makes that line a list item alone, and the note reopens editable as it was saved', async () => {
+    const app = await startApp({ 'Stats.md': `---\ntitle: Stats\n---\n${STATS}` });
+    await openNoteFromSidebar(app, 'Stats.md');
+    const ed = noteEditor(app);
+    await caretBefore(ed, 'Strength');
+    await typeKeys(ed, '- ');
+    await leaveEditor(ed);
+    await quiesce();
+    expect(body(app, 'Stats.md')).toBe('Physical\n\n- Strength - raw power\n\nEndurance - stamina\n');
+    const saved = app.read('Stats.md');
+
+    const again = await reopenNote(app, 'Stats.md');
+    await quiesce();
+    expect(documentBanners(app)).toEqual([]);
+    expect(again.isEditable).toBe(true);
+    expect(again.getJSON().content?.map((n) => n.type)).toEqual(['paragraph', 'bulletList', 'paragraph']);
+    expect(app.read('Stats.md')).toBe(saved);
   });
 
   it('blank lines typed after the last line are there when the note reopens, and reopening writes nothing', async () => {

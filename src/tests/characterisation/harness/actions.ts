@@ -1261,10 +1261,19 @@ export async function alignFirstBlock(app: CharApp, ed: Editor, align: 'left' | 
 
 /** Put the caret right after the first `text` in the editor. */
 export async function caretAfter(ed: Editor, text: string): Promise<void> {
+  await caretAt(ed, text, text.length);
+}
+
+/** The caret put just before the first `text` in the note (the start of a line, say). */
+export async function caretBefore(ed: Editor, text: string): Promise<void> {
+  await caretAt(ed, text, 0);
+}
+
+async function caretAt(ed: Editor, text: string, into: number): Promise<void> {
   let pos = -1;
   ed.state.doc.descendants((node, p) => {
     if (pos >= 0) return false;
-    if (node.isText && node.text?.includes(text)) pos = p + node.text.indexOf(text) + text.length;
+    if (node.isText && node.text?.includes(text)) pos = p + node.text.indexOf(text) + into;
     return true;
   });
   if (pos < 0) throw new Error(`no "${text}" in the note`);

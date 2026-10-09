@@ -126,6 +126,7 @@ filo/
 │   │   │   ├── fileWatcherHash.ts     # Content hash (with a size ceiling) for echo and rename matching
 │   │   │   ├── fileWatcherWalk.ts     # The 30 s reconcile walk (re-reads a file only when its stat moved); files changed since the vault was armed
 │   │   │   ├── fileWatcherOwnMoves.ts # Filo's own renames and trash moves (and folder moves the renderer followed) move the walk's record and caches with the files, so the next walk doesn't report them; a path last seen gone never marks the new one gone
+│   │   │   ├── fileWatcherArrivals.ts # Paths that arrived (first seen holding a file where none was known, nothing paired): a same-named note the walk finds gone pairs with one that came after the note was last seen (a folder renamed while a note in it is edited)
 │   │   │   ├── watcherSupervisor.ts   # Reopens the fs.watch handle after it dies
 │   │   │   ├── watcherSuppression.ts  # Own-echo windows: suppress / suppressWrite / suppressTree
 │   │   │   ├── syncConflictNotifier.ts # Live notices for sync-client conflict copies (board forks, notes' strong-named copies, refused renames)
@@ -139,7 +140,7 @@ filo/
 │   │   │   ├── vaultRegistry.ts       # Active vault tracker (gates IPC); armedAt: when the open began
 │   │   │   ├── recoverySnapshot.ts    # `.filo/recovery/` snapshots; `<ts>-unsaved/` rescue copies and `<ts>-keep/` kept versions (never pruned)
 │   │   │   ├── recoveryCopies.ts      # Settings → Recovery: open a copy, delete copies to the Recycle Bin (only paths inside `.filo/recovery/`)
-│   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames (never onto a path that already held a file: that is a replace); a note moved to a free path and changed at once pairs too, and its change is sent after the rename (`changedOnMove`)
+│   │   │   ├── renameCorrelation.ts   # Pairs missing+present events into renames (never onto a path that already held a file: that is a replace, unless a same-named note the walk finds gone was last seen before that path arrived: `arrivedSinceLastSeen`); a note moved to a free path and changed at once pairs too, and its change is sent after the rename (`changedOnMove`)
 │   │   │   ├── rendererCrashHandler.ts # Renderer crash → breadcrumb + Reload/Quit dialog; Reload releases the vault first (`releaseActiveVault`)
 │   │   │   ├── recentVaults.ts        # Persisted recent vault list
 │   │   │   ├── publicHttp.ts          # getPublic: the Link tile's page fetch; each hop's connection resolves through `checkedLookup` and its connected address is checked, so only public addresses are reached (no DNS rebinding)
@@ -519,7 +520,7 @@ filo/
 │   │   │   │   ├── pastePlainText.ts  # A text/plain paste: Markdown with HTML off, a newline a soft break (a closing one too; opening ones dropped); Ctrl+Shift+V literal (spaces before a newline dropped)
 │   │   │   │   ├── pasteHtml.ts       # A rich paste tidied: the source's text colour (near-black / white), main font and pt sizes dropped; a background or Word highlight a highlight; Word's list paragraphs real lists (HTML copied from a Filo note left alone)
 │   │   │   │   ├── spaceRuns.ts       # Follows prosemirror-markdown's own placement of each space (`misplacedSpace`); one it would write inside other marks than its own keeps bold / italic / strikethrough only where both neighbours carry it with the same marks outside it. A block it writes right is left alone
-│   │   │   │   ├── sceneBreaks.ts     # A lone `#`, `* * *`, `- - -` or `_ _ _` and Enter is a horizontal rule; heading, list, quote and checkbox rules fire on the typed space, never on Enter; a three-digit number (a year) starts no list
+│   │   │   │   ├── sceneBreaks.ts     # A lone `#`, `* * *`, `- - -` or `_ _ _` and Enter is a horizontal rule; heading, list, quote and checkbox rules fire on the typed space, never on Enter, and at the start of a soft-broken line too, where they split that line off first (`isolateSelectedLines`; not after a hard break, nor in a list item or table cell); a three-digit number (a year) starts no list
 │   │   │   │   ├── listSwitch.ts      # The list buttons and Ctrl+Shift+7 / 8 / 9: each list the selection reaches changes kind in place, every item at its level; paragraphs selected with it join it
 │   │   │   │   ├── blockquote.ts      # A quote is written without its empty paragraphs (no bare `>` line)
 │   │   │   │   ├── lossyChanges.ts    # The changes a read-only note would take, the cause first: the banner's "Line N: this list would be split…" / "Line N would change…", Take ownership's list

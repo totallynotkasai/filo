@@ -9,8 +9,11 @@ import { snapshotForRecovery } from '../../main/services/recoverySnapshot';
  * vault file (parse / schema-invalid), `snapshotForRecovery` preserves
  * its bytes in `.filo/recovery/<ts>/<basename>` so the original survives
  * any later overwrite. The user can fix the file by hand from that copy.
+ *
+ * Every case writes and prunes snapshots on the real disk: the retention cases
+ * write dozens, and a busy machine has stretched them past Vitest's 5 s default.
  */
-describe('snapshotForRecovery', () => {
+describe('snapshotForRecovery', { timeout: 20_000 }, () => {
   let vaultRoot: string;
 
   beforeEach(async () => {

@@ -19,7 +19,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { tabStore } from '@renderer/stores/tabs.svelte';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
-import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
+import { __resetDirtyTrackingForTests, unsavedWork } from '@renderer/lib/boards/writeStateTracking';
 import { __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
 import { installFiloMock, restoreFiloDefault } from '../../helpers/filoBridge';
 import { installEditorLoopBreaker, resetEditorLoopBreaker } from '../../helpers/editorLoopBreaker';
@@ -185,18 +185,57 @@ export async function drainDebounce(): Promise<void> {
   await settle();
 }
 
+// Under the component project's 5 s test timeout, so a wait that runs out
+// fails on the test's own expectation, not on the timeout.
+const DRAIN_TIMEOUT_MS = 3000;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function nothingLeftToSave(): boolean {
+  // A failed write is final until Retry or the next change: only pending and
+  // in-flight work can still reach the disk.
+  const work = unsavedWork();
+  return work.pending.length === 0 && work.inflight === 0;
+}
+
 /**
- * Wait until an edit's save of `rel` has landed, then one debounce more, so a
- * second save the edit shouldn't make still shows. A save lands about 485 ms
- * after the edit, so `drainDebounce` alone leaves a busy machine (a full suite
+ * Wait at least `atLeastMs` (the editor's 150 ms serialise idle and the note
+ * writer's 300 ms debounce), then until nothing is left to save: no keys an
+ * editor hasn't serialised, no write queued or in flight. A save that comes
+ * late on a busy machine is then still seen by a test that expects none.
+ * Throws when work is still left after `timeoutMs`: a test whose note holds a
+ * change on purpose (a refused body, a conflict) can't settle, and wants
+ * `drainDebounce`.
+ */
+export async function drainUntilSettled(opts: { atLeastMs?: number; timeoutMs?: number } = {}): Promise<void> {
+  await sleep(opts.atLeastMs ?? 520);
+  // The settle first: work a timer or a reply arms in the meantime shows as
+  // pending before the check.
+  await settle();
+  const deadline = Date.now() + (opts.timeoutMs ?? DRAIN_TIMEOUT_MS);
+  while (!nothingLeftToSave()) {
+    if (Date.now() >= deadline) {
+      const work = unsavedWork();
+      throw new Error(`still unsaved after the drain: pending [${work.pending.join(', ')}], ${work.inflight} in flight`);
+    }
+    await sleep(20);
+    await settle(2);
+  }
+}
+
+/**
+ * Wait until an edit's save of `rel` has landed, then until nothing more is
+ * left to save, so a second save the edit shouldn't make still shows (one its
+ * completion arms is pending by the end of the settle). A save lands about
+ * 485 ms after the edit, so a fixed wait leaves a busy machine (a full suite
  * run, a slow CI runner) no slack; this waits on the write itself.
  */
-export async function drainUntilWritten(fs: RecordingFilo, rel: string, timeoutMs = 5000): Promise<void> {
+export async function drainUntilWritten(fs: RecordingFilo, rel: string, timeoutMs = DRAIN_TIMEOUT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (fs.writesTo(rel).length === 0 && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 20));
+    await sleep(20);
   }
-  await drainDebounce();
+  await drainUntilSettled({ atLeastMs: 0 });
 }
 
 export function resetEditorHarness(): void {

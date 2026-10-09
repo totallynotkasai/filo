@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+  drainUntilWritten,
   recordingFilo,
   mountDocumentEditor,
   settle,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
@@ -25,7 +25,7 @@ describe('an edit keeps what the file already says', () => {
     m.editor().commands.focus('end');
     m.editor().commands.insertContent(' done');
     await settle();
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Obsidian.md');
     expect(fs.files.get('Obsidian.md')).toBe(note.replace('[TODO] x\n', '[TODO] x done\n'));
     await m.unmount();
   });

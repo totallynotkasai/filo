@@ -3,10 +3,10 @@ import { mount, unmount } from 'svelte';
 import TextFormattingToolbar from '@renderer/components/layout/TextFormattingToolbar.svelte';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
 import {
+  drainUntilWritten,
   recordingFilo,
   mountTextTile,
   settle,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
@@ -42,7 +42,7 @@ describe('the Checklist toolbar button', () => {
     await settle();
     expect(m.editor().getJSON().content?.[0]?.type).toBe('taskList');
 
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     expect(fs.files.get('Note.md')).toBe('- [ ] Buy milk\n');
     await m.unmount();
   });

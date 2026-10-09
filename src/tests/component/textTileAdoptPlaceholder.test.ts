@@ -3,10 +3,10 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 import { editorMarkdown } from '@renderer/lib/editor/markdownSync';
 import {
-  recordingFilo,
-  mountTextTile,
   drainDebounce,
   drainUntilWritten,
+  recordingFilo,
+  mountTextTile,
   resetEditorHarness,
   teardownEditorHarness,
   VAULT,
@@ -60,7 +60,7 @@ describe('TextTile never edits a body it has not read', () => {
     const m = await mountTextTile({ tile: { id: 't1', title: 'X' } });
     expect(fs.calls).toContain('vault:read-file-text');
     expect(editorMarkdown(m.editor())).toContain('Real body');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'X.md');
     const last = fs.writesTo('X.md').at(-1)?.content ?? '';
     expect(last).toContain('a: 1');
     expect(last).toContain('b: 2');

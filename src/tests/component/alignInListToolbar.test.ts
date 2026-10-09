@@ -4,10 +4,10 @@ import type { Editor } from '@tiptap/core';
 import TextFormattingToolbar from '@renderer/components/layout/TextFormattingToolbar.svelte';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
 import {
+  drainUntilWritten,
   recordingFilo,
   mountTextTile,
   settle,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
@@ -71,7 +71,7 @@ describe('the Align control and Indent in lists', () => {
     expect(alignSelect().title).toBe('Text Align');
     alignSelect().value = 'center';
     alignSelect().dispatchEvent(new Event('change', { bubbles: true }));
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     expect(fs.files.get('Note.md')).toBe('<p style="text-align: center;">Plain text</p>\n\n- one\n  - nested\n- two\n');
     await m.unmount();
   });
@@ -92,7 +92,7 @@ describe('the Align control and Indent in lists', () => {
     expect(indent).toBeTruthy();
     indent!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
     indent!.click();
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     expect(fs.files.get('Note.md')).toBe('- [ ] buy milk\n  - [ ] eggs\n');
     await m.unmount();
   });

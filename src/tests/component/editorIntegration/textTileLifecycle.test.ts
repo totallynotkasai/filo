@@ -17,10 +17,10 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { editorMarkdown, parseMarkdownFile } from '@renderer/lib/editor/markdownSync';
 import type { TextTile as TextTileDef } from '@renderer/schema/index';
 import {
+  drainUntilSettled,
+  drainUntilWritten,
   recordingFilo,
   settle,
-  drainDebounce,
-  drainUntilWritten,
   resetEditorHarness,
   teardownEditorHarness,
   VAULT,
@@ -66,7 +66,7 @@ describe('TextTile lifecycle (editor integration)', () => {
           const fs = recordingFilo({ 'Note.md': raw });
           const t = await mountTile();
           await unmount(t.component);
-          await drainDebounce();
+          await drainUntilSettled();
           expect(fs.writesTo('Note.md')).toEqual([]);
           expect(fs.files.get('Note.md')).toBe(raw);
         });
@@ -78,7 +78,7 @@ describe('TextTile lifecycle (editor integration)', () => {
     const fs = recordingFilo({ 'Note.md': 'Precious text\n' });
     const t = await mountTile();
     ctrlZ(t.pm);
-    await drainDebounce();
+    await drainUntilSettled();
     expect(editorMarkdown(t.editor)).toContain('Precious text');
     expect(fs.writesTo('Note.md')).toEqual([]);
     await unmount(t.component);
@@ -92,7 +92,7 @@ describe('TextTile lifecycle (editor integration)', () => {
     await settle();
     expect(t.pm.textContent).toContain('After reload');
     ctrlZ(t.pm);
-    await drainDebounce();
+    await drainUntilSettled();
     expect(t.pm.textContent).toContain('After reload');
     expect(t.pm.textContent).not.toContain('Before reload');
     expect(fs.writesTo('Note.md')).toEqual([]);
@@ -116,9 +116,9 @@ describe('TextTile lifecycle (editor integration)', () => {
     const t = await mountTile();
     t.editor.commands.focus('end');
     t.editor.commands.insertContent('!');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     await unmount(t.component);
-    await drainDebounce();
+    await drainUntilSettled();
     const writes = fs.writesTo('Note.md');
     expect(writes.length).toBe(1);
     expect(writes[0].content).toBe('Hello world!');
@@ -130,9 +130,9 @@ describe('TextTile lifecycle (editor integration)', () => {
     const t = await mountTile();
     t.editor.commands.focus('end');
     t.editor.commands.insertContent('!');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     await unmount(t.component);
-    await drainDebounce();
+    await drainUntilSettled();
     const writes = fs.writesTo('Note.md');
     expect(writes.length).toBe(1);
     const out = writes[0].content;

@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import {
+  drainUntilWritten,
   recordingFilo,
   mountTextTile,
   mountDocumentEditor,
   settle,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
@@ -37,7 +37,7 @@ describe('double spaces', () => {
     const ed = doc.editor();
     ed.commands.focus('end');
     ed.commands.insertContent(' world.  Next');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Typed.md');
     await settle();
     const writes = fs.writesTo('Typed.md');
     expect(writes.at(-1)?.content).toContain('Hello world.  Next');

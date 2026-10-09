@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+  drainUntilSettled,
+  drainUntilWritten,
   recordingFilo,
   mountTextTile,
   settle,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
@@ -30,7 +31,7 @@ describe('TextTile unmount writes only unsaved work (MD-2)', () => {
     const fs = recordingFilo({ 'Note.md': NOTE });
     const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     await m.unmount();
-    await drainDebounce();
+    await drainUntilSettled();
     expect(fs.writesTo('Note.md')).toEqual([]);
     expect(fs.files.get('Note.md')).toBe(NOTE);
   });
@@ -40,7 +41,7 @@ describe('TextTile unmount writes only unsaved work (MD-2)', () => {
     const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     type(m, 'Z');
     await m.unmount();
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     const writes = fs.writesTo('Note.md');
     expect(writes.length).toBe(1);
     expect(writes[0].content).toContain('Z');
@@ -50,10 +51,10 @@ describe('TextTile unmount writes only unsaved work (MD-2)', () => {
     const fs = recordingFilo({ 'Note.md': NOTE });
     const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     type(m, 'Z');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     expect(fs.writesTo('Note.md').length).toBe(1);
     await m.unmount();
-    await drainDebounce();
+    await drainUntilSettled();
     expect(fs.writesTo('Note.md').length).toBe(1);
   });
 
@@ -62,12 +63,12 @@ describe('TextTile unmount writes only unsaved work (MD-2)', () => {
     const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     fs.failWrites('Note.md', 'EBUSY');
     type(m, 'Z');
-    await drainDebounce();
+    await drainUntilSettled();
     expect(fs.writesTo('Note.md')).toEqual([]);
     fs.failWrites('Note.md', null);
     await m.unmount();
     await settle();
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     const writes = fs.writesTo('Note.md');
     expect(writes.length).toBe(1);
     expect(writes[0].content).toContain('Z');

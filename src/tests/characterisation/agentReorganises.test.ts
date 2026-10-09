@@ -13,7 +13,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, renameSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { startApp, stopApp, waitFor, quiesce, settle, recoveryCopies, type CharApp } from './harness/app';
-import { onLinux } from './harness/platform';
+import { walkVaultNow } from './harness/recovery';
 import {
   createBoard,
   placeNoteOnBoard,
@@ -159,7 +159,7 @@ describe('a folder renamed by another program while its contents change', () => 
     expect(errorToasts()).toEqual([]);
   });
 
-  it.skipIf(onLinux)('one of its notes deleted: the open note inside is found by the walk it asks for, inside the wait', async () => {
+  it('one of its notes deleted: the open note inside is found by the walk it asks for, inside the wait', async () => {
     const app = await startApp(places);
     await openWithTyping(app, 'Places/Castle.md', ' TYPED');
     const t0 = Date.now();
@@ -172,6 +172,52 @@ describe('a folder renamed by another program while its contents change', () => 
     expect(saidGone()).toBe(false);
     expect(app.exists('Places/Castle.md')).toBe(false);
     expect(boardFilesText(app).some((t) => t.includes('04 Worldbuilding/Castle.md'))).toBe(true);
+  });
+
+  /** The agent's reorganisation: the folder renamed, one note in it rewritten and another deleted, all at once. */
+  function renameRewriteAndDelete(app: CharApp): void {
+    renameSync(app.abs('Places'), app.abs('04 Worldbuilding'));
+    writeFileSync(app.abs('04 Worldbuilding/Castle.md'), app.read('04 Worldbuilding/Castle.md').replace('Castle text', 'Castle text (rewritten)'));
+    rmSync(app.abs('04 Worldbuilding/Forest.md'));
+  }
+
+  it('one note edited and another deleted, with typing in the edited one: one Reload / Keep mine question on the moved note', async () => {
+    const app = await startApp(places);
+    await openWithTyping(app, 'Places/Castle.md', ' TYPED');
+    renameRewriteAndDelete(app);
+
+    await waitFor(() => diskConflictPrompt(), 'the Reload / Keep mine question');
+    await waitFor(() => boardFilesText(app).some((t) => t.includes('04 Worldbuilding/Castle.md')), 'the tile to follow the move');
+    await quiesce(4000);
+    expect(saidGone()).toBe(false);
+    // Nothing is written over the other program's edit until the answer.
+    expect(app.read('04 Worldbuilding/Castle.md')).toContain('(rewritten)');
+
+    await keepMine();
+    await waitFor(() => app.read('04 Worldbuilding/Castle.md').includes('TYPED'), 'the typing in the moved note');
+    await quiesce(1500);
+    expect(app.exists('Places/Castle.md')).toBe(false);
+    expect(notes(app)).toEqual(['04 Worldbuilding/Castle.md']);
+    expect([...recoveryCopies(app).values()].some((t) => t.includes('(rewritten)'))).toBe(true);
+    expect(boardFilesText(app).some((t) => t.includes('Places/Castle.md'))).toBe(false);
+    expect(errorToasts()).toEqual([]);
+  });
+
+  it('one note edited and another deleted, with no typing: the note shows the edit at its new place once Filo walks the vault', async () => {
+    const app = await startApp(places);
+    await createBoard(app, 'mindmap');
+    await placeNoteOnBoard(app, 'mindmap', 'Places/Castle.md');
+    await openNoteFromSidebar(app, 'Places/Castle.md');
+    await quiesce(800);
+    renameRewriteAndDelete(app);
+
+    // Coming back to Filo's window walks the vault.
+    await walkVaultNow();
+    await waitFor(() => docText(app).includes('(rewritten)'), 'the Document tab to show the edit');
+    await waitFor(() => boardFilesText(app).some((t) => t.includes('04 Worldbuilding/Castle.md')), 'the tile to follow the move');
+    await quiesce(1500);
+    expect(toastTexts()).toEqual([]);
+    expect(notes(app)).toEqual(['04 Worldbuilding/Castle.md']);
   });
 });
 

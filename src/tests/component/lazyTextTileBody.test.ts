@@ -12,10 +12,10 @@ import { wantsNativeTextMenu } from '@renderer/lib/utils/editableTarget';
 import type { Editor } from '@tiptap/core';
 import type { TextTile } from '@renderer/schema/index';
 import {
+  drainUntilWritten,
   VAULT,
   recordingFilo,
   settle,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
@@ -105,7 +105,7 @@ describe('LazyTextTileBody: a card shows a preview until its editor is needed', 
     const ed = editorOf(el);
     ed.commands.focus('end');
     ed.commands.insertContent(' typed');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Card.md');
     const writes = fs.writesTo('Card.md');
     expect(writes.length).toBe(1);
     expect(writes[0]?.content).toContain('typed');

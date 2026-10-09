@@ -145,12 +145,14 @@ const NOTE_EXTENSIONS = new Set(['.md', '.markdown']);
  * edit.
  *
  * Only a lone same-named pair of notes, onto a path that held no file before
- * the batch (`wasPresentBefore` must be given, and false), and only when the
- * new file isn't empty: an empty note created as an old one goes is far more
- * often a new placeholder than a move.
+ * the batch (`wasPresentBefore` must be given, and false, unless the new path
+ * arrived after the walk last saw the old one: `arrivedSince`), and only when
+ * the new file isn't empty: an empty note created as an old one goes is far
+ * more often a new placeholder than a move.
  *
  * DECISION: two unrelated same-named notes, one deleted and one created on a
- * free path within the same moment (or the watcher's 1.5 s hold), are followed
+ * free path within the same moment (or the watcher's 1.5 s hold, or, for a
+ * note only the walk finds gone, since the walk last saw it), are followed
  * as a move too: tiles of the gone note then show the new one. No text is
  * lost (an unsaved edit meets the conflict prompt, which keeps copies), and a
  * tile can be re-linked, whereas a move that arrives as a delete forks the
@@ -161,12 +163,18 @@ function movedAndChanged(
   present: FileChangeEvent,
   relPathSize: ((relPath: string) => number | null) | undefined,
   wasPresentBefore: ((relPath: string) => boolean) | undefined,
+  arrivedSince: boolean,
 ): boolean {
-  if (wasPresentBefore === undefined || wasPresentBefore(present.filename)) return false;
-  if (missing.type !== 'document' || present.type !== 'document') return false;
-  if (!NOTE_EXTENSIONS.has(extname(missing.filename).toLowerCase())) return false;
-  if (!NOTE_EXTENSIONS.has(extname(present.filename).toLowerCase())) return false;
+  if (!isNotePair(missing, present)) return false;
+  if (wasPresentBefore === undefined || (wasPresentBefore(present.filename) && !arrivedSince)) return false;
   return relPathSize?.(present.filename) !== 0;
+}
+
+function isNotePair(missing: FileChangeEvent, present: FileChangeEvent): boolean {
+  return missing.type === 'document'
+    && present.type === 'document'
+    && NOTE_EXTENSIONS.has(extname(missing.filename).toLowerCase())
+    && NOTE_EXTENSIONS.has(extname(present.filename).toLowerCase());
 }
 
 /**
@@ -227,6 +235,16 @@ export async function correlateRenames(
    * case-only rename (the same path, spelled otherwise) still pairs.
    */
   wasPresentBefore?: (relPath: string) => boolean,
+  /**
+   * Whether `present` first appeared, with nothing paired, after the walk
+   * last saw `missing`, a note the walk now finds gone (see
+   * `fileWatcherArrivals.ts`). The live watcher can report a moved note's new
+   * path before the walk finds its old one gone (Windows names a renamed
+   * folder alone; Linux reports a moved folder's files as new), so the new
+   * path reads as held before this batch. For a same-named pair of notes it
+   * then isn't a replace; the bytes, or `movedAndChanged`, still decide.
+   */
+  arrivedSinceLastSeen?: (present: string, missing: string) => boolean,
 ): Promise<{
   filtered: FileChangeEvent[];
   renames: Array<{ oldPath: string; newPath: string }>;
@@ -297,13 +315,14 @@ export async function correlateRenames(
       // narrow for the type-checker (the guard can't fail at runtime).
       if (miss !== undefined && pres !== undefined) {
         const cc = conflictCopyOf(pres.filename, miss.filename);
+        const arrivedSince = isNotePair(miss, pres) && arrivedSinceLastSeen?.(pres.filename, miss.filename) === true;
         if (cc) {
           conflicts.push({ copyPath: pres.filename, canonicalPath: miss.filename, client: cc.client });
-        } else if (!replacesFile(pres.filename, miss.filename) && await sameBasenameBytesPreserved(miss, pres, relPathSize, relPathHash)) {
+        } else if ((arrivedSince || !replacesFile(pres.filename, miss.filename)) && await sameBasenameBytesPreserved(miss, pres, relPathSize, relPathHash)) {
           renames.push({ oldPath: miss.filename, newPath: pres.filename });
           suppressedKeys.add(`${miss.type}:${miss.filename}`);
           suppressedKeys.add(`${pres.type}:${pres.filename}`);
-        } else if (movedAndChanged(miss, pres, relPathSize, wasPresentBefore)) {
+        } else if (movedAndChanged(miss, pres, relPathSize, wasPresentBefore, arrivedSince)) {
           renames.push({ oldPath: miss.filename, newPath: pres.filename });
           changedOnMove.push(pres.filename);
           suppressedKeys.add(`${miss.type}:${miss.filename}`);

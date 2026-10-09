@@ -32,7 +32,7 @@ import { canSplit } from '@tiptap/pm/transform';
 const KEEPS_BLOCKS_WHOLE: ReadonlySet<string> = new Set(['listItem', 'taskItem', 'tableCell', 'tableHeader']);
 
 /** True for a block whose lines a command takes apart: a paragraph or heading outside those containers. */
-function splitsAtLines($pos: ResolvedPos): boolean {
+export function splitsAtLines($pos: ResolvedPos): boolean {
   const name = $pos.parent.type.name;
   if (name !== 'paragraph' && name !== 'heading') return false;
   for (let d = $pos.depth - 1; d > 0; d--) {

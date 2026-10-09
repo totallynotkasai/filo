@@ -105,3 +105,55 @@ describe('correlateRenames: a note moved and changed at once', () => {
     expect(res.renames).toEqual([]);
   });
 });
+
+describe('correlateRenames: a note the walk finds gone, whose new path the live watcher reported first', () => {
+  // The new path held a file before this batch (an event reported it), so
+  // only the arrival probe tells a move from a replace.
+  const knownNewPath = (p: string): boolean => p === '04 Worldbuilding/Castle.md';
+  const castle = [ev('Places/Castle.md'), ev('04 Worldbuilding/Castle.md')];
+  const exists = (p: string): boolean => p.startsWith('04 Worldbuilding/');
+
+  it('pairs, as moved and changed, when the new path arrived after the walk last saw the old one', async () => {
+    const sz = (p: string): number => (p.startsWith('Places/') ? 480 : 495);
+    const res = await correlateRenames(castle, exists, sz, hashOf, true, [], knownNewPath, () => true);
+    expect(res.renames).toEqual([{ oldPath: 'Places/Castle.md', newPath: '04 Worldbuilding/Castle.md' }]);
+    expect(res.changedOnMove).toEqual(['04 Worldbuilding/Castle.md']);
+  });
+
+  it('pairs as a plain move when the bytes are the same (Linux reports a moved folder\'s files as new)', async () => {
+    const res = await correlateRenames(castle, exists, () => 480, () => 'same', true, [], knownNewPath, () => true);
+    expect(res.renames).toHaveLength(1);
+    expect(res.changedOnMove).toEqual([]);
+  });
+
+  it('stays a replace when the new path was there before the old one was last seen', async () => {
+    const res = await correlateRenames(castle, exists, () => 480, () => 'same', true, [], knownNewPath, () => false);
+    expect(res.renames).toEqual([]);
+    expect(res.changedOnMove).toEqual([]);
+  });
+
+  it('only for notes: a board or an attachment onto a known path stays a replace', async () => {
+    const board = await correlateRenames(
+      [ev('Places/Map.board.json', 'board'), ev('04 Worldbuilding/Map.board.json', 'board')],
+      exists,
+      () => 900,
+      () => 'same',
+      true,
+      [],
+      (p) => p.startsWith('04 Worldbuilding/'),
+      () => true,
+    );
+    expect(board.renames).toEqual([]);
+    const image = await correlateRenames(
+      [ev('Places/map.png', 'attachment'), ev('04 Worldbuilding/map.png', 'attachment')],
+      exists,
+      () => 900,
+      () => 'same',
+      true,
+      [],
+      (p) => p.startsWith('04 Worldbuilding/'),
+      () => true,
+    );
+    expect(image.renames).toEqual([]);
+  });
+});

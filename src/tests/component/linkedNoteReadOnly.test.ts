@@ -4,10 +4,10 @@ import { editorMarkdown } from '@renderer/lib/editor/markdownSync';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
 import { isLinkedNote, __resetNonUtf8PathsForTests } from '@renderer/lib/vault/nonUtf8Paths.svelte';
 import {
+  drainUntilSettled,
   recordingFilo,
   mountTextTile,
   mountDocumentEditor,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
   type Mounted,
@@ -34,7 +34,7 @@ async function assertFrozen(m: Mounted, rel: string, fs: ReturnType<typeof recor
   tiptapToolbar.setActiveEditor(ed);
   tiptapToolbar.toggleBold();
   expect(editorMarkdown(ed)).toBe(before);
-  await drainDebounce();
+  await drainUntilSettled();
   expect(fs.writesTo(rel)).toEqual([]);
   expect(fs.files.get(rel)).toBe(BODY);
 }

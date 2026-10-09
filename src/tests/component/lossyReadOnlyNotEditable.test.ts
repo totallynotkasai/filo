@@ -3,11 +3,11 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { editorMarkdown } from '@renderer/lib/editor/markdownSync';
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
 import {
+  drainUntilWritten,
   recordingFilo,
   mountTextTile,
   mountDocumentEditor,
   settle,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
   type Mounted,
@@ -41,7 +41,7 @@ async function assertFrozenThenOwned(m: Mounted, rel: string, fs: ReturnType<typ
   expect(ed.isEditable).toBe(true);
   ed.commands.focus('end');
   ed.commands.insertContent('!');
-  await drainDebounce();
+  await drainUntilWritten(fs, rel);
   expect(fs.writesTo(rel).length).toBe(1);
 }
 

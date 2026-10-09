@@ -75,6 +75,20 @@ export function moveRecords(snapshot: WalkSnapshot, oldRel: string, newRel: stri
 }
 
 /**
+ * Moves the entries of a path-keyed cache at or under `oldRel` to `newRel`;
+ * an entry `carry` turns down is dropped instead.
+ */
+export function rekeyUnder<T>(map: Map<VaultPath, T>, oldRel: string, newRel: string, carry: (value: T) => boolean = () => true): void {
+  const base = vaultPath(oldRel);
+  if (!base) return;
+  for (const [key, value] of [...map]) {
+    if (key !== base && !key.startsWith(`${base}/`)) continue;
+    map.delete(key);
+    if (carry(value)) map.set(vaultPath(newRel + key.slice(base.length)), value);
+  }
+}
+
+/**
  * Moves the watcher's size, hash and folder caches with a move, so a later
  * rename of a moved file still pairs.
  *
@@ -86,16 +100,9 @@ export function moveRecords(snapshot: WalkSnapshot, oldRel: string, newRel: stri
  */
 export function moveCaches(caches: WalkPathCaches, oldRel: string, newRel: string): void {
   const base = vaultPath(oldRel);
-  const rekey = <T>(map: Map<VaultPath, T>, carry: (value: T) => boolean = () => true): void => {
-    for (const [key, value] of [...map]) {
-      if (key !== base && !key.startsWith(`${base}/`)) continue;
-      map.delete(key);
-      if (carry(value)) map.set(vaultPath(newRel + key.slice(base.length)), value);
-    }
-  };
-  rekey(caches.lastKnownSizes);
-  rekey(caches.lastKnownHashes);
-  rekey(caches.presence, (present) => present);
+  rekeyUnder(caches.lastKnownSizes, oldRel, newRel);
+  rekeyUnder(caches.lastKnownHashes, oldRel, newRel);
+  rekeyUnder(caches.presence, oldRel, newRel, (present) => present);
   for (const key of [...caches.knownDirs]) {
     if (key !== base && !key.startsWith(`${base}/`)) continue;
     caches.knownDirs.delete(key);

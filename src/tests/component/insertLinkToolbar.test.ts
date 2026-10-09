@@ -4,13 +4,15 @@ import TextFormattingToolbar from '@renderer/components/layout/TextFormattingToo
 import { tiptapToolbar } from '@renderer/lib/editor/toolbarConfig';
 import { LINK_IN_CODE_MESSAGE, LINK_REFUSED_MESSAGE } from '@renderer/lib/editor/toolbarConfig';
 import {
+  drainUntilSettled,
+  drainUntilWritten,
   recordingFilo,
   mountTextTile,
   settle,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
   type Mounted,
+  type RecordingFilo,
 } from './helpers/mountEditor';
 
 /**
@@ -30,7 +32,7 @@ describe('Insert Link from the toolbar', () => {
     teardownEditorHarness();
   });
 
-  async function setUp(body: string): Promise<{ m: Mounted; files: Map<string, string> }> {
+  async function setUp(body: string): Promise<{ m: Mounted; files: Map<string, string>; fs: RecordingFilo }> {
     const fs = recordingFilo({ 'Note.md': body });
     const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     const bar = document.createElement('div');
@@ -39,7 +41,7 @@ describe('Insert Link from the toolbar', () => {
     m.editor().commands.focus();
     await settle();
     expect(tiptapToolbar.activeEditor).toBe(m.editor());
-    return { m, files: fs.files };
+    return { m, files: fs.files, fs };
   }
 
   function linkButton(): HTMLButtonElement {
@@ -69,31 +71,31 @@ describe('Insert Link from the toolbar', () => {
   }
 
   it('links the selected text, adding https:// to a bare domain', async () => {
-    const { m, files } = await setUp('Alpha beta gamma\n');
+    const { m, files, fs } = await setUp('Alpha beta gamma\n');
     m.editor().commands.setTextSelection({ from: 7, to: 11 });
     const { text, url } = await openPopup();
     expect(text.value).toBe('beta');
     type(url, 'example.com');
     pressEnter(url);
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     expect(document.querySelector('.link-popup')).toBeNull();
     expect(files.get('Note.md')).toBe('Alpha [beta](https://example.com) gamma\n');
   });
 
   it('inserts a new link at a bare caret', async () => {
-    const { m, files } = await setUp('Alpha beta gamma\n');
+    const { m, files, fs } = await setUp('Alpha beta gamma\n');
     m.editor().commands.setTextSelection(17);
     const { text, url } = await openPopup();
     expect(text.value).toBe('');
     type(text, ' the site');
     type(url, 'https://example.com');
     pressEnter(url);
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     expect(files.get('Note.md')).toBe('Alpha beta gamma[ the site](https://example.com)\n');
   });
 
   it('edits an existing link from a caret inside it', async () => {
-    const { m, files } = await setUp('See [old](https://old.example) now\n');
+    const { m, files, fs } = await setUp('See [old](https://old.example) now\n');
     m.editor().commands.setTextSelection(7);
     await settle();
     expect(linkButton().getAttribute('aria-pressed')).toBe('true');
@@ -104,7 +106,7 @@ describe('Insert Link from the toolbar', () => {
     type(text, 'new');
     type(url, 'https://new.example');
     pressEnter(text);
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     expect(files.get('Note.md')).toBe('See [new](https://new.example) now\n');
   });
 
@@ -114,7 +116,7 @@ describe('Insert Link from the toolbar', () => {
     const { popup, url } = await openPopup();
     type(url, 'javascript:alert(1)');
     pressEnter(url);
-    await drainDebounce();
+    await drainUntilSettled();
     expect(document.querySelector('.link-popup')).toBe(popup);
     expect(popup.querySelector('[role="alert"]')?.textContent).toBe(LINK_REFUSED_MESSAGE);
     expect(files.get('Note.md')).toBe('Alpha beta gamma\n');
@@ -126,7 +128,7 @@ describe('Insert Link from the toolbar', () => {
     const { popup, url } = await openPopup();
     type(url, 'ftp://files.example.com');
     pressEnter(url);
-    await drainDebounce();
+    await drainUntilSettled();
     expect(document.querySelector('.link-popup')).toBe(popup);
     expect(popup.querySelector('[role="alert"]')?.textContent).toBe(LINK_REFUSED_MESSAGE);
     expect(files.get('Note.md')).toBe('Alpha beta gamma\n');
@@ -138,14 +140,14 @@ describe('Insert Link from the toolbar', () => {
     const { popup, url } = await openPopup();
     type(url, 'https://example.com');
     pressEnter(url);
-    await drainDebounce();
+    await drainUntilSettled();
     expect(document.querySelector('.link-popup')).toBe(popup);
     expect(popup.querySelector('[role="alert"]')?.textContent).toBe(LINK_IN_CODE_MESSAGE);
     expect(files.get('Note.md')).toBe('```\ncode here\n```\n');
   });
 
   it('a caret right before a link inserts a new link and leaves that one alone', async () => {
-    const { m, files } = await setUp('See [old](https://old.example) now\n');
+    const { m, files, fs } = await setUp('See [old](https://old.example) now\n');
     m.editor().commands.setTextSelection(5);
     const { popup, text, url } = await openPopup();
     expect(text.value).toBe('');
@@ -154,7 +156,7 @@ describe('Insert Link from the toolbar', () => {
     type(text, 'new');
     type(url, 'https://new.example');
     pressEnter(url);
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     expect(files.get('Note.md')).toBe('See [new](https://new.example)[old](https://old.example) now\n');
   });
 

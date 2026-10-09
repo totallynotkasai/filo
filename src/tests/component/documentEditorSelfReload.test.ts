@@ -3,10 +3,11 @@ import { undoDepth } from '@tiptap/pm/history';
 import { noteStore } from '@renderer/stores/notes.svelte';
 import { editorMarkdown } from '@renderer/lib/editor/markdownSync';
 import {
+  drainDebounce,
+  drainUntilWritten,
   recordingFilo,
   mountDocumentEditor,
   settle,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
@@ -27,7 +28,7 @@ describe('DocumentEditor does not reload its own autosave', () => {
     const ed = m.editor();
     ed.commands.focus('end');
     ed.commands.insertContent('X');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Doc.md');
     expect(fs.writesTo('Doc.md').length).toBe(1);
     // A self-reload would have reset history; the typed step survives.
     expect(undoDepth(ed.state)).toBeGreaterThan(0);

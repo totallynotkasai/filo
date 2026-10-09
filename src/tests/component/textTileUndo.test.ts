@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { editorMarkdown } from '@renderer/lib/editor/markdownSync';
 import {
+  drainUntilSettled,
   recordingFilo,
   mountTextTile,
   mountDocumentEditor,
   pressUndo,
-  drainDebounce,
   resetEditorHarness,
   teardownEditorHarness,
 } from './helpers/mountEditor';
@@ -23,7 +23,7 @@ describe('Ctrl+Z right after a load does not empty the note (MD-1)', () => {
     const fs = recordingFilo({ 'Note.md': 'Precious text\n' });
     const m = await mountTextTile({ tile: { id: 't1', title: 'Note' } });
     pressUndo(m);
-    await drainDebounce();
+    await drainUntilSettled();
     expect(editorMarkdown(m.editor())).toContain('Precious text');
     expect(fs.writesTo('Note.md')).toEqual([]);
     expect(fs.files.get('Note.md')).toBe('Precious text\n');
@@ -33,7 +33,7 @@ describe('Ctrl+Z right after a load does not empty the note (MD-1)', () => {
     const fs = recordingFilo({ 'Doc.md': 'Precious text\n' });
     const m = await mountDocumentEditor({ docPath: 'Doc.md' });
     pressUndo(m);
-    await drainDebounce();
+    await drainUntilSettled();
     expect(editorMarkdown(m.editor())).toContain('Precious text');
     expect(fs.writesTo('Doc.md')).toEqual([]);
     await m.unmount();

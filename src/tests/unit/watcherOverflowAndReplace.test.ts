@@ -296,3 +296,146 @@ describe('a walk asked for now', () => {
     expect(changed().map((c) => c.filename)).toEqual(['04 Worldbuilding/Lake.md']);
   });
 });
+
+// Each case waits out several notify passes on the real disk.
+describe('a note the walk finds gone, whose new path the live watcher reported first', { timeout: 20_000 }, () => {
+  let dir: string;
+  let watcher: InstanceType<typeof FileWatcher>;
+
+  beforeEach(async () => {
+    sentEvents.length = 0;
+    listeners.length = 0;
+    dir = await fs.mkdtemp(join(tmpdir(), 'filo-watcher-arrivals-'));
+  });
+
+  afterEach(async () => {
+    await watcher?.stop();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  async function started(): Promise<void> {
+    watcher = new FileWatcher(dir);
+    watcher.start();
+    await (watcher as unknown as { reconcileInFlightPromise: Promise<void> | null }).reconcileInFlightPromise;
+    await sleep(50);
+  }
+
+  /**
+   * Another program renames `Places` to `to`, rewrites Castle.md in it and
+   * deletes Forest.md, all at once. Windows reports the folder by its two
+   * names, then the edit and the delete at their new paths.
+   */
+  async function renameRewriteAndDelete(to: string): Promise<void> {
+    await renameOnDisk(join(dir, 'Places'), join(dir, to));
+    writeFileSync(join(dir, to, 'Castle.md'), A_BODY.replace('Alpha', 'Alpha (rewritten)'));
+    await fs.rm(join(dir, to, 'Forest.md'));
+    send('rename', 'Places');
+    send('rename', to);
+    send('change', `${to}/Castle.md`);
+    send('rename', `${to}/Forest.md`);
+    await sleep(NOTIFY_SETTLE_MS);
+  }
+
+  async function placesStarted(): Promise<void> {
+    mkdirSync(join(dir, 'Places'));
+    writeFileSync(join(dir, 'Places', 'Castle.md'), A_BODY);
+    writeFileSync(join(dir, 'Places', 'Forest.md'), B_BODY);
+    await started();
+  }
+
+  it('the arrival pairs with the note the walk finds gone, as moved and changed', async () => {
+    await placesStarted();
+    await renameRewriteAndDelete('04 Worldbuilding');
+    // The live events alone can't tell where Castle.md went.
+    expect(renames()).toEqual([]);
+    expect(changed().map((c) => c.filename)).toContain('04 Worldbuilding/Castle.md');
+    sentEvents.length = 0;
+
+    await watcher.walkAndNotifyNow();
+    expect(renames()).toEqual([{ oldPath: 'Places/Castle.md', newPath: '04 Worldbuilding/Castle.md' }]);
+    // The edit goes out after the rename, so it meets the note at its new path.
+    const order = sentEvents
+      .filter((e) => e.channel !== 'vault:tree-updated')
+      .map((e) => e.channel === 'vault:file-renamed'
+        ? 'renamed'
+        : (e.payload[0] as Array<{ filename: string }>).map((c) => c.filename).join(','));
+    expect(order.lastIndexOf('04 Worldbuilding/Castle.md')).toBeGreaterThan(order.indexOf('renamed'));
+    expect(changed().map((c) => c.filename)).not.toContain('Places/Castle.md');
+  });
+
+  it('a note that was there at the last walk is not taken for the arrival: a merge into a same-named note stays a delete', async () => {
+    mkdirSync(join(dir, 'Ideas'));
+    writeFileSync(join(dir, 'Ideas', 'Plot.md'), A_BODY);
+    await started();
+    // Another program writes a new Story/Plot.md: it arrives...
+    mkdirSync(join(dir, 'Story'));
+    writeFileSync(join(dir, 'Story', 'Plot.md'), B_BODY);
+    send('rename', 'Story');
+    send('rename', 'Story/Plot.md');
+    await sleep(NOTIFY_SETTLE_MS);
+    // ...a walk then records both notes...
+    await watcher.walkAndNotifyNow();
+    sentEvents.length = 0;
+    // ...and the ideas are merged into it and deleted, the delete unseen live.
+    writeFileSync(join(dir, 'Story', 'Plot.md'), `${B_BODY}\n${A_BODY}`);
+    send('change', 'Story/Plot.md');
+    await fs.rm(join(dir, 'Ideas'), { recursive: true });
+    send('rename', 'Ideas');
+    await sleep(NOTIFY_SETTLE_MS);
+    await watcher.walkAndNotifyNow();
+    await sleep(NOTIFY_SETTLE_MS);
+    expect(renames()).toEqual([]);
+    expect(changed().map((c) => c.filename)).toContain('Ideas/Plot.md');
+  });
+
+  it('a note Filo wrote is not taken for the arrival, even once a walk finds it new', async () => {
+    mkdirSync(join(dir, 'Ideas'));
+    writeFileSync(join(dir, 'Ideas', 'Plot.md'), A_BODY);
+    await started();
+    // Filo makes a new same-named note elsewhere (a new card).
+    mkdirSync(join(dir, 'Story'));
+    watcher.suppressWrite('Story/Plot.md', 2000, A_BODY);
+    writeFileSync(join(dir, 'Story', 'Plot.md'), A_BODY);
+    watcher.recordOwnWrite('Story/Plot.md', Buffer.from(A_BODY, 'utf-8'));
+    // Another program deletes the Ideas folder; Windows names only the folder.
+    await fs.rm(join(dir, 'Ideas'), { recursive: true });
+    send('rename', 'Ideas');
+    await sleep(NOTIFY_SETTLE_MS);
+    await watcher.walkAndNotifyNow();
+    await sleep(NOTIFY_SETTLE_MS);
+    expect(renames()).toEqual([]);
+    expect(changed().map((c) => c.filename)).toContain('Ideas/Plot.md');
+  });
+
+  it('an arrival another program then renames a same-named note over stays a replace', async () => {
+    mkdirSync(join(dir, 'Ideas'));
+    writeFileSync(join(dir, 'Ideas', 'Plot.md'), A_BODY);
+    await started();
+    mkdirSync(join(dir, 'Story'));
+    writeFileSync(join(dir, 'Story', 'Plot.md'), B_BODY);
+    send('rename', 'Story');
+    send('rename', 'Story/Plot.md');
+    await sleep(NOTIFY_SETTLE_MS);
+    sentEvents.length = 0;
+    await renameOnDisk(join(dir, 'Ideas', 'Plot.md'), join(dir, 'Story', 'Plot.md'));
+    send('rename', 'Ideas/Plot.md');
+    send('rename', 'Story/Plot.md');
+    await sleep(NOTIFY_SETTLE_MS);
+    // The walk reports both paths once more; it still pairs nothing.
+    await watcher.walkAndNotifyNow();
+    await sleep(NOTIFY_SETTLE_MS);
+    expect(renames()).toEqual([]);
+    expect([...new Set(changed().map((c) => c.filename))].sort()).toEqual(['Ideas/Plot.md', 'Story/Plot.md']);
+  });
+
+  it('an arrival is carried through a folder move the renderer followed', async () => {
+    await placesStarted();
+    await renameRewriteAndDelete('New');
+    // The folder moves again; the renderer follows this one from its tree.
+    await renameOnDisk(join(dir, 'New'), join(dir, 'Newer'));
+    expect(watcher.noteFollowedMove('New', 'Newer')).toBe(true);
+    sentEvents.length = 0;
+    await watcher.walkAndNotifyNow();
+    expect(renames()).toEqual([{ oldPath: 'Places/Castle.md', newPath: 'Newer/Castle.md' }]);
+  });
+});

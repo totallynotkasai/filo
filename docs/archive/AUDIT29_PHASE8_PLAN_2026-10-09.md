@@ -167,5 +167,9 @@ Done 2026-10-09. You took every default (D1 all block markers, D2 the Linux skip
 - **`npm run ci:verify` on Windows:** green in 371 s: 897 files, 8,841 passed, 5 skipped (platform-only cases), 91/91 gates.
 - **Corpus:** against Phase 7's results (`corpus-p7.json`, `owner-corpus-p7.json`, the same lists), no output changed, none newly read-only or failing to load (3 notes not compared: this phase's own docs). Against `corpus-a29.json` / `owner-corpus-a29.json`: the same 4 + 3 changed outputs every phase since Phase 1 has reported (trailing blank lines now kept, all toward the file's own text), 0 newly read-only.
 - **E2E (D3):** `npm run test:e2e` with `FILO_E2E_SCALE=1`, on the build `ci:verify` made: 56 of 56 passed in 3.9 minutes, the scale budgets included.
-- **Version** 0.2.9; HANDOVER_RESULT
+- **Version** 0.2.9, committed as `6c0d9bb`, then the installer built from that commit (`npm run package:win`), so Settings names it with no `+`:
+  - **File:** `release/Filo Setup 0.2.9.exe`, 112,906,681 bytes, SHA-256 `48d092c44ccca9d3f39ae35e1bebf74dd238de1dbb3776d957143528e06e6672`, beside 0.2.0 and 0.2.8 (left in place); `release/win-unpacked/` and `latest.yml` replaced.
+  - **What it holds:** `app.asar` 7.3 MB, 36 entries (`dist/main`, `dist/preload`, `dist/renderer`, `package.json`), no `node_modules`; its `package.json` and `Filo.exe` say 0.2.9; the renderer names `6c0d9bb`, so Settings will read `Filo 0.2.9 (6c0d9bb)`. Not launched (as in Phase 7).
+  - **To install:** close Filo, then run `release\Filo Setup 0.2.9.exe`. Or run `npm run preview` once to bring your `npm start` copy to 0.2.9.
+  - **Pushed** with this note (D4). GitHub's Linux run decides D2: if "one of its notes deleted" fails there, the skip goes back with the reason recorded.
 - **Backlog:** BL-45 and BL-46 closed; BL-09 keeps the watcher tests, the Chromium caret cases, the folder-delete undo's tree read and the two E2E waits; Phase 7's green run (37904980748, 59 min) recorded under BL-21 and BL-43. No new item: the next is still BL-51.

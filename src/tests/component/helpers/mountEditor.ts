@@ -185,6 +185,20 @@ export async function drainDebounce(): Promise<void> {
   await settle();
 }
 
+/**
+ * Wait until an edit's save of `rel` has landed, then one debounce more, so a
+ * second save the edit shouldn't make still shows. A save lands about 485 ms
+ * after the edit, so `drainDebounce` alone leaves a busy machine (a full suite
+ * run, a slow CI runner) no slack; this waits on the write itself.
+ */
+export async function drainUntilWritten(fs: RecordingFilo, rel: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (fs.writesTo(rel).length === 0 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  await drainDebounce();
+}
+
 export function resetEditorHarness(): void {
   resetEditorLoopBreaker();
   noteStore.__resetForTests();

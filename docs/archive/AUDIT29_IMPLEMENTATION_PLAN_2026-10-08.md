@@ -1,7 +1,7 @@
 # Audit-29 implementation plan (draft, 2026-10-08)
 
 - **Source:** [AUDIT29_FULL_AUDIT_2026-10-08.md](AUDIT29_FULL_AUDIT_2026-10-08.md). Finding IDs (A-01, C-08 …) refer to it. Write "Audit-29 A-01" in commit messages, since Audit-28 used the same letters.
-- **Status:** in progress. Phases 0 to 6 done 2026-10-08 (outcomes in section 4). Decided: D1 (a), tight paragraphs; D2 (Tab one level in, under the nearest row above at its level); D3 (`npm run preview`, then `npm start`; no dev guard); D4 (push now, for Phase 0; Phases 1 to 5 stay on this PC); D5 (follow a note moved and edited at once as a move); for 3.3, a new card a filter would hide stays on screen until it is named; D6 (Delete from vault… on a card; removing one card or task stays immediate); D7 (no `title:` until a new note is named); for 5.10, board templates only off a Mind Map; for 5.5, Settings → Trash switches to the item's board, as Ctrl+Z does; D8 (drop Find All, in Phase 6); Phase 6 also takes BL-47, BL-48, BL-49 ("New card" / "New task" everywhere) and BL-50, and pushes Phases 1 to 6 once its checks pass. Phase 7 is next.
+- **Status:** all phases done: Phases 0 to 6 on 2026-10-08, Phase 7 on 2026-10-09 (outcomes in section 4). Phase 7 archived this plan and the report in `docs/archive/`, and built the 0.2.8 installer. Decided: D1 (a), tight paragraphs; D2 (Tab one level in, under the nearest row above at its level); D3 (`npm run preview`, then `npm start`; no dev guard); D4 (push now, for Phase 0; Phases 1 to 5 stay on this PC); D5 (follow a note moved and edited at once as a move); for 3.3, a new card a filter would hide stays on screen until it is named; D6 (Delete from vault… on a card; removing one card or task stays immediate); D7 (no `title:` until a new note is named); for 5.10, board templates only off a Mind Map; for 5.5, Settings → Trash switches to the item's board, as Ctrl+Z does; D8 (drop Find All, in Phase 6); Phase 6 also takes BL-47, BL-48, BL-49 ("New card" / "New task" everywhere) and BL-50, and pushes Phases 1 to 6 once its checks pass; Phase 7 runs no E2E suite and opens no Filo window (your choice, in its outcome), and pushes once its checks pass.
 - **Scores:** out of 10, as in the report. **Hard:** 0/10 = minutes, 5/10 = a few days with tests, 10/10 = weeks.
 
 ## 1. How this plan works
@@ -528,3 +528,46 @@ Version 0.2.7.
 **New findings:** none for the backlog. BL-09 gains this phase's three timing misses (Checks), all passing alone.
 
 **For you:** close Filo if it's open, then run `npm run preview` once. Settings should read `Filo 0.2.7 (<commit>)`. Then try: on a Task List or Kanban board, Tab moves only between rows, cards and their buttons; on a Mind Map, click a tile, scroll it out of view and press N; the Search panel has no Find All. On the days after, open Filo with `npm start`. Phases 1 to 6 are pushed to GitHub with this phase (see "Push").
+
+### Phase 7 (done 2026-10-09)
+
+**Decisions taken:** the installer carries version 0.2.8 (the usual bump; you chose it over 0.3.0); it goes in `release/`, beside your 0.2.0 installer; Phase 7 is pushed once its checks pass. You chose to run **no E2E suite**, and to **skip the built-app tour and the packaged launch**, so nothing in this phase opened a Filo window (deviations 1 to 3). The phase was paused overnight when you turned the PC off, and finished on 9 October. GitHub's run of Phases 1 to 6 failed on two tests (Checks); you chose to make the two fixed-wait tests wait for the save, and to skip the Linux-only case on Linux.
+
+**What changed**
+
+| # | Change |
+|---|---|
+| Version | 0.2.8 (`package.json`, `package-lock.json`). |
+| Archive | The report and this plan moved to `docs/archive/` (`git mv`); the backlog's links follow them. |
+| Backlog | `docs/BACKLOG.md` updated ("Docs and backlog" below). |
+| Two waits (BL-09) | New test helper `drainUntilWritten` (`src/tests/component/helpers/mountEditor.ts`): it waits until an edit's save has landed (up to 5 s), then one debounce more, and the test still requires exactly one save. `textTileLifecycle.test.ts` "(d) a body opening with a `---` rule pair…" and `textTileAdoptPlaceholder.test.ts` "(a) reads disk, shows + keeps the real body…" use it instead of the fixed 520 ms `drainDebounce`. Test-only. |
+| Linux skip (BL-46) | `agentReorganises.test.ts`'s "one of its notes deleted: the open note inside is found by the walk it asks for, inside the wait" runs on Windows and skips on Linux (`it.skipIf(onLinux)`), as seven other watcher cases do. The comment in `harness/platform.ts` names the new reason. |
+| Installer | `release/Filo Setup 0.2.8.exe`, built from the Phase 7 commit after it was made (deviation 5); details in "Installer" below. |
+
+**Checks**
+
+| Check | Result |
+|---|---|
+| `ci:verify` on Windows, the Phase 6 code (0.2.7) | Green at the first run, in 391 s: lint, knip, svelte-check (930 files, 0 errors), main typecheck, 895 test files (8,785 passed, 5 skipped), build, 91/91 gates. |
+| `ci:verify` on Windows after the bump to 0.2.8, twice | 8,784 passed and 1 failed in each run, the same test both times: `textTileLifecycle.test.ts` "(d) a body opening with a `---` rule pair survives mount → edit → write", no save yet when its fixed wait ended. It passed 5 of 5 alone, and only the version string had changed since the green run. Other programs kept the CPU 35 to 45% busy. See deviation 6. |
+| `ci:verify` on Windows, the tree this phase commits | Green at the first run, in 390 s: lint, knip, svelte-check (930 files, 0 errors), main typecheck, 895 test files (8,785 passed, 5 skipped; on Windows the Linux skip runs), build, 91/91 gates. |
+| Corpus, the 741-note list against `corpus-a29.json` | 0 newly read-only, 0 newly failed to load. The same 4 changed outputs as Phases 1, 4 and 6 (three book notes ending in blank lines, now byte for byte as their files, and `node_modules/filelist/README.md`, whose `*` bullets Filo writes `-`, as always). 5 notes not compared (docs edited between the runs); the 2 that failed before are the archived Audit-28 docs. 345 editable and 389 read-only in both runs. |
+| Corpus, your 21 book notes against `owner-corpus-a29.json` | 20 editable, 1 read-only (`Duplicate Review`), as on audit day. The same 3 outputs as Phases 1, 4 and 6 (`Plot Overview`, `Character Profiles`, `Old Magic Ideas`, byte for byte as their files). |
+| GitHub run [37846719366](https://github.com/totallynotkasai/filo/actions/runs/37846719366) (Phases 1 to 6, on 512d29f) | **Failed** after 59 min on `ubuntu-24.04`: 2 failed, 8,760 passed (unit suite 3,413 s). (1) `textTileAdoptPlaceholder.test.ts` (a): no save yet when its fixed 520 ms wait ended, the same shape as the local miss (deviation 6). (2) `agentReorganises.test.ts` "one of its notes deleted…": the typing never reached the moved note within the harness's 20 s, so not slowness (deviation 7). Everything else, the gates and the build included, passed. |
+| E2E suite, with or without scale budgets; E2E on the packaged app | Not run (your choice; deviation 1). |
+| Built-app tour on a fresh copy of the book vault | Not run (your choice; deviation 2). |
+
+**Docs and backlog**
+- Every finding id in the report is in a phase's table, except the three its section 3.1 sets aside: H-01 and E-15 are duplicates of D-01 and D-02 (Phase 1), and H-05 is a non-issue (KNOWN_LIMITATIONS #17 describes the shape; asking your agent not to mix bullets and checkboxes in one list keeps its notes editable).
+- The backlog items this plan took have all left it: BL-08, BL-31, BL-32, BL-35, BL-41 and BL-47 to BL-50 closed. BL-21 stays open until someone looks at the first run after 19 October.
+- The report's section 6 re-check is carried into the backlog: #7 and #31 (follow moves by file ID) raised to 4/10, with what Phase 2 covers; #20 noted as half done (Phase 0's version and commit in Settings); the #17 raw blocks row says why an agent's notes make it matter more; section 2 carries the report's advice on the five open decisions.
+- BL-09 records this phase's misses, the measurement and the two tests that now wait for the save; BL-46 records that Linux meets it without the edit, and the skip; BL-21 and BL-43 record this phase's GitHub runs. No new item: the next is still BL-51.
+
+**Deviations from the plan**
+1. **No E2E suite** (your choice): neither on `dist/` with the scale budgets nor on the packaged app. The latest E2E evidence is therefore Phase 6's: 52 of 56, then the four rerun, under a game's load, with the two budget misses (BL-07, BL-28) matched by the 0.2.6 build in three interleaved rounds. No app source changed since.
+2. **No built-app tour** (your choice). Each of Phases 1 to 6 ended with a hands-on run of the built app on a copy of your book vault (their Checks), on the same app code.
+3. **The installer is checked by its contents, not launched** (your choice): what `app.asar` holds, the version in its `package.json`, and the commit its renderer names.
+4. **`ci:verify` ran four times**: on the Phase 6 code, twice after the version bump (deviation 6), and on the tree this phase commits.
+5. **The installer is built from the commit, after it.** The commit carries the version, so building from it gives Settings the bare commit id; building first would have shown `a9f145a+`. Its details are in "Installer" below, added after the commit.
+6. **Two tests changed in a verification phase (BL-09).** The test that missed twice here waited a fixed 520 ms for a save. Measured with a probe in the component project, the save lands 480 to 498 ms after the edit, the same on the code before Audit-29 (a6de678, in a worktree), so this is no regression: about 35 ms of slack, which a full suite on a busy machine, or GitHub's slower runner, uses up. Its neighbour, which missed on GitHub and in Phase 6, has the same shape. Both now wait for the save itself (What changed). With the edit removed, the changed test still fails (no save within 5 s). The other tests that count saves after `drainDebounce` are left as they are (BL-09 names the helper for them).
+7. **One Linux-only case skips on Linux (BL-46).** On Linux, Node's recursive watch reports every file of a folder that appears as new (checked in Node 22's `lib/internal/fs/recursive_watch.js`, `#watchFolder`), so when another program renames a folder, the moved note's new path is already known when Filo's walk finds its old path gone, and the move reads as a replace: BL-46's mechanism, met on Linux whenever a name is missing from the renamed folder. Windows reports only the two folder names, and the case passes here; it is the case the suite protects. This PC has no Linux to run it on, so the mechanism is read from Node's source and the run's 20 s timeout, not reproduced.

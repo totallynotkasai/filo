@@ -6,6 +6,7 @@ import {
   recordingFilo,
   mountTextTile,
   drainDebounce,
+  drainUntilWritten,
   resetEditorHarness,
   teardownEditorHarness,
   VAULT,
@@ -31,7 +32,7 @@ describe('TextTile never edits a body it has not read', () => {
     const ed = m.editor();
     ed.commands.focus('end');
     ed.commands.insertContent('!');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'X.md');
     const writes = fs.writesTo('X.md');
     expect(writes.length).toBe(1);
     expect(writes[0].content).toContain('Real body');

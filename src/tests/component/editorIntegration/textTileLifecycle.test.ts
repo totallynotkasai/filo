@@ -20,6 +20,7 @@ import {
   recordingFilo,
   settle,
   drainDebounce,
+  drainUntilWritten,
   resetEditorHarness,
   teardownEditorHarness,
   VAULT,
@@ -103,7 +104,7 @@ describe('TextTile lifecycle (editor integration)', () => {
     const t = await mountTile();
     t.editor.commands.focus('end');
     t.editor.commands.insertContent('!');
-    await drainDebounce();
+    await drainUntilWritten(fs, 'Note.md');
     const writes = fs.writesTo('Note.md');
     expect(writes.length).toBe(1);
     expect(parseMarkdownFile(writes[0].content).body).toContain('Some intro');

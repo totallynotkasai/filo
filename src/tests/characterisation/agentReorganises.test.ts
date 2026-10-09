@@ -13,6 +13,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, renameSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { startApp, stopApp, waitFor, quiesce, settle, recoveryCopies, type CharApp } from './harness/app';
+import { onLinux } from './harness/platform';
 import {
   createBoard,
   placeNoteOnBoard,
@@ -158,7 +159,7 @@ describe('a folder renamed by another program while its contents change', () => 
     expect(errorToasts()).toEqual([]);
   });
 
-  it('one of its notes deleted: the open note inside is found by the walk it asks for, inside the wait', async () => {
+  it.skipIf(onLinux)('one of its notes deleted: the open note inside is found by the walk it asks for, inside the wait', async () => {
     const app = await startApp(places);
     await openWithTyping(app, 'Places/Castle.md', ' TYPED');
     const t0 = Date.now();

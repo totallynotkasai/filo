@@ -1,6 +1,6 @@
 {
   "name": "filo",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "A Personal Knowledge Management desktop application with infinite canvas mind mapping",
   "private": true,
   "main": "dist/main/main.js",

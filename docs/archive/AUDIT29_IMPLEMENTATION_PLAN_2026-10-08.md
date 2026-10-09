@@ -571,3 +571,23 @@ Version 0.2.7.
 5. **The installer is built from the commit, after it.** The commit carries the version, so building from it gives Settings the bare commit id; building first would have shown `a9f145a+`. Its details are in "Installer" below, added after the commit.
 6. **Two tests changed in a verification phase (BL-09).** The test that missed twice here waited a fixed 520 ms for a save. Measured with a probe in the component project, the save lands 480 to 498 ms after the edit, the same on the code before Audit-29 (a6de678, in a worktree), so this is no regression: about 35 ms of slack, which a full suite on a busy machine, or GitHub's slower runner, uses up. Its neighbour, which missed on GitHub and in Phase 6, has the same shape. Both now wait for the save itself (What changed). With the edit removed, the changed test still fails (no save within 5 s). The other tests that count saves after `drainDebounce` are left as they are (BL-09 names the helper for them).
 7. **One Linux-only case skips on Linux (BL-46).** On Linux, Node's recursive watch reports every file of a folder that appears as new (checked in Node 22's `lib/internal/fs/recursive_watch.js`, `#watchFolder`), so when another program renames a folder, the moved note's new path is already known when Filo's walk finds its old path gone, and the move reads as a replace: BL-46's mechanism, met on Linux whenever a name is missing from the renamed folder. Windows reports only the two folder names, and the case passes here; it is the case the suite protects. This PC has no Linux to run it on, so the mechanism is read from Node's source and the run's 20 s timeout, not reproduced.
+
+**Installer:** `npm run package:win` on the Phase 7 commit (`e2bff35`, nothing uncommitted), 111 s.
+
+| What | Result |
+|---|---|
+| File | `release/Filo Setup 0.2.8.exe`, 112,903,853 bytes, SHA-256 `1c406835d25f1a557b9957d380c697f767cc2121f3c791be36a63e84e71ba79b`, beside `Filo Setup 0.2.0.exe` (left in place); `release/win-unpacked/` and `latest.yml` replaced. |
+| Installer settings | Per user (no administrator), you choose the folder, desktop and Start menu shortcuts, as before. |
+| What it holds | `app.asar` 7.3 MB, 36 entries: `dist/main`, `dist/preload`, `dist/renderer` and `package.json`, no `node_modules` (gate `packaged-app-needs-no-node-modules`). Its `package.json` says version 0.2.8; `Filo.exe` says 0.2.8.0. |
+| The commit Settings will show | The renderer bundle names `e2bff35`, with no `+`: Settings will read `Filo 0.2.8 (e2bff35)`. |
+| Signing | Not signed (there is no certificate, as for 0.2.0, though the build log says "signing with signtool.exe"): Windows may warn before the first run (More info → Run anyway). |
+
+**Push:** `e2bff35` went to `origin/main` (`a9f145a..e2bff35`) once the checks above passed, as you chose. GitHub's run [37904980748](https://github.com/totallynotkasai/filo/actions/runs/37904980748) is its Linux check (about an hour, BL-43); its result is the next thing to read, with BL-21's first run after 19 October. This note followed as a docs-only commit, which starts no run.
+
+**New findings:** none. BL-09 and BL-46 gain what this phase saw (Deviations 6 and 7).
+
+**For you:**
+- **To install:** close Filo, then run `release\Filo Setup 0.2.8.exe`. It installs for you alone, in the folder you pick. Settings should read `Filo 0.2.8 (e2bff35)`.
+- **Your recent vaults stay:** the installed Filo uses the same profile as `npm start` (`%APPDATA%\filo`), so it opens with your recent vaults. Only one Filo runs at a time: starting a second one brings the first to the front.
+- **Or carry on with `npm start`:** it runs your 0.2.7 preview. Run `npm run preview` once to bring that copy to 0.2.8 too.
+- **Your agent:** ask it not to mix bullets and checkboxes in one list (put a blank line or a heading between them), so Filo can edit what it writes (report section 7).

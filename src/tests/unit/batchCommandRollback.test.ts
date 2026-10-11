@@ -4,7 +4,7 @@ import { BatchCommand } from '@renderer/commands/index';
 import type { Command } from '@renderer/stores/history.svelte';
 
 /**
- * Phase C / C.7 — BatchCommand previously fired children with no
+ * BatchCommand previously fired children with no
  * try/catch. A throw from child #N left children 0..N-1's mutations
  * applied while the user saw an error for the batch as a whole — a
  * silent half-applied state.
@@ -35,14 +35,13 @@ function makeCountingCommand(description: string, throws = false): CountingComma
   return cmd;
 }
 
-describe('Phase C / C.7 — BatchCommand atomic execute + undo', () => {
-  // Polish phase 2.2 — `BatchCommand.execute()` and `undo()` are now async
-  // so children with async return values (DeleteTilesCommand.undo after
-  // polish 2.1, RenameTitleCommand, UpdateTilePathCommand, etc.) are
-  // awaited per-child during both the forward and rollback loops. The
-  // expectations below switch from `expect(() => ...).toThrow()` to
-  // `expect(...).rejects.toThrow()` because the thrown error now
-  // propagates as a rejected promise, not a sync throw.
+describe('BatchCommand atomic execute + undo', () => {
+  // `BatchCommand.execute()` and `undo()` are async so children with async
+  // return values (DeleteTilesCommand.undo, RenameTitleCommand,
+  // UpdateTilePathCommand, etc.) are awaited per-child during both the
+  // forward and rollback loops. The expectations below use
+  // `expect(...).rejects.toThrow()` because the thrown error propagates as a
+  // rejected promise, not a sync throw.
   it('happy path: every child runs and is reversible', async () => {
     const a = makeCountingCommand('a');
     const b = makeCountingCommand('b');
@@ -120,14 +119,14 @@ describe('Phase C / C.7 — BatchCommand atomic execute + undo', () => {
   });
 });
 
-describe('Polish phase 2.2 — BatchCommand awaits async children', () => {
+describe('BatchCommand awaits async children', () => {
   it('rollback awaits each child undo() Promise before invoking the next', async () => {
     // Simulate the DeleteTilesCommand shape: a child whose undo() returns a
     // delayed Promise. The rollback must NOT advance to the next child
     // until the current child's undo settles. Without the await in the
     // rollback loop, the snapshot-write Promise would race the subsequent
     // rollback steps and the rethrow — exactly the silent-failure window
-    // polish 2.2 closes.
+    // the await closes.
     const order: string[] = [];
     const makeAsyncChild = (name: string): Command => (fakeCommand({
       description: name,

@@ -1,6 +1,6 @@
 /**
- * Audit-6 Phase 5.5 — execute/undo ROUND-TRIP coverage for the Task-List
- * structure commands the `ci:command-roundtrip-coverage` gate requires.
+ * Execute/undo ROUND-TRIP coverage for the Task-List structure commands the
+ * `ci:command-roundtrip-coverage` gate requires.
  *
  * Companion to `sectionCommandsDelta.test.ts` (which covers Delete/Reorder).
  * These pin the remaining structure commands: `AddSectionCommand` (a captured
@@ -82,7 +82,7 @@ function slice(): { sections: TaskListSection[]; tasks: TaskPlacement[] } {
   };
 }
 
-describe('Audit-6 Phase 5.5 — Task-List structure command round-trips', () => {
+describe('Task-List structure command round-trips', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -146,7 +146,7 @@ describe('Audit-6 Phase 5.5 — Task-List structure command round-trips', () => 
   });
 });
 
-describe('SEC-3 — add-then-undo on a section-less board restores []', () => {
+describe('add-then-undo on a section-less board restores []', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -190,7 +190,7 @@ describe('SEC-3 — add-then-undo on a section-less board restores []', () => {
     expect(taskIds()).toEqual(['t1', 't2', 't3']);
 
     cmd.undo();
-    expect(sections()).toEqual([]); // SEC-3 — back to section-less, NOT a stranded [default]
+    expect(sections()).toEqual([]); // back to section-less, NOT a stranded [default]
     expect(taskIds()).toEqual(['t1', 't2', 't3']); // tasks preserved (now under the virtual default)
 
     cmd.execute(); // redo re-materialises both

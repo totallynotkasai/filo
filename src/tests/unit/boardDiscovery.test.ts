@@ -9,7 +9,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { unloadedBoardPaths } from '@renderer/stores/unloadedBoards';
 
 /**
- * Audit-19 EXT-1 — `board:list` ran only at vault open, so a `.board.json`
+ * `board:list` ran only at vault open, so a `.board.json`
  * that appeared mid-session (sync, copy) was invisible until the vault was
  * reopened. `adoptBoardAtRuntime` loads it into the running session.
  */
@@ -27,7 +27,7 @@ function envelope(id: string, name: string) {
   };
 }
 
-describe('runtime board discovery (Audit-19 EXT-1)', () => {
+describe('runtime board discovery', () => {
   beforeEach(() => {
     vaultStore.setPath('/vault');
     beginVaultGeneration('/vault');

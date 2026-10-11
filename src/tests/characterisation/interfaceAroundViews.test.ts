@@ -1,5 +1,5 @@
 /**
- * Characterisation — the interface around the views, after Audit-28 Phase 5:
+ * Characterisation — the interface around the views:
  *
  * - Ctrl+W, Ctrl+Tab and Ctrl+Shift+Tab work while typing, and the edit ends
  *   first; Ctrl+Shift+F opens Search from a text field;

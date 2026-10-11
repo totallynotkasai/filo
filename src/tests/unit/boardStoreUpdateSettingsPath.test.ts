@@ -6,13 +6,13 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Phase 3 (Consolidation 2026-05-25) — single settings write path.
+ * Single settings write path.
  *
  * Asserts that `boardStore.updateSettings` / `deleteSettingsKeys` write
  * through the cache via `boardCacheStore.updateBoardSettings` and mirror onto
  * the active proxy — regardless of whether `boardStore.current` and
  * `boardCache[id].board` are the same Svelte 5 $state proxy or two distinct
- * proxies wrapping the same Board. The pre-Phase-3 path relied on the
+ * proxies wrapping the same Board. The earlier path relied on the
  * dual-proxy invariant for persistence (touchBoard only), which is a
  * known footgun (see [pendingSettingsApplyBoard.test.ts] for the original
  * regression).

@@ -476,7 +476,7 @@ describe('hotkeys', () => {
     });
 
     // Escape's app:cancel closes the top layer; with none open it says so, and
-    // the key stays for the board's own Escape and the Search panel's (BL-03).
+    // the key stays for the board's own Escape and the Search panel's.
     it('leaves a key unprevented when the shortcut found nothing to act on', () => {
       let open = true;
       registerShortcut({ key: 'Escape', description: 'Cancel', action: () => { const was = open; open = false; return was; } });
@@ -501,7 +501,7 @@ describe('hotkeys', () => {
     });
   });
 
-  // The Document zoom keys (Audit-29 D-04): Ctrl and + on the number pad, or
+  // The Document zoom keys: Ctrl and + on the number pad, or
   // Ctrl+Shift+=, send `+`, which a binding of `=` takes as browsers and Word do.
   describe('the + key', () => {
     beforeEach(() => {

@@ -5,7 +5,7 @@ import { freshVault, launchBuilt, makeTemp, openNoteByName, quitLikeUser, remove
 import type { LaunchedApp } from './helpers/app';
 
 /**
- * The interface around the views, in the built app (Audit-28 Phase 5):
+ * The interface around the views, in the built app:
  *
  * - right-clicking a note's text builds main's text menu (Cut, Copy, Paste,
  *   Select All, Insert Link), and its Insert Link opens the link popup;

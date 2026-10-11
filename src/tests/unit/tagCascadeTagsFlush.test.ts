@@ -12,9 +12,9 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
 
 /**
- * Phase 4.3 (2026-05-30) — `renameTagEverywhere` / `removeTagEverywhere`
- * (and the retry handler) must flush `.filo/tags.json` synchronously after
- * the in-memory registry commit, mirroring the rename cascade's F3 flush.
+ * `renameTagEverywhere` / `removeTagEverywhere` (and the retry handler) must
+ * flush `.filo/tags.json` synchronously after the in-memory registry commit,
+ * mirroring the rename cascade's flush.
  *
  * `commitTagRenameInMemory` / `commitTagRemovalInMemory` schedule a 300ms
  * debounced `tags.json` write (via renameTag / deleteTag / ensureTag), then
@@ -30,7 +30,7 @@ import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
  * debounce timer (real timers; the suite completes well inside 300ms).
  */
 
-describe('tag cascade — synchronous tags.json flush (Phase 4.3)', () => {
+describe('tag cascade — synchronous tags.json flush', () => {
   let tagsSaves: string[];
 
   beforeEach(async () => {

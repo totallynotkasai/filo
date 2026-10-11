@@ -12,8 +12,8 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Phase 4.1 (2026-05-30) — in-app delete must flush `.filo/tags.json`
- * synchronously, mirroring the rename cascade's F3 flush.
+ * In-app delete must flush `.filo/tags.json` synchronously, mirroring the
+ * rename cascade's tags flush.
  *
  * The file is an attachment: a note's tags live in its frontmatter, but an
  * attachment's live in `tags.json`.
@@ -33,7 +33,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  */
 
 /**
- * Drives the `uiStore.openConfirm`-based delete confirmation (Phase C/C.1)
+ * Drives the `uiStore.openConfirm`-based delete confirmation
  * by polling for the modal config and firing its `onConfirm`. Mirrors the
  * helper in `vaultFolderOpsDelete.test.ts`.
  */
@@ -49,7 +49,7 @@ async function autoConfirm(): Promise<void> {
   }
 }
 
-describe('delete cascade — synchronous tags.json flush (Phase 4.1)', () => {
+describe('delete cascade — synchronous tags.json flush', () => {
   let tagsSaves: string[];
 
   beforeEach(async () => {

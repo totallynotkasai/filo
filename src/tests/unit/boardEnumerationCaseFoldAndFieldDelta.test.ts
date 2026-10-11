@@ -18,26 +18,27 @@ import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-15 Phase 1 — the sibling-parity MEDIUM fixes that need a unit guard.
+ * Sibling-parity fixes that need a unit guard.
  *
- *   P1.3  `.board.json` enumeration (`scanBoardFiles`) + classification
- *         (`classifyChange`) now case-fold the extension, so an externally
- *         case-mangled board isn't silently dropped from the project / routed
- *         past the board reconciler.
- *   P1.4  a field delta keeps the body from FRESH disk when there is no live
- *         editor for the note (orphan / card-only file), so a Properties field
- *         save can't revert an external body edit `fs.watch` missed; with an
- *         editor open, its typed body and the delta land together.
- *   P1.5  a deny-by-default permission handler is installable on the session.
+ *   - `.board.json` enumeration (`scanBoardFiles`) + classification
+ *     (`classifyChange`) now case-fold the extension, so an externally
+ *     case-mangled board isn't silently dropped from the project / routed
+ *     past the board reconciler.
+ *   - A field delta keeps the body from FRESH disk when there is no live
+ *     editor for the note (orphan / card-only file), so a Properties field
+ *     save can't revert an external body edit `fs.watch` missed; with an
+ *     editor open, its typed body and the delta land together.
+ *   - A deny-by-default permission handler is installable on the session.
  *
- * P1.1 (scheduler parked early-return) lives in `writeFlushParkedAndGenerations.test.ts` beside
- * its 1.1 siblings; P1.2 is CSS-only (no unit cover — see P0.1).
+ * The scheduler's parked early-return lives in
+ * `writeFlushParkedAndGenerations.test.ts` beside its siblings; a CSS-only
+ * fix in the same group has no unit cover.
  */
 
-describe('Audit-15 P1.3 — .board.json enumeration + classification case-fold', () => {
+describe('.board.json enumeration + classification case-fold', () => {
   let dir: string;
   beforeEach(async () => {
-    dir = await fs.mkdtemp(join(tmpdir(), 'filo-p13-'));
+    dir = await fs.mkdtemp(join(tmpdir(), 'filo-board-enum-'));
   });
   afterEach(async () => {
     await fs.rm(dir, { recursive: true, force: true });
@@ -69,7 +70,7 @@ describe('Audit-15 P1.3 — .board.json enumeration + classification case-fold',
 });
 
 
-describe('Audit-15 P1.4 — a field delta keeps the fresh disk body when no editor is open', () => {
+describe('a field delta keeps the fresh disk body when no editor is open', () => {
   let vault: MemoryVault;
   const lastWrite = (rel: string): string | undefined =>
     vault.writes.filter(([, r]) => r === rel).at(-1)?.[2];

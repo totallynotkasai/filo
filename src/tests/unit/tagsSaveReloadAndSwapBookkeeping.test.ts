@@ -21,19 +21,19 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
 /**
- * Audit-9 Phase 4 — coherence / recovery completeness (latent / self-healing).
+ * Coherence / recovery completeness (latent / self-healing).
  *
- *  A9-L7  fileTags 3-way merge base desync across a concurrent external reload
- *  A9-L8  note writer post-write bookkeeping must not run against the NEW vault on swap
- *  A9-L9  repairRenameCascade never re-applied the moved board's own path key
+ *  - fileTags 3-way merge base desync across a concurrent external reload
+ *  - note writer post-write bookkeeping must not run against the NEW vault on swap
+ *  - repairRenameCascade never re-applied the moved board's own path key
  *
- * (A9-L10 lives with the rest of the write-error coalescing tests in
- * writeErrorToast.test.ts.)
+ * (Distinct preserved-tmp toasts live with the rest of the write-error
+ * coalescing tests in writeErrorToast.test.ts.)
  */
 
-// ── A9-L7 — tags.json merge-base survives a reload during an in-flight save ──
+// ── tags.json merge-base survives a reload during an in-flight save ──
 
-describe('A9-L7 — a concurrent external reload is not clobbered by an in-flight tags:save', () => {
+describe('a concurrent external reload is not clobbered by an in-flight tags:save', () => {
   let savedSnapshots: string[];
   let suspended: boolean;
   let releaseSave: (() => void) | null;
@@ -81,8 +81,8 @@ describe('A9-L7 — a concurrent external reload is not clobbered by an in-fligh
 
     // Fire the save WITHOUT awaiting — it suspends inside tags:save.
     const flushP = fileTagsStore.flush();
-    // Audit-19 EXT-8 — the save awaits a pre-write `tags:load` first, so the
-    // suspended `tags:save` starts a few microtasks later.
+    // The save awaits a pre-write `tags:load` first, so the suspended
+    // `tags:save` starts a few microtasks later.
     await vi.waitFor(() => expect(releaseSave).not.toBeNull()); // confirm we are mid-save
 
     // An external reload lands DURING the in-flight save: a.png already matches
@@ -112,9 +112,9 @@ describe('A9-L7 — a concurrent external reload is not clobbered by an in-fligh
   });
 });
 
-// ── A9-L8 — the note writer skips post-write bookkeeping when the vault swapped ──
+// ── The note writer skips post-write bookkeeping when the vault swapped ──
 
-describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write vault swap', () => {
+describe('post-write index bookkeeping is skipped after a mid-write vault swap', () => {
   let vault: MemoryVault;
 
   beforeEach(() => {
@@ -174,9 +174,9 @@ describe('A9-L8 — post-write index bookkeeping is skipped after a mid-write va
   });
 });
 
-// ── A9-L9 — recovery re-applies the moved board's own path key ──
+// ── Recovery re-applies the moved board's own path key ──
 
-describe('A9-L9 — repairRenameCascade re-applies the moved board path key', () => {
+describe('repairRenameCascade re-applies the moved board path key', () => {
   const movedTo = new Set(['sub/b1.board.json', 'img/b.png', 'Assets']);
 
   beforeEach(() => {

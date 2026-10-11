@@ -1,5 +1,5 @@
 /**
- * Polish phase 1.4 — `correlateRenames` accepts an async (Promise-returning)
+ * `correlateRenames` accepts an async (Promise-returning)
  * hash probe so the fileWatcher's reconcile pass can read file bytes via
  * `fs.promises.readFile` (concurrency-bounded) instead of blocking the
  * event loop with `readFileSync`. The function awaits the probe inside
@@ -27,7 +27,7 @@ function sizeAmong(map: Record<string, number>): (rel: string) => number | null 
   return (p) => (p in map ? map[p] : null);
 }
 
-describe('correlateRenames — async hash probe (polish 1.4)', () => {
+describe('correlateRenames — async hash probe', () => {
   it('pairs cross-basename when an ASYNC hash probe resolves to matching hashes', async () => {
     const events = [ev('OldName.md'), ev('NewName.md')];
     const exists = existsAmong('NewName.md');

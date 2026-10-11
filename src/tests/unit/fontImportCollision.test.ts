@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Phase 4 / 4.3 — `font:import` must use `atomicWriteFile` AND a
+ * `font:import` must use `atomicWriteFile` AND a
  * collision-suffix loop. Pre-fix, the handler called `fs.copyFile`
  * directly which (a) was not crash-safe (a power loss mid-copy could
  * leave a torn font file that the OS would refuse to load) and (b)
@@ -56,7 +56,7 @@ vi.mock('../../main/ipc/vault.ipc', () => ({
 const { registerFontHandlers } = await import('../../main/ipc/fonts.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 
-describe('font:import — collision suffix + atomic write (Phase 4 / 4.3)', () => {
+describe('font:import — collision suffix + atomic write', () => {
   let vaultDir: string;
   let sourceDir: string;
   let importHandler: (...args: unknown[]) => unknown | Promise<unknown>;

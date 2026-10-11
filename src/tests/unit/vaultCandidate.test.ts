@@ -12,9 +12,8 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { isBaselineUnverified } from '@renderer/lib/vault/fileBaselineRegistry';
 
 /**
- * Phase R4 — `loadVaultCandidate` is the load-side of vault-open as a
- * transaction. These tests cover the acceptance criteria from
- * REFACTOR_PLAN_2026-05-26.md §R4:
+ * `loadVaultCandidate` is the load-side of vault-open as a
+ * transaction. These tests cover its acceptance criteria:
  *
  *   1. Theme load throws → loadVaultCandidate throws.
  *   2. Tags hydration fails → loadVaultCandidate throws.
@@ -44,7 +43,7 @@ function happyPathRoutes(overrides: InvokeRoutes = {}): InvokeRoutes {
     'theme:list': async () => [],
     'theme:load': async () => null,
     'tags:load': async () => VALID_TAGS_JSON,
-    // 6.3.P3 — vault open now stats each of the four `.filo/` configs to
+    // Vault open stats each of the four `.filo/` configs to
     // seed drift baselines. Fresh-vault default returns ENOENT for all
     // four so the loader's catch branch fires and no baselines are
     // seeded — matches the existing tests' "empty vault" assumption.
@@ -86,14 +85,14 @@ describe('loadVaultCandidate', () => {
     expect(candidate.project.theme).toBe('light');
   });
 
-  it('L18: a PERSISTENT top-level config:load-all failure leaves every config unverified and warns once', async () => {
+  it('a PERSISTENT top-level config:load-all failure leaves every config unverified and warns once', async () => {
     // The handler tags a transient whole-`.filo/` read failure (locked dir /
     // EACCES on fs.stat) with `__loadAllFailed`. Memory then holds defaults, so
     // no file may be written blind: each is marked unverified (its first write
     // reads it again, and asks when it differs) rather than paused for the
     // session, and ONE low-key warning shows — not seven per-file toasts.
     //
-    // Audit-7 L3 — the read is now retried with backoff before giving up, so a
+    // The read is retried with backoff before giving up, so a
     // PERSISTENT failure (mock fails every call) only reaches the pause path
     // after the retry schedule exhausts. Fake timers ride out the ~1.45s of
     // backoff so the test stays fast.
@@ -129,10 +128,10 @@ describe('loadVaultCandidate', () => {
     }
   });
 
-  it('L3: a transient config:load-all failure that clears on retry loads cleanly (no pause)', async () => {
+  it('a transient config:load-all failure that clears on retry loads cleanly (no pause)', async () => {
     // The OneDrive/AV lock cleared by the first retry — the REAL configs load,
     // so NO config target is paused and the "couldn't read settings" warning is
-    // never buffered. This is the common case the L3 retry transparently fixes.
+    // never buffered. This is the common case the retry transparently fixes.
     vi.useFakeTimers();
     try {
       let calls = 0;
@@ -361,12 +360,12 @@ describe('loadVaultCandidate', () => {
     expect(candidate.manualOrder['also-bad']).toBeUndefined();
   });
 
-  describe('config baseline seeding (6.3.P3)', () => {
+  describe('config baseline seeding', () => {
     /**
-     * The 5.1 ENOENT-skip guard inside `writeConfigs` is gated on
+     * The ENOENT-skip guard inside `writeConfigs` is gated on
      * `baseline !== undefined`. Without an eager seed at vault open, the
      * first save after open lands in the "no baseline → drift check
-     * skipped" branch — the same bug 5.1 claimed to fix, re-introduced on
+     * skipped" branch — the same bug that guard fixes, re-introduced on
      * the fresh-open path. These tests pin the eager-seed contract.
      */
     it('seeds drift baselines for each .filo/ config that exists on disk', async () => {
@@ -473,7 +472,7 @@ describe('loadVaultCandidate', () => {
 
         // Should NOT throw — non-fatal failure is reported via the bus but
         // the load returns. Without a baseline, the writer's drift check
-        // no-ops on the next save (pre-5.1 behaviour).
+        // no-ops on the next save (as it did before the ENOENT-skip guard).
         const candidate = await loadVaultCandidate('/vault');
         expect(candidate.seededConfigBaselinePaths).toEqual([]);
         // Sanity: reportError did fire (once per failed config) so the
@@ -486,7 +485,7 @@ describe('loadVaultCandidate', () => {
   });
 });
 
-describe('loadAllConfigsWithRetry (L3)', () => {
+describe('loadAllConfigsWithRetry', () => {
   // Inject a no-op sleep so these stay wall-clock-free.
   const noSleep = async (): Promise<void> => undefined;
 

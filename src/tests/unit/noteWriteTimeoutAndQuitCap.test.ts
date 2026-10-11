@@ -15,18 +15,18 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-11 Phase 2 — write liveness (network-volume quit hang & UI freeze).
+ * Write liveness (network-volume quit hang & UI freeze).
  *
- * WC-1/QC-1/QC-2: every debounced write scheduler that can reach an unbounded
- * await (a stuck IPC on a dropped OneDrive/SMB volume, or an interactive drift
- * prompt) now carries `writeTimeoutMs`, so a wedged write resolves the flush as
- * a failure instead of hanging `flushAll` → `save()` → quit forever.
+ * Every debounced write scheduler that can reach an unbounded await (a stuck
+ * IPC on a dropped OneDrive/SMB volume, or an interactive drift prompt) now
+ * carries `writeTimeoutMs`, so a wedged write resolves the flush as a failure
+ * instead of hanging `flushAll` → `save()` → quit forever.
  *
- * WC-1 (half 2) / QC-3: the quit drain is additionally capped by an absolute
- * deadline in `handleFlushAndQuit`, so even an unbounded await surfaces the
- * existing "Save failed" confirm instead of freezing the quit.
+ * The quit drain is additionally capped by an absolute deadline in
+ * `handleFlushAndQuit`, so even an unbounded await surfaces the existing "Save
+ * failed" confirm instead of freezing the quit.
  *
- * QC-4: a re-entrant `app:flush-and-quit` dispatch no-ops.
+ * A re-entrant `app:flush-and-quit` dispatch no-ops.
  */
 
 /** Strip the orthogonal drain heartbeat so handshake assertions stay focused. */
@@ -34,7 +34,7 @@ const handshakeOf = (sent: readonly string[]): string[] =>
   sent.filter((c) => c !== 'app:drain-heartbeat');
 
 
-describe('Audit-11 WC-1 — the note writer bounds a wedged write', () => {
+describe('the note writer bounds a wedged write', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     noteStore.__resetForTests();
@@ -74,7 +74,7 @@ describe('Audit-11 WC-1 — the note writer bounds a wedged write', () => {
     expect(isPathPending('Wedged.md')).toBe(true);
   }, 10_000);
 });
-describe('Audit-11 WC-1 (half 2) / QC-3 / QC-4 — quit drain cap', () => {
+describe('quit drain cap', () => {
   beforeEach(() => {
     __resetQuitDrainingForTests();
     uiStore.closeConfirm();
@@ -123,7 +123,7 @@ describe('Audit-11 WC-1 (half 2) / QC-3 / QC-4 — quit drain cap', () => {
     expect(handshakeOf(sent)).toContain('app:cancel-quit');
   });
 
-  it('QC-3: does not hang on a wedged flushSentinel — still sends ready-to-quit', async () => {
+  it('does not hang on a wedged flushSentinel — still sends ready-to-quit', async () => {
     vi.useFakeTimers();
     const sent: string[] = [];
     const promise = handleFlushAndQuit({
@@ -140,7 +140,7 @@ describe('Audit-11 WC-1 (half 2) / QC-3 / QC-4 — quit drain cap', () => {
     expect(sent).toContain('app:ready-to-quit');
   });
 
-  it('QC-4: a re-entrant dispatch does not start a second save()', async () => {
+  it('a re-entrant dispatch does not start a second save()', async () => {
     let saveCalls = 0;
     let resolveSave!: (v: boolean) => void;
     const savePromise = new Promise<boolean>((r) => {

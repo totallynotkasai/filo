@@ -1,5 +1,5 @@
 /**
- * Phase 3 / 3.1 — FileWatcher supervisor state machine.
+ * FileWatcher supervisor state machine.
  *
  * Verifies the reopen state machine that wraps `fs.watch`. Three concerns:
  *
@@ -9,7 +9,7 @@
  *   2. Synchronous fs.watch() failure (vault path missing at start time)
  *      transitions the supervisor into `reconnecting` and arms a retry
  *      timer at the first backoff slot (1s).
- *   3. The classifyChange granular subtypes (Phase 3 / 3.2):
+ *   3. The classifyChange granular subtypes:
  *      - `.filo/tags.json`        → `config-tags`
  *      - `.filo/themes/foo.json`  → `config-theme`
  *      - `.filo/templates/x.json` → `config-template`
@@ -41,7 +41,7 @@ vi.mock('electron', () => ({
 
 import { FileWatcher } from '../../main/services/fileWatcher';
 
-describe('FileWatcher supervisor — Phase 3 / 3.1', () => {
+describe('FileWatcher supervisor', () => {
   let dir: string;
   let watcher: FileWatcher;
 
@@ -138,7 +138,7 @@ describe('FileWatcher supervisor — Phase 3 / 3.1', () => {
     });
   });
 
-  describe('granular config classification (Phase 3 / 3.2)', () => {
+  describe('granular config classification', () => {
     it('classifies .filo/tags.json as config-tags', () => {
       expect(watcher.classifyForTests('.filo/tags.json')).toBe('config-tags');
     });

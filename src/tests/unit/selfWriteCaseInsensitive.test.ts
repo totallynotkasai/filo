@@ -6,11 +6,9 @@ import {
 } from '@renderer/lib/boards/writeStateTracking';
 
 /**
- * Phase 4 — recent-self-write registry is routed through the shared
- * `vaultPath()` constructor, so the case-fold rule is unconditional (same
- * en-US lowercase normalisation `tagsStorage` uses). The original
- * Phase 3 / 3.4 implementation gated on `process.platform`; the platform
- * branches are gone now in favour of the unified `VaultPath` rule.
+ * The recent-self-write registry is routed through the shared `vaultPath()`
+ * constructor, so the case-fold rule is unconditional (same en-US lowercase
+ * normalisation `tagsStorage` uses) rather than gated on `process.platform`.
  *
  * The tradeoff: a hypothetical case-sensitive Linux vault that stores
  * both `Notes.md` and `notes.md` as distinct files would conflate them in
@@ -20,7 +18,7 @@ import {
  * intentionally create same-name-different-case siblings.
  */
 
-describe('writeStateTracking — self-write case folding (Phase 4)', () => {
+describe('writeStateTracking — self-write case folding', () => {
   beforeEach(() => {
     __clearRecentSelfWritesForTests();
   });

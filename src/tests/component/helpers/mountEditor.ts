@@ -1,5 +1,5 @@
 /**
- * Audit-19 0.1 / 0.2 — component-mount harness for the editor views.
+ * Component-mount harness for the editor views.
  *
  * Mounts the REAL `TextTile.svelte` / `DocumentEditor.svelte` in jsdom (the
  * `component` vitest project resolves `svelte` with the `browser` condition so

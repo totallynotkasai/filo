@@ -94,19 +94,19 @@ describe('IPC channel parity', () => {
       'vault:tree-updated',
       'vault:file-renamed',
       'vault:watcher-failed',
-      // Phase 3 / 3.1 — supervisor state machine, see fileWatcher.ts.
+      // Supervisor state machine, see fileWatcher.ts.
       'vault:watcher-state',
       'vault:tree-too-large',
-      'vault:sync-conflict', // Audit-19 ERR-3 / EXT-2
+      'vault:sync-conflict',
       'app:flush-and-quit',
       'app:ready-to-quit',
-      // 6.2.H4 — renderer → main one-way cancel signal; main listens
-      // via ipcMain.once inside the close/before-quit handlers.
+      // Renderer → main one-way cancel signal; main listens via ipcMain.once
+      // inside the close/before-quit handlers.
       'app:cancel-quit',
-      // Audit-4 DI-04 — renderer → main quit heartbeat; same ipcMain.once
-      // registration in main.ts (not an ipcMain.handle in src/main/ipc).
+      // Renderer → main quit heartbeat; same ipcMain.once registration in
+      // main.ts (not an ipcMain.handle in src/main/ipc).
       'app:quit-awaiting-user',
-      // Audit5 2.1 — renderer → main periodic drain heartbeat; registered via
+      // Renderer → main periodic drain heartbeat; registered via
       // ipcMain.on in main.ts (not an ipcMain.handle in src/main/ipc).
       'app:drain-heartbeat',
       // Windows session end: main → renderer request, and the renderer's
@@ -119,8 +119,8 @@ describe('IPC channel parity', () => {
       'app:text-menu-query',
       'app:text-menu-reply',
       'app:insert-link',
-      // Audit-12 S1 — preload-internal approved-source registration; registered
-      // via ipcMain.on in dialog.ipc.ts (not an ipcMain.handle), fired by the
+      // Preload-internal approved-source registration; registered via
+      // ipcMain.on in dialog.ipc.ts (not an ipcMain.handle), fired by the
       // preload's getPathForFile through a direct ipcRenderer.send.
       'vault:register-source-path',
     ]);

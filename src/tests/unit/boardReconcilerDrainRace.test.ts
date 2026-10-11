@@ -1,5 +1,5 @@
 /**
- * 6.4.M18 — the board-JSON reconciler's silent reload must not clobber a local
+ * The board-JSON reconciler's silent reload must not clobber a local
  * edit that lands DURING the disk read.
  *
  * reconcileBoardJsonChange checks isPathPending BEFORE awaiting loadBoard, then
@@ -69,7 +69,7 @@ function installRoutes(routes: Record<string, (...args: unknown[]) => unknown>):
   };
 }
 
-describe('board reconciler — silent reload guards a write that lands during the read (6.4.M18)', () => {
+describe('board reconciler — silent reload guards a write that lands during the read', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     _resetRegistryForTests();
@@ -106,7 +106,7 @@ describe('board reconciler — silent reload guards a write that lands during th
 
     await dispatchExternalChange({ kind: 'board', filename: REL, eventType: 'change' });
 
-    // M18 — re-checks after the read, sees the pending write, defers to the
+    // Re-checks after the read, sees the pending write, defers to the
     // prompt rather than overwriting the user's edit.
     expect(boardName()).toBe('original');
   });
@@ -127,13 +127,13 @@ describe('board reconciler — silent reload guards a write that lands during th
 });
 
 /**
- * Audit-15 P2.4 — the `.board.json` reconciler mirrors the `.md` path's Audit-13
- * M4 divergence tiebreak: a recent self-write is dropped as our own echo ONLY
- * when its fresh disk stat still matches the baseline we wrote. A diverged stat
+ * The `.board.json` reconciler mirrors the `.md` path's divergence tiebreak: a
+ * recent self-write is dropped as our own echo ONLY when its fresh disk stat
+ * still matches the baseline we wrote. A diverged stat
  * means a second writer touched the file inside the suppression window, so it's
  * a real external edit and must be reconciled proactively, not waited out.
  */
-describe('board reconciler — P2.4 self-write divergence tiebreak', () => {
+describe('board reconciler — self-write divergence tiebreak', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     __resetBaselinesForTests();
@@ -170,7 +170,7 @@ describe('board reconciler — P2.4 self-write divergence tiebreak', () => {
     await dispatchExternalChange({ kind: 'board', filename: REL, eventType: 'change' });
 
     // The divergence tiebreak treats it as a real external edit → reconciled.
-    // Bite: pre-P2.4 the bare `isRecentSelfWrite` early-return dropped it (stays 'original').
+    // Bite: a bare `isRecentSelfWrite` early-return would drop it (stays 'original').
     expect(boardName()).toBe('from-disk');
   });
 

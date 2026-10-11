@@ -1,10 +1,10 @@
 /**
- * Audit-19 EXT-4 — the "file missing" toast for a `.md` referenced by tiles
- * with no open editor. On a synced vault it fires for moves and
- * delete-then-recreate, and its old primary action ("Mark broken refs")
- * actually ran a VAULT-WIDE cascade removing every tile on every board — one
- * click on a sync blip deleted tiles. Now the default does nothing and removal
- * runs only behind a danger confirm that lists the boards.
+ * The "file missing" toast for a `.md` referenced by tiles with no open editor.
+ * On a synced vault it fires for moves and delete-then-recreate, and its old
+ * primary action ("Mark broken refs") actually ran a VAULT-WIDE cascade
+ * removing every tile on every board — one click on a sync blip deleted tiles.
+ * Now the default does nothing and removal runs only behind a danger confirm
+ * that lists the boards.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promptClosedBoardFileMissing } from '@renderer/stores/vaultExternalPrompts';
@@ -43,7 +43,7 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
-describe('Audit-19 EXT-4 — missing-file toast never removes tiles on one click', () => {
+describe('missing-file toast never removes tiles on one click', () => {
   let cascade: ReturnType<typeof vi.spyOn>;
   let dropFile: ReturnType<typeof vi.spyOn>;
 

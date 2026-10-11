@@ -14,7 +14,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { baselineSeq, noteBaseline, __resetBaselinesForTests } from '@renderer/lib/vault/fileBaselineRegistry';
 
 /**
- * Audit-19 EXT-1 — an external FOLDER rename on Windows emits no child events,
+ * An external FOLDER rename on Windows emits no child events,
  * so an open board's file "vanished" and the tree refresh EVICTED it at once:
  * its pending edit was cancelled and its tabs closed, and the reconcile rename
  * that arrived seconds later had nothing to rebind. The board is now only
@@ -37,7 +37,7 @@ function makeBoard(id: string, name: string): BoardFileData {
 const OLD = 'Projects/Plan.board.json';
 const NEW = 'Work/Plan.board.json';
 
-describe('provisionally missing boards (Audit-19 EXT-1)', () => {
+describe('provisionally missing boards', () => {
   let saves: string[];
   let recreates: string[];
   let onReconcile: () => void;

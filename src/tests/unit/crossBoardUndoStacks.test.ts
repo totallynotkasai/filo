@@ -17,14 +17,14 @@ import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 import { seedBoard } from '../helpers/seedBoard';
 
 /**
- * Audit-14 Phase 2 — undo/redo & command-pattern correctness.
+ * Undo/redo & command-pattern correctness.
  *
- * 2.1 Cross-board rollback restored onto the wrong stack.
- * 2.3 DeleteTilesCommand.undo must reconcile open editors on the restored note.
- * 2.4 A command targeting a closed board stranded on a sibling's stack (wedge).
- * 2.5 Tag-remove undo resurrected a deleted tag definition with the default colour.
+ * - Cross-board rollback restored onto the wrong stack.
+ * - DeleteTilesCommand.undo must reconcile open editors on the restored note.
+ * - A command targeting a closed board stranded on a sibling's stack (wedge).
+ * - Tag-remove undo resurrected a deleted tag definition with the default colour.
  *
- * (2.2 — DeleteCardCommand neighbour anchor — lives in
+ * (The DeleteCardCommand neighbour anchor lives in
  * kanbanStructureCommandsRoundTrip.test.ts alongside the other Kanban
  * structure round-trips.)
  */
@@ -62,9 +62,9 @@ class RejectingScopedCommand extends Command {
   }
 }
 
-// ── 2.1 — cross-board rollback restores the ORIGIN board's stack ──────────────
+// ── Cross-board rollback restores the ORIGIN board's stack ────────────────────
 
-describe('Audit-14 2.1 — cross-board rollback resolves the origin board stack', () => {
+describe('cross-board rollback resolves the origin board stack', () => {
   let toastSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     historyStore.clear();
@@ -100,7 +100,7 @@ describe('Audit-14 2.1 — cross-board rollback resolves the origin board stack'
     // Ctrl+Z on A → auto-switch to B → cmd.undo() rejects → rollbackUndo.
     await historyStore.undo().catch(() => {});
 
-    // 2.1 — board A's stack (where the synchronous move happened) is restored.
+    // Board A's stack (where the synchronous move happened) is restored.
     historyStore.setActiveBoard('board-A');
     expect(historyStore.canUndo).toBe(true); // cmd back on A's undo
     expect(historyStore.canRedo).toBe(false); // cmd removed from A's redo (would be true under the bug)
@@ -113,9 +113,9 @@ describe('Audit-14 2.1 — cross-board rollback resolves the origin board stack'
   });
 });
 
-// ── 2.4 — closing a board sweeps commands targeting it off sibling stacks ─────
+// ── Closing a board sweeps commands targeting it off sibling stacks ───────────
 
-describe('Audit-14 2.4 — clearBoard sweeps stranded commands off sibling stacks', () => {
+describe('clearBoard sweeps stranded commands off sibling stacks', () => {
   let toastSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     historyStore.clear();
@@ -160,7 +160,7 @@ describe('Audit-14 2.4 — clearBoard sweeps stranded commands off sibling stack
   });
 });
 
-// ── 2.3 — DeleteTilesCommand.undo reconciles an open editor on the restored file
+// ── DeleteTilesCommand.undo reconciles an open editor on the restored file
 
 function makeMindMapWithTextTile(boardId: string, tileId: string, filePath: string): BoardFileData {
   return {
@@ -200,7 +200,7 @@ function makeMindMapWithTextTile(boardId: string, tileId: string, filePath: stri
   };
 }
 
-describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () => {
+describe('DeleteTilesCommand.undo reconciles open editors', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     noteStore.__resetForTests();
@@ -261,7 +261,7 @@ describe('Audit-14 2.3 — DeleteTilesCommand.undo reconciles open editors', () 
   });
 });
 
-// ── 2.5 — tag-remove undo preserves the global tag colour ─────────────────────
+// ── Tag-remove undo preserves the global tag colour ───────────────────────────
 
 /** A link tile owns its tags on the board def, so the tag edit is a cache write. */
 function makeMindMapLinkTileWithTags(tags: string[]): BoardFileData {
@@ -301,7 +301,7 @@ function linkTags(): string[] {
   return def?.type === 'link' ? def.tags : [];
 }
 
-describe('Audit-14 2.5 — RemoveTileTagCommand.undo preserves the tag colour', () => {
+describe('RemoveTileTagCommand.undo preserves the tag colour', () => {
   beforeEach(() => {
     installFiloMock((channel: string) => {
       if (channel === 'vault:read-file-text') {
@@ -327,25 +327,25 @@ describe('Audit-14 2.5 — RemoveTileTagCommand.undo preserves the tag colour', 
   });
 
   it('resurrects a tag definition deleted between execute and undo with its ORIGINAL colour', () => {
-    const fixture = makeMindMapLinkTileWithTags(['audit14tag']);
+    const fixture = makeMindMapLinkTileWithTags(['colourtag']);
     boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
     // Give the tag a distinctive global colour.
-    fileTagsStore.ensureTag('audit14tag', '#ff0000');
-    expect(fileTagsStore.getDefinition('audit14tag').color).toBe('#ff0000');
+    fileTagsStore.ensureTag('colourtag', '#ff0000');
+    expect(fileTagsStore.getDefinition('colourtag').color).toBe('#ff0000');
 
-    const cmd = new RemoveTileTagCommand('t1', 'audit14tag'); // snapshots colour #ff0000
+    const cmd = new RemoveTileTagCommand('t1', 'colourtag'); // snapshots colour #ff0000
     cmd.execute();
-    expect(linkTags()).not.toContain('audit14tag');
+    expect(linkTags()).not.toContain('colourtag');
 
     // An interleaved GLOBAL tag delete wipes the definition + its colour.
-    fileTagsStore.deleteTag('audit14tag');
+    fileTagsStore.deleteTag('colourtag');
     // getDefinition now falls back to the accent default (no real definition).
-    expect(fileTagsStore.getDefinition('audit14tag').color).toBe(ACCENT_COLOR);
+    expect(fileTagsStore.getDefinition('colourtag').color).toBe(ACCENT_COLOR);
 
     cmd.undo();
 
-    // 2.5 — the original colour is restored, not the ensureTag fallback default.
-    expect(fileTagsStore.getDefinition('audit14tag').color).toBe('#ff0000');
-    expect(linkTags()).toContain('audit14tag');
+    // The original colour is restored, not the ensureTag fallback default.
+    expect(fileTagsStore.getDefinition('colourtag').color).toBe('#ff0000');
+    expect(linkTags()).toContain('colourtag');
   });
 });

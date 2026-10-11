@@ -3,11 +3,11 @@ import { loadVaultCandidate } from '@renderer/lib/vault/vaultCandidate';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit 5.4 — REFUTED. Claim: openVault flips the renderer `vaultPath` while
- * `vault:watch` (which arms the main-side `vaultRegistry`) fires fire-and-
- * forget, so a write triggered immediately after open is rejected by
- * `assertActiveVault` (registry still stale), surfacing a spurious save-failure
- * toast + a transient `.filo/.dirty`.
+ * Regression guard for the vault-open ordering. The worry: openVault flips the
+ * renderer `vaultPath` while `vault:watch` (which arms the main-side
+ * `vaultRegistry`) fires fire-and-forget, so a write triggered immediately
+ * after open would be rejected by `assertActiveVault` (registry still stale),
+ * surfacing a spurious save-failure toast + a transient `.filo/.dirty`.
  *
  * The registry is NOT armed by `vault:watch`. It is armed by `vault:init-config`
  * (`board.ipc.ts` → `vaultRegistry.setCurrentVault(vaultRoot)`), which
@@ -21,8 +21,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  *
  * This guard locks the ordering: `vault:init-config` is the first IPC
  * `loadVaultCandidate` invokes (before the config / board / theme / tags
- * loads). It PASSES against unmodified code — per reproduce-first discipline,
- * the lead is refuted.
+ * loads).
  */
 
 type InvokeRoutes = Record<string, (...args: unknown[]) => unknown | Promise<unknown>>;
@@ -41,7 +40,7 @@ function happyPathRoutes(): InvokeRoutes {
   };
 }
 
-describe('vault open registry-arming order (audit 5.4 — REFUTED)', () => {
+describe('vault open registry-arming order', () => {
   beforeEach(() => restoreFiloDefault());
   afterEach(() => restoreFiloDefault());
 

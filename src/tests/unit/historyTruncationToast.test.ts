@@ -4,8 +4,8 @@ import { uiStore } from '@renderer/stores/ui.svelte';
 import { Command } from '@renderer/commands/Command';
 
 /**
- * Phase 10.3 — history truncation toast. The undo stack caps at a per-board
- * limit (defaults to 500 since Phase 24 / M23; configurable via
+ * History truncation toast. The undo stack caps at a per-board
+ * limit (defaults to 500; configurable via
  * `historyStore.setMaxHistory`). The first time a board's stack drops its
  * head past that cap, the user sees a one-shot info toast. Subsequent
  * truncations in the same session are silent. `clear()` resets the per-board

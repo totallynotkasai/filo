@@ -93,7 +93,7 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
   it('pairs a cross-folder cross-basename rename via the size heuristic', async () => {
     // The hardest case: both folder and basename change in one rename. The
     // same-basename pass cannot pair these (no shared basename); the size
-    // pass must catch them. This is the cross-directory branch of P1-1.
+    // pass must catch them. This is the cross-directory rename branch.
     const events = [ev('notes/Old.md'), ev('archive/Renamed.md')];
     const exists = existsAmong('archive/Renamed.md');
     const sizes = sizeAmong({ 'notes/Old.md': 1234, 'archive/Renamed.md': 1234 });
@@ -132,9 +132,9 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(filtered).toEqual(events);
   });
 
-  it('does NOT pair below the cross-basename min size (Phase 19 S1)', async () => {
+  it('does NOT pair below the cross-basename min size', async () => {
     // Two .md files of size 100 bytes each — well under the 256-byte floor.
-    // Pre-Phase-19 this would have paired silently and rewritten tile
+    // Without the floor this would pair silently and rewrite tile
     // references to the wrong file.
     const events = [ev('Foo.md'), ev('Bar.md')];
     const exists = existsAmong('Bar.md');
@@ -144,7 +144,7 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(filtered).toEqual(events);
   });
 
-  it('does NOT pair when extensions differ (Phase 19 S1)', async () => {
+  it('does NOT pair when extensions differ', async () => {
     // Two attachments of the same size but different extensions can't be a
     // single rename — an OS rename preserves the extension.
     const events = [
@@ -161,10 +161,10 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(filtered).toEqual(events);
   });
 
-  it('Sprint B / B8 — pairs `.txt` → `.md` (text-like extension swap)', async () => {
+  it('pairs `.txt` → `.md` (text-like extension swap)', async () => {
     // A user retypes `Notes.txt` to `Notes.md` in their file manager — same
     // contents, different extension. The strict same-ext guard would force
-    // a delete+create pair; the B8 exemption lets the correlator emit a
+    // a delete+create pair; the text-like exemption lets the correlator emit a
     // synthetic rename so tile references propagate without manual fix-up.
     const events = [ev('Notes.txt'), ev('Notes.md')];
     const exists = existsAmong('Notes.md');
@@ -174,7 +174,7 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(filtered).toEqual([]);
   });
 
-  it('Sprint B / B8 — pairs `.markdown` → `.md` (text-like extension swap)', async () => {
+  it('pairs `.markdown` → `.md` (text-like extension swap)', async () => {
     const events = [ev('Spec.markdown'), ev('Spec.md')];
     const exists = existsAmong('Spec.md');
     const sizes = sizeAmong({ 'Spec.markdown': 2048, 'Spec.md': 2048 });
@@ -183,10 +183,10 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(filtered).toEqual([]);
   });
 
-  it('Sprint B / B8 — text-like exemption does NOT cross into binary formats', async () => {
+  it('text-like exemption does NOT cross into binary formats', async () => {
     // `.png` is not in the text-like set, so a `.png` ↔ `.md` pair still
     // falls through as delete + create — guards against the broad ext
-    // relaxation that Phase 19 S1 was designed to prevent.
+    // relaxation the same-extension guard exists to prevent.
     const events = [
       ev('hero.png', 'attachment'),
       ev('hero.md'),
@@ -199,7 +199,7 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
   });
 
   it('still pairs cross-basename when both above min size and extensions match', async () => {
-    // Regression for Phase 4's cross-basename heuristic — the Phase 19 floor
+    // Regression for the cross-basename heuristic — the min-size floor
     // must not break legitimate large-file renames.
     const events = [ev('Notes/old name.md'), ev('Notes/new name.md')];
     const exists = existsAmong('Notes/new name.md');
@@ -221,10 +221,10 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(renames).toEqual([]);
   });
 
-  it('Phase 31 A4.3 — refuses to pair two same-size files with different content hashes', async () => {
+  it('refuses to pair two same-size files with different content hashes', async () => {
     // Two unrelated .md files of identical byte length but different content.
-    // Pre-A4.3 this would silently pair them and rewrite tile references to
-    // the wrong file. The content-hash gate now refuses the pair.
+    // Without the content-hash gate this would silently pair them and rewrite
+    // tile references to the wrong file. The gate refuses the pair.
     const events = [ev('Foo.md'), ev('Bar.md')];
     const exists = existsAmong('Bar.md');
     const sizes = sizeAmong({ 'Foo.md': 1024, 'Bar.md': 1024 });
@@ -238,7 +238,7 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(filtered).toEqual(events);
   });
 
-  it('Phase 31 A4.3 — pairs when content hashes match (legitimate cross-basename rename)', async () => {
+  it('pairs when content hashes match (legitimate cross-basename rename)', async () => {
     const events = [ev('OldName.md'), ev('NewName.md')];
     const exists = existsAmong('NewName.md');
     const sizes = sizeAmong({ 'OldName.md': 1024, 'NewName.md': 1024 });
@@ -252,11 +252,11 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(filtered).toEqual([]);
   });
 
-  it('Sprint C / C-A5-3 — refuses cross-basename pairing for files >= 10 MB even when hash probe is provided', async () => {
+  it('refuses cross-basename pairing for files >= 10 MB even when hash probe is provided', async () => {
     // Two large attachments of identical byte length and extension. The
     // hash probe is supplied (production fileWatcher always passes one)
     // but the size is above CROSS_BASENAME_HASH_REQUIRED_BELOW so the
-    // hash check is bypassed; pre-Sprint-C this fell through to a silent
+    // hash check is bypassed; before the ceiling this fell through to a silent
     // size-only pair, exposing tile references to silent merge across
     // unrelated >=10 MB files. The fix refuses cross-basename pairing
     // outright above the ceiling — large-file renames inside the same
@@ -282,8 +282,8 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(filtered).toEqual(events);
   });
 
-  it('Sprint C / C-A5-3 — refuses cross-basename pairing for files >= 10 MB when no hash probe is provided', async () => {
-    // Same scenario, but the caller omitted the hash probe — pre-Sprint-C
+  it('refuses cross-basename pairing for files >= 10 MB when no hash probe is provided', async () => {
+    // Same scenario, but the caller omitted the hash probe — before the ceiling
     // this also silently paired because the legacy 256-byte floor was the
     // only large-file guard. The new branch refuses regardless of probe.
     const tenMB = 10 * 1024 * 1024;
@@ -301,7 +301,7 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
     expect(filtered).toEqual(events);
   });
 
-  it('Sprint C / C-A5-3 — same-basename pairing of a 50 MB rename still works (cross-folder, basename preserved)', async () => {
+  it('same-basename pairing of a 50 MB rename still works (cross-folder, basename preserved)', async () => {
     // The ceiling only affects the CROSS-basename pass. A large file whose
     // basename stays the same across a folder move still pairs via the
     // same-basename pass earlier, regardless of size.
@@ -349,7 +349,7 @@ describe('correlateRenames — same-size heuristic for cross-basename renames', 
   });
 });
 
-describe('correlateRenames — same-basename content gate (audit2 2.1)', () => {
+describe('correlateRenames — same-basename content gate', () => {
   function sizeAmong(map: Record<string, number>): (rel: string) => number | null {
     return (p) => (p in map ? map[p] : null);
   }
@@ -424,7 +424,7 @@ describe('correlateRenames — same-basename content gate (audit2 2.1)', () => {
   });
 });
 
-describe('correlateRenames — Phase 31 B2.4 case-only rename', () => {
+describe('correlateRenames — case-only rename', () => {
   const isCaseInsensitive = process.platform === 'win32' || process.platform === 'darwin';
 
   it('pairs `foo.md` → `Foo.md` on case-insensitive filesystems (Win/macOS)', async () => {

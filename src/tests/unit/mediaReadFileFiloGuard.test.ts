@@ -4,13 +4,13 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Audit-15 P3.1 — `media:read-file` was the only vault READ channel taking a
+ * `media:read-file` was the only vault READ channel taking a
  * renderer-supplied relative path that omitted `assertNotInFiloDir`, so a
  * renderer could call `media:read-file('.filo/themes/x.svg')`. Not currently
  * exploitable (every sensitive `.filo/` file is JSON/font → octet-stream →
  * refused by the MIME allowlist), but the channel must enforce its OWN
  * containment instead of leaning on an adjacent control. The fix mirrors
- * `media:save-audio` (1.4).
+ * `media:save-audio`.
  *
  * Bite-verify: an SVG is a READABLE MIME type (`image/svg+xml`), so the MIME
  * allowlist does NOT refuse it — the ONLY thing that can is the `.filo/` guard.
@@ -41,7 +41,7 @@ vi.mock('../../main/ipc/vault.ipc', () => ({
 const { registerMediaHandlers } = await import('../../main/ipc/media.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 
-describe('media:read-file — .filo/ read guard (Audit-15 P3.1)', () => {
+describe('media:read-file — .filo/ read guard', () => {
   let vaultDir: string;
   let readHandler: (...args: unknown[]) => unknown | Promise<unknown>;
   let errSpy: ReturnType<typeof vi.spyOn>;

@@ -25,7 +25,7 @@ describe('tocDefaultBounds', () => {
   });
 });
 
-describe('tocFitsBeside (BL-35: the panel opens folded where it would cover the list)', () => {
+describe('tocFitsBeside (the panel opens folded where it would cover the list)', () => {
   it('is true where the panel sits beside the list or in a clear corner', () => {
     expect(tocFitsBeside(1384, 1090)).toBe(true);
     expect(tocFitsBeside(1920, 1300)).toBe(true);

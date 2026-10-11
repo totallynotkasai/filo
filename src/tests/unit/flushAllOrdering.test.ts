@@ -1,8 +1,8 @@
 /**
- * Audit-12 H4 — `flushAll()` must pre-drain an older in-flight write for a key
+ * `flushAll()` must pre-drain an older in-flight write for a key
  * BEFORE firing that key's pending (newest) write, so the newest lands LAST.
  *
- * The WC-3 fix that drains a key's prior in-flight write before firing the
+ * The fix that drains a key's prior in-flight write before firing the
  * pending one existed only in `flush(key)`. `flushAll()` fired all drained-pending
  * writes and then awaited the already-in-flight ones concurrently. For a
  * NON-serialized scheduler (board / config / misc — markdown / frontmatter
@@ -34,7 +34,7 @@ function makeArgs(path = 'note.md', vaultRoot = '/vault'): TArgs {
   return { vaultRoot, path };
 }
 
-describe('createScheduler — flushAll per-key pre-drain (Audit-12 H4)', () => {
+describe('createScheduler — flushAll per-key pre-drain', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     restoreFiloDefault();

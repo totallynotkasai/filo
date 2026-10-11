@@ -38,7 +38,7 @@ describe('parseRecurrence', () => {
 });
 
 describe('nextDueDate: schedule mode (current due + interval)', () => {
-  // Pinned far in the past so the schedule-mode roll-forward (audit 1.4) never
+  // Pinned far in the past so the schedule-mode roll-forward never
   // triggers for these cases — the task is completed long before its due date,
   // so each asserts pure interval arithmetic (next = currentDue + one interval).
   const COMPLETED = new Date(2020, 0, 1);
@@ -103,7 +103,7 @@ describe('nextDueDate: schedule mode (current due + interval)', () => {
   });
 });
 
-describe('nextDueDate: schedule mode rolls forward past overdue dates (audit 1.4)', () => {
+describe('nextDueDate: schedule mode rolls forward past overdue dates', () => {
   it('a weekly task several intervals overdue advances to the next FUTURE occurrence', () => {
     // due 2026-05-04, completed 2026-05-25 (3 weeks late): occurrences fall on
     // 05-04 / 05-11 / 05-18 / 05-25 / 06-01 -> first strictly after 05-25 is 06-01.

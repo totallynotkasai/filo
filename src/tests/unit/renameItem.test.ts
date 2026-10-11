@@ -5,7 +5,7 @@ import { tmpdir, platform } from 'os';
 import { renameItem, RenameTargetExistsError } from '../../main/vault/fileOps';
 
 /**
- * Phase 8 (P1-10) regression guard: `renameItem` must handle two
+ * Regression guard: `renameItem` must handle two
  * platform-specific quirks the OS-default `fs.rename` mishandles:
  *
  *   1. Windows case-only rename (`Notes.md` → `notes.md`) — NTFS treats
@@ -42,7 +42,7 @@ describe('renameItem', () => {
     await expect(fs.readFile(path, 'utf-8')).resolves.toBe('hello');
   });
 
-  // Phase 1 / 1.1 — POSIX `fs.rename` silently overwrites an existing
+  // POSIX `fs.rename` silently overwrites an existing
   // destination. The pre-flight `fs.access(newPath)` check in `renameItem`
   // must reject the operation with a typed `RenameTargetExistsError` so the
   // IPC layer can prompt the user before clobbering. The original file
@@ -84,7 +84,7 @@ describe('renameItem', () => {
   // every second-leg attempt to fail and asserts the original file is
   // restored without an orphan temp file remaining.
   //
-  // IMPL_PLAN_2026-05-26 / Item 2 — `renameItem` now retries the second leg
+  // `renameItem` retries the second leg
   // on EBUSY / EPERM / EACCES before bailing, so the mock must throw on
   // every (tmp → newPath) call (not just one) for the rescue path to run.
   itOnWindows('restores the original file when every second-rename retry fails (Windows)', async () => {
@@ -114,7 +114,7 @@ describe('renameItem', () => {
     await expect(fs.readFile(oldPath, 'utf-8')).resolves.toBe('restoration');
   });
 
-  // L10 (Audit-13) — a cross-device move (EXDEV) can't use a same-volume
+  // A cross-device move (EXDEV) can't use a same-volume
   // rename, so renameItem falls back to a STAGED copy: copy → fsync → atomic
   // rename → best-effort dir-fsync → unlink source. The prior `copyFile(old → new)`
   // streamed straight to the final name (non-fsync'd, torn on a crash mid-copy).

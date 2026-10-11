@@ -14,20 +14,20 @@ import {
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-18 Phase 2 — the three remaining MEDIUMs (lifecycle / undo / race).
- * None fires on a local SSD vault not edited by other tools; each describe
- * block locks one fix's load-bearing behaviour.
+ * Three medium-severity hazards (lifecycle / undo / race). None fires on a
+ * local SSD vault not edited by other tools; each describe block locks one
+ * fix's load-bearing behaviour.
  */
 
-// ── M1 — acknowledge-only recovery toasts survive automatic teardown ─────────
+// ── Acknowledge-only recovery toasts survive automatic teardown ──────────────
 //
 // Two crash-recovery breadcrumb toasts (`clearQuitFailureBreadcrumb`,
 // `markClean`) carry an onDismiss meaning "the user acknowledged → destroy the
-// breadcrumb". The 6.1.R2 pre-swap "fire every onDismiss" change (and the
+// breadcrumb". The pre-swap "fire every onDismiss" sweep (and the
 // TOAST_CAP eviction) used to fire those automatically, deleting the recoverable
 // file unread BEFORE the user saw it. `acknowledgeOnly` makes both automatic
 // paths skip the onDismiss while genuine user dismissal still clears it.
-describe('Audit-18 M1 — acknowledgeOnly toasts are spared by swap/cap teardown', () => {
+describe('acknowledgeOnly toasts are spared by swap/cap teardown', () => {
   beforeEach(() => {
     installFiloMock(() => ({ ok: true, success: true }));
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -49,8 +49,8 @@ describe('Audit-18 M1 — acknowledgeOnly toasts are spared by swap/cap teardown
       acknowledgeOnly: true,
       onDismiss: breadcrumb,
     });
-    // A promise-backed drift prompt — the 6.1.R2 case that MUST still resolve so
-    // its awaiting write isn't stranded across the swap.
+    // A promise-backed drift prompt MUST still resolve so its awaiting write
+    // isn't stranded across the swap.
     uiStore.pushToast({ text: 'external edit', type: 'warning', duration: 0, onDismiss: driftPrompt });
 
     await fireVaultSwap({ phase: 'pre-swap', previousVault: '/A', nextVault: '/B', saveOutgoing: false });
@@ -83,20 +83,20 @@ describe('Audit-18 M1 — acknowledgeOnly toasts are spared by swap/cap teardown
     }
     uiStore.pushToast({ text: 'e8', type: 'error', duration: 0, onDismiss: vi.fn() });
 
-    // Audit5 R3: when every queued toast is promise-backed, the cap evicts the
+    // When every queued toast is promise-backed, the cap evicts the
     // oldest AND fires its onDismiss so its awaiter resolves. Only acknowledgeOnly
     // toasts are exempt.
     expect(spies[0]).toHaveBeenCalledTimes(1);
   });
 });
 
-// ── M2 — refreshTreeAndCleanup defers eviction while a rename is in flight ────
+// ── refreshTreeAndCleanup defers eviction while a rename is in flight ─────────
 //
 // `runRename` rebinds boardStore.paths[boardId] to the NEW (not-yet-on-disk)
 // path before the rename IPC lands. A concurrent watcher reconcile would see
 // that path missing on disk and evict the LIVE board. The fix defers eviction
 // while `isRenameInFlight()` (or the cached path was rebound since we sampled).
-describe('Audit-18 M2 — rename-in-flight defers board eviction', () => {
+describe('rename-in-flight defers board eviction', () => {
   function makeBoard(boardId: string): Record<string, unknown> {
     return {
       board: {
@@ -167,8 +167,8 @@ describe('Audit-18 M2 — rename-in-flight defers board eviction', () => {
     expect(isRenameInFlight()).toBe(false);
     await vaultStore.refreshTreeAndCleanup();
 
-    // Audit-19 EXT-1 — eviction now follows the provisional-missing re-check
-    // (a reconcile walk + a ~2 s grace), not the tree refresh itself.
+    // Eviction follows the provisional-missing re-check (a reconcile walk +
+    // a ~2 s grace), not the tree refresh itself.
     expect('a' in boardCacheStore.cache).toBe(true);
     await vi.waitFor(() => expect('a' in boardCacheStore.cache).toBe(false), { timeout: 5000, interval: 50 });
   }, 10_000);
@@ -206,17 +206,17 @@ describe('Audit-18 M2 — rename-in-flight defers board eviction', () => {
   });
 });
 
-// ── M4 — rollbackUndo/rollbackRedo identity guard ────────────────────────────
+// ── rollbackUndo/rollbackRedo identity guard ─────────────────────────────────
 //
 // Stack MOVES are synchronous; command BODIES queue (and can park). An action
 // that interleaves while a parked undo/redo body is in flight reassigns the
 // stack array. The old blind `= preUndoStack` / `= preRedoStack` restore ERASED
-// that interleaved command. The fix mirrors rollbackExecute's #18 identity guard
+// that interleaved command. The fix mirrors rollbackExecute's identity guard
 // — blind-restore only when the array is untouched, else surgically re-insert.
-describe('Audit-18 M4 — rollback restores via identity guard, not a blind snapshot', () => {
+describe('rollback restores via identity guard, not a blind snapshot', () => {
   beforeEach(() => {
     historyStore.clear();
-    historyStore.setActiveBoard('b-m4');
+    historyStore.setActiveBoard('b-rollback');
   });
   afterEach(() => {
     historyStore.clear();

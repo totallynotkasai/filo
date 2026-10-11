@@ -1,5 +1,5 @@
 /**
- * Audit-17 0.2 — the 6.4 reconcile walk puts `.filo/tags.json` in the 30 s
+ * The reconcile walk puts `.filo/tags.json` in the 30 s
  * reconcile snapshot. A self-write's echo surfaces in that pass long after the
  * 1.5–5 s self-write TTL, so the renderer can no longer recognise it as its
  * own. Before the fix `reconcileTagsJsonChange` toasted unconditionally and
@@ -72,7 +72,7 @@ async function dispatchTagsChange(): Promise<void> {
   });
 }
 
-describe('Audit-17 0.2 — tags.json reconcile loop', () => {
+describe('tags.json reconcile loop', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     __resetVaultIdentityForTests();

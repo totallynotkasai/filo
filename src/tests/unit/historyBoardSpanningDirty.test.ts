@@ -11,11 +11,12 @@ import type { MindMapBoard, Tile } from '@renderer/schema/index';
 import { seedBoard } from '../helpers/seedBoard';
 
 /**
- * Audit 4.2 (REPRODUCE-FIRST) — claim: `historyStore.undo()/redo()` mark only
- * `command.targetBoardId || activeBoardId` dirty, so a board-spanning command
- * (CascadeDeleteCommand, whose `targetBoardId` is `''`) that restores tiles
- * into an INACTIVE board's cache never schedules that board's `.board.json`
- * write — "a restart could lose the cross-board restoration."
+ * Regression guard: `historyStore.undo()/redo()` mark only
+ * `command.targetBoardId || activeBoardId` dirty, raising the worry that a
+ * board-spanning command (CascadeDeleteCommand, whose `targetBoardId` is `''`)
+ * that restores tiles into an INACTIVE board's cache never schedules that
+ * board's `.board.json` write — "a restart could lose the cross-board
+ * restoration."
  *
  * This test dispatches a cascade through `historyStore` (exercising the exact
  * `dirtyId = command.targetBoardId || activeBoardId` line at
@@ -23,7 +24,7 @@ import { seedBoard } from '../helpers/seedBoard';
  * inactive board's write IS scheduled (a `board:save` fires for it, carrying
  * the restored tile).
  *
- * If this passes against unmodified code the lead is refuted: every cache
+ * Why it holds: every cache
  * writer already calls `ctx.markDirty(resolvedBoardId)` — tiles
  * (core/boardTileOps/mindmap.ts) and connections (core/boardConnectionsOps.ts)
  * — so the board actually mutated is flagged by the op itself, independent of
@@ -88,7 +89,7 @@ function makeMindMap(id: string, tileId: string): BoardFileData {
   };
 }
 
-describe('history dirty-marking for board-spanning commands (audit 4.2)', () => {
+describe('history dirty-marking for board-spanning commands', () => {
   let saved: SavedBoard[];
   beforeEach(() => {
     saved = [];

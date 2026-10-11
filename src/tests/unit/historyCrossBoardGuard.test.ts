@@ -1,5 +1,5 @@
 /**
- * Phase 2 (IMPLEMENTATION_PLAN_2026-05-27) — cross-board undo guard.
+ * Cross-board undo guard.
  *
  * Acceptance test for the mandatory-targetBoardId contract. Per-board
  * history stacks mean each board has its own (un)stack — so the
@@ -83,7 +83,7 @@ class RetargettableCommand extends Command {
   undo(): void { this.undoCount += 1; }
 }
 
-describe('historyStore — cross-board guard (Phase 2)', () => {
+describe('historyStore — cross-board guard', () => {
   let toastSpy: MockInstance<typeof uiStore.toast>;
 
   beforeEach(() => {

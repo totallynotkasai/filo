@@ -5,7 +5,7 @@ import { createBoardScope } from '@renderer/lib/boards/boardScopeFactory';
 import { isActiveScope, setActiveScope, type BoardScope } from '@renderer/lib/boards/boardScope.svelte';
 
 /**
- * M2 (audit 2026-05-29) — duplicate bare-`n` shortcut across board types.
+ * Duplicate bare-`n` shortcut across board types.
  *
  * In a split view a Kanban board and a Task List board are mounted at once
  * and BOTH register a global `n` shortcut. The registry fires the first
@@ -33,7 +33,7 @@ function dispatchKey(init: KeyboardEventInit) {
   return event;
 }
 
-describe('active-pane shortcut guard (M2)', () => {
+describe('active-pane shortcut guard', () => {
   let kanbanScope: BoardScope;
   let taskListScope: BoardScope;
 

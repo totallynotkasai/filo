@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Audit-16 3.1 — `notifyRenderers` awaits `correlateRenames` (real fs hash
+ * `notifyRenderers` awaits `correlateRenames` (real fs hash
  * probes — hundreds of ms on slow volumes) and then sends
  * `vault:files-changed` / `vault:file-renamed` / `vault:tree-updated` with
  * no `aborted` re-check, and `stop()` never tracked the in-flight notify
@@ -62,7 +62,7 @@ vi.mock('../../main/services/renameCorrelation', () => ({
 
 import { FileWatcher } from '../../main/services/fileWatcher';
 
-describe('Audit-16 3.1 — late notify pass cannot emit after stop()', () => {
+describe('late notify pass cannot emit after stop()', () => {
   let dir: string;
   let watcher: FileWatcher;
 

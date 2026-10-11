@@ -23,7 +23,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * `cancelAllPendingWrites()` clears the timers so nothing leaks across the
  * vault boundary.
  *
- * Note (Phase 1 / CONSOLIDATION_PLAN_2026-05-25): tests in this file route
+ * Note: tests in this file route
  * through `installFiloMock` / `restoreFiloDefault` from the shared helper
  * rather than deleting `window.filo` outright. `scheduleBoardWrite` queues
  * an async `markDirty` (via `withSentinelLock`) whose microtask body runs

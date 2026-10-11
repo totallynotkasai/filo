@@ -1,5 +1,5 @@
 /**
- * Phase 2 — direct contract tests for `boardTileOpsRegistry`.
+ * Direct contract tests for `boardTileOpsRegistry`.
  *
  * The contract suite (`deleteTileEntryPoints.test.ts`) covers the
  * dispatcher-level post-condition. This file targets the *strategy
@@ -339,7 +339,7 @@ describe('boardTileOpsRegistry — exhaustive coverage', () => {
 });
 
 /**
- * Phase 6 — strategy registry coverage for the connections + frames slices.
+ * Strategy registry coverage for the connections + frames slices.
  *
  * Today every board type's body is uniform, but the registry promotes the
  * mutators to a typed home so a future per-type divergence (document boards

@@ -7,7 +7,7 @@ import { attachPageView, currentPageBreaks, measureWaits, type PageView } from '
 import type { PageBreak } from '../../renderer/lib/editor/pageLayout';
 
 /**
- * Typing in a very long note with pages on (Audit-29 D-03). Each measure
+ * Typing in a very long note with pages on. Each measure
  * looked every block up by position, a scan of the blocks before it, read
  * every block after every edit and built every break again: in a
  * 100,000-word note (5,000 paragraphs) the measures kept the page busy 1.8 s

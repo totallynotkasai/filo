@@ -1,5 +1,5 @@
 /**
- * Polish phase 1.2 — `flushBoardWrite` must report failure when the
+ * `flushBoardWrite` must report failure when the
  * caller-supplied `getWriteArgs()` returns null (board cache entry
  * already cleared) or null `vaultRoot` / `boardPath`. The pre-fix
  * branch ended the sentinel with success and fell through to the
@@ -39,7 +39,7 @@ function emptyMindmapBoard(id: string): BoardFileData {
   };
 }
 
-describe('flushBoardWrite — null-args surfaces failure (polish 1.2)', () => {
+describe('flushBoardWrite — null-args surfaces failure', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     restoreFiloDefault();

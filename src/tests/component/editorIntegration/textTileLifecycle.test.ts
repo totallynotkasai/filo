@@ -1,9 +1,9 @@
 /**
- * Audit-19 0.2 — editor-level integration suite: the REAL `TextTile.svelte`
- * mounted in jsdom with real TipTap, driven through mount / unmount / undo /
- * reload. The body round-trip corpus drives the editor factory WITHOUT the
- * components, so it can't see what they do on mount, unmount, undo or reload —
- * the layer where MD-1 / MD-2 / MD-3 lived. Pinned by ci:markdown-body-roundtrip
+ * Editor-level integration suite: the REAL `TextTile.svelte` mounted in jsdom
+ * with real TipTap, driven through mount / unmount / undo / reload. The body
+ * round-trip corpus drives the editor factory WITHOUT the components, so it
+ * can't see what they do on mount, unmount, undo or reload — the layer where
+ * earlier markdown-body bugs lived. Pinned by ci:markdown-body-roundtrip
  * (EDITOR_SUITE arm).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

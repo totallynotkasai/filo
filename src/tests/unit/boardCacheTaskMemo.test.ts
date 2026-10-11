@@ -4,10 +4,10 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TileDefinition, TaskListBoard } from '@renderer/schema/index';
 
 /**
- * AUDIT13 Phase 7 L18 — `findBoardIdForTask` now routes through the shared
- * `resolveOwnerCached` reverse-index memo (like its tile / connection / frame /
- * kanban-column siblings) instead of an O(boards × tasks) scan on every keyless
- * persist. The memo verifies-on-hit, so it can never return a stale board.
+ * `findBoardIdForTask` routes through the shared `resolveOwnerCached`
+ * reverse-index memo (like its tile / connection / frame / kanban-column
+ * siblings) instead of an O(boards × tasks) scan on every keyless persist. The
+ * memo verifies-on-hit, so it can never return a stale board.
  *
  * `findBoardIdForTask` is private; it's exercised via the keyless
  * `removeTaskPlacement('', tileId)` path (empty boardId → resolve by scan).
@@ -61,7 +61,7 @@ function defOf(id: string, title: string): TileDefinition {
 const tileIds = (boardId: string): string[] =>
   ((boardCacheStore.cache[boardId].board as TaskListBoard).tasks ?? []).map((p) => p.tileId);
 
-describe('boardCache — findBoardIdForTask memo (L18)', () => {
+describe('boardCache — findBoardIdForTask memo', () => {
   beforeEach(() => {
     installFiloStub();
     boardCacheStore.clear(); // also resets the reverse-index memos

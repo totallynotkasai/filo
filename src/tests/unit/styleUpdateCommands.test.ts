@@ -1,11 +1,11 @@
 /**
- * Phase 15 (Sprint D / C3) regression guard.
+ * Style-popup command regression guard.
  *
  * Style popups (Frame, Kanban card/column, Task item/section, Connection)
- * dispatch a single Update*StyleCommand on close so the whole styling
- * session is one Ctrl+Z. Before Phase 15 only `TileStylePopup` did this —
- * every other popup wrote directly with no command, and the "Restore to
- * Theme Defaults" button irreversibly wiped the style block.
+ * dispatch a single Update*StyleCommand on close so the whole styling session
+ * is one Ctrl+Z. Previously only `TileStylePopup` did this — every other popup
+ * wrote directly with no command, and the "Restore to Theme Defaults" button
+ * irreversibly wiped the style block.
  *
  * These tests assert each new command:
  *   1. execute() applies the "after" snapshot.

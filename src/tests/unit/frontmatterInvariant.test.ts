@@ -17,9 +17,9 @@ import {
 } from '@renderer/lib/vault/frontmatterDelta';
 
 /**
- * 1.7 — the frontmatter data-loss invariant gate.
+ * The frontmatter data-loss invariant gate.
  *
- * Phase 1 (1.1–1.6) killed a cluster of silent-frontmatter-loss bugs. This
+ * A cluster of silent-frontmatter-loss bugs was fixed in the write paths. This
  * suite is the standing guard that no write path reintroduces the class: for a
  * corpus of HOSTILE frontmatter (CRLF, tabs, comments, anchors, quoted /
  * special-char / numeric / bool tags, flow / block / scalar shapes, duplicate
@@ -38,7 +38,7 @@ interface FmRegion {
 }
 
 function fmRegion(md: string): FmRegion {
-  // Audit-4 DI-02 — a leading UTF-8 BOM precedes the opening `---` fence, so
+  // A leading UTF-8 BOM precedes the opening `---` fence, so
   // strip it before matching (and from the no-frontmatter body). Without this a
   // BOM file reads as "no frontmatter" here and the duplicate-frontmatter-block
   // bug (a tag-add prepending a second block) slips through the invariant.
@@ -55,9 +55,9 @@ function fmRegion(md: string): FmRegion {
  * number js-yaml CORE would give), so it serves BOTH as the `nextObj` an
  * object-patch op starts from and as the oracle that re-parses the engine's
  * output — the whole object-patch invariant is single-parser, faithful to
- * production. Like a CORE read it keeps DI-01 / DI-05 (the `yaml` core schema
- * resolves no timestamp / merge tag, so an unquoted date stays a string and `<<`
- * a literal key). Returns null on any parse error / non-mapping root.
+ * production. Like a CORE read it never resolves a timestamp or merge tag (the
+ * `yaml` core schema has neither, so an unquoted date stays a string and `<<` a
+ * literal key). Returns null on any parse error / non-mapping root.
  */
 function parseFm(raw: string): Record<string, unknown> | null {
   try {
@@ -114,11 +114,11 @@ function assertSafeTagOp(input: string, out: string, label: string): void {
       if (k === 'tags') continue; // tags is the field under edit
       expect(outParse.keys.has(k), `${label}: silently dropped key "${k}"`).toBe(true);
     }
-    // Audit-4 DI-01 / DI-05 — beyond "key still present", a tag op must not
+    // Beyond "key still present", a tag op must not
     // REFORMAT a non-tags value: an unquoted date must not become an ISO
     // timestamp, a `<<` merge key must not be inlined. Compare values parsed with
     // the `yaml` package (the read path's + write engine's single parser). A
-    // folded `>` scalar may be cosmetically reflowed (DI-06, accepted) but its
+    // folded `>` scalar may be cosmetically reflowed (accepted) but its
     // PARSED value is identical, so it holds.
     const inObj = parseFm(inR.raw);
     const outObj = parseFm(outR.raw);
@@ -168,7 +168,7 @@ const HOSTILE_CORPUS: ReadonlyArray<{ label: string; md: string }> = [
   { label: 'numeric/bool sibling keys', md: '---\ncount: 3\nflag: true\ntags:\n  - foo\n---\nbody\n' },
   { label: 'aliased tags', md: '---\ncommon: &x\n  - a\ntags: *x\n---\nbody\n' },
   { label: 'anchored tags', md: '---\ntags: &t [foo, bar]\n---\nbody\n' },
-  // H2 (Audit-13) — UNRESOLVABLE alias shapes: each parses with `errors.length
+  // UNRESOLVABLE alias shapes: each parses with `errors.length
   // === 0` but THROWS in `toJS()` resolving the dangling reference (verified
   // against yaml@2.9). The read returns `{}` + the raw bytes, so every op must
   // keep-raw or refuse — never dump over the poison block.
@@ -177,9 +177,9 @@ const HOSTILE_CORPUS: ReadonlyArray<{ label: string; md: string }> = [
   { label: 'alias-in-seq missing anchor (toJS throws)', md: '---\nlist:\n  - *nope\ntitle: X\n---\nbody\n' },
   { label: 'duplicate key (unparseable)', md: '---\ntitle: X\ntitle: Y\ntags:\n  - foo\n---\nbody\n' },
   { label: 'tab indent (unparseable)', md: '---\ntitle: X\n\tbad: tab\ntags:\n  - foo\n---\nbody\n' },
-  // Audit-4 DI-01 / DI-02 / DI-05 / DI-06 — the inputs that previously slipped
-  // through this invariant (the corruption was a reformatted VALUE / a BOM
-  // duplicate block, neither of which the pre-Audit-4 assertions detected).
+  // The inputs that previously slipped through this invariant (the corruption
+  // was a reformatted VALUE / a BOM duplicate block, neither of which the
+  // earlier assertions detected).
   { label: 'unquoted date-only', md: '---\ncreated: 2025-01-15\ntags:\n  - foo\n---\nbody\n' },
   { label: 'unquoted date-time', md: '---\ncreated: 2025-01-15T10:30:00\ntags:\n  - foo\n---\nbody\n' },
   { label: 'leading BOM', md: '﻿---\ntitle: X\ntags:\n  - foo\n---\nbody\n' },
@@ -193,14 +193,14 @@ const HOSTILE_CORPUS: ReadonlyArray<{ label: string; md: string }> = [
   },
   { label: 'folded > scalar', md: '---\nsummary: >\n  line one\n  line two\ntags:\n  - foo\n---\nbody\n' },
   { label: 'special-char tags on BOM', md: '﻿---\ntags:\n  - "@home"\n  - foo\n---\nbody\n' },
-  // Audit-16 Phase 5 — corpus gaps the ninth audit surfaced:
-  //  5.1 — `tags: []` on disk (a common Obsidian/template shape) must survive
-  //        any UNRELATED edit byte-for-byte (the unconditional empty-tags drop
-  //        predated and bypassed the 1.1 baseline rescue, which covers `null`).
-  //  5.5 — an alias INSIDE the tags collection (the old anchored check only
-  //        inspected the START of the header value) — skip, never dump.
-  //  5.4 — a NON-SCALAR mapping key (`[a, b]: x`): `toJS()` stringifies it, so
-  //        the object view is unfaithful — the engine refuses, file untouched.
+  // Further corpus gaps:
+  //  - `tags: []` on disk (a common Obsidian/template shape) must survive
+  //    any UNRELATED edit byte-for-byte (the unconditional empty-tags drop
+  //    predated and bypassed the baseline rescue, which covers `null`).
+  //  - an alias INSIDE the tags collection (the old anchored check only
+  //    inspected the START of the header value) — skip, never dump.
+  //  - a NON-SCALAR mapping key (`[a, b]: x`): `toJS()` stringifies it, so
+  //    the object view is unfaithful — the engine refuses, file untouched.
   { label: 'empty tags array on disk', md: '---\ntitle: X\ntags: []\n---\nbody\n' },
   { label: 'alias inside tags collection (flow)', md: '---\nkeep: &s shared\ntags: [*s]\n---\nbody\n' },
   {
@@ -209,7 +209,7 @@ const HOSTILE_CORPUS: ReadonlyArray<{ label: string; md: string }> = [
   },
   { label: 'non-scalar seq key sibling', md: '---\n[a, b]: x\ntitle: X\ntags:\n  - foo\n---\nbody\n' },
   { label: 'non-scalar map key sibling', md: '---\n{k: 1}: x\ntitle: X\ntags:\n  - foo\n---\nbody\n' },
-  // Audit-18 3.2 — a trailing `|+` keep-chomped block scalar OWNS the FM's
+  // A trailing `|+` keep-chomped block scalar OWNS the FM's
   // trailing blank line as part of its value. A tag op (or a body-only save)
   // must not collapse that separator newline (the pre-fix `reassemble` did,
   // silently changing `notes`). Last key, so the blank is its EOF-keep.
@@ -218,7 +218,7 @@ const HOSTILE_CORPUS: ReadonlyArray<{ label: string; md: string }> = [
   { label: 'empty', md: '' },
 ];
 
-describe('frontmatter data-loss invariant — hostile corpus (1.7)', () => {
+describe('frontmatter data-loss invariant — hostile corpus', () => {
   for (const { label, md } of HOSTILE_CORPUS) {
     for (const op of TAG_OPS) {
       it(`${op.name} never silently loses data on: ${label}`, () => {
@@ -227,7 +227,7 @@ describe('frontmatter data-loss invariant — hostile corpus (1.7)', () => {
     }
   }
 
-  // 1.1 + 1.2 — a body-only save must emit the captured frontmatter bytes
+  // A body-only save must emit the captured frontmatter bytes
   // verbatim (never re-dump, never drop a fence it couldn't parse).
   for (const { label, md } of HOSTILE_CORPUS) {
     it(`body-only save preserves the frontmatter block byte-for-byte on: ${label}`, () => {
@@ -245,7 +245,7 @@ describe('frontmatter data-loss invariant — hostile corpus (1.7)', () => {
 });
 
 /**
- * L1 (Audit-12) — the empty-FM safety-net split, pinned in the invariant
+ * The empty-FM safety-net split, pinned in the invariant
  * corpus. When the live object is `{}` but the source HAD a block, the two
  * reasons need OPPOSITE handling: a PARSEABLE block must honour the clear
  * (drop the keys) while an UNPARSEABLE one is kept verbatim (data-loss
@@ -253,7 +253,7 @@ describe('frontmatter data-loss invariant — hostile corpus (1.7)', () => {
  * undoing a deliberate clear. These rows pin the split so it can't regress
  * back to the unconditional revert.
  */
-describe('frontmatter empty-FM safety-net split (Audit-12 L1)', () => {
+describe('frontmatter empty-FM safety-net split', () => {
   it('a cleared PARSEABLE block drops to no frontmatter (no silent revert)', () => {
     const out = assembleMarkdownFile({}, 'body\n', {
       rawFrontmatter: 'title: X\ncount: 3',
@@ -282,7 +282,7 @@ describe('frontmatter empty-FM safety-net split (Audit-12 L1)', () => {
   });
 });
 
-describe('frontmatter data-loss invariant — fuzz (1.7)', () => {
+describe('frontmatter data-loss invariant — fuzz', () => {
   // Tags drawn from a pool that mixes safe names with YAML-hostile ones
   // (special-char, hierarchy, numeric, colon) so the rewriter's quoting and
   // CRLF handling are exercised across thousands of generated shapes.
@@ -331,7 +331,7 @@ describe('frontmatter data-loss invariant — fuzz (1.7)', () => {
 });
 
 /**
- * Audit5 R1 / #3 — the BYTE-equality ratchet for the dirty frontmatter write.
+ * The BYTE-equality ratchet for the dirty frontmatter write.
  *
  * The earlier invariant compared parsed values of untouched keys, which is
  * BLIND to source canonicalisation: `02134` and `2134` parse to the same number
@@ -344,7 +344,7 @@ describe('frontmatter data-loss invariant — fuzz (1.7)', () => {
  * dirty write that changes exactly one sibling key. They fail against the old
  * whole-document re-serialise and pass only with the source-preserving splice.
  */
-describe('frontmatter dirty-write preserves untouched scalar BYTES (R1 / #3)', () => {
+describe('frontmatter dirty-write preserves untouched scalar BYTES', () => {
   // One row per canonicalisation-prone value class. Each is a top-level scalar
   // whose source is NOT what a serializer would re-emit from its parsed value.
   const SCALAR_CLASSES: ReadonlyArray<{ label: string; line: string }> = [
@@ -358,13 +358,13 @@ describe('frontmatter dirty-write preserves untouched scalar BYTES (R1 / #3)', (
     { label: 'padded value', line: 'padded:   spaced value' },
     { label: 'double-quoted', line: 'quoted: "keep me"' },
     { label: 'single-quoted', line: "sq: 'literal'" },
-    // M2 (Audit-6) — `1_000` / `0b1010` are the forms js-yaml CORE and the `yaml`
+    // `1_000` / `0b1010` are the forms js-yaml CORE and the `yaml`
     // package DISAGREE on: js-yaml reads them as the NUMBERS 1000 / 10, the `yaml`
     // package keeps them as the STRINGS "1_000" / "0b1010". A second parser in the
-    // loop flagged an UNTOUCHED key as changed and canonicalised it. Phase 6 put
-    // the read (`parseFm` here) AND the write engine on the `yaml` package, so an
+    // loop flagged an UNTOUCHED key as changed and canonicalised it. The read
+    // (`parseFm` here) AND the write engine both use the `yaml` package, so an
     // untouched `1_000` is the SAME string on both sides of the diff → unchanged →
-    // spliced verbatim (the M2 class is structurally dead, single-parser).
+    // spliced verbatim (that class is structurally dead, single-parser).
     // `0o17` / `0xFF` already agree across both parsers — control cases that
     // guard the broader edge-numeric class against future drift.
     { label: 'underscore-separated int', line: 'thousands: 1_000' },
@@ -438,7 +438,7 @@ describe('frontmatter dirty-write preserves untouched scalar BYTES (R1 / #3)', (
 });
 
 /**
- * Audit-6 C1 (CRITICAL) — setting a value on a BARE/empty key must re-parse.
+ * Setting a value on a BARE/empty key must re-parse.
  *
  * A bare key (`aliases:`, or `aliases: # note`) parses to a ZERO-WIDTH scalar
  * value whose CST range collapses to a point (`[n, n, n]`). The pre-fix
@@ -456,7 +456,7 @@ describe('frontmatter dirty-write preserves untouched scalar BYTES (R1 / #3)', (
  * the output (1) re-parses, (2) carries the correct new value, and (3) keeps its
  * sibling keys — the corruption took out the whole block, not just the key.
  */
-describe('frontmatter bare-empty-key value-set re-parses (Audit-6 C1)', () => {
+describe('frontmatter bare-empty-key value-set re-parses', () => {
   const BARE_KEYS = ['aliases', 'tags', 'cssclasses'] as const;
   const SIBLING_BEFORE = 'title: Note';
   const SIBLING_AFTER = 'count: 3';
@@ -525,14 +525,14 @@ describe('frontmatter bare-empty-key value-set re-parses (Audit-6 C1)', () => {
 });
 
 /**
- * Audit-6 L27 — a document using YAML anchors (&a) / aliases (*a) refuses the
+ * A document using YAML anchors (&a) / aliases (*a) refuses the
  * source-preserving splice (returns null), so the caller falls back to a full
  * dump. Editing the anchored value with a value-only splice would otherwise
  * rewrite only the anchor's bytes and leave every alias pointing at the stale
  * value (the object diff resolves aliases, so the change "looks" local). The
  * dump expands the alias to a concrete value — structure lost, DATA correct.
  */
-describe('frontmatter anchors/aliases — splice refuses only for TOUCHED anchored keys (Audit-6 L27)', () => {
+describe('frontmatter anchors/aliases — splice refuses only for TOUCHED anchored keys', () => {
   const SRC = 'base: &b 5\nthreshold: *b\ntitle: Note';
 
   it('refuses when the CHANGED key carries an anchor (re-emit would dangle its aliases)', () => {
@@ -549,7 +549,7 @@ describe('frontmatter anchors/aliases — splice refuses only for TOUCHED anchor
     expect(out).toBeNull();
   });
 
-  it('still SPLICES an edit to an UNRELATED key, preserving anchors verbatim (no over-refusal — DI-05)', () => {
+  it('still SPLICES an edit to an UNRELATED key, preserving anchors verbatim (no over-refusal)', () => {
     const current = yaml.load(SRC, { schema: yaml.CORE_SCHEMA }) as Record<string, unknown>;
     // `title` carries no anchor/alias and `base`/`threshold` are untouched, so
     // the splice is safe and keeps `&b` / `*b` byte-for-byte.
@@ -577,12 +577,12 @@ describe('frontmatter anchors/aliases — splice refuses only for TOUCHED anchor
 });
 
 /**
- * Audit-6 L23 — verbatim byte preservation is TOP-LEVEL only. An untouched
+ * Verbatim byte preservation is TOP-LEVEL only. An untouched
  * top-level key keeps its bytes (incl. comments inside a nested block it owns);
  * a CHANGED nested collection re-serialises the whole pair, dropping comments
  * that lived inside it. Pinned so any widening of the loss is caught.
  */
-describe('frontmatter nested-collection comment preservation is top-level only (Audit-6 L23)', () => {
+describe('frontmatter nested-collection comment preservation is top-level only', () => {
   const SRC = 'title: Note\nmeta:\n  author: me   # who wrote it\n  year: 2020\n';
 
   it('keeps inner comments when the nested map is UNTOUCHED (verbatim splice)', () => {
@@ -606,12 +606,12 @@ describe('frontmatter nested-collection comment preservation is top-level only (
 });
 
 /**
- * Audit-6 L28 — a scalar→collection type change re-serialises the pair, so a
- * same-line trailing comment on the old scalar is dropped (same mechanism as
- * the bare-key C1 case). A scalar→scalar VALUE change keeps the comment via the
+ * A scalar→collection type change re-serialises the pair, so a same-line
+ * trailing comment on the old scalar is dropped (same mechanism as the bare-key
+ * value-set case). A scalar→scalar VALUE change keeps the comment via the
  * value-only splice. Pinned so the boundary doesn't widen silently.
  */
-describe('frontmatter scalar→collection drops the trailing comment (Audit-6 L28)', () => {
+describe('frontmatter scalar→collection drops the trailing comment', () => {
   const SRC = 'title: Note\ntags: draft   # working copy\n';
 
   it('scalar→list loses the trailing comment (pinned)', () => {
@@ -634,18 +634,19 @@ describe('frontmatter scalar→collection drops the trailing comment (Audit-6 L2
 });
 
 /**
- * Audit-6 Phase 5.1 / 5.2 — the GENERAL object-patch invariant (set / delete /
- * add on ANY key), not just the tag ops the original 1.7 corpus exercised.
+ * The GENERAL object-patch invariant (set / delete / add on ANY key), not just
+ * the tag ops the original invariant corpus exercised.
  *
- * C1 and M2 slipped through precisely because the invariant gate only ever
- * EDITED `tags`: it never SET a value on a bare/empty key, and never carried a
- * `1_000` / `0xFF` sibling through a neighbour's edit. This section closes that
- * blind spot for the WHOLE op set. Every case asserts the three Phase 5
- * invariants on `patchFrontmatterSourceCst` (the engine where the corruption
- * lived): the output (1) RE-PARSES, (2) keeps every untouched single-line
- * scalar key BYTE-identical, and (3) carries the correct value for every key in
- * the next object (dropping exactly the deleted keys, adding no others). A
- * refusal (`null`) is always safe — the caller falls back to a lossless dump.
+ * The bare-key value-set and `1_000` canonicalisation bugs slipped through
+ * precisely because the invariant gate only ever EDITED `tags`: it never SET a
+ * value on a bare/empty key, and never carried a `1_000` / `0xFF` sibling
+ * through a neighbour's edit. This section closes that blind spot for the WHOLE
+ * op set. Every case asserts three invariants on `patchFrontmatterSourceCst`
+ * (the engine where the corruption lived): the output (1) RE-PARSES, (2) keeps
+ * every untouched single-line scalar key BYTE-identical, and (3) carries the
+ * correct value for every key in the next object (dropping exactly the deleted
+ * keys, adding no others). A refusal (`null`) is always safe — the caller falls
+ * back to a lossless dump.
  */
 
 /**
@@ -672,9 +673,9 @@ function topLevelKeyLine(source: string, key: string): string | null {
 }
 
 /**
- * The shared Phase-5 assertion: `patchFrontmatterSourceCst(source, nextObj)` is a
- * SAFE source-preserving patch — either a refusal (`null`, caller dumps) or a
- * block satisfying the three invariants above. `current` is the `yaml`-package-
+ * The shared object-patch assertion: `patchFrontmatterSourceCst(source,
+ * nextObj)` is a SAFE source-preserving patch — either a refusal (`null`,
+ * caller dumps) or a block satisfying the three invariants above. `current` is the `yaml`-package-
  * parsed object of `source` (the read path's + engine's single parser), so
  * "untouched" is judged with the same value semantics the engine itself uses.
  */
@@ -687,7 +688,7 @@ function assertSafeObjectPatch(
   const out = patchFrontmatterSourceCst(source, nextObj);
   if (out === null) return; // refusal — caller falls back to a lossless full dump
 
-  // (1) Output re-parses into a mapping (C1's failure mode: it didn't).
+  // (1) Output re-parses into a mapping (the bare-key bug's failure mode: it didn't).
   const reObj = parseFm(out);
   expect(reObj, `${label}: output did not re-parse into a mapping`).not.toBeNull();
   if (!reObj) return;
@@ -709,8 +710,8 @@ function assertSafeObjectPatch(
     expect(expectedKeys.includes(k), `${label}: unexpected key "${k}" appeared`).toBe(true);
   }
 
-  // (2) Untouched single-line scalar keys are BYTE-identical (M2/R1's failure
-  // mode: an unrelated edit canonicalised `1_000` → `1000`, `0xFF00FF` → lower).
+  // (2) Untouched single-line scalar keys are BYTE-identical (the earlier
+  // failure mode: an unrelated edit canonicalised `1_000` → `1000`, `0xFF00FF` → lower).
   const outLines = new Set(out.split('\n'));
   for (const k of expectedKeys) {
     if (!(k in current)) continue; // an added key was never "untouched"
@@ -771,7 +772,7 @@ const OBJECT_OPS: ReadonlyArray<{
 ];
 
 // Frontmatter SOURCES covering the comment-position + non-canonical-scalar gaps
-// the plan enumerates (leading / standalone / trailing / inline comments;
+// (leading / standalone / trailing / inline comments;
 // `02134` / `1_000` / `0xFF`; quoted scalars). Each is a raw FM block (no fences).
 const PATCH_CORPUS: ReadonlyArray<{ label: string; src: string }> = [
   { label: 'leading comment', src: '# leading note\ntitle: Note\ncount: 3' },
@@ -787,7 +788,7 @@ const PATCH_CORPUS: ReadonlyArray<{ label: string; src: string }> = [
   { label: 'single key', src: 'only: value' },
 ];
 
-describe('frontmatter object-patch invariant — set / delete / add op matrix (Audit-6 Phase 5.1)', () => {
+describe('frontmatter object-patch invariant — set / delete / add op matrix', () => {
   for (const { label, src } of PATCH_CORPUS) {
     const current = parseFm(src);
     for (const op of OBJECT_OPS) {
@@ -820,11 +821,11 @@ describe('frontmatter object-patch invariant — set / delete / add op matrix (A
     expect(out).not.toBeNull();
     expect(out, 'trailing comment dropped').toContain('# trailing note');
   });
-  it('a comment documenting a DELETED key drops with it (L4 — not relocated onto a survivor)', () => {
+  it('a comment documenting a DELETED key drops with it (not relocated onto a survivor)', () => {
     // `# doc for foo` documents `foo`; deleting `foo` removes the comment with it
     // rather than migrating it onto `baz` (which it never documented). A
     // SURVIVING key's comment is untouched — covered by the sibling-edit cases
-    // above; this asserts only the deleted-key relocation that L4 closes.
+    // above; this asserts only that a deleted key's comment is not relocated.
     const src = 'title: Note\n# doc for foo\nfoo: bar\nbaz: qux';
     const out = patchFrontmatterSourceCst(src, { title: 'Note', baz: 'qux' });
     expect(out).not.toBeNull();
@@ -882,16 +883,16 @@ describe('frontmatter object-patch invariant — set / delete / add op matrix (A
 });
 
 /**
- * Audit-6 Phase 5.2 — the property-based extension of the object-patch
+ * The property-based extension of the object-patch
  * invariant. Generates random frontmatter mixing EMPTY values (bare keys),
  * canonicalisation-prone numeric forms, quoted scalars, and NESTED objects,
  * builds the block from RAW source lines (so untouched siblings are NOT already
- * canonical — the byte-preservation surface R1/M2 broke), then applies a random
+ * canonical — the byte-preservation surface at risk), then applies a random
  * set / delete / add op and asserts the three invariants. This is the highest-
  * leverage anti-regression net: it explores shapes the hand-written corpus
  * can't enumerate.
  */
-describe('frontmatter object-patch invariant — fuzz set/delete/add (Audit-6 Phase 5.2)', () => {
+describe('frontmatter object-patch invariant — fuzz set/delete/add', () => {
   // Raw scalar SOURCE texts: a mix of canonical and canonicalisation-prone
   // forms. Each is a valid single-line YAML scalar (parses, never throws).
   const SCALAR_SOURCES = [
@@ -988,15 +989,16 @@ describe('frontmatter object-patch invariant — fuzz set/delete/add (Audit-6 Ph
 });
 
 /**
- * Phase 6.0 — corpus gaps the single-parser refactor sweep surfaced. Additive
- * cases the CST engine must satisfy (they were the safety net the Phase 6 refactor
- * was validated against, retained as a permanent regression net). Each shape was
- * previously unexercised by the object-patch corpus.
+ * Corpus gaps the single-parser refactor surfaced. Additive cases the CST engine
+ * must satisfy (they were the safety net that refactor was validated against,
+ * retained as a permanent regression net). Each shape was previously
+ * unexercised by the object-patch corpus.
  */
-describe('frontmatter object-patch invariant — Phase 6.0 corpus gaps', () => {
+describe('frontmatter object-patch invariant — single-parser corpus gaps', () => {
   // GAP 1 — an anchored/aliased UNTOUCHED sibling alongside a changed key. The
-  // general object-patch invariant (not just the L27 describe) must hold: the
-  // splice keeps `&b` / `*b` byte-for-byte and never over-refuses a safe edit.
+  // general object-patch invariant (not just the anchors/aliases describe) must
+  // hold: the splice keeps `&b` / `*b` byte-for-byte and never over-refuses a
+  // safe edit.
   it('preserves an untouched anchor/alias sibling when an unrelated key changes', () => {
     const src = 'base: &b 5\nthreshold: *b\ntitle: Note';
     const current = parseFm(src);
@@ -1009,7 +1011,7 @@ describe('frontmatter object-patch invariant — Phase 6.0 corpus gaps', () => {
   });
 
   // GAP 2 — a folded `>` UNTOUCHED sibling. Its parsed value survives a sibling
-  // edit (the DI-06 contract); post-R1 the legacy engine also keeps its multi-line
+  // edit (the folded-scalar contract); the engine also keeps its multi-line
   // bytes verbatim (an untouched key is spliced from source, never re-folded).
   it('preserves a folded > scalar sibling on an unrelated edit', () => {
     const src = 'summary: >\n  line one\n  line two\ntitle: Note\ncount: 3';
@@ -1077,7 +1079,7 @@ describe('frontmatter object-patch invariant — Phase 6.0 corpus gaps', () => {
 });
 
 /**
- * Audit-14 7.5 — the Phase-4 DELTA write path across the hostile corpus.
+ * The DELTA write path across the hostile corpus.
  *
  * The invariant suite fuzzed tag-ops + the body-only save, but NOT the
  * delta-on-fresh-read path the field/popup edits take. The gateway WIRING
@@ -1086,13 +1088,13 @@ describe('frontmatter object-patch invariant — Phase 6.0 corpus gaps', () => {
  * APPLICATION across the hostile corpus. `applyDeltaLikeGateway` mirrors the
  * gateway branch exactly — parse the disk bytes (the "fresh read"), apply ONLY
  * the delta keys to `parsed.frontmatter`, assemble against the SAME fresh source
- * with the fresh-read EOL/BOM — and asserts the Phase-4 guarantee: a field edit
+ * with the fresh-read EOL/BOM — and asserts the delta-write guarantee: a field edit
  * that writes a delta never silently drops the user's OTHER (untouched) keys, and
  * a block the engine can't model (unresolvable alias / `<<` merge / malformed
  * YAML) is preserved verbatim while the edit is refused. Bite-check: revert the
  * delta primitive / the engine's source-preservation → these go red.
  */
-describe('frontmatter DELTA-write invariant — fresh-read delta across hostile corpus (Audit-14 7.5)', () => {
+describe('frontmatter DELTA-write invariant — fresh-read delta across hostile corpus', () => {
   function applyDeltaLikeGateway(diskMd: string, delta: FrontmatterDelta): string {
     // markdownFileWriter.ts `writeMarkdownFileImpl` delta branch (~L684-759).
     const parsed = parseMarkdownFile(diskMd);
@@ -1129,7 +1131,7 @@ describe('frontmatter DELTA-write invariant — fresh-read delta across hostile 
     expect(stripEol(outR.body), `${label}: body changed`).toBe(stripEol(inR.body));
     if (!inR.has) return; // no FM on disk — an add-FM write, nothing to preserve.
 
-    // 5.4 (Audit-16) — a byte-identical FM block is ALWAYS safe: the engine
+    // A byte-identical FM block is ALWAYS safe: the engine
     // refused (e.g. a non-scalar mapping key) and the assemble kept the raw
     // bytes verbatim; the edit is dropped loudly via onFrontmatterRefused in
     // the real gateway. Nothing was lost, so there's nothing more to assert.
@@ -1210,7 +1212,7 @@ describe('frontmatter DELTA-write invariant — fresh-read delta across hostile 
     );
   }, 30_000);
 
-  // The untested shape the plan calls out: a delta-SET of a key whose disk value
+  // A previously untested shape: a delta-SET of a key whose disk value
   // is an unresolvable alias / `<<` merge. The engine refuses (toJS throws), the
   // assemble keeps the raw block verbatim, the edit is dropped — NEVER a partial
   // dump that erases the other keys.
@@ -1258,12 +1260,12 @@ describe('frontmatter DELTA-write invariant — fresh-read delta across hostile 
     expect(fmRegion(out).body).toBe('old\n');
   });
 
-  // 5.1 (Audit-16) — an on-disk `tags: []` must survive an UNRELATED field
+  // An on-disk `tags: []` must survive an UNRELATED field
   // delta byte-for-byte. Pre-fix the assemble's unconditional empty-tags drop
   // ran even on the delta path (where `fm` IS the fresh disk read), so the CST
   // engine saw `tags` as deleted and spliced the line out — the exact
   // "untouched key dropped" class this gate forbids.
-  it('5.1 — an on-disk `tags: []` survives an unrelated field delta byte-for-byte', () => {
+  it('an on-disk `tags: []` survives an unrelated field delta byte-for-byte', () => {
     const md = '---\ntitle: X\ntags: []\n---\nbody\n';
     const out = applyDeltaLikeGateway(md, { set: { completed: true }, unset: [] });
     const outRaw = fmRegion(out).raw;
@@ -1277,7 +1279,7 @@ describe('frontmatter DELTA-write invariant — fresh-read delta across hostile 
   // …while a file with NO baseline `tags` key keeps the cosmetic drop: a delta
   // that sets tags to [] on a file that never had the key does not write a
   // gratuitous `tags: []` line (the drop is gated on the baseline, not removed).
-  it('5.1 — no baseline tags key ⇒ an empty-tags set still drops (cosmetic clean kept)', () => {
+  it('no baseline tags key ⇒ an empty-tags set still drops (cosmetic clean kept)', () => {
     const md = '---\ntitle: X\n---\nbody\n';
     const out = applyDeltaLikeGateway(md, { set: { tags: [] }, unset: [] });
     expect(fmRegion(out).raw).not.toContain('tags');
@@ -1285,7 +1287,7 @@ describe('frontmatter DELTA-write invariant — fresh-read delta across hostile 
 });
 
 /**
- * 5.4 (Audit-16) — NON-SCALAR mapping keys (`[a, b]: x`, `{k: 1}: x`). The
+ * NON-SCALAR mapping keys (`[a, b]: x`, `{k: 1}: x`). The
  * `yaml` package parses them with zero errors but `toJS()` STRINGIFIES the key
  * ("[ a, b ]") because a plain JS object can't hold it — so the object view is
  * not faithful to the source. Pre-fix the engine passed the item through
@@ -1295,7 +1297,7 @@ describe('frontmatter DELTA-write invariant — fresh-read delta across hostile 
  * and the assemble routes the refusal to keep-raw (NOT the dump fallback, which
  * would rewrite the key as its quoted string twin — a semantic change).
  */
-describe('frontmatter non-scalar mapping keys — engine refuses, file byte-identical (Audit-16 5.4)', () => {
+describe('frontmatter non-scalar mapping keys — engine refuses, file byte-identical', () => {
   const CASES: ReadonlyArray<{ label: string; src: string }> = [
     { label: 'flow-seq key', src: '[a, b]: x\ntitle: t' },
     { label: 'flow-map key', src: '{k: 1}: x\ntitle: t' },

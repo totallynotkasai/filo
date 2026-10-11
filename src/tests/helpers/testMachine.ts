@@ -1,6 +1,6 @@
 /**
- * Audit-19 EXT-6 — the fixed machine identity the unit-test setup pins, plus
- * the per-machine sentinel paths built from it.
+ * The fixed machine identity the unit-test setup pins, plus the per-machine
+ * sentinel paths built from it.
  */
 import { machineSentinelPath, type SentinelKind } from '../../shared/sentinelPaths';
 

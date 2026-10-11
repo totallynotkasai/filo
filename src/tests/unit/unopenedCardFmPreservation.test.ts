@@ -9,14 +9,14 @@ import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-9 Phase 3 — source-preservation / silent formatting loss.
+ * Source-preservation / silent formatting loss.
  *
- * A9-L5: a card field edit on a note no editor has open must patch only the
- * changed key in the frontmatter source: comments, key order and quoting
- * survive, exactly as for an open note. Undo restores the original bytes.
+ * A card field edit on a note no editor has open must patch only the changed
+ * key in the frontmatter source: comments, key order and quoting survive,
+ * exactly as for an open note. Undo restores the original bytes.
  */
 
-describe('A9-L5 — un-opened card FM edit preserves comments / key order / quoting', () => {
+describe('un-opened card FM edit preserves comments / key order / quoting', () => {
   let vault: MemoryVault;
 
   // Disk frontmatter with a leading comment, an explicitly-quoted scalar, and a

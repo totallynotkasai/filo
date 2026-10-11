@@ -1,8 +1,7 @@
 /**
- * Phase 5 contract — untrusted-to-sink security boundaries.
+ * Contract — untrusted-to-sink security boundaries.
  *
- * The original Phase 0 characterisation PINNED the surface that Phase 5
- * would later close. Phase 5 has landed:
+ * The contract this suite pins:
  *
  *   - `src/shared/untrusted.ts` exports `asSafeIframeSrc` /
  *     `asSafeThemeValue` / `asSafeOpenExternal` and the matching
@@ -59,7 +58,7 @@ const MEDIA_IPC_TEXT = fs.readFileSync(MEDIA_IPC, 'utf-8');
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
-describe('Phase 5 contract — `src/shared/untrusted.ts` module is the canonical sink gateway', () => {
+describe('`src/shared/untrusted.ts` module is the canonical sink gateway', () => {
   it('exports the three validators', () => {
     expect(typeof asSafeIframeSrc).toBe('function');
     expect(typeof asSafeThemeValue).toBe('function');
@@ -77,7 +76,7 @@ describe('Phase 5 contract — `src/shared/untrusted.ts` module is the canonical
   });
 });
 
-describe('Phase 5 contract — IframeTile.svelte routes tile.url through asSafeIframeSrc', () => {
+describe('IframeTile.svelte routes tile.url through asSafeIframeSrc', () => {
   it('imports asSafeIframeSrc from shared/untrusted', () => {
     expect(IFRAME_TILE_TEXT).toMatch(/asSafeIframeSrc/);
     expect(IFRAME_TILE_TEXT).toMatch(/shared\/untrusted/);
@@ -96,7 +95,7 @@ describe('Phase 5 contract — IframeTile.svelte routes tile.url through asSafeI
   });
 });
 
-describe('Phase 5 contract — themeManager.ts routes setProperty through asSafeThemeValue', () => {
+describe('themeManager.ts routes setProperty through asSafeThemeValue', () => {
   it('imports asSafeThemeValue from shared/untrusted', () => {
     expect(THEME_MANAGER_TEXT).toMatch(/asSafeThemeValue/);
     expect(THEME_MANAGER_TEXT).toMatch(/shared\/untrusted/);
@@ -140,7 +139,7 @@ describe('media:open-external — main uses the shared open-path allowlist', () 
   });
 });
 
-describe('Phase 5 contract — every renderer media:open-external callsite is sanitised', () => {
+describe('every renderer media:open-external callsite is sanitised', () => {
   it('every callsite is bracketed by an asSafeOpenExternal call (or annotation)', () => {
     const RENDERER = path.join(ROOT, 'src', 'renderer');
     const offenders: string[] = [];
@@ -171,7 +170,7 @@ describe('Phase 5 contract — every renderer media:open-external callsite is sa
   });
 });
 
-describe('Phase 5 contract — link:fetch-metadata rejects non-http(s) schemes at entry', () => {
+describe('link:fetch-metadata rejects non-http(s) schemes at entry', () => {
   it("entry-point scheme check is present", () => {
     expect(MEDIA_IPC_TEXT).toMatch(/Only http\(s\) URLs are allowed for link metadata/);
   });

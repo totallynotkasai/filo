@@ -1,12 +1,12 @@
 /**
- * Audit5 Phase 4 (#9) — Kanban `DeleteColumnCommand` must be delta-aware.
+ * Kanban `DeleteColumnCommand` must be delta-aware.
  *
  * `DeleteColumnCommand` previously snapshotted the WHOLE `columns` slice at
  * construction and replayed it on undo, silently reverting any edit made to a
  * SURVIVING column between execute and undo — the Kanban analogue of the
- * TaskList `DeleteSectionCommand` slice-replace bug Audit5 2.5 fixed (2.5 was
- * scoped to `sectionCommands.ts` only, so the structurally identical Kanban
- * command was missed). It now captures only the removed column + its index and
+ * TaskList `DeleteSectionCommand` slice-replace bug (that fix was scoped to
+ * `sectionCommands.ts` only, so the structurally identical Kanban command
+ * was missed). It now captures only the removed column + its index and
  * re-inserts it against the LIVE cache via `insertKanbanColumnAt`.
  *
  * These tests pin: the deleted column (with its cards) round-trips exactly, AND
@@ -72,7 +72,7 @@ function cardIds(colId: string): string[] {
   return (column(colId)?.tilePlacements ?? []).map((p) => p.tileId);
 }
 
-describe('Audit5 Phase 4 — DeleteColumnCommand (delta-aware)', () => {
+describe('DeleteColumnCommand (delta-aware)', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');

@@ -2,10 +2,9 @@
  * Characterisation — renames, edits made by other programs, deletes and undo,
  * and the vault-wide tag rename.
  *
- * Pins what the user sees, not how the app does it. Phases 3–6 of the master
- * plan must keep these green without editing this file (only the harness
- * adapter may change). Expected change, made in Phase 6 and nowhere else:
- * "delete tile and file" moves the file to `.filo/trash`.
+ * Pins what the user sees, not how the app does it. Refactors must keep these
+ * green without editing this file (only the harness adapter may change).
+ * "Delete tile and file" moves the file to `.filo/trash`.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, quiesce, waitFor, reopenVault } from './harness/app';

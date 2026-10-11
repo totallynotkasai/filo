@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /**
- * Audit-19 ERR-3 / EXT-2 — sync-conflict notices: main detects a board fork /
+ * Sync-conflict notices: main detects a board fork /
  * a refused conflict-copy rename and sends `vault:sync-conflict`; the renderer
  * shows one sticky notice and postpones the original's "deleted externally"
  * prompt while its other version is being downloaded.

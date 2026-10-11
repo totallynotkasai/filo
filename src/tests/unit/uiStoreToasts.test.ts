@@ -37,14 +37,14 @@ describe('uiStore — toast aggregation helpers', () => {
 });
 
 /**
- * 1.6 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — a genuinely-sticky error toast
- * (save failed, recovery-location hint) used to expire at the 15s cap even
- * though the failure persists. Error toasts with no explicit positive duration
- * are now sticky. The Audit5 R3 cap is preserved for every NON-error toast
- * (including the promise-backed external-edit decision warnings) so a re-firing
- * prompt can't blanket the screen and a write-blocking promise can't strand.
+ * A genuinely-sticky error toast (save failed, recovery-location hint) used to
+ * expire at the 15s cap even though the failure persists. Error toasts with no
+ * explicit positive duration are now sticky. The 15s cap is preserved for every
+ * NON-error toast (including the promise-backed external-edit decision
+ * warnings) so a re-firing prompt can't blanket the screen and a write-blocking
+ * promise can't strand.
  */
-describe('uiStore — sticky error toasts (1.6)', () => {
+describe('uiStore — sticky error toasts', () => {
   beforeEach(() => {
     for (const toast of [...uiStore.toasts]) {
       uiStore.dismissToast(toast.id, { silent: true });
@@ -65,7 +65,7 @@ describe('uiStore — sticky error toasts (1.6)', () => {
     expect(uiStore.toasts.find((t) => t.id === id)).toBeTruthy();
   });
 
-  it('a NON-error toast with duration 0 still auto-dismisses at the cap (Audit5 R3 preserved)', () => {
+  it('a NON-error toast with duration 0 still auto-dismisses at the cap', () => {
     vi.useFakeTimers();
     const id = uiStore.pushToast({ text: 'reload?', type: 'warning', duration: 0 });
     vi.advanceTimersByTime(16000);
@@ -81,12 +81,12 @@ describe('uiStore — sticky error toasts (1.6)', () => {
 });
 
 /**
- * Audit-19 UX-6 — non-promise decision toasts may be `sticky` (no lifetime
+ * Non-promise decision toasts may be `sticky` (no lifetime
  * timer) and carry a `dedupeKey` (a newer toast for the same subject replaces
  * the older one). A promise-backed toast (onDismiss set) refuses `sticky` and
- * keeps the Audit5-R3 15s cap so its write can never strand.
+ * keeps the 15s cap so its write can never strand.
  */
-describe('uiStore — sticky + deduped decision toasts (Audit-19 UX-6)', () => {
+describe('uiStore — sticky + deduped decision toasts', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     for (const toast of [...uiStore.toasts]) uiStore.dismissToast(toast.id, { silent: true });

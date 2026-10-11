@@ -16,13 +16,13 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 afterEach(disposeTestSchedulers);
 
 /**
- * Audit-17 Phase 5 — narrow-window hardening + engine edges.
+ * Narrow-window hardening + engine edges.
  *
  * Each describe is bite-verified against the pre-fix code (temp-revert the named
  * fix → the block goes red).
  */
 
-describe('Audit-17 5.1 — NaN equality (no churn on untouched `.nan` keys)', () => {
+describe('NaN equality (no churn on untouched `.nan` keys)', () => {
   it('valuesEqual treats NaN === NaN (and only NaN)', () => {
     expect(valuesEqual(NaN, NaN)).toBe(true);
     expect(valuesEqual(NaN, 5)).toBe(false);
@@ -55,7 +55,7 @@ describe('Audit-17 5.1 — NaN equality (no churn on untouched `.nan` keys)', ()
   });
 });
 
-describe('Audit-17 5.2 — CST engine refuses a touched explicit `!!tag` key', () => {
+describe('CST engine refuses a touched explicit `!!tag` key', () => {
   it('a CHANGED tagged scalar routes to the full-dump fallback (returns null)', () => {
     // priority is `!!int 5`; changing it to 10 would value-splice and leave the
     // tag → `priority: !!int 10` (corruption). The engine must refuse → null.
@@ -79,7 +79,7 @@ describe('Audit-17 5.2 — CST engine refuses a touched explicit `!!tag` key', (
   });
 });
 
-describe('Audit-17 5.5 — scheduler.hasParked sees parked fires; hasPendingTimer does not', () => {
+describe('scheduler.hasParked sees parked fires; hasPendingTimer does not', () => {
   function makeScheduler() {
     return createScheduler<{ path: string }>({
       name: 'test',
@@ -94,14 +94,14 @@ describe('Audit-17 5.5 — scheduler.hasParked sees parked fires; hasPendingTime
     const release = s.__parkForTests('caller-1');
     expect(s.hasParked((info) => info.key === 'caller-1')).toBe(true);
     expect(s.hasParked((info) => info.key === 'other')).toBe(false);
-    // P2.5 contract preserved: armed-timer-only probe never sees the parked fire.
+    // Contract preserved: the armed-timer-only probe never sees the parked fire.
     expect(s.hasPendingTimer(() => true)).toBe(false);
     release();
     expect(s.hasParked(() => true)).toBe(false);
   });
 });
 
-describe('Audit-17 5.4 — board post-write baseline keeps prior on a foreign-size stat', () => {
+describe('board post-write baseline keeps prior on a foreign-size stat', () => {
   beforeEach(() => {
     __resetBaselinesForTests();
     __resetDirtyTrackingForTests();
@@ -139,7 +139,7 @@ describe('Audit-17 5.4 — board post-write baseline keeps prior on a foreign-si
       board: { type: 'kanban', id: 'b1' },
     } as never);
 
-    // Foreign size rejected → prior baseline kept (DI-14), NOT poisoned to the
+    // Foreign size rejected → prior baseline kept, NOT poisoned to the
     // foreign (mtime,size). Pre-fix the post-write stat was stamped unconditionally.
     expect(getBaseline(boardPath)).toEqual({ mtimeMs: 1000, size: 100 });
   });

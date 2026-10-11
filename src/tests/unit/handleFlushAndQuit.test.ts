@@ -5,13 +5,13 @@ import {
 } from '@renderer/lib/vault/handleFlushAndQuit';
 import { uiStore } from '@renderer/stores/ui.svelte';
 
-/** Audit5 2.1 — the drain heartbeat is orthogonal to the terminal quit
- *  handshake; strip it so the handshake assertions stay focused. */
+/** The drain heartbeat is orthogonal to the terminal quit handshake; strip
+ *  it so the handshake assertions stay focused. */
 const handshakeOf = (sent: readonly string[]): string[] =>
   sent.filter((c) => c !== 'app:drain-heartbeat');
 
 /**
- * 6.2.H4 — flush-and-quit handler. Pre-fix, the renderer slept 200 ms on a
+ * Flush-and-quit handler. Pre-fix, the renderer slept 200 ms on a
  * save failure and unconditionally sent `app:ready-to-quit`; the user had
  * about 200 ms to read a toast naming a `<path>.<nonce>.tmp` location
  * before the window destroyed.
@@ -21,7 +21,7 @@ const handshakeOf = (sent: readonly string[]): string[] =>
  * failure. The latter sends a new `app:cancel-quit` signal that the main
  * process uses to rewind `isFlushingForQuit` so the user can keep editing.
  */
-describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
+describe('handleFlushAndQuit — save-failure confirm flow', () => {
   beforeEach(() => {
     __resetQuitDrainingForTests();
     uiStore.closeConfirm();
@@ -67,7 +67,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     expect(uiStore.confirmDialog?.cancelLabel).toBe('Stay open');
     expect(uiStore.confirmDialog?.secondaryAction?.label).toBe('Retry now');
 
-    // Audit5 2.1 — a drain heartbeat fired (so main re-armed its destroy
+    // A drain heartbeat fired (so main re-armed its destroy
     // timer). Beyond that, awaiting-user has fired but no TERMINAL quit signal
     // yet — the window must stay alive until the user clicks something.
     expect(sent).toContain('app:drain-heartbeat');
@@ -80,7 +80,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     expect(handshakeOf(sent)).toEqual(['app:quit-awaiting-user', 'app:ready-to-quit']);
   });
 
-  it('Audit-19 EXT-5: Retry now → retryFailed → save ok → ready-to-quit', async () => {
+  it('Retry now → retryFailed → save ok → ready-to-quit', async () => {
     const sent: string[] = [];
     let saves = 0;
     const retryFailed = vi.fn(async () => ({ failed: [] }));
@@ -103,7 +103,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     expect(uiStore.confirmDialog).toBeNull();
   });
 
-  it('Audit-19 EXT-5: Retry now that fails again re-shows the confirm; Stay open cancels', async () => {
+  it('Retry now that fails again re-shows the confirm; Stay open cancels', async () => {
     const sent: string[] = [];
     const promise = handleFlushAndQuit({
       saveStateState: () => 'saved',
@@ -125,7 +125,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     expect(handshakeOf(sent)).toEqual(['app:quit-awaiting-user', 'app:quit-awaiting-user', 'app:cancel-quit']);
   });
 
-  it('DI-04: emits app:quit-awaiting-user BEFORE opening the confirm on a save failure', async () => {
+  it('emits app:quit-awaiting-user BEFORE opening the confirm on a save failure', async () => {
     // The heartbeat must reach main before the (open-ended) confirm appears so
     // main can clear its FLUSH_TIMEOUT_MS auto-destroy timer first — otherwise
     // the timer fires, destroys the window under the dialog, and discards the
@@ -146,8 +146,8 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
 
     await new Promise((r) => setTimeout(r, 10));
     expect(uiStore.confirmDialog).not.toBeNull();
-    // Audit5 2.1 — the heartbeat goes out first (before save() even resolves),
-    // then the awaiting-user signal; neither precedes the confirm being closed.
+    // The heartbeat goes out first (before save() even resolves), then the
+    // awaiting-user signal; neither precedes the confirm being closed.
     expect(order[0]).toBe('app:drain-heartbeat');
     expect(handshakeOf(order)).toEqual(['app:quit-awaiting-user']);
 
@@ -224,7 +224,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     expect(sentChannel).toBe('app:ready-to-quit');
   });
 
-  it('Audit5 2.1: beats immediately and re-beats every ~2s while save() drains, stopping once it settles', async () => {
+  it('beats immediately and re-beats every ~2s while save() drains, stopping once it settles', async () => {
     vi.useFakeTimers();
     const sent: string[] = [];
     let resolveSave!: (v: boolean) => void;
@@ -262,7 +262,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     expect(beats()).toBe(beatsAtSettle);
   });
 
-  it('Audit-6 M5: awaits flushSentinel BEFORE app:ready-to-quit (happy path)', async () => {
+  it('awaits flushSentinel BEFORE app:ready-to-quit (happy path)', async () => {
     // The dirty-flag markClean save() queued while draining is fire-and-forget
     // on the sentinel mutex. If ready-to-quit goes out before it lands, main
     // destroys the renderer mid-IPC and `.filo/.dirty` survives → phantom
@@ -302,7 +302,7 @@ describe('handleFlushAndQuit — 6.2.H4 save-failure confirm flow', () => {
     expect(relevant).toEqual(['flush:start', 'flush:end', 'send:app:ready-to-quit']);
   });
 
-  it('Audit-6 M5: awaits flushSentinel before ready-to-quit on "Quit anyway"', async () => {
+  it('awaits flushSentinel before ready-to-quit on "Quit anyway"', async () => {
     // On a save failure the user picks "Quit anyway" — the sentinel is DIRTY
     // (failed paths). Flushing that markDirty before ready-to-quit keeps the
     // next launch's recovery prompt accurate.

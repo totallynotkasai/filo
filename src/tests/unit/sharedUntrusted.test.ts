@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Phase 5 — branded `SanitisedUrl` / `SanitisedColor` / `SanitisedSrc`
+ * Branded `SanitisedUrl` / `SanitisedColor` / `SanitisedSrc`
  * newtypes + `asSafe*` validator constructors.
  *
  * The brands stop a raw vault-shipped string from reaching three sinks:
@@ -21,7 +21,7 @@ import path from 'node:path';
  *
  * These tests exercise the validators directly. The CI gate
  * `scripts/gates:untrusted-sinks` enforces that the sinks
- * route through these validators (`error` level after Phase 5).
+ * route through these validators (at `error` level).
  */
 
 describe('asSafeIframeSrc — iframe src allowlist', () => {
@@ -179,7 +179,7 @@ describe.each(CSS_SUPPORTS_MODES)('asSafeThemeValue — theme CSS variable value
     expect(asSafeThemeValue('vbscript:msgbox')).toBeNull();
   });
 
-  it('rejects a bare `;` even without url()/@import (6.2 — defends the single-declaration contract)', () => {
+  it('rejects a bare `;` even without url()/@import (defends the single-declaration contract)', () => {
     // No url()/@import/expression/image — the ONLY suspect token is the
     // `;`. In the renderer the `CSS.supports('--probe: …')` gate rejects
     // a multi-declaration value, but where `CSS.supports` is absent (the main
@@ -258,8 +258,8 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
       }
     });
 
-    it('rejects HTML-renderable extensions added by Phase 5', () => {
-      // P1-10 — `.html` / `.htm` / `.xhtml` / `.svg` / `.shtml` / `.xml`
+    it('rejects HTML-renderable extensions', () => {
+      // `.html` / `.htm` / `.xhtml` / `.svg` / `.shtml` / `.xml`
       // executes attacker-controlled JS from a trusted-origin browser frame.
       const exts = ['.html', '.htm', '.xhtml', '.svg', '.shtml', '.xml'];
       for (const ext of exts) {
@@ -267,7 +267,7 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
       }
     });
 
-    it('rejects OS launcher / shell-shortcut extensions added by Audit-13 M12', () => {
+    it('rejects OS launcher / shell-shortcut extensions', () => {
       // `.url` / `.scf` / `.website` can point at a UNC share and leak NetNTLM
       // creds; `.reg` / `.inf` import/run on activation; `.pif` executes;
       // `.desktop` runs its `Exec=` line on Linux.
@@ -286,7 +286,7 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
       expect(asSafeOpenExternal('/vault/notes/report.pdf.exe')).toBeNull();
     });
 
-    it('Audit-10 B3 — Win32 trailing-dot / trailing-space / NTFS-ADS bypasses are blocked', () => {
+    it('Win32 trailing-dot / trailing-space / NTFS-ADS bypasses are blocked', () => {
       // `path.extname` reads these as `.` / `.exe ` / `.exe::$DATA` — none in
       // the blocklist — but the OS shell strips the trailing dot/space and
       // resolves the ADS suffix, launching `evil.exe`. `launcherExtension`
@@ -324,7 +324,7 @@ describe('asSafeOpenExternal — shell.openExternal allowlist + unsafe-extension
   });
 });
 
-describe('launcherExtension — robust Win32/NTFS extension extraction (Audit-10 B3)', () => {
+describe('launcherExtension — robust Win32/NTFS extension extraction', () => {
   it('reads the plain final extension, lowercased', () => {
     expect(launcherExtension('/vault/notes/report.pdf')).toBe('.pdf');
     expect(launcherExtension('C:\\vault\\notes\\REPORT.PDF')).toBe('.pdf');

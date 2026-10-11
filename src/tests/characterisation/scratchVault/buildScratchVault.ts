@@ -1,8 +1,7 @@
 /**
- * Builds the dogfooding scratch vault for the file-model refactor
- * (master plan 2.4) by driving the real app, so the boards are always in the
- * current board format: re-run it after a format change instead of fixing a
- * vault by hand.
+ * Builds a scratch vault for hands-on testing by driving the real app, so the
+ * boards are always in the current board format: re-run it after a format
+ * change instead of fixing a vault by hand.
  *
  *   npm run scratch-vault                       → ~/Filo Scratch Vault
  *   FILO_SCRATCH_VAULT=<empty dir> npm run scratch-vault

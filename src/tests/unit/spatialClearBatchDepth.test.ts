@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { createSpatialScope, type SpatialScope } from '@renderer/stores/spatial.svelte';
 
 /**
- * Audit 5.5 — a board reload / external-change reconcile rebuilds the spatial
+ * A board reload / external-change reconcile rebuilds the spatial
  * index via `rebuildSpatialIndex` → `clear()` + re-`insert()`. If a drag batch
  * is open at that moment (`beginBatch` raised `_batchDepth`), `clear()`'s
  * `bumpRevision()` is deferred and the depth is never reset, so the re-inserts
@@ -12,7 +12,7 @@ import { createSpatialScope, type SpatialScope } from '@renderer/stores/spatial.
  * A `clear()` is a wholesale rebuild, not a per-frame drag mutation, so it must
  * bump the revision immediately regardless of an open batch.
  */
-describe('SpatialScope.clear() during an open batch (audit 5.5)', () => {
+describe('SpatialScope.clear() during an open batch', () => {
   let scope: SpatialScope;
   beforeEach(() => {
     scope = createSpatialScope();

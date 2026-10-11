@@ -6,7 +6,7 @@ import { historyStore } from '@renderer/stores/history.svelte';
 import { selectionStore } from '@renderer/stores/selection.svelte';
 import { canvasStore } from '@renderer/stores/canvas.svelte';
 import { tileDragAction } from '@renderer/lib/canvas/tileDrag';
-// Audit-18 6.1 — the action now requires the pane's BoardScope. The global
+// The action requires the pane's BoardScope. The global
 // stores these tests assert through resolve to `getActiveScope()`, so passing
 // it keeps the action operating on the same active scope.
 import { getActiveScope } from '@renderer/lib/boards/boardScope.svelte';
@@ -15,7 +15,7 @@ import type { MindMapBoard, Tile, TileDefinition } from '@renderer/schema/index'
 import { seedBoard } from '../helpers/seedBoard';
 
 /**
- * Phase 27 / A2 — Escape mid-drag cancels the move. Without this fix, a
+ * Escape mid-drag cancels the move. Without this fix, a
  * partial drag would commit (committing wherever the cursor was when the
  * key was pressed), be added to history, and the user would have to Ctrl+Z
  * to recover. The new contract: Escape restores the start positions on
@@ -141,7 +141,7 @@ describe('tileDragAction — Escape cancels in-flight drag', () => {
     boardStore.updateTile('t1', { position: { x: 999, y: 999 } });
     expect(boardStore.getTile('t1')?.position).toEqual({ x: 999, y: 999 });
 
-    // Now fire Escape on window — A2 should restore (100, 100).
+    // Now fire Escape on window — the cancel should restore (100, 100).
     const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
     window.dispatchEvent(esc);
 

@@ -5,7 +5,7 @@ import {
 } from '../../renderer/lib/editor/markdownSync';
 
 /**
- * Phase 1 / 1.1 — BOM-prefixed `.md` files (Notepad, legacy Office "Save
+ * BOM-prefixed `.md` files (Notepad, legacy Office "Save
  * As UTF-8") were losing their frontmatter because the regex anchored to
  * `^---` after the BOM byte. `parseMarkdownFile` now strips the leading
  * BOM and exposes `hadBom: boolean` so callers can opt into re-emission

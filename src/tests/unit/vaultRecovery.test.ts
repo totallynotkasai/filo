@@ -10,7 +10,7 @@ import {
 } from '@renderer/lib/boards/writeStateTracking';
 
 /**
- * Phase 2.3 — the `.filo/.dirty.a1b2c3d4e5f6` sentinel must survive a Recovery-modal
+ * The `.filo/.dirty.a1b2c3d4e5f6` sentinel must survive a Recovery-modal
  * close that wasn't an explicit acknowledgement. Only `acknowledgeRecovery`
  * (the Dismiss button) is allowed to clear the on-disk sentinel; closing
  * via Esc / X / backdrop must leave it so the next vault open re-surfaces
@@ -49,7 +49,7 @@ describe('vaultRecovery slice', () => {
       setProject: () => {},
       getRecoveryPendingPaths: () => recoveryPaths,
       setRecoveryPendingPaths: (next) => { recoveryPaths = next; },
-      // Phase 3 / 3.3 — recovery sequencer hook; no-op in unit tests.
+      // Recovery sequencer hook; no-op in unit tests.
       resolveRecoveryDismissed: () => {},
       markMetaDirty: () => {},
       refreshTree: async () => {},
@@ -66,7 +66,7 @@ describe('vaultRecovery slice', () => {
   it('clearRecoveryPendingPaths empties the in-memory list WITHOUT touching disk', () => {
     slice.clearRecoveryPendingPaths();
     expect(recoveryPaths).toEqual([]);
-    // Phase 25 L6 — vault:delete now takes (vaultRoot, itemPath); sentinel
+    // vault:delete takes (vaultRoot, itemPath); the sentinel
     // path lives in args[1].
     const sentinelDelete = writes.find(
       (w) => w.channel === 'vault:delete' && String(w.args[1]).includes('.dirty'),
@@ -77,7 +77,7 @@ describe('vaultRecovery slice', () => {
   it('acknowledgeRecovery clears the on-disk sentinel via vault:delete', async () => {
     await slice.acknowledgeRecovery();
     expect(recoveryPaths).toEqual([]);
-    // Phase 25 L6 — vault:delete now takes (vaultRoot, itemPath); sentinel
+    // vault:delete takes (vaultRoot, itemPath); the sentinel
     // path lives in args[1].
     const sentinelDelete = writes.find(
       (w) => w.channel === 'vault:delete' && String(w.args[1]).endsWith('.filo/.dirty.a1b2c3d4e5f6'),
@@ -93,10 +93,10 @@ describe('vaultRecovery slice', () => {
     expect(sentinelDelete).toBeUndefined();
   });
 
-  // Audit-14 1.2 — acknowledgeRecovery must gate the sentinel clear on the write
+  // acknowledgeRecovery must gate the sentinel clear on the write
   // tracker being idle. Dismissing the modal while a write is still pending must
   // NOT wipe the breadcrumb for that genuinely-unflushed file.
-  it('does NOT clear the sentinel while a write is in flight, but clears once idle (1.2)', async () => {
+  it('does NOT clear the sentinel while a write is in flight, but clears once idle', async () => {
     __resetDirtyTrackingForTests();
     // Simulate an in-flight write for the active vault.
     beginWrite('/vault', 'Notes.md');
@@ -118,7 +118,7 @@ describe('vaultRecovery slice', () => {
     __resetDirtyTrackingForTests();
   });
 
-  it('re-marks the sentinel with remaining failed paths instead of clearing (1.2)', async () => {
+  it('re-marks the sentinel with remaining failed paths instead of clearing', async () => {
     __resetDirtyTrackingForTests();
     // A failed write keeps the tracker non-idle even with no in-flight count.
     // (Paths are stored case-folded as `VaultPath`, so use a lowercase path.)

@@ -8,7 +8,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Frame, Tile } from '@renderer/schema/index';
 
 /**
- * Phase 6 / 6.1 — MoveTilesCommand must restore frame containment on
+ * MoveTilesCommand must restore frame containment on
  * undo. The previous implementation only restored tile positions: any
  * tile dragged into or out of a frame ended up referenced by the wrong
  * frame after Ctrl+Z because `frame.tileIds` was never reverted.

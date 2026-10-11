@@ -9,7 +9,7 @@ import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 import { seedBoard } from '../helpers/seedBoard';
 
 /**
- * Audit 3.4 — `tileResizeAction.destroy()` must release the captured pointer.
+ * `tileResizeAction.destroy()` must release the captured pointer.
  *
  * When a tile unmounts mid-resize, the old `destroy()` nulled `activePointerId`
  * WITHOUT calling `releasePointerCapture` — unlike the parallel `tileDrag.ts`,
@@ -94,7 +94,7 @@ function trackPointerCapture(el: HTMLElement): { captured: number[]; released: n
   return { captured, released };
 }
 
-describe('Audit 3.4 — tileResizeAction.destroy releases pointer capture', () => {
+describe('tileResizeAction.destroy releases pointer capture', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     vaultStore.setPath('/vault');

@@ -121,7 +121,7 @@ describe('effectiveTileStyle cascade integration', () => {
   });
 });
 
-// ── Board-layer cascade (Phase 4 follow-up) ──────────────────────────
+// ── Board-layer cascade ──────────────────────────────────────────────
 //
 // A board can carry a `settings.defaults.*` block that overrides the
 // global defaults for that board only. Every field is optional; unset
@@ -364,7 +364,7 @@ describe('effectiveDocumentStyle cascade', () => {
   });
 });
 
-// ── Connection path cascade (Phase 5 follow-up) ─────────────────────
+// ── Connection path cascade ─────────────────────────────────────────
 
 function makeConnection(over: Partial<Connection> = {}): Connection {
   return {

@@ -4,7 +4,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit2 4.3 — `indexOnePath` stamped `parseMarkdown(..., Date.now())` and
+ * `indexOnePath` stamped `parseMarkdown(..., Date.now())` and
  * discarded the `mtimeMs` the `vault:read-file-text` IPC already returns from
  * its pre-flight stat. So `FileMetadata.lastModified` was always "now", and the
  * partial-read stability window in conflictResolver (`now - lastModified < 1s`)
@@ -12,7 +12,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
  * through the ~5s retry path instead of reloading immediately. The fix threads
  * the disk mtime through so `lastModified` reflects the file's real age.
  */
-describe('Audit2 4.3 — index stamps the disk mtime, not Date.now()', () => {
+describe('index stamps the disk mtime, not Date.now()', () => {
   beforeEach(() => {
     restoreFiloDefault();
     vaultStore.setPath('/vault');

@@ -11,7 +11,7 @@ import {
 } from './helpers/mountEditor';
 
 /**
- * Audit-19 MD-3 — `DocumentState.body` is body-only, but five sites re-parsed it
+ * `DocumentState.body` is body-only, but five sites re-parsed it
  * with `parseMarkdownFile`, which treats a body starting with a `---` line and
  * containing a later `---` line as FRONTMATTER. A note with real FM whose body
  * opens with a horizontal-rule pair lost its intro on the next remount/reload,
@@ -19,7 +19,7 @@ import {
  */
 const FILE = '---\ntitle: x\n---\n---\n\nSome intro\n\n---\n\nMore _text_\n';
 
-describe('an HR-leading body survives remounts (MD-3)', () => {
+describe('an HR-leading body survives remounts', () => {
   beforeEach(() => resetEditorHarness());
   afterEach(() => teardownEditorHarness());
 

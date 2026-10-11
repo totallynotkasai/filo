@@ -1,8 +1,7 @@
 /**
- * Audit-28 Phase 5, the interface around the views: the pure rules behind
- * Escape and the Search panel (BL-03), the docked sidebar at laptop widths
- * (H-04), nested frames (E-09), a Mind Map's remembered panels (E-26), copied
- * links (E-22) and a task row's styles.
+ * The interface around the views: the pure rules behind Escape and the Search
+ * panel, the docked sidebar at laptop widths, nested frames, a Mind Map's
+ * remembered panels, copied links and a task row's styles.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { escapeClosesSearchPanel } from '@renderer/lib/search/searchEscape';
@@ -76,7 +75,7 @@ describe('escapeClosesSearchPanel', () => {
 
 describe('the docked sidebar at laptop widths', () => {
   it('pushes the workspace aside where the page would start under the sidebar', () => {
-    // The plan's widths, 1,100, 1,280 and 1,366 px, with the default 240 px sidebar:
+    // Laptop widths 1,100, 1,280 and 1,366 px, with the default 240 px sidebar:
     // at 1,366 the 860 px page already clears it.
     for (const width of [1100, 1280, 1339]) expect(sidebarPushesWorkspace(width, 240), String(width)).toBe(true);
     for (const width of [1340, 1366, 1920]) expect(sidebarPushesWorkspace(width, 240), String(width)).toBe(false);

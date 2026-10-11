@@ -8,8 +8,8 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/boardSaver';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 
 /**
- * Audit 4.5 — a debounced `.board.json` write that fires AFTER the file has
- * been deleted on disk (external tool / sync client) must NOT resurrect it.
+ * A debounced `.board.json` write that fires AFTER the file has been deleted on
+ * disk (external tool / sync client) must NOT resurrect it.
  *
  * `writeBoardFile`'s pre-write `vault:stat` swallows ENOENT, so the write
  * falls through to `board:save` whose `ensureDir + atomicWriteFile`
@@ -62,7 +62,7 @@ function makeCached(): BoardFileData {
   } as unknown as BoardFileData;
 }
 
-describe('writeBoardFile — externally-deleted file is not resurrected (audit 4.5)', () => {
+describe('writeBoardFile — externally-deleted file is not resurrected', () => {
   let calls: InvokeRecord[];
   beforeEach(() => {
     calls = [];

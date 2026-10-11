@@ -1,5 +1,5 @@
 /**
- * IMPL_PLAN_2026-05-23_v2 P1.5 — `DeleteCardCommand` snapshot deep-clone.
+ * `DeleteCardCommand` snapshot deep-clone.
  *
  * Pre-fix the command captured snapshots via shallow `{ ...placement }` and
  * `{ ...def }`. Any tag/style mutation on the same tile between the
@@ -8,7 +8,7 @@
  * arrays and objects are still aliased). On undo the restored card would
  * carry the *current* nested state, not the delete-time state.
  *
- * The fix mirrors `AddCardCommand`'s Phase 31 B4.4 pattern: deep-clone via
+ * The fix mirrors `AddCardCommand`'s pattern: deep-clone via
  * `JSON.parse(JSON.stringify(...))` so the snapshot is fully isolated.
  */
 
@@ -62,7 +62,7 @@ function makeKanbanWithCard(): BoardFileData {
   };
 }
 
-describe('DeleteCardCommand — deep-clone snapshot (P1.5)', () => {
+describe('DeleteCardCommand — deep-clone snapshot', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');

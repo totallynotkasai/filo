@@ -40,7 +40,7 @@ function makeWorkspace(): WorkspaceState {
   return { openTabs: [], activeTabId: '' };
 }
 
-describe('configWriteScheduler — ENOENT skip-on-resurrection (5.1)', () => {
+describe('configWriteScheduler — ENOENT skip-on-resurrection', () => {
   beforeEach(() => {
     restoreFiloDefault();
     __resetBaselinesForTests();
@@ -151,7 +151,7 @@ describe('configWriteScheduler — ENOENT skip-on-resurrection (5.1)', () => {
 
 // The dedup cache must never assert a payload is on disk when it isn't: after
 // an external delete, a payload that returns to an earlier value is written.
-describe('configWriteScheduler — ENOENT skip clears dedup cache (6.4.M12)', () => {
+describe('configWriteScheduler — ENOENT skip clears dedup cache', () => {
   beforeEach(() => {
     restoreFiloDefault();
     __resetBaselinesForTests();
@@ -211,7 +211,7 @@ describe('configWriteScheduler — ENOENT skip clears dedup cache (6.4.M12)', ()
 // A OneDrive/AV/sync client can momentarily unlink-then-recreate a `.filo/`
 // config. The pre-write ENOENT re-stats ONCE: if the file is back, the armed
 // write proceeds; if it's still gone, the file is created again.
-describe('configWriteScheduler — L24 re-stat disambiguates a transient unlink', () => {
+describe('configWriteScheduler — re-stat disambiguates a transient unlink', () => {
   beforeEach(() => {
     restoreFiloDefault();
     __resetBaselinesForTests();
@@ -285,13 +285,14 @@ describe('configWriteScheduler — L24 re-stat disambiguates a transient unlink'
   });
 });
 
-// Audit-7 L11 — a delete+recreate is an external mutation the mtime+size drift
-// check can be blind to: a same-size, same-second recreate reads as "no drift",
-// so a FOREIGN recreate would be silently clobbered. On the reappear branch the
+// A delete+recreate is an external mutation the mtime+size drift check can be
+// blind to: a same-size, same-second recreate reads as "no drift", so a
+// FOREIGN recreate would be silently clobbered. On the reappear branch the
 // writer now reads the reappeared CONTENT and aborts if it differs from what
-// Filo last wrote/seeded — while a benign same-content blip (L24) still
-// proceeds (and an unverifiable / never-seeded target falls through unchanged).
-describe('configWriteScheduler — L11 foreign delete+recreate not clobbered', () => {
+// Filo last wrote/seeded — while a benign same-content blip (the transient
+// unlink above) still proceeds (and an unverifiable / never-seeded target
+// falls through unchanged).
+describe('configWriteScheduler — foreign delete+recreate not clobbered', () => {
   beforeEach(() => {
     restoreFiloDefault();
     __resetBaselinesForTests();
@@ -310,7 +311,7 @@ describe('configWriteScheduler — L11 foreign delete+recreate not clobbered', (
     ({ general: { globalFont: 'fixed' }, mindmap, kanban: {}, tasklist: {}, document: {} } as ProjectSettings);
 
   // Builds the catchall mock: defaults.json's first stat ENOENTs then reappears
-  // with the SAME baseline mtime+size (the L11 blind spot); `config:load`
+  // with the SAME baseline mtime+size (the drift check's blind spot); `config:load`
   // returns whatever object the test supplies for the reappeared file.
   function mockWith(reappearedDefaults: unknown, calls: Array<{ channel: string; args: unknown[] }>) {
     let defaultsStatCount = 0;

@@ -1,5 +1,5 @@
 /**
- * Audit-6 H3 / H4 / L27 — external-edit reconcilers must re-check vault
+ * External-edit reconcilers must re-check vault
  * identity after their async disk read.
  *
  * Each per-kind reconciler captures the active vault path, awaits a disk read
@@ -65,7 +65,7 @@ function makeBoard(name: string): BoardFileData {
   };
 }
 
-describe('Audit-6 H3/H4/L27 — reconciler vault-identity guard', () => {
+describe('reconciler vault-identity guard', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     __resetVaultIdentityForTests();
@@ -87,7 +87,7 @@ describe('Audit-6 H3/H4/L27 — reconciler vault-identity guard', () => {
     delete (window as unknown as Record<string, unknown>).filo;
   });
 
-  // ── H4 — board reconciler ──
+  // ── Board reconciler ──
 
   it('board: a swap during board:load is NOT injected into the new vault cache', async () => {
     const REL = 'k.board.json';
@@ -124,7 +124,7 @@ describe('Audit-6 H3/H4/L27 — reconciler vault-identity guard', () => {
     expect((boardCacheStore.cache.kb!.board as KanbanBoard).emoji).toBe('from-disk');
   });
 
-  // ── H3 — tags reconciler (worst case: persists to disk) ──
+  // ── Tags reconciler (worst case: persists to disk) ──
 
   it('tags: a swap during tags:load does NOT apply A’s registry to B', async () => {
     const applySpy = vi.spyOn(fileTagsStore, 'applyExternalReload');
@@ -161,7 +161,7 @@ describe('Audit-6 H3/H4/L27 — reconciler vault-identity guard', () => {
     expect(applySpy).toHaveBeenCalledTimes(1);
   });
 
-  // ── L27 — theme reconciler (visual only) ──
+  // ── Theme reconciler (visual only) ──
 
   it('theme: a swap during refreshAvailable does NOT re-apply the outgoing theme', async () => {
     vi.spyOn(themeStore, 'refreshAvailable').mockImplementation(async () => {

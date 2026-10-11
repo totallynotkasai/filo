@@ -8,10 +8,9 @@ import {
 } from '@renderer/lib/vault/frontmatterDelta';
 
 /**
- * WRITE_PATH_REMEDIATION_PLAN_2026-06-04 Phase 4 — pure delta primitives that
- * make "never drop an untouched key" structural. The gateway applies these to a
- * FRESH disk read at write time, so the seam tests below pin the contract the
- * write path relies on.
+ * Pure delta primitives that make "never drop an untouched key" structural. The
+ * gateway applies these to a FRESH disk read at write time, so the seam tests
+ * below pin the contract the write path relies on.
  */
 
 describe('frontmatterDelta — patchToFrontmatterDelta', () => {

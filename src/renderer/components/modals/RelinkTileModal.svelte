@@ -16,7 +16,7 @@
    * `src` for image/video/audio) through `UpdateTilePathCommand` so the
    * change is undoable.
    *
-   * Sidebar-scoped, per the implementation plan: we list only files the
+   * Sidebar-scoped: we list only files the
    * vault tree currently knows about — no full filesystem picker — so
    * the modal honours the local-first invariant (no leaking paths
    * outside the vault).

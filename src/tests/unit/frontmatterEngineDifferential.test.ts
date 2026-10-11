@@ -5,19 +5,18 @@ import { valuesEqual } from '@renderer/lib/vault/frontmatterEngine';
 import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstModel';
 
 /**
- * The CST-engine corpus contract (formerly the Phase 6.0 / 6.1 DIFFERENTIAL
- * harness).
+ * The CST-engine corpus contract (formerly the DIFFERENTIAL harness).
  *
  * While the legacy byte-splice engine still existed, this file ran the whole
  * object-patch corpus + a fuzzer through BOTH engines and asserted they agreed
  * byte-for-byte (the safety net that justified routing production through the CST
- * engine). Phase 6.7 deleted the legacy engine, so the differential comparison is
+ * engine). With the legacy engine deleted, the differential comparison is
  * gone — but its INDEPENDENT contract assertions are kept here as a permanent,
  * single-engine regression net: for every corpus shape and every fuzzed shape,
  * `patchFrontmatterSourceCst` must either refuse (`null`, caller dumps) or emit a
  * block that re-parses, carries the correct value for every key, drops exactly
  * the deleted keys, and keeps every UNTOUCHED single-line scalar's source line
- * BYTE-identical (the R1 / M2 surface).
+ * BYTE-identical (the source-canonicalisation surface).
  */
 
 /**
@@ -144,9 +143,9 @@ const OBJECT_OPS: ReadonlyArray<{
   { name: 'set tags->scalar', run: (cur) => ({ ...cur, tags: 'solo' }) },
 ];
 
-// Fenceless FM SOURCE blocks. Covers the legacy corpus shapes PLUS the Phase 6.0
-// gap cases (anchored untouched sibling, folded `>` untouched sibling, nested
-// collections, CRLF, quoted/numeric/bool siblings).
+// Fenceless FM SOURCE blocks. Covers the legacy corpus shapes PLUS the
+// single-parser gap cases (anchored untouched sibling, folded `>` untouched
+// sibling, nested collections, CRLF, quoted/numeric/bool siblings).
 const ENGINE_CORPUS: ReadonlyArray<{ label: string; src: string }> = [
   { label: 'leading comment', src: '# leading note\ntitle: Note\ncount: 3' },
   { label: 'standalone comment between keys', src: 'title: Note\n# section break\ncount: 3' },
@@ -164,7 +163,7 @@ const ENGINE_CORPUS: ReadonlyArray<{ label: string; src: string }> = [
   { label: 'quoted special tag (flow)', src: 'title: X\ntags: ["@home", foo]' },
   { label: 'numeric/bool siblings', src: 'count: 3\nflag: true\ntags:\n  - foo' },
   { label: 'unquoted date', src: 'created: 2025-01-15\ntitle: Note' },
-  { label: 'nested map (L23)', src: 'title: Note\nmeta:\n  author: me   # who\n  year: 2020' },
+  { label: 'nested map', src: 'title: Note\nmeta:\n  author: me   # who\n  year: 2020' },
   { label: 'folded > untouched sibling', src: 'summary: >\n  line one\n  line two\ntitle: Note\ncount: 3' },
   { label: 'anchored untouched sibling', src: 'base: &b 5\nthreshold: *b\ntitle: Note' },
   { label: 'merge key untouched sibling', src: 'defaults: &d\n  color: red\nwidget:\n  <<: *d\n  size: big\ntitle: Note' },
@@ -183,7 +182,7 @@ describe('frontmatter CST engine — corpus contract (single engine)', () => {
     });
   }
 
-  // The added-key-after-a-trailing-blank-line case (the Phase 6.1 append wrinkle).
+  // The added-key-after-a-trailing-blank-line case (an append wrinkle).
   it('add key after a trailing blank line', () => {
     const src = 'title: Note\ncount: 3\n';
     assertEngineSafe(src, { title: 'Note', count: 3, tags: ['x'] }, 'add-after-blank');
@@ -193,7 +192,7 @@ describe('frontmatter CST engine — corpus contract (single engine)', () => {
 /**
  * The property-based contract. Generates random frontmatter on RAW non-canonical
  * source lines (so untouched siblings are NOT already canonical — the
- * byte-preservation surface R1/M2 broke), then applies a random set / delete /
+ * byte-preservation surface at risk), then applies a random set / delete /
  * add op and holds the engine to the contract across thousands of shapes.
  */
 describe('frontmatter CST engine — fuzz set/delete/add', () => {

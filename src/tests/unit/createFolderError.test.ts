@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { vaultStore } from '@renderer/stores/vault.svelte';
 
 /**
- * Phase 9.8 — vaultStore.createFolder propagates the IPC envelope so callers
+ * vaultStore.createFolder propagates the IPC envelope so callers
  * can react to failures. Previously the wrapper coerced the result to a
  * plain boolean and discarded `{ code, error }`, so the sidebar's New Folder
  * button silently no-op'd on EACCES / EEXIST / vault-swap races.
@@ -26,7 +26,7 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
-describe('vaultStore.createFolder — error propagation (Phase 9.8)', () => {
+describe('vaultStore.createFolder — error propagation', () => {
   beforeEach(() => {
     uninstallFiloStub();
     vaultStore.setPath('/vault');

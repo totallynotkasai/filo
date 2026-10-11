@@ -15,7 +15,7 @@ import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTra
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Phase 6.1.R3 — a command's execute / undo must dirty the ORIGINATING
+ * A command's execute / undo must dirty the ORIGINATING
  * board, never whichever board is active at dispatch time. The bug
  * class: `boardCacheStore.markDirty(boardStore.current?.id ?? '')` lands
  * on the user's currently-focused board after a cross-board undo/redo
@@ -77,7 +77,7 @@ function installFiloWithBoardSaveSpy(capture: BoardSaveCapture): void {
   });
 }
 
-describe('Phase 6.1.R3 — commands dirty their originating board, not the active one', () => {
+describe('commands dirty their originating board, not the active one', () => {
   let capture: BoardSaveCapture;
 
   beforeEach(() => {

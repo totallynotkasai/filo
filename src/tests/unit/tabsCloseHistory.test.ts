@@ -8,17 +8,17 @@ import {
 } from '@renderer/lib/boards/boardSaver';
 
 /**
- * Phase 13.6 — when a tab closes, the per-board undo/redo stack is dropped.
+ * When a tab closes, the per-board undo/redo stack is dropped.
  * Reopening the board (via the sidebar) creates a fresh tab and fresh
  * history — the board's content stays on disk, but undo doesn't reach back
  * into the prior editing session. If the same board is still open in
  * another tab, history is preserved.
  *
- * Polish phase 1.2 — `historyStore.execute(NoopCommand)` here triggers a
+ * `historyStore.execute(NoopCommand)` here triggers a
  * markDirty → scheduleBoardWrite chain even though the test never sets
- * `vaultStore.path`. Pre-polish-1.2 the resulting phantom-write was
+ * `vaultStore.path`. The resulting phantom-write used to be
  * silently swallowed (flushBoardWrite returned ok:true on null args);
- * post-polish-1.2 it correctly surfaces as a save failure and the
+ * now it correctly surfaces as a save failure and the
  * `tabStore.close` confirm-close dialog hangs the test environment
  * waiting for a click. Drain pending writes in beforeEach/afterEach so
  * the test environment matches the contract `tabStore.close` expects.
@@ -52,14 +52,14 @@ describe('tabStore.close — per-board history clearing', () => {
     historyStore.execute(new NoopCommand());
     expect(historyStore.canUndo).toBe(true);
 
-    // Polish phase 1.2 — drop the phantom board-write that the NoopCommand
+    // Drop the phantom board-write that the NoopCommand
     // scheduled via boardStore.markDirty. Without a vaultStore.path the
     // scheduled write would resolve to null args at flush time and the
     // close path would surface a save-failure confirm modal that hangs
     // the test environment.
     cancelAllPendingWrites();
 
-    // Sprint B / B2 — `tabStore.close` is async (drains pending markdown /
+    // `tabStore.close` is async (drains pending markdown /
     // frontmatter writes before unmount). Await so the history clear that
     // follows the tabs mutation has actually run before the assertion.
     await tabStore.close(tab.id);

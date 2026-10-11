@@ -7,7 +7,7 @@ import {
 } from '../../main/vault/fileOps';
 
 /**
- * Phase 1 / 1.5 — `vault:read-tree` used to walk the entire directory
+ * `vault:read-tree` used to walk the entire directory
  * tree and then count, so pointing Filo at `~` or `C:\` would still
  * enumerate millions of entries into memory before refusing the result.
  * The walker now threads a counter into the recursion and throws
@@ -33,7 +33,7 @@ function makeDirDirent(name: string): MockDirent {
   return { name, isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false };
 }
 
-// Audit-11 P2 — a reparse point (NTFS junction / POSIX symlink) entry.
+// A reparse point (NTFS junction / POSIX symlink) entry.
 function makeSymlinkDirent(name: string): MockDirent {
   return { name, isDirectory: () => false, isFile: () => false, isSymbolicLink: () => true };
 }
@@ -139,12 +139,12 @@ describe('readDirectoryTree — in-walk cap', () => {
 });
 
 /**
- * Audit-11 P2 — a reparse point (NTFS junction / POSIX symlink) inside the
+ * A reparse point (NTFS junction / POSIX symlink) inside the
  * vault can resolve OUTSIDE it. The walker realpaths each link entry and drops
  * it from the tree when the target escapes the vault root, so an out-of-vault
  * path's name never leaks into the sidebar.
  */
-describe('readDirectoryTree — reparse-point containment (Audit-11 P2)', () => {
+describe('readDirectoryTree — reparse-point containment', () => {
   let readdirSpy: ReturnType<typeof vi.spyOn>;
   let statSpy: ReturnType<typeof vi.spyOn>;
   let realpathSpy: ReturnType<typeof vi.spyOn>;

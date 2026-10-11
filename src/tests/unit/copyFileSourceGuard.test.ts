@@ -13,8 +13,8 @@ import { vaultRegistry } from '../../main/services/vaultRegistry';
 import { copyFileToVault } from '../../main/vault/fileOps';
 
 /**
- * Audit-12 S1 — `vault:copy-file` must constrain WHICH file the renderer may
- * name as a source. Two layers are tested here:
+ * `vault:copy-file` must constrain WHICH file the renderer may name as a
+ * source. Two layers are tested here:
  *
  *   1. POLICY — `isApprovedCopySource(vaultRoot, sourcePath)` allows only files
  *      inside the vault or ones explicitly registered (dialog pick / OS drop),
@@ -31,14 +31,14 @@ import { copyFileToVault } from '../../main/vault/fileOps';
  * remove the `.isFile()` re-check or the `maxBytes` cap from `copyFileToVault`
  * → the corresponding specs go red.
  */
-describe('Audit-12 S1 — approved copy-source policy', () => {
+describe('approved copy-source policy', () => {
   const VAULT = process.platform === 'win32' ? 'C:\\Users\\me\\Vault' : '/home/me/Vault';
 
   beforeEach(() => {
     __resetApprovedSourcesForTests();
-    // Audit-14 4.2 — registration now BINDS to the active vault (read from the
-    // registry), so a registerApprovedSource(...) only takes effect with a vault
-    // set. Anchor on VAULT for the generic specs; cross-vault specs override.
+    // Registration now BINDS to the active vault (read from the registry), so a
+    // registerApprovedSource(...) only takes effect with a vault set. Anchor on
+    // VAULT for the generic specs; cross-vault specs override.
     vaultRegistry.setCurrentVault(VAULT);
   });
 
@@ -85,7 +85,7 @@ describe('Audit-12 S1 — approved copy-source policy', () => {
     expect(isApprovedCopySource(VAULT, 'c:\\users\\me\\A.PNG')).toBe(true);
   });
 
-  it('Audit-14 4.2 — a source approved under vault A is NOT approved after a swap to vault B (binding)', () => {
+  it('a source approved under vault A is NOT approved after a swap to vault B (binding)', () => {
     const VAULT_A = process.platform === 'win32' ? 'C:\\Users\\me\\VaultA' : '/home/me/VaultA';
     const VAULT_B = process.platform === 'win32' ? 'C:\\Users\\me\\VaultB' : '/home/me/VaultB';
     const picked = process.platform === 'win32' ? 'D:\\Photos\\holiday.jpg' : '/mnt/usb/holiday.jpg';
@@ -105,7 +105,7 @@ describe('Audit-12 S1 — approved copy-source policy', () => {
     expect(isApprovedCopySource(VAULT_B, insideB)).toBe(true);
   });
 
-  it('Audit-13 M11 — clearApprovedSources() drops a leaked approval (defence in depth)', () => {
+  it('clearApprovedSources() drops a leaked approval (defence in depth)', () => {
     const VAULT_A = process.platform === 'win32' ? 'C:\\Users\\me\\VaultA' : '/home/me/VaultA';
     const picked = process.platform === 'win32' ? 'D:\\Photos\\holiday.jpg' : '/mnt/usb/holiday.jpg';
 
@@ -119,7 +119,7 @@ describe('Audit-12 S1 — approved copy-source policy', () => {
     expect(isApprovedCopySource(VAULT_A, picked)).toBe(false);
   });
 
-  it('Audit-14 4.2 — registration with no active vault is a no-op (nothing to bind)', () => {
+  it('registration with no active vault is a no-op (nothing to bind)', () => {
     const picked = process.platform === 'win32' ? 'D:\\Photos\\x.jpg' : '/mnt/usb/x.jpg';
     vaultRegistry.setCurrentVault(null);
     registerApprovedSource(picked); // no active vault → not recorded
@@ -136,13 +136,13 @@ describe('Audit-12 S1 — approved copy-source policy', () => {
   });
 });
 
-describe('Audit-12 S1 — copyFileToVault TOCTOU + streamed-byte cap', () => {
+describe('copyFileToVault TOCTOU + streamed-byte cap', () => {
   let vaultDir: string;
   let sourceDir: string;
 
   beforeEach(async () => {
-    vaultDir = await fs.mkdtemp(join(tmpdir(), 'filo-s1-vault-'));
-    sourceDir = await fs.mkdtemp(join(tmpdir(), 'filo-s1-source-'));
+    vaultDir = await fs.mkdtemp(join(tmpdir(), 'filo-copysrc-vault-'));
+    sourceDir = await fs.mkdtemp(join(tmpdir(), 'filo-copysrc-source-'));
   });
 
   afterEach(async () => {
@@ -211,7 +211,7 @@ describe('Audit-12 S1 — copyFileToVault TOCTOU + streamed-byte cap', () => {
     expect((await fs.readFile(dest)).equals(payload)).toBe(true);
   });
 
-  // ── Audit-14 4.3 — symlink-target-swap defence (noFollowSource) ────────────
+  // ── Symlink-target-swap defence (noFollowSource) ───────────────────────────
 
   it('refuses a symlink source when noFollowSource is true (O_NOFOLLOW / lstat-reject)', async () => {
     // Models the post-lstat swap: the source the IPC handler validated as a

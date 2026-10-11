@@ -23,7 +23,7 @@ import { historyStore } from '@renderer/stores/history.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-12 M5 — an OS file-drop must create the tile on the pane it was dropped
+ * An OS file-drop must create the tile on the pane it was dropped
  * on, not the globally-active pane.
  *
  * A `drop` carries no preceding pointerdown to activate the target pane (unlike
@@ -64,7 +64,7 @@ function makeFakeScope(boardId: string, transform: { x: number; y: number; scale
   return { scope, addTile };
 }
 
-describe('Audit-12 M5 — file-drop lands on the dropped-on pane', () => {
+describe('file-drop lands on the dropped-on pane', () => {
   beforeEach(() => {
     installFiloMock(() => ({ ok: true, success: true }));
     historyStore.clear();

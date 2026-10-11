@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Audit-13 L20 — the trailing-edge notify debounce now carries a max-wait cap.
+ * The trailing-edge notify debounce carries a max-wait cap.
  *
  * The plain trailing debounce (`scheduleNotify`) re-arms on every event, so a
  * continuous sub-300ms external write stream (a sync client doing many small
@@ -27,7 +27,7 @@ type Internals = {
   notifyRenderers: () => Promise<void>;
 };
 
-describe('FileWatcher — notify debounce max-wait cap (Audit-13 L20)', () => {
+describe('FileWatcher — notify debounce max-wait cap', () => {
   let dir: string;
   let watcher: FileWatcher;
   let notifySpy: Mock<() => Promise<void>>;

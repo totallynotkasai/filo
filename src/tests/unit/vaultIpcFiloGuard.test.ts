@@ -8,12 +8,12 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Phase 1 / 1.2 — every generic `vault:*` IPC handler that mutates the
- * filesystem (write-file-text, write-existing-file-text, delete, rename,
- * copy-file, create-folder) now runs the path it was handed through
- * `assertNotInFiloDir` so a buggy renderer cannot end-run the dedicated
- * `config:save` / `tags:save` / `templates:write` / `theme:save` channels
- * and clobber `.filo/` state with arbitrary text.
+ * Every generic `vault:*` IPC handler that mutates the filesystem
+ * (write-file-text, write-existing-file-text, delete, rename, copy-file,
+ * create-folder) now runs the path it was handed through `assertNotInFiloDir`
+ * so a buggy renderer cannot end-run the dedicated `config:save` /
+ * `tags:save` / `templates:write` / `theme:save` channels and clobber `.filo/`
+ * state with arbitrary text.
  *
  * The 8 cases below mirror the 6 IPC handlers (rename + copy-file each
  * check both endpoints, hence 8). This machine's own recovery sentinels stay allowlisted

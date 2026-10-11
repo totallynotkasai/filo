@@ -7,7 +7,7 @@ import { beginVaultGeneration, __resetVaultIdentityForTests } from '@renderer/li
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-19 ERR-4 (renderer half) — a transiently unreadable board used to map
+ * Renderer side — a transiently unreadable board used to map
  * to "not-found" and vanish for the session. It now carries a typed kind, is
  * not snapshotted, and gets a sticky notice whose Retry adopts the board into
  * the running session.
@@ -24,7 +24,7 @@ const board = {
   frames: [],
 };
 
-describe('board load — transient failures are retryable (Audit-19 ERR-4)', () => {
+describe('board load — transient failures are retryable', () => {
   beforeEach(() => {
     __resetVaultIdentityForTests();
     boardCacheStore.hydrate({}, {});

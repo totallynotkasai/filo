@@ -4,11 +4,10 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Phase 4 / 4.4 — `flushSidebarStateNow()` must drain any in-debounce
- * `scheduleSave` timer AND any in-flight `writeSidebarState` promise
- * before resolving. Without this, `before-quit` could exit between the
- * user's sidebar resize (300 ms debounce) and the actual disk write,
- * silently dropping the new geometry.
+ * `flushSidebarStateNow()` must drain any in-debounce `scheduleSave` timer AND
+ * any in-flight `writeSidebarState` promise before resolving. Without this,
+ * `before-quit` could exit between the user's sidebar resize (300 ms debounce)
+ * and the actual disk write, silently dropping the new geometry.
  */
 
 // Mock Electron's `app` so `loadSidebarState` / `statePath()` can resolve a
@@ -28,7 +27,7 @@ const { updateSidebarState, flushSidebarStateNow, loadSidebarState } = await imp
   '../../main/services/sidebarState'
 );
 
-describe('flushSidebarStateNow — drains timer + in-flight write (Phase 4 / 4.4)', () => {
+describe('flushSidebarStateNow — drains timer + in-flight write', () => {
   beforeEach(async () => {
     userDataDir = await fs.mkdtemp(join(tmpdir(), 'filo-sidebar-'));
     // Re-prime the module's cache against the fresh userDataDir.

@@ -57,9 +57,8 @@ interface CallSite {
 function findCallers(channel: string): CallSite[] {
   const callers: CallSite[] = [];
   // Match bare `invoke('channel'` only — `invokeOk('channel'` (the safe
-  // wrapper introduced by CONSOLIDATION_PLAN_2026-05-25 Phase 1) does NOT
-  // satisfy `invoke('channel'` because of the `Ok` in between, so it is
-  // automatically excluded from the caller scan.
+  // wrapper) does NOT satisfy `invoke('channel'` because of the `Ok` in
+  // between, so it is automatically excluded from the caller scan.
   const needles = [`invoke('${channel}'`, `invoke("${channel}"`];
   for (const file of RENDERER_FILES) {
     const text = fs.readFileSync(file, 'utf-8');
@@ -92,9 +91,8 @@ function findCallers(channel: string): CallSite[] {
 // ── Channel inventory ──────────────────────────────────────────────────
 
 /**
- * Envelope channels declared in `src/main/ipc/board.ipc.ts`. Scoped to that
- * single IPC file per the consolidation plan. Phase 1's CI gate will widen
- * this to every envelope channel across `src/main/ipc/`.
+ * Envelope channels declared in `src/main/ipc/board.ipc.ts`. This test is
+ * scoped to that single IPC file.
  */
 const BOARD_IPC_ENVELOPE_CHANNELS = [
   'vault:init-config',
@@ -105,7 +103,7 @@ const BOARD_IPC_ENVELOPE_CHANNELS = [
   'theme:save',
   'theme:delete',
   'recovery:snapshot',
-  // Sprint A / A16 — theme:load is now a HYBRID channel:
+  // theme:load is a HYBRID channel:
   //   - bare ThemeFile (data) or null on success / ENOENT
   //   - { ok: false, code: 'invalid-json', name } envelope on parse error
   // Renderer callers detect the envelope inline via `isThemeParseFailure`
@@ -170,10 +168,10 @@ describe('Contract — IPC envelope contract (board.ipc.ts)', () => {
       it(`${channel} — every renderer caller has assertIpcOk in scope`, () => {
         const callers = findCallers(channel);
         if (callers.length === 0) {
-          // No renderer caller — channel is fire-and-forget from main, OR
-          // is invoked through a wrapper that obfuscates the literal name.
-          // Phase 1 will add a typed `invokeOk<channel>(...)` that surfaces
-          // this; for now, an empty caller list is acceptable.
+          // No bare renderer caller — the channel is fire-and-forget from
+          // main, is called only through `invokeOk` (excluded from this scan),
+          // OR is invoked through a wrapper that obfuscates the literal name.
+          // An empty caller list is acceptable.
           return;
         }
         const missing = callers.filter((c) => !c.hasNearbyAssertIpcOk);
@@ -190,14 +188,11 @@ describe('Contract — IPC envelope contract (board.ipc.ts)', () => {
     }
   });
 
-  // Phase 0 (IMPLEMENTATION_PLAN_2026-05-27.md) — re-enabled. The four
-  // skip blocks below originally documented the gap that CONSOLIDATION_PLAN
-  // Phase 1 closed; that work has shipped (callers migrated to `invokeOk`
-  // or marked `// allow-envelope-bare:`), so these assertions now pass.
+  // Renderer callers of these channels route through `invokeOk` or are
+  // marked `// allow-envelope-bare:`; these assertions pin that.
   describe('renderer callers no longer swallow the envelope', () => {
-    // CONSOLIDATION_PLAN_2026-05-25 Phase 1 (bug #1) — boardLoader.ts +
-    // vault.svelte.ts now route through `invokeOk`. The one remaining
-    // bare site (dirtyFlagRecovery.ts:190) is annotated
+    // boardLoader.ts + vault.svelte.ts route through `invokeOk`. The one
+    // remaining bare site (dirtyFlagRecovery.ts:190) is annotated
     // `// allow-envelope-bare:` because the snapshot is a defensive
     // best-effort backup whose failure is deliberately swallowed (the
     // primary error already has its own toast).
@@ -207,17 +202,17 @@ describe('Contract — IPC envelope contract (board.ipc.ts)', () => {
       expect(missing).toEqual([]);
     });
 
-    // CONSOLIDATION_PLAN_2026-05-25 Phase 1 — vault.svelte.ts:951 and
-    // vaultCandidate.ts:140 both use `invokeOk`; no bare callers remain.
+    // vault.svelte.ts:951 and vaultCandidate.ts:140 both use `invokeOk`; no
+    // bare callers remain.
     it('vault:init-config — every renderer caller has assertIpcOk in scope', () => {
       const callers = findCallers('vault:init-config');
       const missing = callers.filter((c) => !c.hasNearbyAssertIpcOk);
       expect(missing).toEqual([]);
     });
 
-    // CONSOLIDATION_PLAN_2026-05-25 Phase 1 — boardCache.svelte.ts:578-583
-    // now uses `invokeOk('board:create', ...)`. No bare callers remain;
-    // the assertion is structurally identical to the others above.
+    // boardCache.svelte.ts:578-583 uses `invokeOk('board:create', ...)`. No
+    // bare callers remain; the assertion is structurally identical to the
+    // others above.
     it('board:create — every renderer caller has assertIpcOk in scope', () => {
       const callers = findCallers('board:create');
       const missing = callers.filter((c) => !c.hasNearbyAssertIpcOk);

@@ -1,5 +1,5 @@
 /**
- * Characterisation — notes and boards (Audit-28 Phase 6B), as a user meets them:
+ * Characterisation — notes and boards, as a user meets them:
  * - switching tabs away from a raw view whose text can't be saved asks first,
  *   as closing the tab does; text that can be saved is saved;
  * - a note-only change (a ticked task, a card's due date) leaves the board's

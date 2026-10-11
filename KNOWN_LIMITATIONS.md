@@ -4,7 +4,7 @@ These are **deliberate, accepted trade-offs**, not bugs. They follow from Filo's
 core design principles (open format, local-first, no sidecar files) or from
 platform constraints. They are documented here so they aren't repeatedly
 re-discovered and "fixed" — changing any of them needs a design discussion, not
-a patch. (Cross-referenced from the audit's Appendix C, "do NOT fix".)
+a patch.
 
 If you hit one of these and believe the trade-off should change, open a design
 note rather than a quick fix — each entry lists why it is the way it is.
@@ -13,7 +13,7 @@ note rather than a quick fix — each entry lists why it is the way it is.
 
 ## 1. Frontmatter full re-dump — only for new files (and a few narrow cases)
 
-**What (Phase 6 — root cause deleted, not patched):** Filo's frontmatter writes
+**What:** Filo's frontmatter writes
 go through a single-parser, source-preserving **CST-operations engine**
 (`frontmatterCstModel.ts`, built entirely on the `yaml` package). It tokenises
 the on-disk frontmatter source, rewrites ONLY the keys whose value actually
@@ -24,13 +24,13 @@ metadata edit verbatim. Every note write takes this path: the note writer reads
 the file fresh at each flush and patches that source, and the tag rewriter's
 fallback uses the same engine.
 
-Six audits fought a recurring corruption class here (DI-01 unquoted date→ISO,
-DI-05 destroyed `<<` merge keys, R1/M2 canonicalised untouched scalars, C1
-bare-key collapse, DI-06 folded-scalar reflow). The shared root cause was a
-**dual-parser object-vs-source diff plus a hand-rolled byte-splice** (js-yaml for
-the compare, the `yaml` package for the emit) — two libraries that disagreed on a
-handful of scalar forms. Phase 6 replaced that machine with the single-parser CST
-engine, so the class is **structurally gone, not guarded**. The
+A whole class of corruption (unquoted dates turned into ISO timestamps,
+destroyed `<<` merge keys, canonicalised untouched scalars, collapsed bare keys,
+reflowed folded scalars) came from a **dual-parser object-vs-source diff plus a
+hand-rolled byte-splice** (js-yaml for the compare, the `yaml` package for the
+emit) — two libraries that disagreed on a handful of scalar forms. The
+single-parser CST engine replaces that machine, so the class is **structurally
+gone, not guarded**. The
 `no-jsyaml` gate keeps js-yaml out of the app entirely (tests keep it only as an
 independent oracle).
 
@@ -84,13 +84,13 @@ loss):**
   owned are dropped (`gapWithoutCommentLines` in `frontmatterCstModel.ts`). This
   was a deliberate trade-off introduced with the L4 delete-handling work
   (relocating mis-documents the survivor); option (b) — relocate to a trailing
-  block instead of dropping — is tracked if dogfooding shows users rely on
+  block instead of dropping — is worth doing if users turn out to rely on
   frontmatter comments.
 - **Touched anchored or tagged key.** Changing or deleting a key carrying
   `&a`/`*a` or a `!tag` full-dumps (structure expanded), provided the dump
   keeps every untouched value exact; otherwise the edit is refused. An
   anchor/alias confined to UNTOUCHED keys is spliced verbatim and survives
-  (DI-05's `<<: *base`).
+  (e.g. `<<: *base`).
 - **New file.** Emitted in the `yaml` package's default style
   (nothing prior to preserve).
 
@@ -156,7 +156,7 @@ directory entry, not file contents.
 lose a just-renamed file's directory entry on NTFS. Extremely narrow; the
 `.filo/.dirty.<machineId>` sentinel + recovery flow covers the broader crash case.
 
-**Audit-4 DI-10 (confirmed, accepted).** Re-verified: the file-handle `fsync`
+**Confirmed and accepted.** The file-handle `fsync`
 (data durability) always runs before the rename; only the containing-directory
 `fsync` (rename-metadata durability) is best-effort on Windows. The failure
 mode is therefore "lose the last rename's directory entry," never file-content
@@ -241,7 +241,7 @@ path for `RECENT_SELF_WRITE_TTL_MS = 1500` ms (or
 rename) workloads. Widening them unconditionally would slow genuine external-edit
 detection.
 
-**Audit-13 M4 — in-window handling is content-aware, not time-only:** A watcher
+**In-window handling is content-aware, not time-only:** A watcher
 event for a recently self-written board path is not suppressed by the timer
 alone. The board reconciler
 ([src/renderer/stores/vaultExternalReconcilers.ts](src/renderer/stores/vaultExternalReconcilers.ts))
@@ -256,14 +256,14 @@ board or config self-write's OS echo can arrive *after* the recent-self-write
 window has expired (`isRecentSelfWrite` already false), so the app's own write
 is classified as an external edit — surfacing a spurious "Reload / Keep local"
 board toast. This is a UX
-annoyance, **not** data loss (and, per M4 above, never a *dropped* external
+annoyance, **not** data loss (and, as above, never a *dropped* external
 edit). Monitor; widen the window only if it bites in practice.
 
-**Audit-19 EXT-5 — slower renames:** a write whose rename waits out a Windows
+**Slower renames:** a write whose rename waits out a Windows
 file lock can land up to ~5 s late. Main's pre-write suppression now covers that
 (`LOCK_AWARE_SUPPRESS_MS` = the lock budget + 2 s), but the renderer's
 recent-self-write TTL can still expire first; for boards the baseline-divergence
-tie-break (Audit-15 P2.4) then drops the echo because the disk stat matches what
+tie-break then drops the echo because the disk stat matches what
 Filo wrote. Notes use the content-hash check above.
 
 **Board writes hide only their own bytes; `.filo/` files still hide by time.**
@@ -354,7 +354,7 @@ unsaved edit meets the conflict question, which keeps both sides.
 ceiling). The safety net is the manual broken-reference relink flow,
 [src/renderer/stores/boardRefIntegrity.svelte.ts](src/renderer/stores/boardRefIntegrity.svelte.ts).
 
-**Why accepted (Audit-8 L2):** This is deliberate false-positive avoidance —
+**Why accepted:** This is deliberate false-positive avoidance —
 silently re-pointing a tile at the *wrong* file (an unrelated same-size video)
 is far worse than flagging a broken reference the user can relink in one click.
 Renaming a large attachment outside the app, then changing its name, is
@@ -403,7 +403,7 @@ and [index.html](index.html). The src is validated by `asSafeIframeSrc`
 ([src/shared/untrusted.ts](src/shared/untrusted.ts)) and the tile renders inside
 a `sandbox="allow-scripts"` iframe (deliberately WITHOUT `allow-same-origin`).
 
-**Why accepted (Audit-14 4.5):** This is defense-in-depth, not a hole. Because
+**Why accepted:** This is defense-in-depth, not a hole. Because
 the embedding iframe has no `allow-same-origin`, embedded content runs in an
 opaque origin and cannot read Filo's `file://` document, its storage, or other
 vault contents; `default-src 'self'` still governs the app document itself. The
@@ -450,13 +450,13 @@ guard no longer applies and saves go through.
 **Where:** `looksTorn` and its callers in `noteWriter.ts`; the disk-change retry
 (`TORN_RETRY_MS`) in [src/renderer/stores/notes.svelte.ts](src/renderer/stores/notes.svelte.ts).
 
-**Why accepted (Audit-15 P2.3):** It fails **safe** — the refusal is loud
+**Why accepted:** It fails **safe** — the refusal is loud
 (`markPathFailed` + a "save failed" surface), no data is lost, and the on-disk
 file is untouched. Every attempt to distinguish "stable FM-removed body that
 starts with `---`" from "genuine partial read" using only the read is
 undecidable: a size heuristic (e.g. "read is < ½ the prior byte size") lets a
 truncated read of *most* of a small file through, which re-opens the
-HIGH-severity Audit-14 3.3 silent-frontmatter-drop (the `deltaWriteEolTruncation` "refuses
+high-severity silent frontmatter drop (the `deltaWriteEolTruncation` "refuses
 … truncated" test pins exactly that 25-of-38-byte case). For a data-integrity
 guard, "never silently drop frontmatter" correctly wins over "never show a
 spurious toast."
@@ -512,13 +512,13 @@ written by reading.
 [src/renderer/lib/boards/boardWriteScheduler.ts](src/renderer/lib/boards/boardWriteScheduler.ts)
 (`writeBoardFile`) refreshes the pre-write drift baseline only when the
 post-write `vault:stat` **size** equals the bytes it wrote. The `.filo/` config
-scheduler (Audit-18 3.6) goes further and reads the bytes **back** to also reject
+scheduler goes further and reads the bytes **back** to also reject
 a *same-byte-count* foreign write that landed in the save→stat gap; the board
 writer deliberately does **not**. (Notes work differently: see #15.)
 
 **Where:** the post-write `refreshBaselineAfterWrite` block in `writeBoardFile`.
 
-**Why accepted (Audit-18 3.6):** A `.board.json` can be multi-MB and is rewritten
+**Why accepted:** A `.board.json` can be multi-MB and is rewritten
 every 300 ms while a user drags tiles. A full content read-back on every save
 would double the write-path IO on the hot path — a real perf cost — to close a
 window that requires a foreign tool to write the *exact same byte count* to the
@@ -761,8 +761,7 @@ alongside.
 **Why accepted:** Localised client strings (e.g. Dropbox's German
 "Kopie mit Konflikt") and arbitrary `-WORD` suffixes are not matched, because
 matching them would misread names users pick themselves (`Meeting-Notes.md`,
-`Report (2).md`). An unrecognised copy is simply an ordinary file (the pre-Audit-19
-behaviour).
+`Report (2).md`). An unrecognised copy is simply an ordinary file.
 
 A note's conflict copy is announced only for the strong shapes (Syncthing,
 Dropbox / Nextcloud, OneDrive), and only beside its original: a weak
@@ -779,7 +778,7 @@ copy (`Chapter (1).md`, `Chapter 2.md`) shows in the sidebar with no notice.
 
 **What:** When a file disappears and a same-content file appears whose name is a
 conflict copy of the missing one (`Note.md` → `Note-<your device>.md`,
-`Note (1).md`), the rename correlator refuses to pair them (Audit-19 EXT-2): that
+`Note (1).md`), the rename correlator refuses to pair them: that
 is exactly how OneDrive resolves a conflict, and pairing them would rebind every
 tile to the losing copy.
 
@@ -1658,8 +1657,7 @@ its formatting, black included.
 
 **Why accepted:** Docs writes black Arial 11 pt on every run and Word its
 theme font and size, so a paste kept as it was showed as black text in a dark
-theme and smaller than the note around it (the owner's decision D6 in
-Audit-28). A deliberate black word in the source can't be told from the
+theme and smaller than the note around it. A deliberate black word in the source can't be told from the
 source's plain text.
 
 **Impact:** A word meant to be black, or a size meant to differ from the
@@ -1769,8 +1767,7 @@ the same rules in [src/renderer/components/boards/DocumentEditor.svelte](src/ren
 [src/renderer/lib/editor/emptyParagraphs.ts](src/renderer/lib/editor/emptyParagraphs.ts),
 [src/renderer/lib/editor/lineBlocks.ts](src/renderer/lib/editor/lineBlocks.ts).
 
-**Why accepted:** Tight paragraphs are how the owner writes (decision D1 of
-the Audit-29 plan). The spacing is drawn by Filo's styles and is never in the
+**Why accepted:** Tight paragraphs are a deliberate choice of style. The spacing is drawn by Filo's styles and is never in the
 note, so the file stays plain Markdown that every app reads the same, words,
 order and structure alike.
 

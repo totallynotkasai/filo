@@ -8,7 +8,7 @@ import {
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Tests the Phase 19 S3 renderer-side recent-self-write registry. The
+ * Tests the renderer-side recent-self-write registry. The
  * registry is the safety net that drops late OS-level watcher events for
  * paths the renderer just wrote — without it, a bulk operation that
  * outruns the main-side suppression window fires spurious external-edit
@@ -56,13 +56,13 @@ describe('recentSelfWrites registry', () => {
     expect(isRecentSelfWrite('Notes.md')).toBe(false);
   });
 
-  it('trackComponentWrite registers the path before writeFn runs (Phase A.2a)', async () => {
+  it('trackComponentWrite registers the path before writeFn runs', async () => {
     // The OS watcher event for our own write can fire (and reach the renderer)
     // before the IPC promise resolves. Marking after the await let
     // `vault:files-changed` see the path as unknown-self-write and surface
     // a spurious external-edit toast for every freshly-created file. The fix
     // moves the mark to before the writeFn so suppression is active for the
-    // entire IPC window. See [IMPL_PLAN_2026-05-23_v3.md] §A.2a.
+    // entire IPC window.
     await trackComponentWrite('/vault', 'sub/Notes.md', async () => {
       expect(isRecentSelfWrite('sub/Notes.md')).toBe(true);
     });
@@ -70,9 +70,9 @@ describe('recentSelfWrites registry', () => {
     expect(isRecentSelfWrite('sub/Notes.md')).toBe(true);
   });
 
-  it('trackComponentWrite drops the path from the registry on failure (Phase 1 / 1.4)', async () => {
-    // Phase 1 / 1.4 reverses the A.2a trade-off for the FAILURE branch.
-    // The original A.2a behaviour kept the recent-self-write entry alive
+  it('trackComponentWrite drops the path from the registry on failure', async () => {
+    // The FAILURE branch reverses the mark-early trade-off above. An
+    // earlier behaviour kept the recent-self-write entry alive
     // after a failed write, on the theory that the tile-creation toast
     // spam was worse than a 1.5 s window where a true external edit
     // might be missed. That theory missed a worse failure mode: a real
@@ -100,7 +100,7 @@ describe('recentSelfWrites registry', () => {
     expect(isRecentSelfWrite('Failing.md')).toBe(false);
   });
 
-  it('trackComponentWrite clears the registry on failure for the case-folded key (Phase 1 / 1.4)', async () => {
+  it('trackComponentWrite clears the registry on failure for the case-folded key', async () => {
     // Defence-in-depth: the case-fold normalisation used by mark/check
     // also applies to the drop helper. A Windows-side failure path that
     // marked `Notes.md` and then threw must clear the registry entry

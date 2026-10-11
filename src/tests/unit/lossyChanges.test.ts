@@ -92,9 +92,9 @@ describe('locating and describing a change', () => {
 });
 
 /**
- * The change that makes a note read-only comes first, said for what it is
- * (Audit-29 H-02). The owner's agent-written note mixes bullets and a
- * checkbox in one list, which Filo saves as a list and a checklist: a change
+ * The change that makes a note read-only comes first, said for what it is.
+ * The owner's agent-written note mixes bullets and a checkbox in one list,
+ * which Filo saves as a list and a checklist: a change
  * the file shows only as a blank line, so the banner named the first harmless
  * blank line instead, and Take ownership listed the real one third, as "a
  * blank line".

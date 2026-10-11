@@ -1,5 +1,5 @@
 /**
- * Sprint 35.2 regression — CascadeDeleteCommand must snapshot the style-clears
+ * Regression guard: CascadeDeleteCommand must snapshot the style-clears
  * the cascade applies (kanban placement `coverImage`, frame
  * `style.backgroundImage`, mindmap `defaults.frame.backgroundImage`) so undo
  * restores them. Without the snapshot, the placements return on Ctrl+Z but
@@ -110,7 +110,7 @@ function makeMindMapWithFrame(
   };
 }
 
-describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
+describe('CascadeDeleteCommand — styleClears undo', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     vaultStore.setPath('');
@@ -270,7 +270,7 @@ describe('CascadeDeleteCommand — styleClears undo (Sprint 35.2)', () => {
   });
 });
 
-describe('boardCacheStore.findCascadeDeleteTargets / applyCascadeStyleClears (Sprint 35.2)', () => {
+describe('boardCacheStore.findCascadeDeleteTargets / applyCascadeStyleClears', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     vaultStore.setPath('');
@@ -372,14 +372,14 @@ describe('boardCacheStore.findCascadeDeleteTargets / applyCascadeStyleClears (Sp
 });
 
 /**
- * Polish phase 3.2 (2026-05-25) — `restoreCascadeStyleClears` must not
+ * `restoreCascadeStyleClears` must not
  * trample a manual edit the user made between cascade-delete and undo.
  * Previously the guard `value === matchedPath` only skipped when the field
  * already held the right value; if the user re-pointed coverImage /
  * backgroundImage to a different file, undo would overwrite the new pick
  * with the original deleted path.
  */
-describe('restoreCascadeStyleClears — manual-edit guard (polish phase 3.2)', () => {
+describe('restoreCascadeStyleClears — manual-edit guard', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     vaultStore.setPath('');

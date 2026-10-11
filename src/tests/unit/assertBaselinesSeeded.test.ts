@@ -1,8 +1,9 @@
 /**
- * Phase 4 / E4 — dev-time baseline tripwire. `assertBaselinesSeeded` warns
- * (never throws) when a loaded path is missing its drift baseline, turning the
- * F1 invariant into a runtime signal during development. These tests run under
- * vitest, where `import.meta.env.DEV` is true, so the guarded body executes.
+ * Dev-time baseline tripwire. `assertBaselinesSeeded` warns (never throws)
+ * when a loaded path is missing its drift baseline, turning the "every loaded
+ * path has a baseline" invariant into a runtime signal during development.
+ * These tests run under vitest, where `import.meta.env.DEV` is true, so the
+ * guarded body executes.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -11,7 +12,7 @@ import {
   __resetBaselinesForTests,
 } from '@renderer/lib/vault/fileBaselineRegistry';
 
-describe('assertBaselinesSeeded (E4)', () => {
+describe('assertBaselinesSeeded', () => {
   let warn: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     __resetBaselinesForTests();

@@ -13,7 +13,7 @@ import {
 } from '@renderer/lib/utils/errorBus';
 
 /**
- * Phase 2 / 2.4 — verifies the rename queue serialises `vault:tree-updated`
+ * Verifies the rename queue serialises `vault:tree-updated`
  * + `vault:file-renamed` arrivals. An external `git mv` burst can produce
  * both events in the same tick; without queue ordering, the tree reconcile
  * runs before the rename handler rebinds `boardPaths`, sees the renamed
@@ -42,7 +42,7 @@ function makeMindMap(boardId: string): BoardFileData {
   };
 }
 
-describe('Phase 2.4 — tree-updated vs file-renamed race', () => {
+describe('tree-updated vs file-renamed race', () => {
   beforeEach(() => {
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -175,11 +175,11 @@ describe('Phase 2.4 — tree-updated vs file-renamed race', () => {
     ]);
   });
 
-  // 6.4.M6 — when the listener routes through the rename queue, a failure
+  // When the listener routes through the rename queue, a failure
   // in the queued task surfaces via reportError with the supplied label.
   // The next enqueued task still runs. Without the label, behaviour is
   // unchanged (caller is responsible for awaiting + handling the rejection).
-  it('routes rejected task to reportError when a label is supplied (M6)', async () => {
+  it('routes rejected task to reportError when a label is supplied', async () => {
     __resetErrorBusForTests();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const errors: ReportedError[] = [];
@@ -191,7 +191,7 @@ describe('Phase 2.4 — tree-updated vs file-renamed race', () => {
           async () => {
             throw new Error('rename failed');
           },
-          { label: 'vault.testLabel', message: 'Failed in M6 test fixture' },
+          { label: 'vault.testLabel', message: 'Failed in test fixture' },
         )
         .catch(() => undefined);
 

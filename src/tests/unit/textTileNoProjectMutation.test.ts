@@ -1,5 +1,5 @@
 /**
- * L2 (Audit-12) — TextTile's editor `onUpdate` used to write
+ * TextTile's editor `onUpdate` used to write
  * `DocumentBoard.content` / `updatedAt` directly onto the by-reference
  * in-memory virtual `project.boards`, bypassing reactivity. The virtual
  * project is in-memory only and nothing reads `.content` as a write source
@@ -28,7 +28,7 @@ const TEXT_TILE_PATH = path.join(
   'TextTile.svelte',
 );
 
-describe('TextTile — no in-memory project.boards mutation (Audit-12 L2)', () => {
+describe('TextTile — no in-memory project.boards mutation', () => {
   const rawSrc = fs.readFileSync(TEXT_TILE_PATH, 'utf8');
   // Blank comments before scanning so the explanatory comment that NAMES the
   // removed pattern (which legitimately mentions `project.boards` /

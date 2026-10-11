@@ -4,24 +4,23 @@ import { renameVaultIndexUnderPrefix } from '@renderer/stores/vaultFolderOps';
 import type { FileMetadata } from '@renderer/lib/vault/vaultIndex';
 
 /**
- * Audit 1.3 — REFUTED claim, pinned as a regression guard.
- *
- * The audit claimed that renaming a folder whose name contains an uppercase
- * letter (e.g. `Projects`) leaves its descendants' full-text-search keys stale,
- * on the premise that "VaultIndex/MiniSearch keys are stored lowercased" while
- * `renameVaultIndexUnderPrefix` derives a case-preserved prefix.
+ * Regression guard: renaming a folder whose name contains an uppercase letter
+ * (e.g. `Projects`) must not leave its descendants' full-text-search keys
+ * stale. It was once suspected to, on the premise that "VaultIndex/MiniSearch
+ * keys are stored lowercased" while `renameVaultIndexUnderPrefix` derives a
+ * case-preserved prefix.
  *
  * That premise is false. `VaultIndex` keys every entry via `toPosix(...)`
  * (separators only — never lowercased), and `renameVaultIndexUnderPrefix`
  * derives `oldKey`/`childPrefix` from the same case-preserving `normalizePath`.
  * So `"Projects/Note.md".startsWith("Projects/")` already matches and the
  * descendant rebind already works. (The case-insensitive `normalizeVaultRelative`
- * fold the audit pointed at is used only for the `knownPaths` set and the
- * branded `VaultPath` keys, NOT for the search index.)
+ * fold is used only for the `knownPaths` set and the branded `VaultPath` keys,
+ * NOT for the search index.)
  *
- * Applying the audit's proposed fix (lowercasing the keys via
- * `normalizeVaultRelative`) would in fact REGRESS this: `childPrefix` would
- * become `"projects/"`, which fails the case-sensitive `startsWith` against the
+ * Lowercasing the keys via `normalizeVaultRelative` would in fact REGRESS
+ * this: `childPrefix` would become `"projects/"`, which fails the
+ * case-sensitive `startsWith` against the
  * case-preserved `"Projects/Note.md"`, and `index.renameKey` (which looks up by
  * the case-preserved key) would miss. This test locks in the correct behaviour.
  */
@@ -38,7 +37,7 @@ function md(path: string): FileMetadata {
   };
 }
 
-describe('renameVaultIndexUnderPrefix — uppercase folder rename (Audit 1.3)', () => {
+describe('renameVaultIndexUnderPrefix — uppercase folder rename', () => {
   beforeEach(() => {
     vaultIndexStore.clear();
   });

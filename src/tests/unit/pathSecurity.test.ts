@@ -8,19 +8,18 @@ import {
 } from '../../main/utils/pathSecurity';
 
 /**
- * Phase 3 (P0-17) regression guard for the existing path-security helpers
- * that Phase 3 newly enforces at the IPC layer. `assertSafeFilename` and
- * `isPrivateUrl` were already exported but only sporadically called — the
- * tests below pin the traversal / SSRF payloads we now reject.
+ * Regression guard for the path-security helpers enforced at the IPC layer.
+ * `assertSafeFilename` and `isPrivateUrl` used to be exported but only
+ * sporadically called — the tests below pin the traversal / SSRF payloads we
+ * now reject.
  *
- * 6.3.P1 / 6.3.P2 — the Windows-only rules (illegal chars `<>:"|?*`, reserved
- * DOS names) are platform-gated by default; callers pass
- * `{ forCreation: true }` at creation channels to enforce on every platform.
- * The "creation rule" tests below pass `{ forCreation: true }` so they pin
- * the cross-platform-portability invariant regardless of which OS CI runs
- * on. Separate tests below mock `process.platform = 'darwin'` to pin the
- * POSIX-read invariant (legitimately-named files like `2025:01:15.md` must
- * be accessible).
+ * The Windows-only rules (illegal chars `<>:"|?*`, reserved DOS names) are
+ * platform-gated by default; callers pass `{ forCreation: true }` at creation
+ * channels to enforce on every platform. The "creation rule" tests below pass
+ * `{ forCreation: true }` so they pin the cross-platform-portability invariant
+ * regardless of which OS CI runs on. Separate tests below mock
+ * `process.platform = 'darwin'` to pin the POSIX-read invariant
+ * (legitimately-named files like `2025:01:15.md` must be accessible).
  */
 describe('assertSafeFilename', () => {
   it('accepts a bare filename', () => {
@@ -58,7 +57,7 @@ describe('assertSafeFilename', () => {
   });
 
   it('rejects Windows reserved names at creation regardless of case or extension', () => {
-    // 6.3.P2 — pass forCreation:true so these reject on every CI platform.
+    // Pass forCreation:true so these reject on every CI platform.
     const c = { forCreation: true } as const;
     expect(() => assertSafeFilename('CON', c)).toThrow(/CON/);
     expect(() => assertSafeFilename('con', c)).toThrow(/CON/);
@@ -80,8 +79,8 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename('Console.md')).not.toThrow();
   });
 
-  // Audit-8 L1 — the device-name set previously omitted CONIN$ / CONOUT$ /
-  // CLOCK$. Each opens a device handle on Windows like CON/NUL do.
+  // The device-name set previously omitted CONIN$ / CONOUT$ / CLOCK$. Each
+  // opens a device handle on Windows like CON/NUL do.
   it('rejects the CONIN$ / CONOUT$ / CLOCK$ device names at creation', () => {
     const c = { forCreation: true } as const;
     expect(() => assertSafeFilename('CONIN$', c)).toThrow(/CONIN\$/);
@@ -98,9 +97,9 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename('CONINNER$.md', c)).not.toThrow();
   });
 
-  // Audit-8 L1 — Windows trims leading/trailing spaces off the name component,
-  // so ` CON.md` / `CON .md` still resolve to the CON device. The stem trim
-  // before the reserved-name compare catches them.
+  // Windows trims leading/trailing spaces off the name component, so
+  // ` CON.md` / `CON .md` still resolve to the CON device. The stem trim before
+  // the reserved-name compare catches them.
   it('rejects a space-padded reserved device name at creation', () => {
     const c = { forCreation: true } as const;
     expect(() => assertSafeFilename(' CON.md', c)).toThrow(/CON/);
@@ -114,11 +113,10 @@ describe('assertSafeFilename', () => {
     expect(() => assertSafeFilename('foo ', c)).toThrow(/trailing/);
   });
 
-  // Audit2 5.4 / 6.3.P1 — `:` is the load-bearing entry: NTFS Alternate
-  // Data Streams. A filename like `note.md:hidden` writes to a hidden
-  // stream inside the vault on Windows. Creation channels (forCreation:
-  // true) reject these on every platform so a cross-platform vault stays
-  // portable.
+  // `:` is the load-bearing entry: NTFS Alternate Data Streams. A filename
+  // like `note.md:hidden` writes to a hidden stream inside the vault on
+  // Windows. Creation channels (forCreation: true) reject these on every
+  // platform so a cross-platform vault stays portable.
   it('rejects NTFS Alternate Data Stream filenames (colon) at creation', () => {
     const c = { forCreation: true } as const;
     expect(() => assertSafeFilename('note.md:hidden', c)).toThrow(/Windows-illegal/);
@@ -154,15 +152,14 @@ describe('assertSafeFilename', () => {
 });
 
 /**
- * 6.3.P1 / 6.3.P2 — the bug fix. Audit2 5.4 / 5.5 enforced Windows-only
- * rules platform-blind, which made any POSIX vault containing a file named
- * `2025:01:15 meeting.md` (Obsidian daily-notes default) unreadable through
- * Filo — every read/delete/rename IPC threw before reaching `fs.readFile`.
- * The default behaviour now gates those checks to win32; creation channels
- * still get `forCreation: true` to keep the cross-platform-portability
- * invariant.
+ * The bug fix: the Windows-only rules were once enforced platform-blind, which
+ * made any POSIX vault containing a file named `2025:01:15 meeting.md`
+ * (Obsidian daily-notes default) unreadable through Filo — every
+ * read/delete/rename IPC threw before reaching `fs.readFile`. The default
+ * behaviour now gates those checks to win32; creation channels still get
+ * `forCreation: true` to keep the cross-platform-portability invariant.
  */
-describe('assertSafeFilename — platform gating (6.3.P1 / 6.3.P2)', () => {
+describe('assertSafeFilename — platform gating', () => {
   let platformSpy: ReturnType<typeof vi.spyOn> | null = null;
   const setPlatform = (p: NodeJS.Platform): void => {
     platformSpy?.mockRestore();
@@ -336,8 +333,8 @@ describe('assertSafeRelativePath', () => {
     expect(() => assertSafeRelativePath('../etc/passwd')).toThrow();
   });
 
-  // Audit-19 ERR-2 — `..` INSIDE a name is not traversal. Reverting the
-  // substring `includes('..')` test turns this red.
+  // `..` INSIDE a name is not traversal. Reverting the substring
+  // `includes('..')` test turns this red.
   it('accepts ellipses and double dots inside a name', () => {
     for (const p of ['Call Bob..md', 'Ideas... later.md', 'v1..2.md', 'notes/Wait... what.md']) {
       expect(() => assertSafeRelativePath(p, { forCreation: true })).not.toThrow();

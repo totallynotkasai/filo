@@ -8,7 +8,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 afterEach(disposeTestSchedulers);
 
 /**
- * Audit-19 EXT-5 / ERR-9 — a write that failed on a transient lock used to be
+ * A write that failed on a transient lock used to be
  * forgotten: the scheduler kept only the failure id, `flushAll()` re-fired only
  * `pending`, and the quit dialog's retry re-issued nothing. Transient failures
  * now RETAIN their args getter and the next flushAll / Retry re-fires them.
@@ -28,7 +28,7 @@ async function waitFor(pred: () => boolean): Promise<void> {
   throw new Error('condition not met');
 }
 
-describe('writeScheduler — retained failed writes re-fire (Audit-19 EXT-5)', () => {
+describe('writeScheduler — retained failed writes re-fire', () => {
   beforeEach(() => {
     installFiloMock(() => ({ success: true, ok: true }));
     __resetDirtyTrackingForTests();

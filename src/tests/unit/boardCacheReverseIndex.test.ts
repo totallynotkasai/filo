@@ -4,7 +4,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Phase 7.5 — findBoardIdFor* now memoises scan results (id → boardId). A tile
+ * findBoardIdFor* memoises scan results (id → boardId). A tile
  * is created on one board and never re-parented (an invariant), so a hit stays
  * valid for the tile's life. The memo verifies-on-hit and rescans on a miss or
  * stale hit, so it can never return a wrong board — these tests pin that.
@@ -37,7 +37,7 @@ function mmWithPlacement(boardId: string, tileId: string): BoardFileData {
   };
 }
 
-describe('boardCache — tile→board reverse index (Phase 7.5)', () => {
+describe('boardCache — tile→board reverse index', () => {
   beforeEach(() => {
     installFiloStub();
     boardCacheStore.clear();

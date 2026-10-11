@@ -6,7 +6,7 @@ import type { FileTreeNode } from '@shared/types';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-4 DI-03 — `runPostCommitTasks` must not write the *outgoing* vault's
+ * `runPostCommitTasks` must not write the *outgoing* vault's
  * pruned tags into the *incoming* vault on a fast A→B swap.
  *
  * Mechanism (vault.svelte.ts): the post-open index rebuild's `.then` callback
@@ -106,7 +106,7 @@ function parkFirstRebuild(gate: Promise<void>): () => number {
   return () => calls;
 }
 
-describe('Audit-4 DI-03 — fast vault swap does not corrupt the new vault\'s tags.json', () => {
+describe('fast vault swap does not corrupt the new vault\'s tags.json', () => {
   beforeEach(() => restoreFiloDefault());
   afterEach(() => {
     vi.restoreAllMocks();
@@ -154,7 +154,7 @@ describe('Audit-4 DI-03 — fast vault swap does not corrupt the new vault\'s ta
 });
 
 /**
- * Audit-8 H2(b) — the post-commit prune guard must use the GENERATION-aware
+ * The post-commit prune guard must use the GENERATION-aware
  * `isStillSameVault`, not a `vaultPath !== newVaultPath` string compare. The
  * A→B test above passes under BOTH (the path string differs), but a
  * close→reopen of the SAME path is a new vault generation with an identical
@@ -165,7 +165,7 @@ describe('Audit-4 DI-03 — fast vault swap does not corrupt the new vault\'s ta
  * present (its own prune drops nothing). Releasing the parked first rebuild,
  * the outgoing session must not prune the reopened session's tags.
  */
-describe('Audit-8 H2(b) — close→reopen same path bails via the generation guard', () => {
+describe('close→reopen same path bails via the generation guard', () => {
   beforeEach(() => restoreFiloDefault());
   afterEach(() => {
     vi.restoreAllMocks();

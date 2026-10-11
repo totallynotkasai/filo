@@ -1,11 +1,11 @@
 /**
- * Phase 7 — contract-level vault-lifecycle coverage.
+ * Contract-level vault-lifecycle coverage.
  *
- * Phase 4 introduced `vaultLifecycle` as the single subscription point for
- * vault-swap reset; Phase 0's `vaultSwapResets.test.ts` covers a hardcoded
- * list of REQUIRED handler names; the `ci:vault-lifecycle-coverage` gate
- * (`scripts/gates:vault-lifecycle-coverage`) statically scans the
- * renderer for `$state` modules with no `onVaultSwap(...)` call.
+ * `vaultLifecycle` is the single subscription point for vault-swap reset;
+ * `vaultSwapResets.test.ts` covers a hardcoded list of REQUIRED handler names;
+ * the `ci:vault-lifecycle-coverage` gate
+ * (`scripts/gates:vault-lifecycle-coverage`) statically scans the renderer for
+ * `$state` modules with no `onVaultSwap(...)` call.
  *
  * This test complements those two by walking the renderer source AT TEST
  * TIME, importing every module it finds, and asserting the registry holds
@@ -36,10 +36,9 @@ const RENDERER_DIR = join(ROOT, 'src', 'renderer');
 // Any drift between the two is a maintenance hazard — the parity test below
 // fails if the two lists diverge.
 //
-// Sprint B / B14 — guides/connections/ui/navigation now subscribe; their
-// exemption entries (and the gate's matching entries) have been removed.
-// Sprint C / C25 — vault.svelte.ts now subscribes for the reconcile
-// throttle reset; removed from the exemption list.
+// guides/connections/ui/navigation subscribe, so they (and the gate's
+// matching entries) are not exempt. vault.svelte.ts subscribes for the
+// reconcile throttle reset, so it is not exempt either.
 const EXEMPT_MODULES = new Set([
   'src/renderer/stores/board.svelte.ts',
   'src/renderer/stores/canvas.svelte.ts',
@@ -64,7 +63,7 @@ const EXEMPT_MODULES = new Set([
   'src/renderer/lib/utils/keyedReactivity.svelte.ts',
   // A per-folder row count, owned by a sidebar row and gone with it.
   'src/renderer/lib/utils/progressiveCount.svelte.ts',
-  // Audit 5.3 — per-instance aria-live announcer created by each board and
+  // Per-instance aria-live announcer created by each board and
   // disposed on unmount; its $state is function-local (per createAriaAnnouncer
   // call), never module-level, so nothing survives a vault swap.
   'src/renderer/lib/utils/ariaAnnouncer.svelte.ts',
@@ -150,7 +149,7 @@ beforeAll(async () => {
   }
 });
 
-describe('Phase 7 contract — vault-lifecycle coverage', () => {
+describe('vault-lifecycle coverage contract', () => {
   it('discovers every renderer module that holds $state', () => {
     expect(scanned.length).toBeGreaterThan(0);
     // Sanity bound: ratchet downward if the scanner regresses on detection.

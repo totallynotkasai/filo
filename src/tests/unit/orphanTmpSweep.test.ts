@@ -9,13 +9,12 @@ import {
 } from '../../main/services/emergencyFileRegistry';
 
 /**
- * Audit-19 EXT-5 / ERR-9 step 6 — preserved atomic-write temps
- * (`<file>.<12hex>.tmp`) accumulated forever inside the synced vault. On vault
- * open, orphans older than 10 minutes are MOVED (never deleted) into
- * `.filo/recovery/orphan-tmp/`, sparing anything a quit-failure breadcrumb or
- * this process's emergency registry still points at.
+ * Preserved atomic-write temps (`<file>.<12hex>.tmp`) accumulated forever
+ * inside the synced vault. On vault open, orphans older than 10 minutes are
+ * MOVED (never deleted) into `.filo/recovery/orphan-tmp/`, sparing anything a
+ * quit-failure breadcrumb or this process's emergency registry still points at.
  */
-describe('sweepOrphanTmpFiles (Audit-19 EXT-5)', () => {
+describe('sweepOrphanTmpFiles', () => {
   let vault: string;
   const now = Date.now();
   const old = new Date(now - ORPHAN_MIN_AGE_MS - 60_000);

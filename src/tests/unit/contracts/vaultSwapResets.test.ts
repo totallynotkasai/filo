@@ -1,10 +1,9 @@
 /**
  * Vault-swap reset chain — contract + lifecycle contract.
  *
- * Phase 0 of the consolidation plan captured the inline reset chain inside
- * `vault.svelte.ts:openVault` as a source-code snapshot. Phase 4
- * replaced that chain with a `vaultLifecycle` subscription registry; this
- * test now asserts the equivalent invariant against the new shape:
+ * The reset chain that used to live inline in `vault.svelte.ts:openVault` is
+ * now a `vaultLifecycle` subscription registry; this test asserts the
+ * equivalent invariant against that shape:
  *
  *  1. `openVault` fires `vaultLifecycle.fireVaultSwap({ phase: 'pre-swap', ... })`
  *     before hydrating the new vault, with `saveOutgoing` carrying the
@@ -12,9 +11,9 @@
  *  2. Every store / scheduler / sentinel that previously appeared in the
  *     inline reset chain is now registered as a `pre-swap` handler via
  *     `onVaultSwap(...)`.
- *  3. The Sprint B carry-overs (themeStore, orphansStore, vaultIndexStore
- *     pending retries, saveStateStore failed paths) — previously deferred
- *     skip tests — are subscribed and active.
+ *  3. themeStore, orphansStore, vaultIndexStore pending retries and
+ *     saveStateStore failed paths — previously deferred skip tests — are
+ *     subscribed and active.
  *
  * Reading the registered handler names through `__getRegisteredHandlerNames`
  * lets us assert against the subscription side without importing every store
@@ -66,7 +65,7 @@ function extractBodyOf(text: string, signature: string): string {
 const VAULT_STORE_TEXT = fs.readFileSync(VAULT_STORE_PATH, 'utf-8');
 // `openVault` runs its body (`openVaultExclusive`) one open at a time.
 const OPEN_VAULT_BODY = extractBodyOf(VAULT_STORE_TEXT, 'async openVaultExclusive(');
-// Phase R4 — `openVault` now delegates the hydration sequence to
+// `openVault` delegates the hydration sequence to
 // `commitVaultCandidate` / `runPostCommitTasks` defined alongside it in
 // the same file. The post-swap-hydration assertions below scan the
 // union of the three bodies so the contract survives the refactor.
@@ -74,13 +73,12 @@ const COMMIT_BODY = extractBodyOf(VAULT_STORE_TEXT, 'function commitVaultCandida
 const POST_COMMIT_BODY = extractBodyOf(VAULT_STORE_TEXT, 'function runPostCommitTasks(');
 const HYDRATION_REACH = `${OPEN_VAULT_BODY}\n${COMMIT_BODY}\n${POST_COMMIT_BODY}`;
 
-// Pre-swap handlers required by Phase 4 — these names must appear in the
+// Required pre-swap handlers — these names must appear in the
 // vaultLifecycle registry once every store module has been loaded.
 //
-// Phase 3 (IMPL_PLAN 2026-05-25) — three sentinel-mutex chains and the
-// dirty-flag mutex now register too, so a straggling sentinel op enqueued
-// just before swap can't drag the new vault's first op behind a chain
-// targeting the outgoing vault's IPC paths.
+// The three sentinel-mutex chains and the dirty-flag mutex register too, so
+// a straggling sentinel op enqueued just before swap can't drag the new
+// vault's first op behind a chain targeting the outgoing vault's IPC paths.
 const REQUIRED_PRE_SWAP_HANDLERS = [
   'boardCache',
   'boardRefIntegrity',
@@ -128,7 +126,7 @@ beforeAll(async () => {
     import('@renderer/stores/vaultIndex.svelte'),
     import('@renderer/stores/workspace.svelte'),
     import('@renderer/lib/boards/boardSaver'),
-    // Phase 3 (IMPL_PLAN 2026-05-25) — sentinel mutex modules register
+    // Sentinel mutex modules register
     // their pre-swap handlers at module-init time.
     import('@renderer/lib/vault/dirtyFlagRecovery'),
     import('@renderer/lib/vault/fileBaselineRegistry'),
@@ -190,7 +188,7 @@ describe('Vault-swap reset chain — lifecycle contract', () => {
   });
 
   describe('post-swap hydration still happens inside the openVault file', () => {
-    // Phase R4 — these steps used to live inline in `openVault`; they
+    // These steps used to live inline in `openVault`; they
     // now live in `commitVaultCandidate` (synchronous swap) or
     // `runPostCommitTasks` (async best-effort). The test scans the
     // union of the three bodies so the contract — "the hydration

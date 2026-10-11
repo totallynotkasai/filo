@@ -24,10 +24,10 @@ import type {
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-9 Phase 1 behavioral matrix:
- *   - A9-H1: a field command whose first read spans a vault swap writes nothing.
- *   - A9-M3: the seed thunk folded into AddTaskCommand.execute() (+ rollback).
- *   - A9-L1: the Kanban bulk tag-add is one undoable, chained BatchCommand.
+ * Behavioral matrix:
+ *   - A field command whose first read spans a vault swap writes nothing.
+ *   - The seed thunk folded into AddTaskCommand.execute() (+ rollback).
+ *   - The Kanban bulk tag-add is one undoable, chained BatchCommand.
  */
 
 interface Captured {
@@ -44,8 +44,8 @@ function writesIn(captured: Captured[]): Captured[] {
   );
 }
 
-// ── A9-H1 — cross-vault frontmatter write suppression ────────────────────────
-describe('A9-H1 — first-touch field edit + vault swap mid-read never writes the old vault FM onto the new vault', () => {
+// ── Cross-vault frontmatter write suppression ────────────────────────────────
+describe('first-touch field edit + vault swap mid-read never writes the old vault FM onto the new vault', () => {
   let captured: Captured[];
   let releaseRead: () => void;
   let readReachedP: Promise<void>;
@@ -131,8 +131,8 @@ describe('A9-H1 — first-touch field edit + vault swap mid-read never writes th
   });
 });
 
-// ── A9-M3 — task-creation .md seed runs on the history chain ──────────────────
-describe('A9-M3 — backing-.md seed runs inside the chained AddTaskCommand', () => {
+// ── Task-creation .md seed runs on the history chain ──────────────────────────
+describe('backing-.md seed runs inside the chained AddTaskCommand', () => {
   function hydrateBoard() {
     boardCacheStore.clear();
     boardCacheStore.hydrate(
@@ -231,8 +231,8 @@ describe('A9-M3 — backing-.md seed runs inside the chained AddTaskCommand', ()
   });
 });
 
-// ── A9-L1 — Kanban bulk tag-add is undoable + crash-safe ──────────────────────
-describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained BatchCommand', () => {
+// ── Kanban bulk tag-add is undoable + crash-safe ──────────────────────────────
+describe('Kanban bulk tag-add routes through an undoable, chained BatchCommand', () => {
   beforeEach(() => {
     __resetVaultIdentityForTests();
     __resetDirtyTrackingForTests();
@@ -262,7 +262,7 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
     vaultStore.setPath('');
   });
 
-  // Audit-18 M7 — the bulk tag value is injected via `promptForTag` (an in-app
+  // The bulk tag value is injected via `promptForTag` (an in-app
   // popup resolver) rather than `window.prompt`, which throws in Electron's
   // renderer. The test supplies the resolver directly.
   function makeMultiSelect(
@@ -292,8 +292,8 @@ describe('A9-L1 — Kanban bulk tag-add routes through an undoable, chained Batc
     selection.addMultiple(['a', 'b']);
     const ms = makeMultiSelect(selection, 'urgent');
     // Capture the command WITHOUT running the per-card write pipeline (the
-    // children's on-chain seeds + gateway writes are exercised by the A9-H1 /
-    // A9-M2 tests). The structural claim here is: one BatchCommand, dispatched
+    // children's on-chain seeds + gateway writes are exercised by the tests
+    // above). The structural claim here is: one BatchCommand, dispatched
     // via historyStore.execute — i.e. on the history chain (crash-safe) AND on
     // the undo stack (undoable), unlike the old off-chain per-card loop.
     const dispatched: unknown[] = [];

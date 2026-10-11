@@ -2,13 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createAriaAnnouncer } from '@renderer/lib/utils/ariaAnnouncer.svelte';
 
 /**
- * Audit 5.3 — the screen-reader announcer (extracted from TaskListBoard /
- * KanbanBoard) auto-clears its live-region text after a delay. If the host
- * board unmounts within that window the armed `setTimeout` previously fired
- * against orphaned component state. `dispose()` (called from `onDestroy`)
- * cancels the pending timer.
+ * The screen-reader announcer (extracted from TaskListBoard / KanbanBoard)
+ * auto-clears its live-region text after a delay. If the host board unmounts
+ * within that window the armed `setTimeout` previously fired against orphaned
+ * component state. `dispose()` (called from `onDestroy`) cancels the pending
+ * timer.
  */
-describe('createAriaAnnouncer (audit 5.3)', () => {
+describe('createAriaAnnouncer', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 

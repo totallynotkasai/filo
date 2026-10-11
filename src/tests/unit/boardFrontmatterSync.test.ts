@@ -10,8 +10,8 @@ import type { BoardContext } from '@renderer/stores/boardStoreTypes';
 import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 
 /**
- * Audit-14 7.7 — `boardFrontmatterSync.ts` had no dedicated test file; its
- * cascade was only reached incidentally through the CascadeDeleteCommand suites.
+ * Dedicated tests for `boardFrontmatterSync.ts`, whose cascade is otherwise
+ * only reached incidentally through the CascadeDeleteCommand suites.
  * Covers the slice's own surface directly: the file-delete cascade (a tile
  * referencing the deleted `.md` is removed and the delete is undoable), the
  * no-op path, and the rename delegation.

@@ -1,20 +1,19 @@
 /**
- * Phase 5 — board-creation parity.
+ * Board-creation parity.
  *
- * Pre-Phase-5, four call sites built default boards independently:
+ * Four call sites used to build default boards independently:
  *   - `boardRegistry.ts` factories (canonical)
  *   - `BoardBrowser.svelte:createBoard` (3 starter Kanban cols + 1 default Task section)
  *   - `TabBar.svelte:createQuickBoard` (0 Kanban cols + 0 Task sections)
  *   - `boardCache.createBoard` (empty `settings: {}`, no type-specific fields)
  *
- * The audit table in `CONSOLIDATION_PLAN_2026-05-25.md` documents three
- * contradictory shapes for Kanban and three for Tasklist. The schema's
- * `.passthrough()` masked the drift on disk.
+ * Between them they produced three contradictory shapes for Kanban and three
+ * for Tasklist. The schema's `.passthrough()` masked the drift on disk.
  *
- * Phase 5 collapses every gesture to `boardDefaults[type](...)`.
+ * Every gesture now goes through `boardDefaults[type](...)`.
  * This test pins:
  *
- * 1. The canonical shape per the Phase 5 DECISIONS (Kanban: `columns: []`;
+ * 1. The canonical shape (Kanban: `columns: []`;
  *    Tasklist: one default `Task List` section + `collapsedSubtasks: []`).
  * 2. `boardCacheStore.createBoard` — which BoardBrowser, TabBar, the template
  *    flow all route through — produces structurally
@@ -28,7 +27,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-// Phase 5 — import the pure factories from `boardDefaults`, not `boardRegistry`.
+// Import the pure factories from `boardDefaults`, not `boardRegistry`.
 // The registry's value adds Svelte component references which vitest's CSS
 // preprocessor cannot resolve through jsdom; the factories themselves have
 // no UI-side dependencies and are the single source of truth either way.
@@ -71,7 +70,7 @@ function structural(board: Board): Record<string, unknown> {
 
 const ALL_TYPES: BoardType[] = ['mindmap', 'kanban', 'tasklist', 'document'];
 
-describe('Phase 5 — board-creation parity', () => {
+describe('board-creation parity', () => {
   beforeEach(() => {
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -94,7 +93,7 @@ describe('Phase 5 — board-creation parity', () => {
     vaultStore.setPath('');
   });
 
-  describe('canonical shapes per board type (DECISIONS in CONSOLIDATION_PLAN)', () => {
+  describe('canonical shapes per board type', () => {
     it('mindmap — empty placements/inlineTiles/connections/frames/waypoints/groups', () => {
       const board = boardDefaults.mindmap('mm', 'M') as MindMapBoard;
       expect(board.type).toBe('mindmap');
@@ -163,7 +162,7 @@ describe('Phase 5 — board-creation parity', () => {
       expect(created.collapsedSubtasks).toEqual([]);
     });
 
-    // Phase 7.5 — board ids are `${type}_${createId()}` (a 12-char nanoid),
+    // Board ids are `${type}_${createId()}` (a 12-char nanoid),
     // not the old `${type}-${Date.now()}-${Math.random()}` recipe.
     it.each(ALL_TYPES)('generates a `%s_<nanoid>` id', async (type) => {
       const created = await boardCacheStore.createBoard('Foo', type);

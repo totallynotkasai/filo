@@ -1,7 +1,7 @@
 /**
- * Audit 6.1 — OrphanCatcher per-row delete must give feedback.
+ * OrphanCatcher per-row delete must give feedback.
  *
- * Before 6.1 the per-row "Delete" removed a tile silently (undoable, files
+ * The per-row "Delete" used to remove a tile silently (undoable, files
  * kept) with no confirm and no toast. The fix keeps it single-tap — the
  * deliberate design noted in the component — but adds an undo-hint toast so
  * the action isn't invisible.
@@ -22,7 +22,7 @@ function clearToasts(): void {
   for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
-describe('OrphanCatcher per-row delete feedback (audit 6.1)', () => {
+describe('OrphanCatcher per-row delete feedback', () => {
   beforeEach(() => {
     clearToasts();
     uiStore.closeConfirm();

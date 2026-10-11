@@ -1,5 +1,5 @@
 /**
- * Audit-13 H3 — a failed candidate load must NOT strand the user on an
+ * A failed candidate load must NOT strand the user on an
  * empty-looking, half-torn-down vault.
  *
  * `openVault` tears the outgoing vault A down (pre-swap resets its stores;
@@ -84,7 +84,7 @@ function buildRoutes(
   };
 }
 
-describe('Audit-13 H3 — openVault reverts to the outgoing vault on a failed load', () => {
+describe('openVault reverts to the outgoing vault on a failed load', () => {
   beforeEach(() => restoreFiloDefault());
   afterEach(() => restoreFiloDefault());
 

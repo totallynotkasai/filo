@@ -7,7 +7,7 @@ import {
 import type { CanvasScope } from '@renderer/stores/canvas.svelte';
 
 /**
- * Audit 5.2 — edge-pan during connection drawing must arm for the pane the
+ * Edge-pan during connection drawing must arm for the pane the
  * user is drawing in, not whichever pane's effect happens to fire first.
  *
  * `connectionsStore.drawing` is a GLOBAL `$state`, so in split view both
@@ -26,7 +26,7 @@ function fakeScope(id: string): CanvasScope {
   return { id } as unknown as CanvasScope;
 }
 
-describe('edge-pan connection-draw scope gating (audit 5.2)', () => {
+describe('edge-pan connection-draw scope gating', () => {
   beforeEach(() => stopEdgePan());
   afterEach(() => stopEdgePan());
 

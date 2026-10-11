@@ -11,7 +11,7 @@ import type { RowDndItem } from '@renderer/lib/tasklist/blockMove';
 import { sectionIdForPlacementIndex } from '@renderer/lib/tasklist/sectionMath';
 
 /**
- * Phase 6 — TaskDragController integration.
+ * TaskDragController integration.
  *
  * The controller's reactive `$state` fields run under Svelte 5's runtime, so
  * we instantiate via the constructor and exercise the `onConsider` /
@@ -124,7 +124,7 @@ describe('TaskDragController — same-section reorder', () => {
     expect(rec.reorder[0].isCrossSection).toBe(false);
     expect(rec.reorder[0].isMultiDrag).toBe(false);
     expect(rec.reorder[0].description).toBe('Reorder task');
-    // Phase 7.4 announcement form: "Dropped task X at position N in section S".
+    // Announcement form: "Dropped task X at position N in section S".
     expect(rec.announce.some((m) => /^Dropped task .* at position \d+ in /.test(m))).toBe(true);
   });
 });
@@ -197,7 +197,7 @@ describe('TaskDragController — cross-section drag', () => {
   });
 });
 
-describe('TaskDragController — DRAG-1 cross-section subtask outdent', () => {
+describe('TaskDragController — cross-section subtask outdent', () => {
   it('outdents a subtask dragged into another section (separate commit)', () => {
     // A@0 owns [p, c] (c.parent = p); B@2 owns [b1]. Dragging the subtask c
     // into B moves its placement but would leave it rendering under p in A
@@ -284,7 +284,7 @@ describe('TaskDragController — DRAG-1 cross-section subtask outdent', () => {
   });
 });
 
-describe('TaskDragController — DRAG-2 cross-section indent reject', () => {
+describe('TaskDragController — cross-section indent reject', () => {
   it('rejects an indent when the hovered target is in another section', () => {
     // A@0 owns [a]; B@1 owns [b]. The drag finalizes in the SOURCE section A
     // (so the same-section indent branch is reached), but the pointer's last
@@ -484,7 +484,7 @@ describe('TaskDragController — indent / outdent (single, same-section)', () =>
   });
 });
 
-describe('TaskDragController — pointerdown snapshot (Phase 1 fix)', () => {
+describe('TaskDragController — pointerdown snapshot', () => {
   it('armRow snapshots dragBlockIds from current selection at pointerdown', () => {
     const placements = [p('a', 0), p('b', 1), p('c', 2)];
     const sections = [s('S', 0)];
@@ -716,7 +716,7 @@ describe('TaskDragController — ESC cancel', () => {
   });
 });
 
-describe('TaskDragController — DRAG-4 no-op drop', () => {
+describe('TaskDragController — no-op drop', () => {
   it('does NOT commit a reorder when the rebuilt order equals the pre-drag order', () => {
     const placements = [p('a', 0), p('b', 1), p('c', 2)];
     const sections = [s('S', 0)];
@@ -838,7 +838,7 @@ describe('TaskDragController — syncFromSnapshot', () => {
   });
 });
 
-describe('TaskDragController — L16 pointerup cleanup', () => {
+describe('TaskDragController — pointerup cleanup', () => {
   it('detaches the armRow pointerup on cancelDrag() even when no drag started', () => {
     const snap: SectionItemsSnapshot = {
       itemsBySection: { S: [{ id: 'a' }] },

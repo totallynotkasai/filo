@@ -13,9 +13,8 @@
  *  - `tileCommands.ts`          — DeleteTilesCommand
  *  - `groupAndBoardCommands.ts` — CascadeDeleteCommand
  *
- * History: before Phase 2 of CONSOLIDATION_PLAN_2026-05-25 the sink was
- * mindmap-only and silently dropped Kanban / Task List placements. Phase 2
- * lifted the body into a per-type strategy registry
+ * The sink used to be mindmap-only and silently dropped Kanban / Task List
+ * placements. Its body now lives in a per-type strategy registry
  * (`src/renderer/core/boardTileOps.ts`) so every dispatch is exhaustive
  * over `BoardType` — this test asserts the post-condition holds across
  * all four variants.
@@ -255,10 +254,10 @@ describe('Contract — delete-tile entry-point parity', () => {
     });
   });
 
-  describe('Kanban — entry points (Phase 2 fixes the dispatch)', () => {
+  describe('Kanban — entry points', () => {
     // The right path for Kanban exists today as
     // `boardCacheStore.removeKanbanPlacement` — this passes.
-    it('removeKanbanPlacement (Phase 2 dispatch target) leaves no orphans', () => {
+    it('removeKanbanPlacement (dispatch target) leaves no orphans', () => {
       const { boardId, envelope } = freshBoard('kanban', 'tile_a');
       boardCacheStore.hydrate({ [boardId]: envelope }, { [boardId]: 'k.board.json' });
 
@@ -273,9 +272,8 @@ describe('Contract — delete-tile entry-point parity', () => {
       });
     });
 
-    // Phase 2 / CONSOLIDATION_PLAN_2026-05-25 — `persistRemoveTile` now
-    // dispatches via `opsFor(cached.board).removeTile`, so the Kanban
-    // variant in `core/boardTileOps/kanban.ts` runs here. The orphan
+    // `persistRemoveTile` dispatches via `opsFor(cached.board).removeTile`, so
+    // the Kanban variant in `core/boardTileOps/kanban.ts` runs here. The orphan
     // placement that used to land on disk is now swept along with the def.
     it('persistRemoveTile on a Kanban tile leaves no orphan placement', () => {
       const { boardId, envelope } = freshBoard('kanban', 'tile_a');
@@ -293,8 +291,8 @@ describe('Contract — delete-tile entry-point parity', () => {
     });
   });
 
-  describe('Task List — entry points (Phase 2 fixes the dispatch)', () => {
-    it('removeTaskPlacement (Phase 2 dispatch target) leaves no orphans', () => {
+  describe('Task List — entry points', () => {
+    it('removeTaskPlacement (dispatch target) leaves no orphans', () => {
       const { boardId, envelope } = freshBoard('tasklist', 'tile_a');
       boardCacheStore.hydrate({ [boardId]: envelope }, { [boardId]: 't.board.json' });
 
@@ -309,9 +307,8 @@ describe('Contract — delete-tile entry-point parity', () => {
       });
     });
 
-    // Phase 2 / CONSOLIDATION_PLAN_2026-05-25 — same dispatch fix as the
-    // Kanban case above: `persistRemoveTile` now routes through
-    // `opsFor(cached.board).removeTile`, which lands in
+    // Same dispatch as the Kanban case above: `persistRemoveTile` routes
+    // through `opsFor(cached.board).removeTile`, which lands in
     // `core/boardTileOps/tasklist.ts` for Task List boards and shifts the
     // surviving section positions.
     it('persistRemoveTile on a Task List tile leaves no orphan placement', () => {
@@ -333,7 +330,7 @@ describe('Contract — delete-tile entry-point parity', () => {
   describe('Document boards have no tile-removal entry point (intentional)', () => {
     // Document tiles are inline rich text — there is no per-tile delete
     // surface, so no entry-point coverage to mirror. This is a positive
-    // assertion that the Phase 2 registry must include a `document` ops
+    // assertion that the strategy registry must include a `document` ops
     // implementation that is a documented no-op.
     it('document boards do not surface a tile-removal API today', () => {
       // boardCacheStore.persistRemoveTile is a no-op when no board owns
@@ -341,7 +338,7 @@ describe('Contract — delete-tile entry-point parity', () => {
       // have no tile-defs). The post-condition is trivially satisfied.
       boardCacheStore.clear();
       boardCacheStore.persistRemoveTile('no_such_tile');
-      // No throw; no state mutation. Phase 2's document ops becomes the
+      // No throw; no state mutation. The registry's document ops is the
       // explicit version of this behavior.
       expect(true).toBe(true);
     });

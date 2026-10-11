@@ -11,8 +11,8 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 afterEach(disposeTestSchedulers);
 
 /**
- * Audit5 R3 — the two independent defences against a stranded / wedged write
- * hanging the flush chain (#1):
+ * The two independent defences against a stranded / wedged write hanging the
+ * flush chain:
  *
  *  Part 1 (toast eviction): a promise-backed toast (the external-edit drift
  *  prompt resolves its awaiting write ONLY via onDismiss/action) must never be
@@ -28,7 +28,7 @@ function clearToasts(): void {
   for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
-describe('Audit5 R3 part 1 — toast eviction never strands a promise-backed toast', () => {
+describe('toast eviction never strands a promise-backed toast', () => {
   beforeEach(() => clearToasts());
   afterEach(() => clearToasts());
 
@@ -77,7 +77,7 @@ describe('Audit5 R3 part 1 — toast eviction never strands a promise-backed toa
   });
 });
 
-describe('Audit5 R3 part 2 — bounded write flush (writeTimeoutMs)', () => {
+describe('bounded write flush (writeTimeoutMs)', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));

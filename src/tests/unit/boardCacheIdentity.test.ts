@@ -1,14 +1,14 @@
 /**
- * Audit 5.5 / 5.6 — board sub-object mutators refresh cache identity.
+ * Board sub-object mutators refresh cache identity.
  *
- * 5.5: `updateBoardSettings` used to mutate `cached.board.settings` in place
- *      and then ref-copy the SAME entry, leaving a transient window where the
- *      cache map pointed at the old entry while `board.settings` had already
- *      changed.
- * 5.6: the per-type `removeTile` ops (and `removeKanbanPlacement`) mutated
- *      `board.placements` / `board.columns` / `board.tasks` in place but only
- *      spread `tileDefs` / `connections` into `updateEntry`, carrying the same
- *      `board` reference forward.
+ * - `updateBoardSettings` used to mutate `cached.board.settings` in place
+ *   and then ref-copy the SAME entry, leaving a transient window where the
+ *   cache map pointed at the old entry while `board.settings` had already
+ *   changed.
+ * - The per-type `removeTile` ops (and `removeKanbanPlacement`) mutated
+ *   `board.placements` / `board.columns` / `board.tasks` in place but only
+ *   spread `tileDefs` / `connections` into `updateEntry`, carrying the same
+ *   `board` reference forward.
  *
  * Both are latent today (deep-proxy reactivity still fires), but they violate
  * the spread-to-update convention and would bite any future identity check on
@@ -108,7 +108,7 @@ function makeTaskListWith(tileId: string): BoardFileData {
   };
 }
 
-describe('Audit 5.5/5.6 — board mutators refresh cache identity', () => {
+describe('board mutators refresh cache identity', () => {
   beforeEach(() => {
     boardCacheStore.clear();
   });
@@ -117,7 +117,7 @@ describe('Audit 5.5/5.6 — board mutators refresh cache identity', () => {
     restoreFiloDefault();
   });
 
-  it('5.5 updateBoardSettings replaces the board object and applies settings', () => {
+  it('updateBoardSettings replaces the board object and applies settings', () => {
     boardCacheStore.hydrate({ kb: makeKanbanWith('t1') }, { kb: 'k.board.json' });
     const before = boardCacheStore.cache.kb.board;
     boardCacheStore.updateBoardSettings('kb', { foo: 'bar' });
@@ -126,7 +126,7 @@ describe('Audit 5.5/5.6 — board mutators refresh cache identity', () => {
     expect((after as { settings: Record<string, unknown> }).settings).toEqual({ foo: 'bar' });
   });
 
-  it('5.6 mindmap removeTile refreshes the board identity and drops the placement', () => {
+  it('mindmap removeTile refreshes the board identity and drops the placement', () => {
     boardCacheStore.hydrate({ mm: makeMindMapWith('t1') }, { mm: 'm.board.json' });
     const before = boardCacheStore.cache.mm.board;
     boardCacheStore.persistRemoveTile('t1');
@@ -135,7 +135,7 @@ describe('Audit 5.5/5.6 — board mutators refresh cache identity', () => {
     expect((after as MindMapBoard).placements?.t1).toBeUndefined();
   });
 
-  it('5.6 kanban removeKanbanPlacement refreshes the board identity', () => {
+  it('kanban removeKanbanPlacement refreshes the board identity', () => {
     boardCacheStore.hydrate({ kb: makeKanbanWith('t1') }, { kb: 'k.board.json' });
     const before = boardCacheStore.cache.kb.board;
     boardCacheStore.removeKanbanPlacement('kb', 't1');
@@ -143,7 +143,7 @@ describe('Audit 5.5/5.6 — board mutators refresh cache identity', () => {
     expect(after).not.toBe(before);
   });
 
-  it('5.6 tasklist removeTile refreshes the board identity', () => {
+  it('tasklist removeTile refreshes the board identity', () => {
     boardCacheStore.hydrate({ tl: makeTaskListWith('t1') }, { tl: 't.board.json' });
     const before = boardCacheStore.cache.tl.board;
     boardCacheStore.persistRemoveTile('t1');

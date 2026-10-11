@@ -1,10 +1,10 @@
 /**
- * Sprint C — schema-bound regression suite.
+ * Schema-bound regression suite.
  *
- * Each test pins a single Sprint C schema tightening (C1 / C3 / C6 / C7
- * / C8 / C10) so a future refactor that loosens the schema (e.g. drops
- * a `.finite()` on a partial style numeric, or removes a duplicate
- * boardId cross-check) is caught by `npm run test:unit:strict`.
+ * Each test pins a single schema tightening so a future refactor that
+ * loosens the schema (e.g. drops a `.finite()` on a partial style numeric,
+ * or removes a duplicate boardId cross-check) is caught by
+ * `npm run test:unit:strict`.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -23,7 +23,7 @@ import {
   LayoutTemplateSchema,
 } from '@renderer/schema/index';
 
-describe('Sprint C / C1 — partial style numerics reject Infinity', () => {
+describe('partial style numerics reject Infinity', () => {
   it('mindmap.defaults.tile.shadowIntensity rejects Infinity', () => {
     const r = MindMapBoardSchema.safeParse({
       id: 'b',
@@ -116,7 +116,7 @@ describe('Sprint C / C1 — partial style numerics reject Infinity', () => {
   });
 });
 
-describe('Sprint C / C3 — TimerTile duration/remaining nonnegative', () => {
+describe('TimerTile duration/remaining nonnegative', () => {
   const baseTile = {
     id: 't1',
     title: 'T',
@@ -171,7 +171,7 @@ describe('Sprint C / C3 — TimerTile duration/remaining nonnegative', () => {
   });
 });
 
-describe('Sprint C / C6 — min(1) titles + filter keys', () => {
+describe('min(1) titles + filter keys', () => {
   it('KanbanColumn.title accepts empty string today and stays accepted', () => {
     // Tracked separately — KanbanColumn.title currently allows '' for
     // freshly-created columns. The min(1) test lives on the column block
@@ -223,7 +223,7 @@ describe('Sprint C / C6 — min(1) titles + filter keys', () => {
   });
 });
 
-describe('Sprint C / C7 — record keys must match nanoid pattern', () => {
+describe('record keys must match nanoid pattern', () => {
   const makeEnvelope = (overrides: Record<string, unknown> = {}) => ({
     version: 8 as const,
     board: {
@@ -281,7 +281,7 @@ describe('Sprint C / C7 — record keys must match nanoid pattern', () => {
   });
 });
 
-describe('Sprint C / C8 — boardId cross-check in BoardFileDataSchema', () => {
+describe('boardId cross-check in BoardFileDataSchema', () => {
   // Note: cross-check is warn-only (logged via console.warn) — rejecting
   // at the schema layer would routinely fail loosely-tagged test
   // fixtures through `failedBoards`. The signal is preserved through the
@@ -346,7 +346,7 @@ describe('Sprint C / C8 — boardId cross-check in BoardFileDataSchema', () => {
   });
 });
 
-describe('Sprint C / C5 — DecodedFiloLinkSchema', () => {
+describe('DecodedFiloLinkSchema', () => {
   it('decodeFiloLink rejects non-finite position coordinates', () => {
     const result = decodeFiloLink('filo://position/b1/Infinity/Infinity');
     expect(result).toBeNull();
@@ -364,7 +364,7 @@ describe('Sprint C / C5 — DecodedFiloLinkSchema', () => {
   });
 });
 
-describe('Sprint C / C4 — ProjectSchema.version and tags dropped', () => {
+describe('ProjectSchema.version and tags dropped', () => {
   it('parses without version/tags fields', () => {
     const r = ProjectSchema.safeParse({
       vaultPath: '',
@@ -381,8 +381,8 @@ describe('Sprint C / C4 — ProjectSchema.version and tags dropped', () => {
   });
 });
 
-describe('Sprint C / C9 + C10 — migration error kinds', () => {
-  it('C9 — missing-step path yields error: no-migration-path (not fromFuture)', () => {
+describe('migration error kinds', () => {
+  it('missing-step path yields error: no-migration-path (not fromFuture)', () => {
     // An old version gets its own no-migration-path error rather than
     // reusing the from-future flag.
     const result = migrateBoardFile({ version: 3, board: {} });
@@ -390,19 +390,19 @@ describe('Sprint C / C9 + C10 — migration error kinds', () => {
     expect(result.noMigrationPath).toBe(true);
   });
 
-  it('C10 — fractional version is rejected as no-migration-path', () => {
+  it('fractional version is rejected as no-migration-path', () => {
     const result = migrateBoardFile({ version: 6.5, board: {} });
     expect(result.noMigrationPath).toBe(true);
   });
 
-  it('C10 — integer current version still passes through cleanly', () => {
+  it('integer current version still passes through cleanly', () => {
     const result = migrateBoardFile({ version: 8, board: {} });
     expect(result.fromFuture).toBe(false);
     expect(result.noMigrationPath).toBe(false);
   });
 });
 
-describe('Sprint C / C23 — KanbanColumn.coverImage cascade-delete', () => {
+describe('KanbanColumn.coverImage cascade-delete', () => {
   it('column-level coverImage is added to the cascade-delete result', async () => {
     const { findTilesToCascadeDelete } = await import('@renderer/lib/vault/fileRefIntegrity');
     const board = {
@@ -443,7 +443,7 @@ describe('Sprint C / C23 — KanbanColumn.coverImage cascade-delete', () => {
   });
 });
 
-describe('Sprint C / C11 — TagsFile + LayoutTemplate accept future version numbers', () => {
+describe('TagsFile + LayoutTemplate accept future version numbers', () => {
   it('TagsFileSchema accepts a future integer version', () => {
     const r = TagsFileSchema.safeParse({ version: 2, tags: {}, fileTags: {} });
     expect(r.success).toBe(true);

@@ -3,8 +3,8 @@ import yaml from 'js-yaml';
 import { assembleMarkdownFile } from '@renderer/lib/editor/markdownSync';
 
 /**
- * Audit2 4.8 — a dirty frontmatter re-serialise (a metadata edit) now patches
- * the disk-baseline source via the `yaml` Document engine instead of dumping the
+ * A dirty frontmatter re-serialise (a metadata edit) now patches the
+ * disk-baseline source via the `yaml` Document engine instead of dumping the
  * whole object, so comments / key order on untouched keys survive (the fix for
  * the lossy YAML round-trip, KNOWN_LIMITATION #1). New files with no baseline
  * still take the full dump.
@@ -14,7 +14,7 @@ function fmOf(md: string): string {
   return m ? m[1] : '';
 }
 
-describe('assembleMarkdownFile — source-preserving dirty path (4.8)', () => {
+describe('assembleMarkdownFile — source-preserving dirty path', () => {
   it('preserves a comment + key order when a metadata value changes', () => {
     const original = ['# project notes', 'title: My Note', 'priority: low'].join('\n');
     const out = assembleMarkdownFile(
@@ -64,13 +64,13 @@ describe('assembleMarkdownFile — source-preserving dirty path (4.8)', () => {
 });
 
 /**
- * 1.1 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — a present-but-empty key on disk
- * (`aliases:`) parses to `null`. The assembler's clean pass dropped it, so the
- * CST engine then saw it as DELETED and spliced the line out — silently erasing
- * the key on any unrelated metadata edit. The fix preserves a null/undefined
- * value when its key is present in the disk baseline.
+ * A present-but-empty key on disk (`aliases:`) parses to `null`. The
+ * assembler's clean pass dropped it, so the CST engine then saw it as DELETED
+ * and spliced the line out — silently erasing the key on any unrelated metadata
+ * edit. The fix preserves a null/undefined value when its key is present in the
+ * disk baseline.
  */
-describe('assembleMarkdownFile — present-but-empty disk key survives (1.1)', () => {
+describe('assembleMarkdownFile — present-but-empty disk key survives', () => {
   it('keeps a baseline empty key (aliases:) when another field changes', () => {
     const original = 'aliases:\ntitle: My Note';
     const out = assembleMarkdownFile(
@@ -97,13 +97,13 @@ describe('assembleMarkdownFile — present-but-empty disk key survives (1.1)', (
 });
 
 /**
- * 1.5 (WRITE_PATH_REMEDIATION_PLAN_2026-06-04) — when the on-disk frontmatter is
- * genuinely UNPARSEABLE (tabs, duplicate keys), the engine returns null and the
- * old code dumped just the new key over the block, destroying it. The fix keeps
- * the raw block verbatim (refusing the metadata edit) for a true parse failure,
- * while a valid-but-non-mapping baseline keeps the long-standing dump fallback.
+ * When the on-disk frontmatter is genuinely UNPARSEABLE (tabs, duplicate keys),
+ * the engine returns null and the old code dumped just the new key over the
+ * block, destroying it. The fix keeps the raw block verbatim (refusing the
+ * metadata edit) for a true parse failure, while a valid-but-non-mapping
+ * baseline keeps the long-standing dump fallback.
  */
-describe('assembleMarkdownFile — unparseable frontmatter is preserved, not dumped over (1.5)', () => {
+describe('assembleMarkdownFile — unparseable frontmatter is preserved, not dumped over', () => {
   it('keeps a malformed (tab + duplicate-key) block instead of replacing it', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const original = '\tbad: yaml\n  dup: 1\n  dup: 2';
@@ -163,7 +163,7 @@ describe('assembleMarkdownFile — unparseable frontmatter is preserved, not dum
     expect(onFrontmatterRefused).not.toHaveBeenCalled();
   });
 
-  it('Audit-11 N1 — invokes onFrontmatterRefused when the edit is dropped over unparseable YAML', () => {
+  it('invokes onFrontmatterRefused when the edit is dropped over unparseable YAML', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const onFrontmatterRefused = vi.fn();
     const original = '\tbad: yaml\n  dup: 1\n  dup: 2';
@@ -181,7 +181,7 @@ describe('assembleMarkdownFile — unparseable frontmatter is preserved, not dum
     warnSpy.mockRestore();
   });
 
-  it('Audit-11 N1 — does NOT invoke onFrontmatterRefused when the YAML is parseable', () => {
+  it('does NOT invoke onFrontmatterRefused when the YAML is parseable', () => {
     const onFrontmatterRefused = vi.fn();
     const out = assembleMarkdownFile(
       { priority: 'high' },
@@ -195,19 +195,19 @@ describe('assembleMarkdownFile — unparseable frontmatter is preserved, not dum
 });
 
 /**
- * H2 (Audit-13) — frontmatter carrying an UNRESOLVED alias parses with
- * `errors.length === 0` (so the CST engine's refusal gate passes) but THROWS a
- * ReferenceError in `doc.toJS()` while resolving the dangling reference. Before
- * the fix that throw escaped `patchFrontmatterSourceCst` → `assembleMarkdownFile`
- * → the write, so the keep-raw safety net never engaged and the metadata write
+ * Frontmatter carrying an UNRESOLVED alias parses with `errors.length === 0`
+ * (so the CST engine's refusal gate passes) but THROWS a ReferenceError in
+ * `doc.toJS()` while resolving the dangling reference. Before the fix that
+ * throw escaped `patchFrontmatterSourceCst` → `assembleMarkdownFile` → the
+ * write, so the keep-raw safety net never engaged and the metadata write
  * crashed (or, with only a half-fix, a full dump erased the poison block the
  * read returned `{}` for). The fix makes BOTH the engine (`toJS()` wrapped →
- * `null`) and `frontmatterSourceParses` (`toJS()` forced → `false`) fail closed,
- * so a metadata edit over alias-poison FM keeps the user's exact bytes verbatim,
- * drops only the edit, and surfaces it loudly via `onFrontmatterRefused` — never
- * throws, never corrupts.
+ * `null`) and `frontmatterSourceParses` (`toJS()` forced → `false`) fail
+ * closed, so a metadata edit over alias-poison FM keeps the user's exact bytes
+ * verbatim, drops only the edit, and surfaces it loudly via
+ * `onFrontmatterRefused` — never throws, never corrupts.
  */
-describe('assembleMarkdownFile — unresolved-alias frontmatter keeps raw bytes (H2)', () => {
+describe('assembleMarkdownFile — unresolved-alias frontmatter keeps raw bytes', () => {
   const POISON: ReadonlyArray<{ label: string; original: string }> = [
     { label: 'forward-ref alias', original: 'title: X\ntags: *missing' },
     { label: 'missing-anchor << merge', original: 'widget:\n  <<: *gone\ntitle: X' },
@@ -252,15 +252,15 @@ describe('assembleMarkdownFile — unresolved-alias frontmatter keeps raw bytes 
 });
 
 /**
- * L1 (Audit-12) — when the live frontmatter object is empty (the user cleared
- * every key) but the source HAD a block, the old 1.1 safety net re-emitted the
- * original bytes verbatim — silently reverting the deletion. It couldn't tell
- * "couldn't parse" (keep raw — data-loss avoidance) from "user emptied it"
- * (honour the clear). The fix splits the two on `frontmatterSourceParses`: an
- * unparseable block is still kept; a parseable-but-emptied one routes through
- * the CST engine (drops the keys, keeps any standalone comment).
+ * When the live frontmatter object is empty (the user cleared every key) but
+ * the source HAD a block, the old safety net re-emitted the original bytes
+ * verbatim — silently reverting the deletion. It couldn't tell "couldn't parse"
+ * (keep raw — data-loss avoidance) from "user emptied it" (honour the clear).
+ * The fix splits the two on `frontmatterSourceParses`: an unparseable block is
+ * still kept; a parseable-but-emptied one routes through the CST engine (drops
+ * the keys, keeps any standalone comment).
  */
-describe('assembleMarkdownFile — empty-FM split: clear vs unparseable (L1)', () => {
+describe('assembleMarkdownFile — empty-FM split: clear vs unparseable', () => {
   it('honours a cleared single-key block (emits no FM block, not the original)', () => {
     const out = assembleMarkdownFile({}, 'Body\n', {
       rawFrontmatter: 'title: Foo',
@@ -314,16 +314,16 @@ describe('assembleMarkdownFile — empty-FM split: clear vs unparseable (L1)', (
 });
 
 /**
- * H2 (Audit-7) — `patchFrontmatterSourceCst` normalises the FM source to LF and
- * its docstring says the caller re-applies the file's line ending; the dirty
- * `objectHasKeys` branch used to hard-code `\n` for the FM block + fences, so a
- * CRLF file's first metadata edit (tag row / editor) silently flipped
- * its frontmatter to LF. The matrix below pins eol preservation across
- * {LF, CRLF} × {frontmatter-only (diskBody), editor-dirty (LF body), clean
- * passthrough, dump fallback} × {BOM, no-BOM}. The LF-only suite above never
- * exercised the single most leak-prone formatting invariant.
+ * `patchFrontmatterSourceCst` normalises the FM source to LF and its docstring
+ * says the caller re-applies the file's line ending; the dirty `objectHasKeys`
+ * branch used to hard-code `\n` for the FM block + fences, so a CRLF file's
+ * first metadata edit (tag row / editor) silently flipped its frontmatter to
+ * LF. The matrix below pins eol preservation across {LF, CRLF} ×
+ * {frontmatter-only (diskBody), editor-dirty (LF body), clean passthrough, dump
+ * fallback} × {BOM, no-BOM}. The LF-only suite above never exercised the single
+ * most leak-prone formatting invariant.
  */
-describe('assembleMarkdownFile — line-ending preservation on the dirty FM path (Audit-7 H2)', () => {
+describe('assembleMarkdownFile — line-ending preservation on the dirty FM path', () => {
   // True iff `s` contains no lone LF (every `\n` is part of a `\r\n`).
   const isAllCrlf = (s: string): boolean => !s.replace(/\r\n/g, '').includes('\n');
   const CRLF_FM = 'priority: low\r\ntitle: Note';
@@ -422,7 +422,7 @@ describe('assembleMarkdownFile — line-ending preservation on the dirty FM path
 });
 
 /**
- * A8-M1 — the H2 matrix above only used ≥2-key frontmatter, whose source
+ * The line-ending matrix above only used ≥2-key frontmatter, whose source
  * carries an internal `\r\n` that `detectFrontmatterEol` could short-circuit on.
  * A SINGLE-line FM (`title:` / `created:` — the common shape) has no internal
  * `\r\n`, so the truthy FM source masked the CRLF-bearing body and the file
@@ -430,7 +430,7 @@ describe('assembleMarkdownFile — line-ending preservation on the dirty FM path
  * detection fallback now also consults the body, and (b) the gateway-threaded
  * `options.eol` wins outright (the only signal that survives an LF editor body).
  */
-describe('assembleMarkdownFile — single-line frontmatter eol (A8-M1)', () => {
+describe('assembleMarkdownFile — single-line frontmatter eol', () => {
   const isAllCrlf = (s: string): boolean => !s.replace(/\r\n/g, '').includes('\n');
 
   it('CRLF file + single-line FM + frontmatter-only dirty (CRLF body) → whole output CRLF', () => {
@@ -491,7 +491,7 @@ describe('assembleMarkdownFile — single-line frontmatter eol (A8-M1)', () => {
   });
 });
 
-describe('assembleMarkdownFile — CRLF body (A19-MD10)', () => {
+describe('assembleMarkdownFile — CRLF body', () => {
   const hasBareLf = (s: string): boolean => /(^|[^\r])\n/.test(s);
 
   it('clean frontmatter + LF editor body + eol CRLF → no bare \\n anywhere', () => {

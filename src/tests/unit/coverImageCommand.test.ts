@@ -1,9 +1,9 @@
 /**
- * Phase 5 / 5.4 — UpdateCoverImageCommand regression guard.
+ * UpdateCoverImageCommand regression guard.
  *
- * Set cover → Ctrl+Z clears. Clear cover → Ctrl+Z restores. Before this
- * phase both paths called `setKanbanPlacementCoverImage` directly with no
- * history entry, so accidental clicks silently destroyed the prior choice.
+ * Set cover → Ctrl+Z clears. Clear cover → Ctrl+Z restores. Both paths used
+ * to call `setKanbanPlacementCoverImage` directly with no history entry, so
+ * accidental clicks silently destroyed the prior choice.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

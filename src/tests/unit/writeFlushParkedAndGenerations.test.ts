@@ -12,15 +12,15 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 afterEach(disposeTestSchedulers);
 
 /**
- * Audit-14 Phase 1 — write-drain & recovery integrity.
+ * Write-drain & recovery integrity.
  *
  * Covers the scheduler / write-tracking fixes:
- *  - 1.1 a write PARKED behind an in-flight write is awaited by flushAll/flush
- *  - 1.4 a superseded late write is told `isLatestWrite() === false`
- *  - 1.5 a late component-write success does not clear a NEWER writer's failure
- *  - 1.6 `writeGenByPath` prunes back to ~0 after writes complete
+ *  - a write PARKED behind an in-flight write is awaited by flushAll/flush
+ *  - a superseded late write is told `isLatestWrite() === false`
+ *  - a late component-write success does not clear a NEWER writer's failure
+ *  - `writeGenByPath` prunes back to ~0 after writes complete
  *
- * The recovery-store fixes (1.2 acknowledgeRecovery idle-gate, 1.3 launchId
+ * The recovery-store fixes (acknowledgeRecovery idle-gate, launchId
  * sentinel suppression) live in `vaultRecovery.test.ts` / `dirtyFlagRecovery.test.ts`.
  */
 
@@ -37,7 +37,7 @@ function waitFor(cond: () => boolean, timeoutMs = 1500): Promise<void> {
   });
 }
 
-describe('Audit-14 1.1 — flush/flushAll await a write parked behind an in-flight write', () => {
+describe('flush/flushAll await a write parked behind an in-flight write', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));
@@ -137,7 +137,7 @@ describe('Audit-14 1.1 — flush/flushAll await a write parked behind an in-flig
   }, 5000);
 });
 
-describe('Audit-15 P1.1 — flush(key) early-return blocks on a still-parked write', () => {
+describe('flush(key) early-return blocks on a still-parked write', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));
@@ -147,7 +147,7 @@ describe('Audit-15 P1.1 — flush(key) early-return blocks on a still-parked wri
     restoreFiloDefault();
   });
 
-  // The Audit-14 1.1 tests above call flush WHILE the prior write is still in
+  // The parked-write tests above call flush WHILE the prior write is still in
   // flight, so flush enters via the (correct) inFlight-non-empty drain loop. This
   // test isolates the EARLY-RETURN: the prod-unreachable one-microtask gap where
   // the prior write has already left `inFlight` but the parked fire hasn't
@@ -182,7 +182,7 @@ describe('Audit-15 P1.1 — flush(key) early-return blocks on a still-parked wri
   }, 5000);
 });
 
-describe('Audit-14 1.4 — a superseded late write is told it is not the latest', () => {
+describe('a superseded late write is told it is not the latest', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));
@@ -236,7 +236,7 @@ describe('Audit-14 1.4 — a superseded late write is told it is not the latest'
   }, 6000);
 });
 
-describe('Audit-14 1.5 — a late component-write success does not clear a newer failure', () => {
+describe('a late component-write success does not clear a newer failure', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));
@@ -285,7 +285,7 @@ describe('Audit-14 1.5 — a late component-write success does not clear a newer
   });
 });
 
-describe('Audit-14 1.6 — writeGenByPath prunes back after writes complete', () => {
+describe('writeGenByPath prunes back after writes complete', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));

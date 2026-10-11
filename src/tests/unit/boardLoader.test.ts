@@ -140,7 +140,7 @@ describe('boardLoader', () => {
       expect(list).toMatchObject({ ok: false, error: 'schema-invalid', message: 'the file is a list, not a board' });
     });
 
-    it('preserves unknown top-level envelope keys on load (DI-11 passthrough)', async () => {
+    it('preserves unknown top-level envelope keys on load (passthrough)', async () => {
       // A forward-compat top-level key a future Filo wrote.
       // `BoardFileDataSchema.passthrough()` keeps it through the parse and
       // the loader's normalised reconstruction spreads it back in, so it
@@ -232,7 +232,7 @@ describe('boardLoader', () => {
       }
     });
 
-    it('Phase 2.4 — prunes orphan connections + frame.tileIds and flags orphansPruned', async () => {
+    it('prunes orphan connections + frame.tileIds and flags orphansPruned', async () => {
       const file = validBoardFile('m-prune');
       file.connections = {
         c_valid: {
@@ -291,7 +291,7 @@ describe('boardLoader', () => {
     // and the board flagged so the repair reaches disk. Trivially produced by
     // copying one board's connections into another file, or a third-party tool
     // writing a stale `boardId`.
-    it('Audit 2.1 — normalizes a mismatched connection/frame/group boardId to board.id', async () => {
+    it('normalizes a mismatched connection/frame/group boardId to board.id', async () => {
       const file = validBoardFile('home-board');
       file.connections = {
         c1: {
@@ -339,7 +339,7 @@ describe('boardLoader', () => {
       }
     });
 
-    it('Phase 2.4 — deduplicates Kanban placements within a column without rejecting the board', async () => {
+    it('deduplicates Kanban placements within a column without rejecting the board', async () => {
       const now = Date.now();
       const file = {
         version: 8,

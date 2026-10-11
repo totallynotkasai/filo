@@ -19,14 +19,14 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
 /**
- * Audit-7 Phase 4 — external-edit reconciliation cluster.
+ * External-edit reconciliation cluster.
  *
- *  - L13/L16: a note that absorbed an external edit is built on the new bytes,
+ *  - A note that absorbed an external edit is built on the new bytes,
  *    so the next keystroke saves without re-detecting that edit as a conflict.
- *  - L14: the reconcile defers while a full index rebuild is in flight, so it
+ *  - The reconcile defers while a full index rebuild is in flight, so it
  *    never reads a half-cleared index.
- *  - L15: our own write coming back through the watcher changes nothing.
- *  - L17: the rename-cascade breadcrumb is laid down BEFORE the tag-flush bail,
+ *  - Our own write coming back through the watcher changes nothing.
+ *  - The rename-cascade breadcrumb is laid down BEFORE the tag-flush bail,
  *    so a swap-interrupted cascade still leaves a recovery trail.
  */
 
@@ -64,9 +64,9 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
-// ── L13 / L16 / L15 — a reload re-bases the note; our own write is ignored ──
+// ── A reload re-bases the note; our own write is ignored ──
 
-describe('Audit-7 L13/L15/L16 — watcher events on an open note', () => {
+describe('watcher events on an open note', () => {
   let vault: MemoryVault;
   const bigBody = '# Note\n' + 'x'.repeat(2000) + '\n';
 
@@ -134,9 +134,9 @@ describe('Audit-7 L13/L15/L16 — watcher events on an open note', () => {
   });
 });
 
-// ── L14 — defer reconcile while the index is rebuilding ──────────────────
+// ── Defer reconcile while the index is rebuilding ────────────────────────
 
-describe('Audit-7 L14 — reconcile defers while the index rebuilds', () => {
+describe('reconcile defers while the index rebuilds', () => {
   beforeEach(() => {
     noteStore.__resetForTests();
     vaultIndexStore.clear();
@@ -178,9 +178,9 @@ describe('Audit-7 L14 — reconcile defers while the index rebuilds', () => {
   });
 });
 
-// ── L17 — rename-cascade breadcrumb survives a swap-during-flush ──────────
+// ── Rename-cascade breadcrumb survives a swap-during-flush ────────────────
 
-describe('Audit-7 L17 — rename-cascade sentinel laid before the tag-flush bail', () => {
+describe('rename-cascade sentinel laid before the tag-flush bail', () => {
   let sentinelWrites: string[];
 
   beforeEach(() => {
@@ -234,7 +234,7 @@ describe('Audit-7 L17 — rename-cascade sentinel laid before the tag-flush bail
     vi.spyOn(boardCacheStore, 'ensureAllLoaded').mockResolvedValue([]);
     vi.spyOn(boardStore, 'propagateRename').mockReturnValue(['b1']);
     vi.spyOn(boardCacheStore, 'renameBoardPath').mockReturnValue([]);
-    // The swap lands DURING the synchronous tag flush — exactly the L17 window.
+    // The swap lands DURING the synchronous tag flush — the window under test.
     vi.spyOn(fileTagsStore, 'flushPendingSave').mockImplementation(async () => {
       beginVaultGeneration('/vault2');
       return { ok: true };

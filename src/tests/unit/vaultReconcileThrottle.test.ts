@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Phase 3 / 3.5 — `vault:reconcile`'s per-process throttle (`5 s`) must reset
+ * `vault:reconcile`'s per-process throttle (`5 s`) must reset
  * on vault swap. Without the reset, the renderer's focus-driven reconcile
  * fired immediately after opening a new vault is silently dropped if the
  * OLD vault's last reconcile fell inside the 5 s window — and any drift on
@@ -13,7 +13,7 @@ import { tmpdir } from 'os';
  * The test exercises the throttle directly via the registered handler:
  *   1. vault:reconcile (first call after watch) → runs, lastReconcileAt set.
  *   2. vault:reconcile immediately again → skipped (throttled).
- *   3. vault:watch with the (same) vault → throttle reset by Phase 3 / 3.5.
+ *   3. vault:watch with the (same) vault → throttle reset.
  *   4. vault:reconcile immediately → runs again, NOT skipped.
  */
 
@@ -44,7 +44,7 @@ vi.mock('electron', () => ({
 const { registerVaultHandlers } = await import('../../main/ipc/vault.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 
-describe('vault:reconcile — throttle resets on vault swap (Phase 3 / 3.5)', () => {
+describe('vault:reconcile — throttle resets on vault swap', () => {
   let vaultDir: string;
   let watchHandler: (...args: unknown[]) => Promise<unknown>;
   let reconcileHandler: (...args: unknown[]) => Promise<unknown>;
@@ -62,7 +62,7 @@ describe('vault:reconcile — throttle resets on vault swap (Phase 3 / 3.5)', ()
 
   beforeEach(async () => {
     vaultDir = await fs.mkdtemp(join(tmpdir(), 'filo-reconcile-throttle-'));
-    // M3 — `vault:watch` now requires the open-vault handshake: the vault
+    // `vault:watch` requires the open-vault handshake: the vault
     // must already be registered (in the real app by `vault:init-config`)
     // before the watch call. Register it here so `assertActiveVault` passes.
     vaultRegistry.setCurrentVault(vaultDir);

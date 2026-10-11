@@ -54,7 +54,7 @@ describe('parseQuickAdd: tags', () => {
     expect(r.title).toBe('Issue #123 and abc#tag');
   });
 
-  it('keeps a chapter number in the title, and takes a tag that has a letter (E-05)', () => {
+  it('keeps a chapter number in the title, and takes a tag that has a letter', () => {
     const r = parseQuickAdd('Revise Chapter #3 #2026-goals #v2', { now: NOW });
     expect(r.tags).toEqual(['2026-goals', 'v2']);
     expect(r.title).toBe('Revise Chapter #3');
@@ -190,7 +190,7 @@ describe('parseQuickAdd: dates', () => {
     expect(parseQuickAdd('Task in 1m', { now: NOW }).dueDate).toBe('2026-06-15');
   });
 
-  // Audit-8 L6 — month-end must clamp, not overflow (Jan 31 + 1m → Feb 28/29,
+  // Month-end must clamp, not overflow (Jan 31 + 1m → Feb 28/29,
   // matching the recurrence engine; raw setMonth would roll to Mar 3).
   it('clamps "in 1m" at month-end (Jan 31 → Feb 28, non-leap)', () => {
     const jan31 = new Date(2026, 0, 31, 10, 0);
@@ -227,44 +227,44 @@ describe('parseQuickAdd: dates', () => {
   });
 });
 
-describe('parseQuickAdd: invalid dates stay in the title (QA-1/2/3)', () => {
+describe('parseQuickAdd: invalid dates stay in the title', () => {
   // The handlers must reject impossible/overflow dates so they are never written
   // verbatim to canonical frontmatter (where the app would then render/treat
   // them as a rolled-over day). A rejected token is left in the title untouched.
 
-  it('QA-1: rejects an impossible ISO day (Feb 30)', () => {
+  it('rejects an impossible ISO day (Feb 30)', () => {
     const r = parseQuickAdd('Pay rent 2026-02-30', { now: NOW });
     expect(r.dueDate).toBeUndefined();
     expect(r.title).toBe('Pay rent 2026-02-30');
   });
 
-  it('QA-1: rejects an out-of-range ISO month (13) and zero month/day', () => {
+  it('rejects an out-of-range ISO month (13) and zero month/day', () => {
     expect(parseQuickAdd('x 2026-13-01', { now: NOW }).dueDate).toBeUndefined();
     expect(parseQuickAdd('x 2026-00-00', { now: NOW }).dueDate).toBeUndefined();
     expect(parseQuickAdd('x 2026-02-00', { now: NOW }).dueDate).toBeUndefined();
   });
 
-  it('QA-2: rejects M/D Feb 30 instead of rolling it to next-year Mar 2', () => {
+  it('rejects M/D Feb 30 instead of rolling it to next-year Mar 2', () => {
     const r = parseQuickAdd('Pay rent 2/30', { now: NOW });
     expect(r.dueDate).toBeUndefined();
     expect(r.title).toBe('Pay rent 2/30');
   });
 
-  it('QA-2: rejects M/D Apr 31', () => {
+  it('rejects M/D Apr 31', () => {
     expect(parseQuickAdd('x 4/31', { now: NOW }).dueDate).toBeUndefined();
   });
 
-  it('QA-2: rejects 2/29 in a non-leap year (NOW=2026)', () => {
+  it('rejects 2/29 in a non-leap year (NOW=2026)', () => {
     expect(parseQuickAdd('x 2/29', { now: NOW }).dueDate).toBeUndefined();
   });
 
-  it('QA-3: rejects a numeric-overflow offset instead of writing NaN-NaN-NaN', () => {
+  it('rejects a numeric-overflow offset instead of writing NaN-NaN-NaN', () => {
     const r = parseQuickAdd('Do thing in 99999999999999999999d', { now: NOW });
     expect(r.dueDate).toBeUndefined();
     expect(r.title).toBe('Do thing in 99999999999999999999d');
   });
 
-  it('QA-3: rejects an out-of-bounds month/week offset', () => {
+  it('rejects an out-of-bounds month/week offset', () => {
     expect(parseQuickAdd('x in 9999999999m', { now: NOW }).dueDate).toBeUndefined();
     expect(parseQuickAdd('x in 4000w', { now: NOW }).dueDate).toBeUndefined();
   });
@@ -348,7 +348,7 @@ describe('parseQuickAdd: combined', () => {
   });
 });
 
-describe('parseQuickAdd: malformed @time stays in the title (QA-4)', () => {
+describe('parseQuickAdd: malformed @time stays in the title', () => {
   it('keeps a non-time @token in the title instead of swallowing it', () => {
     const r = parseQuickAdd('Meet @99 East St', { now: NOW });
     expect(r.dueTime).toBeUndefined();
@@ -362,7 +362,7 @@ describe('parseQuickAdd: malformed @time stays in the title (QA-4)', () => {
   });
 });
 
-describe('parseQuickAdd: am/pm hour bounds (QA-5)', () => {
+describe('parseQuickAdd: am/pm hour bounds', () => {
   it('rejects @13pm..@23pm (the suffix is meaningless past 12)', () => {
     expect(parseQuickAdd('x @13pm', { now: NOW }).dueTime).toBeUndefined();
     expect(parseQuickAdd('x @23pm', { now: NOW }).dueTime).toBeUndefined();
@@ -380,7 +380,7 @@ describe('parseQuickAdd: am/pm hour bounds (QA-5)', () => {
   });
 });
 
-describe('parseQuickAdd: duplicate tokens stripped, first wins (QA-8)', () => {
+describe('parseQuickAdd: duplicate tokens stripped, first wins', () => {
   it('strips a second @time from the title', () => {
     const r = parseQuickAdd('x @9am @5pm', { now: NOW });
     expect(r.dueTime).toBe('09:00');
@@ -400,7 +400,7 @@ describe('parseQuickAdd: duplicate tokens stripped, first wins (QA-8)', () => {
   });
 });
 
-describe('parseQuickAdd: status case + tag case (QA-9)', () => {
+describe('parseQuickAdd: status case + tag case', () => {
   it('lowercases status at write (FIELD_READERS.status reads it lowercased)', () => {
     const r = parseQuickAdd('Build feature =In-Progress', { now: NOW });
     expect(r.status).toBe('in-progress');
@@ -415,7 +415,7 @@ describe('parseQuickAdd: status case + tag case (QA-9)', () => {
   });
 });
 
-describe('parseQuickAdd: next-weekday is one uniform rule (QA-6)', () => {
+describe('parseQuickAdd: next-weekday is one uniform rule', () => {
   // NOW = Friday 2026-05-15. "next <wd>" = soonest occurrence STRICTLY after
   // today, applied identically to every weekday (today excluded ⇒ same weekday
   // lands a week out).
@@ -433,7 +433,7 @@ describe('parseQuickAdd: next-weekday is one uniform rule (QA-6)', () => {
   });
 });
 
-describe('parseQuickAdd: day-first d/m for day-first locales (BL-8)', () => {
+describe('parseQuickAdd: day-first d/m for day-first locales', () => {
   const SEPT_23 = new Date(2026, 8, 23, 10, 0);
 
   it('"Dentist 3/4" is 3 April (past this year → next year)', () => {
@@ -462,8 +462,8 @@ describe('parseQuickAdd: day-first d/m for day-first locales (BL-8)', () => {
   });
 });
 
-describe('parseQuickAdd: only weekday names are weekdays (E-05)', () => {
-  // Sunday 2026-10-04, local noon (the audit's repro day).
+describe('parseQuickAdd: only weekday names are weekdays', () => {
+  // Sunday 2026-10-04, local noon (the day the bug was reproduced on).
   const SUN = new Date(2026, 9, 4, 12, 0, 0);
 
   it.each([
@@ -495,7 +495,7 @@ describe('parseQuickAdd: only weekday names are weekdays (E-05)', () => {
   });
 });
 
-describe('parseQuickAdd: a fraction between words is not a date (E-05)', () => {
+describe('parseQuickAdd: a fraction between words is not a date', () => {
   const SUN = new Date(2026, 9, 4, 12, 0, 0);
 
   it('"act 2/3 of the book" keeps its fraction', () => {
@@ -519,7 +519,7 @@ describe('parseQuickAdd: a fraction between words is not a date (E-05)', () => {
   });
 });
 
-describe('parseQuickAdd: a time after the date (E-05)', () => {
+describe('parseQuickAdd: a time after the date', () => {
   it('reads "tomorrow 5pm"', () => {
     const r = parseQuickAdd('Call the printer tomorrow 5pm', { now: NOW });
     expect(r.dueDate).toBe('2026-05-16');
@@ -553,7 +553,7 @@ describe('parseQuickAdd: a time after the date (E-05)', () => {
   });
 });
 
-describe('parseQuickAdd: repeats (D8)', () => {
+describe('parseQuickAdd: repeats', () => {
   // NOW is Friday 2026-05-15.
   it('"every friday" repeats weekly from the next Friday (today counts)', () => {
     const r = parseQuickAdd('Water plants every friday', { now: NOW });

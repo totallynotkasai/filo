@@ -100,7 +100,7 @@ describe('WCAG 2.1 relative luminance + contrast', () => {
   });
 });
 
-describe('getDynamicContrastText (Phase 4 toggle)', () => {
+describe('getDynamicContrastText', () => {
   it('chooses white text on a near-black background', () => {
     expect(getDynamicContrastText('#000000')).toBe('#ffffff');
     expect(getDynamicContrastText('#222222')).toBe('#ffffff');

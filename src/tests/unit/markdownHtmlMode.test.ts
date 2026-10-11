@@ -4,13 +4,13 @@ import { createTiptapEditor } from '../../renderer/lib/editor/createEditor';
 import { editorMarkdown, loadMarkdownIntoEditor } from '../../renderer/lib/editor/markdownSync';
 
 /**
- * Audit 2.5 + 2.6 — `tiptap-markdown` runs in `html: true` mode, so the editor
+ * `tiptap-markdown` runs in `html: true` mode, so the editor
  * serialises formatting it has no Markdown token for (underline, text colour,
  * highlight, font family / size) and non-GFM tables (merged or multi-paragraph
  * cells) as inline HTML, and parses that HTML back on load. The formatting
- * round-trips instead of being silently stripped on the next save (2.6) or
- * written as the literal sentinel `[table]` that destroys every cell's contents
- * (2.5 — see `tiptap-markdown` `HTMLNode` / `Table` serialisers).
+ * round-trips instead of being silently stripped on the next save or written
+ * as the literal sentinel `[table]` that destroys every cell's contents (see
+ * `tiptap-markdown` `HTMLNode` / `Table` serialisers).
  *
  * These exercise a *real* TipTap instance (the same factory the app uses)
  * through a disk → fresh-editor → disk cycle, mirroring `emptyParagraphs.test.ts`.
@@ -56,7 +56,7 @@ const para = (content: unknown[]): unknown => ({ type: 'paragraph', content });
 const text = (t: string, marks?: unknown[]): unknown =>
   marks ? { type: 'text', text: t, marks } : { type: 'text', text: t };
 
-describe('markdown rich-formatting round-trip (audit 2.6)', () => {
+describe('markdown rich-formatting round-trip', () => {
   it('underline survives save + reload as inline HTML', () => {
     const r = roundTrip({
       type: 'doc',
@@ -106,7 +106,7 @@ describe('markdown rich-formatting round-trip (audit 2.6)', () => {
   });
 });
 
-describe('non-GFM table round-trip (audit 2.5)', () => {
+describe('non-GFM table round-trip', () => {
   it('a multi-paragraph cell serialises as HTML, not the literal [table]', () => {
     const r = roundTrip({
       type: 'doc',

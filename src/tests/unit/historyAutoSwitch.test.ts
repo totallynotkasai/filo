@@ -1,5 +1,5 @@
 /**
- * Audit 5.3 — history auto-switch to a command's originating board.
+ * History auto-switch to a command's originating board.
  *
  * Per-board undo stacks mean a command can land on the active board's stack
  * while targeting a DIFFERENT board (e.g. a still-mounted side-effect from
@@ -66,7 +66,7 @@ function switchBackToasts(spy: MockInstance<typeof uiStore.toast>): unknown[] {
   );
 }
 
-describe('Audit 5.3 — history auto-switch to the originating board', () => {
+describe('history auto-switch to the originating board', () => {
   let toastSpy: MockInstance<typeof uiStore.toast>;
 
   beforeEach(() => {
@@ -169,7 +169,7 @@ describe('Audit 5.3 — history auto-switch to the originating board', () => {
   });
 });
 
-describe('Audit-13 M7 — facade body waits for the pane pivot to re-point the scope', () => {
+describe('facade body waits for the pane pivot to re-point the scope', () => {
   beforeEach(() => {
     historyStore.clear();
     historyStore.setMaxHistory(500);

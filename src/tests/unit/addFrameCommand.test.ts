@@ -13,12 +13,12 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Frame, Connection, Tile } from '@renderer/schema/index';
 
 /**
- * Phase 27 / A1 — Add*Command snapshots must be deep clones. A shallow
+ * Add*Command snapshots must be deep clones. A shallow
  * `{ ...frame }` lets later mutations of `frame.style.*` or `frame.tileIds[*]`
  * silently leak into the would-be-restored value when execute()/undo() runs
  * after the user has continued editing. The same risk applies to
- * AddConnectionCommand's nested `label`. M24's JSON round-trip is now the
- * standard pattern for every Add/Delete *Command.
+ * AddConnectionCommand's nested `label`. A JSON round-trip is the standard
+ * pattern for every Add/Delete *Command.
  */
 
 function installEmptyFiloStub(): void {
@@ -177,8 +177,8 @@ describe('AddConnectionCommand — deep clone snapshot', () => {
     expect(stored.label.text).toBe('original-label');
   });
 
-  // Audit-8 L5 — a genuine execute → undo → redo round-trip. The prior file
-  // only constructed + executed AddConnectionCommand (the deep-clone test
+  // A genuine execute → undo → redo round-trip. The file used to
+  // only construct + execute AddConnectionCommand (the deep-clone test
   // above), so the file-level roundtrip-coverage gate passed it for free via
   // sibling commands' `.undo(` calls; the tightened window-scoped gate exposed
   // that there was no real round-trip. AddConnectionCommand is a deterministic
@@ -212,7 +212,7 @@ describe('AddConnectionCommand — deep clone snapshot', () => {
 });
 
 /**
- * C3 — MoveFrameCommand must call `framesStore.updateContainment` after
+ * MoveFrameCommand must call `framesStore.updateContainment` after
  * execute() and undo() so the frame's tileIds reflect what its restored
  * bounds actually contain. Without this, a tile added between drag and
  * a later redo would not be picked up; a tile that left the frame's
@@ -301,7 +301,7 @@ describe('MoveFrameCommand — updateContainment after execute/undo', () => {
 });
 
 /**
- * D.1 — DeleteFrameCommand must throw an explicit Error when the target
+ * DeleteFrameCommand must throw an explicit Error when the target
  * frame is missing. Without the guard, `JSON.stringify(undefined)` returns
  * the value `undefined`, which `JSON.parse` then throws on with an opaque
  * "Unexpected token u in JSON" — a poor diagnostic for what is actually a
@@ -309,7 +309,7 @@ describe('MoveFrameCommand — updateContainment after execute/undo', () => {
  * (external delete, undo of an AddFrameCommand, …).
  */
 /**
- * Phase 6 / 6.2 — UpdateFrameCommand must snapshot frame containment
+ * UpdateFrameCommand must snapshot frame containment
  * when `size` is in the patch. Without this, resizing a frame and then
  * undoing leaves `frame.tileIds` reflecting the post-resize containment
  * even though the frame's size is back to before.

@@ -1,5 +1,5 @@
 /**
- * Audit 5.2 — `deleteAllCompleted` reads the live rows projection, not the
+ * `deleteAllCompleted` reads the live rows projection, not the
  * 300ms-debounced vault index.
  *
  * The bulk "delete completed" path used to read `completed` straight from
@@ -59,7 +59,7 @@ function makeDeleter(rows: TaskRow[]) {
   });
 }
 
-describe('Audit 5.2 — deleteAllCompleted reads live rows, not the stale index', () => {
+describe('deleteAllCompleted reads live rows, not the stale index', () => {
   let confirmSpy: ReturnType<typeof vi.spyOn>;
   let toastSpy: ReturnType<typeof vi.spyOn>;
 

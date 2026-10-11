@@ -11,15 +11,15 @@ import type { Connection, MindMapBoard, TextTile, Tile } from '@renderer/schema/
 import { seedBoard } from '../helpers/seedBoard';
 
 /**
- * Audit 4.1 — `DeleteTilesCommand.undo()` re-adds the connections it
- * snapshotted (routing same-board edges through `boardStore.addConnection`
- * and other-board edges through `boardCacheStore.persistAddConnection`).
- * `execute()` / redo, however, only loops `boardStore.removeTile(...)` and
- * relies on each removeTile's cache-side connection sweep. That sweep only
- * touches the tile's OWN board cache (see `core/boardTileOps/mindmap.ts`),
- * so a connection that lives in a DIFFERENT board's cache while referencing
- * a deleted tile is never removed by execute — it survives delete → undo →
- * redo as a dangling edge in the inactive board's `.board.json`.
+ * `DeleteTilesCommand.undo()` re-adds the connections it snapshotted (routing
+ * same-board edges through `boardStore.addConnection` and other-board edges
+ * through `boardCacheStore.persistAddConnection`). `execute()` / redo, however,
+ * only loops `boardStore.removeTile(...)` and relies on each removeTile's
+ * cache-side connection sweep. That sweep only touches the tile's OWN board
+ * cache (see `core/boardTileOps/mindmap.ts`), so a connection that lives in a
+ * DIFFERENT board's cache while referencing a deleted tile is never removed by
+ * execute — it survives delete → undo → redo as a dangling edge in the inactive
+ * board's `.board.json`.
  *
  * Repro: tile `t1` on the active board `mm`; an edge `c1` parked in the
  * inactive board `mm2`'s cache (boardId `mm2`) that references `t1`. Deleting
@@ -114,7 +114,7 @@ function makeMindMapFixture(
   };
 }
 
-describe('DeleteTilesCommand — cross-board connection redo (audit 4.1)', () => {
+describe('DeleteTilesCommand — cross-board connection redo', () => {
   beforeEach(() => {
     vaultStore.setPath('/vault');
     boardCacheStore.clear();

@@ -1,5 +1,5 @@
 /**
- * Audit 6.5 — Board Browser keyboard reorder (Alt+ArrowUp / Alt+ArrowDown).
+ * Board Browser keyboard reorder (Alt+ArrowUp / Alt+ArrowDown).
  *
  * `computeKeyboardReorder` is the pure core the component calls; testing it
  * directly (rather than the un-mountable Svelte component) locks the reorder
@@ -12,7 +12,7 @@ type B = { id: string; name: string };
 const mk = (...ids: string[]): B[] => ids.map((id) => ({ id, name: id }));
 const ids = (out: B[] | null): string[] | null => (out ? out.map((b) => b.id) : null);
 
-describe('computeKeyboardReorder (audit 6.5)', () => {
+describe('computeKeyboardReorder', () => {
   it('moves a board up by one (Alt+ArrowUp)', () => {
     const full = mk('a', 'b', 'c');
     expect(ids(computeKeyboardReorder(full, full, 'b', -1))).toEqual(['b', 'a', 'c']);

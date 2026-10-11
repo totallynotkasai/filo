@@ -7,7 +7,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Phase 10.2 — UpdateBoardSettingsCommand. Each command captures a forward
+ * UpdateBoardSettingsCommand. Each command captures a forward
  * patch and inverse patch; if a key didn't exist in the prior settings, it's
  * recorded in `deleteOnUndo` so undo removes it cleanly rather than leaving
  * a phantom `key: undefined`.

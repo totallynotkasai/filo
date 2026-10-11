@@ -4,12 +4,12 @@ import { completionPatchForRow } from '@renderer/lib/tasklist/frontmatterWriter'
 import type { TaskRow } from '@renderer/lib/tasks/taskListModel';
 
 /**
- * Phase 6 — "complete a recurring task" flow coverage.
+ * "Complete a recurring task" flow coverage.
  *
  * `TaskListBoard.toggleCompleted` is the production caller; its per-row patch
  * comes from `completionPatchForRow`. `decideCompletion` below DELEGATES to that
  * production helper (rather than re-implementing the decision tree) so these
- * cases exercise real code — including the Phase-2 REC-1 fallback (an undated
+ * cases exercise real code — including the schedule-mode fallback (an undated
  * schedule-mode repeat now rolls forward from the completion day instead of
  * silently terminating). The un-complete direction stays inline, matching
  * toggleCompleted (`completionPatchForRow` only handles completing).
@@ -128,8 +128,8 @@ describe('decideCompletion — recurring rows roll forward on first complete', (
 });
 
 describe('decideCompletion — recurring completion edge cases', () => {
-  it('schedule mode without a dueDate rolls forward from the completion day (REC-1)', () => {
-    // REC-1 — schedule mode has no anchor, so nextDueDate(schedule) is null; the
+  it('schedule mode without a dueDate rolls forward from the completion day', () => {
+    // Schedule mode has no anchor, so nextDueDate(schedule) is null; the
     // helper falls back to completion-mode semantics (completion day + interval)
     // so the repeat survives instead of being permanently completed. Schedule is
     // the DEFAULT mode, so this is the default undated-repeat path. Fri 2026-05-15

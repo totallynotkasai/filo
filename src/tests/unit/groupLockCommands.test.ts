@@ -8,7 +8,7 @@ import type { MindMapBoard, TileGroup } from '@renderer/schema/index';
 import { seedBoard } from '../helpers/seedBoard';
 
 /**
- * Phase 10.2 — ToggleGroupCommand and ToggleLockCommand.
+ * ToggleGroupCommand and ToggleLockCommand.
  *
  * Both snapshot prior state so undo restores it exactly:
  *   - ToggleGroupCommand snapshots the full groups[] array (cheap; groups are

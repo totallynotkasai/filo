@@ -3,7 +3,7 @@ import { correlateRenames } from '../../main/services/renameCorrelation';
 import type { FileChangeEvent } from '../../main/services/fileWatcherTypes';
 
 /**
- * Audit-19 EXT-2 — OneDrive resolves a conflict by RENAMING the local file to
+ * OneDrive resolves a conflict by RENAMING the local file to
  * `Note-<DEVICE>.md` (identical bytes) and downloading the other version as
  * `Note.md`. When the download lands after the watcher batch closes, the batch
  * holds a missing `Note.md` + a present `Note-DESKTOP-….md` with the same size
@@ -24,7 +24,7 @@ async function correlate(missing: string, pres: string, knownHosts: string[] = [
   return correlateRenames([ev(missing), ev(pres)], present(pres), sameSize, sameHash, true, knownHosts);
 }
 
-describe('correlateRenames — sync conflict copies are never correlated (Audit-19 EXT-2)', () => {
+describe('correlateRenames — sync conflict copies are never correlated', () => {
   it('missing Note.md + present Note-DESKTOP-1A2B3C4.md (same bytes) → no rename, one conflict (bite)', async () => {
     const res = await correlate('Note.md', 'Note-DESKTOP-1A2B3C4.md');
     expect(res.renames).toEqual([]);

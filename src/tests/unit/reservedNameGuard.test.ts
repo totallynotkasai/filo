@@ -7,17 +7,18 @@ import { sanitizeFilename } from '../../main/vault/filenameUtils';
 import { computeMoveIntoFolderTarget } from '@renderer/lib/vault/moveIntoFolder';
 
 /**
- * Audit-9 Phase 5 — A9-V1 verification.
+ * Widened reserved-name guard verification.
  *
- * The uncommitted Audit-8 L1 work widened the Windows reserved-name guard:
+ * The Windows reserved-name guard was widened:
  *   - added the `$`-bearing device names CONIN$ / CONOUT$ / CLOCK$ to
  *     `RESERVED_WINDOWS_NAMES`;
  *   - trimmed the stem before the reserved-name compare, because Windows
  *     strips leading/trailing spaces off the name component (` CON.md` /
  *     `CON .md` still open the CON device).
  *
- * A9-V1 asks: do these additions reject a PRE-EXISTING legitimate vault file on
- * rename/move? They must NOT — they may only block creating *new* unsafe names.
+ * The question: do these additions reject a PRE-EXISTING legitimate vault file
+ * on rename/move? They must NOT — they may only block creating *new* unsafe
+ * names.
  *
  * The move path is the sharp edge. `vaultStore.moveIntoFolder` PRESERVES the
  * source filename (`computeMoveIntoFolderTarget`), then routes through
@@ -60,7 +61,7 @@ const BENIGN_NEAR_MISS: readonly string[] = [
   'LPT10.md',
 ];
 
-// Negative controls — the Audit-8 L1 additions that MUST still reject at
+// Negative controls — the widened-guard additions that MUST still reject at
 // creation, so the boundary is provably placed (not "everything passes").
 const RESERVED_AT_CREATION: readonly { name: string; re: RegExp }[] = [
   { name: 'CONIN$.md', re: /CONIN\$/ },
@@ -72,7 +73,7 @@ const RESERVED_AT_CREATION: readonly { name: string; re: RegExp }[] = [
 
 const FORCE = { forCreation: true } as const;
 
-describe('A9-V1 — widened reserved-name guard does not over-reject benign names', () => {
+describe('widened reserved-name guard does not over-reject benign names', () => {
   it('clears every benign near-miss name under the strictest (creation) guard', () => {
     for (const name of BENIGN_NEAR_MISS) {
       expect(() => assertSafeFilename(name, FORCE), name).not.toThrow();
@@ -97,7 +98,7 @@ describe('A9-V1 — widened reserved-name guard does not over-reject benign name
   });
 });
 
-describe('A9-V1 — sanitizeFilename handles the new `$` device names', () => {
+describe('sanitizeFilename handles the new `$` device names', () => {
   it('prefixes CONIN$ / CONOUT$ / CLOCK$ so the sanitised result clears the guard', () => {
     expect(sanitizeFilename('CONIN$')).toBe('_CONIN$');
     expect(sanitizeFilename('CONOUT$.txt')).toBe('_CONOUT$.txt');
@@ -141,7 +142,7 @@ vi.mock('electron', () => ({
 const { registerVaultHandlers } = await import('../../main/ipc/vault.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 
-describe('A9-V1 — vault:rename moves a benign pre-existing file (real handler)', () => {
+describe('vault:rename moves a benign pre-existing file (real handler)', () => {
   let vaultDir: string;
   let renameHandler: (...args: unknown[]) => Promise<unknown>;
   let errSpy: ReturnType<typeof vi.spyOn>;

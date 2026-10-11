@@ -3,9 +3,7 @@ import { createBoardScope } from '@renderer/lib/boards/boardScopeFactory';
 import { isActiveScope, setActiveScope, type BoardScope } from '@renderer/lib/boards/boardScope.svelte';
 
 /**
- * Audit-14 Phase 5 — UI/UX & accessibility.
- *
- * 5.1 MindMapBoard's `<svelte:window onkeydown>` handler is not pane-scoped.
+ * MindMapBoard's `<svelte:window onkeydown>` handler was not pane-scoped.
  *
  * The window handler fires for EVERY mounted Mind Map pane, so in a split view
  * a single bare key (n / c / arrows / Backspace) acted in BOTH panes — one `n`
@@ -33,7 +31,7 @@ function installEmptyFiloStub(): void {
   };
 }
 
-describe('Mind Map pane-scope keyboard guard (Audit-14 5.1)', () => {
+describe('Mind Map pane-scope keyboard guard', () => {
   let paneA: BoardScope;
   let paneB: BoardScope;
   const acted: string[] = [];
@@ -44,7 +42,7 @@ describe('Mind Map pane-scope keyboard guard (Audit-14 5.1)', () => {
   // just records which pane ran so we can assert exactly one pane responds.
   function makePaneHandler(scope: BoardScope, label: string) {
     return (e: KeyboardEvent) => {
-      if (!isActiveScope(scope)) return; // <-- the Audit-14 5.1 fix
+      if (!isActiveScope(scope)) return; // <-- the pane-scope guard
       if (e.key === 'n') acted.push(label);
     };
   }

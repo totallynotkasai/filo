@@ -13,31 +13,31 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Frame, Tile } from '@renderer/schema/index';
 
 /**
- * Audit-17 Phase 4 — UI/UX silent-loss paper cuts.
+ * UI/UX silent-loss paper cuts.
  *
- *  4.1 Tile title rename silently discarded when the tile unmounted inside
- *      the 200 ms blur→commit window (clicking another tab/board blurs AND
- *      unmounts within ms; the Audit-11 R3 teardown cancelled, never
- *      committed). Fix: snapshot the editor BEFORE destroy and commit; the
- *      rename helper gained a home-board cache fallback because by teardown
- *      time the pane's scope already points at the switched-in board.
- *  4.2 Frame title twin: same unmount loss + the blur setTimeout was
- *      anonymous and uncleared (stacked on repeated blur/focus).
- *  4.3 Frame drag-end's "flush final position" was dead code — the flag was
- *      flipped BEFORE the flush, whose first guard is `if (!isDragging)`.
- *  4.4 The Audit-16 6.1 unmount-mid-drag teardown left the incrementally
- *      persisted frame+tile moves in place with NO undo command. Fix: true
- *      cancel (revert to drag-start positions), mirroring tileDrag.destroy().
- *  4.5 lastView persist debounce was cancelled-without-flush on every board
- *      switch (TaskListBoard + KanbanBoard) — a filter change within 300 ms
- *      of switching was never written (the hydratedForBoardId guard blocks
- *      any re-fire after the switch). Fix: flush the ARM-time snapshot for
- *      the CAPTURED board id through the cache (teardown-safe).
+ *  - Tile title rename silently discarded when the tile unmounted inside
+ *    the 200 ms blur→commit window (clicking another tab/board blurs AND
+ *    unmounts within ms; the old teardown cancelled, never committed).
+ *    Fix: snapshot the editor BEFORE destroy and commit; the rename helper
+ *    gained a home-board cache fallback because by teardown time the pane's
+ *    scope already points at the switched-in board.
+ *  - Frame title twin: same unmount loss + the blur setTimeout was
+ *    anonymous and uncleared (stacked on repeated blur/focus).
+ *  - Frame drag-end's "flush final position" was dead code — the flag was
+ *    flipped BEFORE the flush, whose first guard is `if (!isDragging)`.
+ *  - The unmount-mid-drag teardown left the incrementally persisted
+ *    frame+tile moves in place with NO undo command. Fix: true cancel
+ *    (revert to drag-start positions), mirroring tileDrag.destroy().
+ *  - lastView persist debounce was cancelled-without-flush on every board
+ *    switch (TaskListBoard + KanbanBoard) — a filter change within 300 ms
+ *    of switching was never written (the hydratedForBoardId guard blocks
+ *    any re-fire after the switch). Fix: flush the ARM-time snapshot for
+ *    the CAPTURED board id through the cache (teardown-safe).
  *
  * The jsdom suite has no Svelte component-mount harness, so component wiring
- * is pinned via source-shape assertions (same pattern as audit11Phase1 /
- * audit12L5) and the behavior lives in the extracted lib helpers + the
- * detached cache write paths the teardowns rely on.
+ * is pinned via source-shape assertions and the behavior lives in the
+ * extracted lib helpers + the detached cache write paths the teardowns rely
+ * on.
  */
 
 const ROOT = process.cwd();
@@ -132,9 +132,9 @@ afterEach(() => {
   boardStore.clearBoard();
 });
 
-// ── 4.1 — tile title commit-on-unmount ──────────────────────────────────
+// ── Tile title commit-on-unmount ────────────────────────────────────────
 
-describe('Audit-17 4.1 — resolveTitleCommitValues (shared blur-commit resolution)', () => {
+describe('resolveTitleCommitValues (shared blur-commit resolution)', () => {
   it('falls back when the user emptied the editor and suppresses identity HTML', () => {
     expect(resolveTitleCommitValues('   ', '<p></p>', 'New Tile')).toEqual({
       plain: 'New Tile',
@@ -156,7 +156,7 @@ describe('Audit-17 4.1 — resolveTitleCommitValues (shared blur-commit resoluti
   });
 });
 
-describe('Audit-17 4.1 — a teardown title commit resolves through the home board cache', () => {
+describe('a teardown title commit resolves through the home board cache', () => {
   function makeLinkTile(id: string, boardId: string, title: string): Tile {
     return {
       ...makeTextTile(id, boardId, title),
@@ -199,7 +199,7 @@ describe('Audit-17 4.1 — a teardown title commit resolves through the home boa
   });
 });
 
-describe('Audit-17 4.1 — TileHeader teardown commits instead of cancelling (source shape)', () => {
+describe('TileHeader teardown commits instead of cancelling (source shape)', () => {
   /** The unmount `$effect` cleanup region of TileHeader. */
   // A title typed but not committed is committed whether or not the blur window is open.
   const teardownStart = TILE_HEADER_SRC.indexOf('const snap = uncommittedTitle();');
@@ -225,7 +225,7 @@ describe('Audit-17 4.1 — TileHeader teardown commits instead of cancelling (so
   });
 });
 
-// ── 4.2 — frame title twin ───────────────────────────────────────────────
+// ── Frame title twin ─────────────────────────────────────────────────────
 
 describe('the frame title commits when focus leaves, and on unmount', () => {
   it('ends the edit through the shared focus rule (behaviour: titleCommitsOnClickAway.test.ts)', () => {
@@ -273,9 +273,9 @@ describe('the frame title commits when focus leaves, and on unmount', () => {
   });
 });
 
-// ── 4.3 — drag-end flush ordering ────────────────────────────────────────
+// ── Drag-end flush ordering ──────────────────────────────────────────────
 
-describe('Audit-17 4.3 — Frame drag-end flushes the RAF-pending move BEFORE flipping isDragging', () => {
+describe('Frame drag-end flushes the RAF-pending move BEFORE flipping isDragging', () => {
   it('flushDragMove() precedes `isDragging = false` in handleDragEnd', () => {
     const start = FRAME_SRC.indexOf('function handleDragEnd()');
     expect(start).toBeGreaterThan(-1);
@@ -291,9 +291,9 @@ describe('Audit-17 4.3 — Frame drag-end flushes the RAF-pending move BEFORE fl
   });
 });
 
-// ── 4.4 — unmount-mid-drag true cancel ──────────────────────────────────
+// ── Unmount-mid-drag true cancel ────────────────────────────────────────
 
-describe('Audit-17 4.4 — revertFrameDragOnTeardown (true cancel, mirrors tileDrag.destroy)', () => {
+describe('revertFrameDragOnTeardown (true cancel, mirrors tileDrag.destroy)', () => {
   interface Call { id: string; pos: { x: number; y: number } }
 
   function makeDeps(tiles: Record<string, Tile>) {
@@ -360,16 +360,16 @@ describe('Audit-17 4.4 — revertFrameDragOnTeardown (true cancel, mirrors tileD
     expect(idx).toBeGreaterThan(-1);
     const endBatchAfter = FRAME_SRC.indexOf('spatialStore.endBatch()', idx);
     expect(endBatchAfter).toBeGreaterThan(idx);
-    // The wrong Audit-16 comment claimed tileDrag "cancels-not-commits" as a
+    // An earlier, wrong comment claimed tileDrag "cancels-not-commits" as a
     // justification for committing — the teardown must not push history.
     const teardown = FRAME_SRC.slice(idx - 2500, endBatchAfter);
     expect(teardown).not.toContain('historyStore.');
   });
 });
 
-// ── 4.5 — lastView flush-on-teardown ────────────────────────────────────
+// ── lastView flush-on-teardown ──────────────────────────────────────────
 
-describe('Audit-17 4.5 — flushLastViewForBoard (teardown-safe lastView sink)', () => {
+describe('flushLastViewForBoard (teardown-safe lastView sink)', () => {
   it('writes the slice onto the CAPTURED board even when another board is active', () => {
     activateTwoBoards('mm');
     const next = { filterTags: ['urgent'], smartList: 'today', showCompleted: false };

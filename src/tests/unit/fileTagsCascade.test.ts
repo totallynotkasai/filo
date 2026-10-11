@@ -21,10 +21,10 @@ import { parseMarkdown, type FileMetadata } from '@renderer/lib/vault/vaultIndex
 /**
  * Integration coverage for the three-sink tag cascade.
  *
- * The audit flagged that `renameTagEverywhere` / `removeTagEverywhere` did
- * not touch `settings.savedViews[*].filterTags` or `settings.lastView
- * .filterTags`. This test pins the cascade so a future regression is caught
- * before the next vault inconsistency is shipped.
+ * `renameTagEverywhere` / `removeTagEverywhere` once did not touch
+ * `settings.savedViews[*].filterTags` or `settings.lastView.filterTags`. This
+ * test pins the cascade so a future regression is caught before the next vault
+ * inconsistency is shipped.
  */
 
 function emptyTagsFile(): string {
@@ -110,8 +110,8 @@ describe('fileTagsStore — rename / delete cascade', () => {
       'board:save': async () => null,
       'board:load': async () => null,
       'vault:write-file-text': async () => ({ success: true }),
-      // Phase 31 A4.5 — fileTags + tag-rewrite-sweep now call
-      // vault:write-existing-file-text for edits to existing .md files.
+      // fileTags + tag-rewrite-sweep call vault:write-existing-file-text for
+      // edits to existing .md files.
       'vault:write-existing-file-text': async () => ({ success: true }),
       'vault:read-file-text': async () => ({ success: true, content: '' }),
     });
@@ -317,7 +317,7 @@ describe('fileTagsStore — rename / delete cascade', () => {
     });
   });
 
-  // Phase 9.1 (P1-5): tag-rename / tag-removal sweeps must rewrite every `.md`
+  // Tag-rename / tag-removal sweeps must rewrite every `.md`
   // file BEFORE committing the `.filo/tags.json` / tile-def cascade — so that
   // a partial disk failure leaves the registry pointing at the old name and a
   // retry naturally targets only the unwritten files. The old behaviour fired
@@ -368,9 +368,8 @@ describe('fileTagsStore — rename / delete cascade', () => {
           mtimeMs: 1,
           size: makeMarkdown('urgent').length,
         }),
-        // Phase 31 A4.5 — tag-rewrite-sweep now uses write-existing for
-        // edits to existing .md files. Sentinel writes still use the
-        // create-channel.
+        // tag-rewrite-sweep uses write-existing for edits to existing .md
+        // files. Sentinel writes still use the create-channel.
         'vault:write-file-text': recordPath,
         'vault:write-existing-file-text': recordPath,
       });
@@ -414,13 +413,13 @@ describe('fileTagsStore — rename / delete cascade', () => {
           mtimeMs: 1,
           size: makeMarkdown('urgent').length,
         }),
-        // Sprint B / B3 — allow `.filo/` writes (including the new
+        // Allow `.filo/` writes (including the new
         // tag-rewrite recovery sentinel) but make .md writes fail. This
         // mirrors the real-world failure mode (sentinel works, .md doesn't)
         // and lets the test isolate the per-file failure path.
         //
-        // Phase 31 A4.5 — tag-rewrite-sweep now calls write-existing for
-        // existing .md files; sentinel writes still go through write-file-text.
+        // tag-rewrite-sweep calls write-existing for existing .md files;
+        // sentinel writes still go through write-file-text.
         'vault:write-file-text': failOnMd,
         'vault:write-existing-file-text': failOnMd,
         'vault:delete': async () => ({ success: true }),
@@ -476,10 +475,10 @@ describe('fileTagsStore — rename / delete cascade', () => {
           mtimeMs: 1,
           size: makeMarkdown('urgent').length,
         }),
-        // Sprint B / B3 — allow `.filo/` writes (sentinel) but fail .md
-        // writes to isolate the per-file rewrite failure.
+        // Allow `.filo/` writes (sentinel) but fail .md writes to isolate
+        // the per-file rewrite failure.
         //
-        // Phase 31 A4.5 — same dual mock as the rename test above.
+        // Same dual mock as the rename test above.
         'vault:write-file-text': failOnMd,
         'vault:write-existing-file-text': failOnMd,
         'vault:delete': async () => ({ success: true }),

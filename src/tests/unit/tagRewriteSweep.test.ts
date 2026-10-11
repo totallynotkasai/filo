@@ -1,5 +1,5 @@
 /**
- * Polish phase 4.3 (2026-05-25) — full-function mutex.
+ * Full-function mutex.
  *
  * The previous mutex (`tagRewriteSentinel`) only guarded the sentinel JSON
  * read/write. Two rapid `rewriteTagInAllMarkdown` calls (e.g. user renames
@@ -116,7 +116,7 @@ function makeMetadata(paths: string[], tag: string): FileMetadata[] {
   }));
 }
 
-describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
+describe('rewriteTagInAllMarkdown — sweep mutex', () => {
   let fs: FakeFs;
 
   beforeEach(() => {
@@ -264,20 +264,20 @@ describe('rewriteTagInAllMarkdown — sweep mutex (polish phase 4.3)', () => {
     expect(r2).toBeDefined();
   });
 
-  // ── Audit 2.2 ─────────────────────────────────────────────────────────────
+  // ── case-insensitive candidate filter ─────────────────────────────────────
   // The index preserves the file's authored casing (`Project`), but the
   // registry canonical name is `project`. Pre-fix the candidate filter
   // (`md.tags.some((t) => t === oldName)`) was case-SENSITIVE, so the file was
   // skipped and the rename never reached its `.md` — leaving a stale `Project`
   // that the next external-edit reconcile would re-assert. Both the filter AND
   // the rewriter must fold case to match identity used everywhere else.
-  // ── 6.3 (AUDIT_REMEDIATION_PLAN_2026-05-31) ───────────────────────────────
+  // ── per-path progress for a tag removal ───────────────────────────────────
   // A crash mid tag-REMOVAL used to be undetectable: the sentinel recorded no
   // per-path progress, and reopen-side detection short-circuited to "not
   // partial" for removals — so a vault split between files that still carry
   // the tag and files that don't went unwarned. The sweep must now record
   // each committed path incrementally so reopen can detect the split.
-  it('records committedPaths incrementally for a partial removal (6.3)', async () => {
+  it('records committedPaths incrementally for a partial removal', async () => {
     const withFm = (tag: string, body: string) => `---\ntags:\n  - ${tag}\n---\n${body}\n`;
     fs.files.set('a.md', withFm('obsolete', 'note A'));
     fs.files.set('b.md', withFm('obsolete', 'note B'));

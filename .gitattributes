@@ -1,7 +1,6 @@
-# 6.4.L4 — enforce LF line endings for all text files on every platform so an
-# editor or core.autocrlf can't silently re-encode a source file to CRLF on
-# commit. Phase 5 did exactly that to KanbanCard.svelte + GlobalToolbar.svelte;
-# this prevents the whole class of line-ending churn going forward.
+# Enforce LF line endings for all text files on every platform so an editor or
+# core.autocrlf can't silently re-encode a source file to CRLF on commit; this
+# prevents the whole class of line-ending churn.
 * text=auto eol=lf
 
 # Binary assets — git must never apply text/eol processing to these.

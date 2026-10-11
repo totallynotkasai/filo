@@ -1,8 +1,7 @@
 /**
- * Phase A.6 — carry-over from IMPL_PLAN_2026-05-24 Phase 9.7.
+ * Global cap on recovery snapshots.
  *
- * The constant `MAX_SNAPSHOTS_TOTAL` (Sprint C / C19 dropped from 200 to
- * 100) is exercised here:
+ * The constant `MAX_SNAPSHOTS_TOTAL` (100) is exercised here:
  *
  *   1. Per-basename prune respected (existing 20-per-basename cap
  *      regression check).
@@ -18,7 +17,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { snapshotForRecovery } from '../../main/services/recoverySnapshot';
 
-describe('snapshotForRecovery — global cap (Phase A.6)', () => {
+describe('snapshotForRecovery — global cap', () => {
   let vaultRoot: string;
 
   beforeEach(async () => {
@@ -65,7 +64,7 @@ describe('snapshotForRecovery — global cap (Phase A.6)', () => {
     expect(remaining).toHaveLength(20);
   });
 
-  // Sprint D — these two cases each create ~200 fs entries + utimes calls.
+  // These two cases each create ~200 fs entries + utimes calls.
   // On Windows under ci:verify's parallel test load case 2 alone has been
   // observed at 25s. Bumped to 60s; not a behaviour change.
   it('case 2 — total above 100 is pruned to exactly 100', { timeout: 60000 }, async () => {

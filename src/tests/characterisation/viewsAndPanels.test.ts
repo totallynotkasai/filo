@@ -1,6 +1,6 @@
 /**
- * Characterisation — the Mind Map, Documents and the interface (Audit-29
- * Phase 4), as a user meets them:
+ * Characterisation — the Mind Map, Documents and the interface, as a user
+ * meets them:
  * - folding a frame hides the frames inside it too;
  * - the Waypoints panel stays hidden until the board has a waypoint;
  * - Ctrl and + on the number pad, and Ctrl+Shift+=, zoom a note in, and the

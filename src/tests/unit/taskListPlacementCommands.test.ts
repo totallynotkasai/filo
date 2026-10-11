@@ -18,7 +18,7 @@ import type {
 } from '@renderer/schema/index';
 
 /**
- * Phase 4 placement-level commands. Round-trip coverage:
+ * Placement-level commands. Round-trip coverage:
  *   - TogglePlacementLockCommand  → flips placement.locked
  *   - ReorderTaskWithinSectionCommand → delegates to MoveTaskBlockCommand
  */

@@ -1,24 +1,24 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 
 /**
- * Audit-14 Phase 4 — security & IPC hardening.
+ * Security & IPC hardening.
  *
- *   4.1  media:open-external now runs the DNS-resolution SSRF check its sibling
- *        link:fetch-metadata enforces (a public hostname that RESOLVES to a
- *        private range is refused, not handed to the OS browser).
- *   4.2  dialog:open-file is gated on an active vault (no vault → null, no
- *        approval minted), and every picked path is registered as an approved
- *        copy source BOUND to the active vault.
- *   4.4  tags:load / tags:save resolve a typed `{ ok: false, code }` envelope on
- *        error instead of letting the rejection cross IPC as an opaque string.
- *   4.7  the app-origin CSP drops the dev-only `ws://localhost:*` in packaged
- *        builds.
+ *   - media:open-external runs the DNS-resolution SSRF check its sibling
+ *     link:fetch-metadata enforces (a public hostname that RESOLVES to a
+ *     private range is refused, not handed to the OS browser).
+ *   - dialog:open-file is gated on an active vault (no vault → null, no
+ *     approval minted), and every picked path is registered as an approved
+ *     copy source BOUND to the active vault.
+ *   - tags:load / tags:save resolve a typed `{ ok: false, code }` envelope on
+ *     error instead of letting the rejection cross IPC as an opaque string.
+ *   - the app-origin CSP drops the dev-only `ws://localhost:*` in packaged
+ *     builds.
  *
  * The handlers are driven directly with mocked electron / dns primitives so we
- * can assert the dangerous path is refused. Bite-verify: revert the 4.1 `else`
- * DNS branch → the rebinding spec goes green-through (failure); revert the 4.2
- * gate → the no-vault spec returns a path; revert the 4.4 try/catch → the
- * envelope specs see a thrown rejection.
+ * can assert the dangerous path is refused. Bite-verify: revert the
+ * open-external `else` DNS branch → the rebinding spec goes green-through
+ * (failure); revert the dialog:open-file gate → the no-vault spec returns a
+ * path; revert the tags try/catch → the envelope specs see a thrown rejection.
  */
 
 const mockState = vi.hoisted(() => ({
@@ -121,8 +121,8 @@ afterEach(() => {
   vaultRegistry.setCurrentVault(null);
 });
 
-// ── 4.1 — media:open-external DNS-resolution SSRF check ─────────────────────
-describe('Audit-14 4.1 — media:open-external DNS SSRF parity', () => {
+// ── media:open-external DNS-resolution SSRF check ───────────────────────────
+describe('media:open-external DNS SSRF parity', () => {
   const callOpen = async (target: string) =>
     (await handler('media:open-external')({}, target)) as { success: boolean; error?: string };
 
@@ -159,8 +159,8 @@ describe('Audit-14 4.1 — media:open-external DNS SSRF parity', () => {
   });
 });
 
-// ── 4.2 — dialog:open-file active-vault gate + bound approval ────────────────
-describe('Audit-14 4.2 — dialog:open-file vault gate + approval binding', () => {
+// ── dialog:open-file active-vault gate + bound approval ──────────────────────
+describe('dialog:open-file vault gate + approval binding', () => {
   const PICKED =
     process.platform === 'win32' ? 'D:\\Photos\\holiday.jpg' : '/mnt/usb/holiday.jpg';
   const VAULT = process.platform === 'win32' ? 'C:\\Users\\me\\Vault' : '/home/me/Vault';
@@ -185,7 +185,7 @@ describe('Audit-14 4.2 — dialog:open-file vault gate + approval binding', () =
     expect(isApprovedCopySource(VAULT, PICKED)).toBe(true);
   });
 
-  it('a path picked under vault A is NOT approved after swapping to vault B (the 4.2 fix)', async () => {
+  it('a path picked under vault A is NOT approved after swapping to vault B', async () => {
     const VAULT_A = process.platform === 'win32' ? 'C:\\Users\\me\\A' : '/home/me/A';
     const VAULT_B = process.platform === 'win32' ? 'C:\\Users\\me\\B' : '/home/me/B';
     vaultRegistry.setCurrentVault(VAULT_A);
@@ -201,8 +201,8 @@ describe('Audit-14 4.2 — dialog:open-file vault gate + approval binding', () =
   });
 });
 
-// ── 4.4 — tags:load / tags:save envelope on error ───────────────────────────
-describe('Audit-14 4.4 — tags channels return an envelope on error', () => {
+// ── tags:load / tags:save envelope on error ─────────────────────────────────
+describe('tags channels return an envelope on error', () => {
   it('tags:save returns { ok:false, code:NO_ACTIVE_VAULT } with no vault open (no throw)', async () => {
     // No active vault → assertActiveVault throws → wrapped in the envelope.
     const result = (await handler('tags:save')({}, '/some/vault', '{"v":1}')) as {
@@ -232,8 +232,8 @@ describe('Audit-14 4.4 — tags channels return an envelope on error', () => {
   });
 });
 
-// ── 4.7 — packaged CSP drops ws://localhost:* ───────────────────────────────
-describe('Audit-14 4.7 — app CSP omits ws://localhost in packaged builds', () => {
+// ── packaged CSP drops ws://localhost:* ─────────────────────────────────────
+describe('app CSP omits ws://localhost in packaged builds', () => {
   it('dev build keeps the Vite HMR websocket in connect-src', () => {
     const csp = buildAppContentSecurityPolicy(false);
     expect(csp).toContain("connect-src 'self' ws://localhost:*");

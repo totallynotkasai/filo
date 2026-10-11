@@ -24,10 +24,10 @@ import { testSentinelPath } from '../helpers/testMachine';
 afterEach(disposeTestSchedulers);
 
 /**
- * Audit-16 Phase 3 — cross-vault contamination & lifecycle races
- * (renderer-side items; 3.1 lives in fileWatcherLateNotify.test.ts).
+ * Cross-vault contamination & lifecycle races (renderer side; the watcher
+ * late-notify race lives in fileWatcherLateNotify.test.ts).
  *
- * 3.2 — the recovery sequencer's step-2 (tag-rewrite Resume/Discard) confirm
+ * The recovery sequencer's step-2 (tag-rewrite Resume/Discard) confirm
  * handlers ran with NO vault-identity guard. The pre-swap handler in
  * ui.svelte.ts AUTO-CANCELS a parked confirm when the user opens another
  * vault instead of answering, so onCancel can straddle the swap commit:
@@ -87,7 +87,7 @@ function resetAll(): void {
   for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id);
 }
 
-describe('Audit-16 3.2 — recovery sequencer step-2 handlers are vault-identity-guarded', () => {
+describe('recovery sequencer step-2 handlers are vault-identity-guarded', () => {
   beforeEach(() => {
     resetAll();
     vaultStore.setPath('/vault');
@@ -168,7 +168,7 @@ describe('Audit-16 3.2 — recovery sequencer step-2 handlers are vault-identity
 });
 
 /**
- * 3.4 — a PARKED fire (debounce fire deferred behind an in-flight write)
+ * A PARKED fire (debounce fire deferred behind an in-flight write)
  * survives `reset()`: the timer already fired, so cancelAll's clearTimeout
  * can't reach it, and reset() only drops the parked-promise REFERENCES. When
  * the old write settled, the dangling closure resumed and called
@@ -179,7 +179,7 @@ describe('Audit-16 3.2 — recovery sequencer step-2 handlers are vault-identity
  * session's failed set (sticky `.filo/.dirty`, phantom recovery prompt).
  * The parked closure now captures a scheduler generation bumped by reset().
  */
-describe('Audit-16 3.4 — a parked fire neutralised by reset() neither fires nor pollutes', () => {
+describe('a parked fire neutralised by reset() neither fires nor pollutes', () => {
   interface TArgs {
     vaultRoot: string;
     path: string;
@@ -208,7 +208,7 @@ describe('Audit-16 3.4 — a parked fire neutralised by reset() neither fires no
     let resolveA!: () => void;
     const writes: TArgs[] = [];
     const scheduler = createScheduler<TArgs>({
-      name: 'test-3.4',
+      name: 'test-parked',
       debounceMs: 100,
       performWrite: (a) => {
         writes.push(a);
@@ -273,11 +273,11 @@ describe('Audit-16 3.4 — a parked fire neutralised by reset() neither fires no
 });
 
 /**
- * 3.5 — a quit's `save()` during a swap waits out the swap's registry-null
+ * A quit's `save()` during a swap waits out the swap's registry-null
  * window instead of draining inside it. Opens run one at a time, so a second
  * open during the swap is refused rather than opening a window of its own.
  */
-describe('Audit-16 3.5 — a concurrent swap window survives the first swap\'s finally', () => {
+describe('a concurrent swap window survives the first swap\'s finally', () => {
   const VALID_TAGS_JSON = JSON.stringify({ version: 1, tags: {}, fileTags: {} });
 
   /** Per-path gate on the candidate load's `vault:read-tree`. */
@@ -361,7 +361,7 @@ describe('Audit-16 3.5 — a concurrent swap window survives the first swap\'s f
 });
 
 /**
- * 3.6 — `refreshTreeAndCleanup` evicted boards using a possibly-stale
+ * `refreshTreeAndCleanup` evicted boards using a possibly-stale
  * `fileTree`: (a) a FAILED `vault:read-tree` left the old tree in place and
  * returned void, so the missing-board walk ran against it anyway; (b) the
  * tree enumeration can race a concurrent `board:create` (read started
@@ -369,7 +369,7 @@ describe('Audit-16 3.5 — a concurrent swap window survives the first swap\'s f
  * board's pending debounced writes and closes its tabs — so recent edits
  * were silently lost while the file on disk kept the older state.
  */
-describe('Audit-16 3.6 — refreshTreeAndCleanup does not evict on stale-tree evidence', () => {
+describe('refreshTreeAndCleanup does not evict on stale-tree evidence', () => {
   function makeBoard(boardId: string): Record<string, unknown> {
     return {
       board: {
@@ -455,7 +455,7 @@ describe('Audit-16 3.6 — refreshTreeAndCleanup does not evict on stale-tree ev
 
     await vaultStore.refreshTreeAndCleanup();
 
-    // Audit-19 EXT-1 — eviction now follows the provisional-missing re-check
+    // Eviction follows the provisional-missing re-check
     // (a reconcile walk + a ~2 s grace), not the tree refresh itself.
     expect('a' in boardCacheStore.cache).toBe(true);
     await vi.waitFor(() => expect('a' in boardCacheStore.cache).toBe(false), { timeout: 5000, interval: 50 });
@@ -463,7 +463,7 @@ describe('Audit-16 3.6 — refreshTreeAndCleanup does not evict on stale-tree ev
 });
 
 /**
- * 3.7 — the external-change renderer bridge (`vaultStore.listenForChanges`)
+ * The external-change renderer bridge (`vaultStore.listenForChanges`)
  * must be owned by an app-lifetime component, NOT VaultSidebar's mount
  * lifecycle: the docked and floating sidebars are mutually exclusive
  * `{#if}` branches in AppShell, so a float/dock toggle destroyed one
@@ -477,7 +477,7 @@ describe('Audit-16 3.6 — refreshTreeAndCleanup does not evict on stale-tree ev
  * lives in App.svelte (mounted once for the app's lifetime) and nowhere in
  * the sidebar tree.
  */
-describe('Audit-16 3.7 — the watcher bridge is app-lifetime, not sidebar-lifecycle', () => {
+describe('the watcher bridge is app-lifetime, not sidebar-lifecycle', () => {
   const read = (rel: string): string =>
     readFileSync(join(process.cwd(), rel), 'utf-8');
 

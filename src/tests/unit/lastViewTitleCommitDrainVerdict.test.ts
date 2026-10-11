@@ -1,27 +1,27 @@
 /**
- * Audit-18 Phase 5 — Audit-17 recent-change regressions.
+ * Regressions in the lastView debounce, the teardown title commit and
+ * withDrainedWrites' sibling parking.
  *
- *  5.1 The lastView persist `$effect` cleanup fired on EVERY effect re-run
- *      (Svelte 5 runs the cleanup before each re-execution, not only on
- *      teardown), so a filter/sort change flushed the pending debounce
- *      immediately — structurally defeating the 300 ms debounce (each change
- *      wrote one behind). Fix: flush ONLY on a real board switch (`board?.id
- *      !== id`); the unmount flush moved to `filters.dispose()` / KanbanBoard's
- *      onDestroy, decoupled from the timer the cleanup may have just nulled.
- *  5.2 The teardown-time title commit (A17-4.1) renamed the `.md` with NO undo
- *      entry, fire-and-forget, racing the board switch. Fix: defer the commit
- *      one microtask past the switch and push `RenameTitleCommand` onto the
- *      tile's HOME board's stack via the new
- *      `historyStore.pushWithoutExecuteOnBoard`.
- *  5.3 `withDrainedWrites`' A17-3.4 sibling-parking re-ran a FULL drain per
- *      queued sibling on a drain failure (`return withDrainedWrites(op)`) — an
- *      N×60 s latency cliff + duplicate toasts. Fix: siblings share the outer
- *      drain's verdict (throw, no re-drain) and re-validate the vault
- *      generation after the park.
+ *  - The lastView persist `$effect` cleanup fired on EVERY effect re-run
+ *    (Svelte 5 runs the cleanup before each re-execution, not only on
+ *    teardown), so a filter/sort change flushed the pending debounce
+ *    immediately — structurally defeating the 300 ms debounce (each change
+ *    wrote one behind). Fix: flush ONLY on a real board switch (`board?.id
+ *    !== id`); the unmount flush moved to `filters.dispose()` / KanbanBoard's
+ *    onDestroy, decoupled from the timer the cleanup may have just nulled.
+ *  - The teardown-time title commit renamed the `.md` with NO undo entry,
+ *    fire-and-forget, racing the board switch. Fix: defer the commit one
+ *    microtask past the switch and push `RenameTitleCommand` onto the tile's
+ *    HOME board's stack via `historyStore.pushWithoutExecuteOnBoard`.
+ *  - `withDrainedWrites`' sibling-parking re-ran a FULL drain per queued
+ *    sibling on a drain failure (`return withDrainedWrites(op)`) — an
+ *    N×60 s latency cliff + duplicate toasts. Fix: siblings share the outer
+ *    drain's verdict (throw, no re-drain) and re-validate the vault
+ *    generation after the park.
  *
  * The jsdom suite has no Svelte component-mount harness, so component wiring is
- * pinned via source-shape assertions (same pattern as audit17Phase4); the
- * behaviour lives in the extracted lib helpers / stores the components call.
+ * pinned via source-shape assertions; the behaviour lives in the extracted lib
+ * helpers / stores the components call.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -101,9 +101,9 @@ function installEmptyFiloStub(): void {
   };
 }
 
-// ── 5.1 — lastView debounce ──────────────────────────────────────────────
+// ── lastView debounce ────────────────────────────────────────────────────
 
-describe('Audit-18 5.1 — lastView persist debounce restored', () => {
+describe('lastView persist debounce restored', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     vaultStore.setPath('');
@@ -183,7 +183,7 @@ describe('Audit-18 5.1 — lastView persist debounce restored', () => {
   });
 });
 
-// ── 5.2 — teardown title rename onto the home board's stack ───────────────
+// ── Teardown title rename onto the home board's stack ─────────────────────
 
 class NoopCommand extends Command {
   readonly targetBoardId: string;
@@ -201,7 +201,7 @@ class NoopCommand extends Command {
   }
 }
 
-describe('Audit-18 5.2 — teardown title commit pushes onto the HOME board stack', () => {
+describe('teardown title commit pushes onto the HOME board stack', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     boardCacheStore.clear();
@@ -259,9 +259,9 @@ describe('Audit-18 5.2 — teardown title commit pushes onto the HOME board stac
   });
 });
 
-// ── 5.3 — withDrainedWrites failure-path recursion cap + post-park re-validate
+// ── withDrainedWrites failure-path recursion cap + post-park re-validate
 
-describe('Audit-18 5.3 — withDrainedWrites siblings share the drain verdict', () => {
+describe('withDrainedWrites siblings share the drain verdict', () => {
   beforeEach(() => {
     noteStore.__resetForTests();
     __resetDirtyTrackingForTests();

@@ -1,5 +1,5 @@
 /**
- * L5 (Audit-12) — attachment-delete grace, pinned by source scan (it lives in
+ * Attachment-delete grace, pinned by source scan (it lives in
  * a module-private reconciler, which this suite pins structurally — cf.
  * `contracts/externalEditReconciliation.test.ts`):
  *
@@ -23,7 +23,7 @@ function blankComments(src: string): string {
     .replace(/<!--[\s\S]*?-->/g, '');
 }
 
-describe('Audit-12 L5(b) — attachment reconciler is fire-and-forget', () => {
+describe('attachment reconciler is fire-and-forget', () => {
   const src = blankComments(
     fs.readFileSync(
       path.join(ROOT, 'src', 'renderer', 'stores', 'vaultExternalReconcilers.ts'),

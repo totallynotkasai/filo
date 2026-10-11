@@ -14,14 +14,14 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Phase 4.4 / 4.5 (2026-05-30) — rename-cascade recovery sentinel handlers.
+ * Rename-cascade recovery sentinel handlers.
  *
- * 4.4: the Retry handler must repair board JSON + tags.json AND move an open
- *      note to the new path, like the normal rename path; a note already open
- *      when an in-session retry fires would otherwise keep writing to the
- *      OLD path.
- * 4.5: the Discard handler just cleared the breadcrumb — leaving any board
- *      whose flush had failed pointing at the old path with no repair.
+ * - Retry: the handler must repair board JSON + tags.json AND move an open
+ *   note to the new path, like the normal rename path; a note already open
+ *   when an in-session retry fires would otherwise keep writing to the OLD
+ *   path.
+ * - Discard: the handler used to just clear the breadcrumb — leaving any
+ *   board whose flush had failed pointing at the old path with no repair.
  *
  * The sequencer is private; `__runRecoverySequencerForTests` drives it past
  * recovery steps 1 (.dirty) and 2 (tag-rewrite), which no-op here (their
@@ -210,14 +210,14 @@ describe('rename-cascade recovery — Retry repoints open notes', () => {
 });
 
 /**
- * 6.2.H2 — `awaitConfirm` must await the `onConfirm` handler's async work
+ * `awaitConfirm` must await the `onConfirm` handler's async work
  * before resolving its outer promise. Pre-fix: `onConfirm: () => void` ran
  * synchronously and resolved immediately, so a `void convergeForward()`
  * inside it fired-and-forgot. The sequencer's next `await awaitConfirm(...)`
  * stage could then race against the still-pumping `renameTagEverywhere` —
  * two recoveries mutating `boardCacheStore.cache` / `flushAllDirty` at once.
  */
-describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
+describe('recovery sequencer — awaitConfirm awaits onConfirm', () => {
   const tagSentinel = (): string => ownSentinelPath('tag-rewrite');
 
   beforeEach(() => {
@@ -268,7 +268,7 @@ describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
     const seq = __runRecoverySequencerForTests('/vault');
     await fireDialog('confirm');
 
-    // Race the sequencer against a short timeout. If H2 is fixed, the
+    // Race the sequencer against a short timeout. With the fix, the
     // sequencer is still awaiting `convergeForward`, so the timeout wins.
     const TIMEOUT = Symbol('timeout');
     const raced = await Promise.race([
@@ -284,14 +284,14 @@ describe('recovery sequencer — 6.2.H2: awaitConfirm awaits onConfirm', () => {
 });
 
 /**
- * 6.2.H3 — the tag-rewrite step's partial-state detection reads
+ * The tag-rewrite step's partial-state detection reads
  * `vaultIndexStore.allMetadata()` — which would return a mid-chunk empty/
  * partial sample if `vaultIndexStore.rebuild()` is still running. Without
  * the `whenBuildComplete()` await, the sequencer could see "no newName
  * carrier" mid-rebuild, decide "not partial", and show the Discard label —
  * users then discarding what was actually a half-committed rename.
  */
-describe('recovery sequencer — 6.2.H3: awaits vaultIndex rebuild before metadata sample', () => {
+describe('recovery sequencer — awaits vaultIndex rebuild before metadata sample', () => {
   const tagSentinel = (): string => ownSentinelPath('tag-rewrite');
 
   beforeEach(() => {

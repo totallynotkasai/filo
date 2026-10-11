@@ -8,12 +8,12 @@ import {
 } from '../../main/services/recoverySnapshot';
 
 /**
- * Audit-5 #11 — `listRecoverySnapshots` surfaces preserved `.filo/recovery/`
- * snapshots to the renderer on vault open WITHOUT pruning them. Read-only: the
- * user's safety net is only removed when they act on it (reveal → recover /
- * delete) or the write-time cap trims the oldest.
+ * `listRecoverySnapshots` surfaces preserved `.filo/recovery/` snapshots to the
+ * renderer on vault open WITHOUT pruning them. Read-only: the user's safety net
+ * is only removed when they act on it (reveal → recover / delete) or the
+ * write-time cap trims the oldest.
  */
-describe('listRecoverySnapshots (#11)', () => {
+describe('listRecoverySnapshots', () => {
   let vaultRoot: string;
 
   beforeEach(async () => {
@@ -53,7 +53,7 @@ describe('listRecoverySnapshots (#11)', () => {
     expect(after).toHaveLength(1);
   });
 
-  it('L13: excludes Filo sentinel basenames from the listing', async () => {
+  it('excludes Filo sentinel basenames from the listing', async () => {
     // Plant a recovery subdir holding sentinel-named files alongside a real
     // preserved snapshot. (A sentinel can land here, e.g. via the forensic
     // `.dirty` copy path.) The listing must surface only the user file — a

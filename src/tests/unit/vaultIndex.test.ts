@@ -57,9 +57,9 @@ inline #should-not-appear in body.
     expect(meta.tags).toEqual([]);
   });
 
-  it('captures rawFrontmatter when the fence lines carry trailing whitespace (DI-17 M9 parity)', () => {
+  it('captures rawFrontmatter when the fence lines carry trailing whitespace', () => {
     // Editors / linters routinely leave a trailing space on a `---` fence. The
-    // index fence regex must tolerate it (matching parseMarkdownFile's 6.4.M9
+    // index fence regex must tolerate it (matching parseMarkdownFile's
     // `[ \t]*`) so the index's verbatim-bytes view doesn't diverge from the
     // write gateway's. The pre-fix regex (`^---\r?\n`) didn't match `--- \n`,
     // so rawFrontmatter came back empty for such a file.
@@ -71,24 +71,24 @@ inline #should-not-appear in body.
 });
 
 /**
- * Phase 6.5 — the vault index frontmatter read is on the `yaml` package (was
- * js-yaml CORE_SCHEMA), so the index builds its frontmatter object with the SAME
- * parser as `markdownSync.parseMarkdownFile` and the source-preserving write
- * engine. The only two scalar forms where js-yaml CORE and the `yaml` package
- * ever disagreed — `1_000` / `0b1010` (NUMBERS under js-yaml CORE, STRINGS under
- * the `yaml` package) — now surface as strings in the index too, so an
+ * The vault index frontmatter read is on the `yaml` package (was js-yaml
+ * CORE_SCHEMA), so the index builds its frontmatter object with the SAME parser
+ * as `markdownSync.parseMarkdownFile` and the source-preserving write engine.
+ * The only two scalar forms where js-yaml CORE and the `yaml` package ever
+ * disagreed — `1_000` / `0b1010` (NUMBERS under js-yaml CORE, STRINGS under the
+ * `yaml` package) — now surface as strings in the index too, so an
  * exotic-numeric value can't diverge between the index metadata and the
- * documentStore frontmatter and read as a phantom external change (the M2 class).
+ * documentStore frontmatter and read as a phantom external change.
  */
-describe('parseMarkdown — frontmatter on the `yaml` package (Phase 6.5)', () => {
-  it('reads 1_000 / 0b1010 as strings, matching parseMarkdownFile (M2 consistency)', () => {
+describe('parseMarkdown — frontmatter on the `yaml` package', () => {
+  it('reads 1_000 / 0b1010 as strings, matching parseMarkdownFile', () => {
     const md = '---\nthousands: 1_000\nflags: 0b1010\n---\n# Body\n';
     const meta = parseMarkdown('numerics.md', md);
     expect(meta.frontmatter.thousands).toBe('1_000');
     expect(meta.frontmatter.flags).toBe('0b1010');
   });
 
-  it('keeps an unquoted date a string, not a Date (DI-01 preserved)', () => {
+  it('keeps an unquoted date a string, not a Date', () => {
     const md = '---\ndue: 2026-06-01\n---\n# Body\n';
     const meta = parseMarkdown('dates.md', md);
     expect(typeof meta.frontmatter.due).toBe('string');
@@ -103,15 +103,15 @@ describe('parseMarkdown — frontmatter on the `yaml` package (Phase 6.5)', () =
 });
 
 /**
- * M2 (Audit-13) — `gray-matter` (its bundled `js-yaml@3` / YAML 1.1) was a
- * reachable SECOND frontmatter parser on the index's fallback paths: on
- * malformed-but-recoverable YAML it coerced an unquoted `date:` → Date and
- * `0b1010` → 10, diverging from the `yaml` package the read/write gateway uses
- * (the "looks changed but isn't" drift class). Both fallbacks now route through
- * the `yaml` package (`lib/vault/frontmatterRead.ts`), so a malformed-recoverable
- * block parses with the SAME string-typed scalars, never a js-yaml coercion.
+ * `gray-matter` (its bundled `js-yaml@3` / YAML 1.1) was a reachable SECOND
+ * frontmatter parser on the index's fallback paths: on malformed-but-recoverable
+ * YAML it coerced an unquoted `date:` → Date and `0b1010` → 10, diverging from
+ * the `yaml` package the read/write gateway uses (the "looks changed but isn't"
+ * drift class). Both fallbacks now route through the `yaml` package
+ * (`lib/vault/frontmatterRead.ts`), so a malformed-recoverable block parses with
+ * the SAME string-typed scalars, never a js-yaml coercion.
  */
-describe('parseMarkdown — single yaml parser, no gray-matter coercion (Audit-13 M2)', () => {
+describe('parseMarkdown — single yaml parser, no gray-matter coercion', () => {
   it('a tab-indented FM keeps an unquoted date a STRING, not a Date', () => {
     // Tabs are illegal YAML indentation: the `yaml` package reports
     // TAB_AS_INDENT (the old code fell through to gray-matter here), but
@@ -182,13 +182,13 @@ describe('VaultIndex', () => {
 });
 
 /**
- * M1 (Audit-13) — VaultIndex keys its metadata Map by the
- * case-FOLDED vault-relative path, so a case-divergent external edit (case-only
- * rename, multi-device OneDrive, git) hits the SAME entry instead of missing it
- * (which bypassed the partial-read guard and upserted a duplicate). The stored
- * `metadata.path` keeps OS casing for display.
+ * VaultIndex keys its metadata Map by the case-FOLDED vault-relative path, so a
+ * case-divergent external edit (case-only rename, multi-device OneDrive, git)
+ * hits the SAME entry instead of missing it (which bypassed the partial-read
+ * guard and upserted a duplicate). The stored `metadata.path` keeps OS casing
+ * for display.
  */
-describe('VaultIndex — case-folded keys (Audit-13 M1)', () => {
+describe('VaultIndex — case-folded keys', () => {
   it('get/has resolve a case-divergent lookup to the same entry', () => {
     const idx = new VaultIndex();
     idx.upsert(parseMarkdown('Notes/Meeting.md', '---\ntags: [x]\n---\n# Meeting'));
@@ -355,7 +355,7 @@ describe('VaultIndex — incremental updates', () => {
 });
 
 /**
- * Phase 1 / 1.3 — `.markdown` is the IANA-registered alternative to `.md`
+ * `.markdown` is the IANA-registered alternative to `.md`
  * and Obsidian, VS Code, GitHub all treat it as equivalent. The cold-rebuild
  * walker (`collectMarkdownPaths`) and the watcher-driven applyChanges filter
  * (in `vaultIndex.svelte.ts`) used to filter on `.md` only, so `.markdown`

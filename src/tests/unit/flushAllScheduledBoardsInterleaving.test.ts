@@ -9,17 +9,17 @@ import { flushAllScheduledBoards } from '@renderer/lib/boards/boardWriteSchedule
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Phase 40 / 40.5 — regression for `flushAllScheduledBoards` interleaving.
+ * Regression for `flushAllScheduledBoards` interleaving.
  *
- * The Phase 25 L12 comment claims:
+ * The scheduler's own comment claims:
  *   "capture every pending (boardId, args, snapshot) tuple synchronously
  *    upfront before issuing any await."
  *
- * The audit (2026-05-22) wanted this verified — concretely, a cascade-rename
- * (or any other in-memory mutation) that lands MID-FLUSH must not affect the
- * boardPath or snapshot already written for any subsequent board. The
- * regression: a rebound `getWriteArgs` between iterations of the await loop
- * could swap one board's path onto another's payload, corrupting both files.
+ * This test verifies it — concretely, a cascade-rename (or any other in-memory
+ * mutation) that lands MID-FLUSH must not affect the boardPath or snapshot
+ * already written for any subsequent board. The regression: a rebound
+ * `getWriteArgs` between iterations of the await loop could swap one board's
+ * path onto another's payload, corrupting both files.
  *
  * The synchronous capture loop (`for (const [boardId, pending] of
  * pendingBoardWrites.entries())`) freezes both the path returned by
@@ -28,9 +28,8 @@ import type { MindMapBoard } from '@renderer/schema/index';
  * invariant by mutating the getter between iterations and confirming each
  * captured (path, payload) pair is written intact.
  *
- * Phase C / C.5 — the snapshot is now taken at flush time (inside the
- * upfront capture loop), not at schedule time. The "freeze before await"
- * invariant is unchanged; only the moment of the deep-clone shifted.
+ * The snapshot is taken at flush time (inside the upfront capture loop), not
+ * at schedule time; the "freeze before await" invariant holds either way.
  */
 
 type InvokeHandler = (...args: unknown[]) => unknown | Promise<unknown>;

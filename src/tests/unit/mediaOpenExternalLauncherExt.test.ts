@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Audit-10 B3 — `media:open-external` launcher-blocklist bypass.
+ * `media:open-external` launcher-blocklist bypass.
  *
  * The local-path branch refuses to hand OS-launcher / scripting / HTML
  * extensions to `shell.openPath`. The original check used
@@ -64,7 +64,7 @@ vi.mock('../../main/ipc/vault.ipc', () => ({
 
 const { registerMediaHandlers } = await import('../../main/ipc/media.ipc');
 
-describe('media:open-external — launcher-extension blocklist (Audit-10 B3)', () => {
+describe('media:open-external — launcher-extension blocklist', () => {
   let vaultDir: string;
   let openExternalHandler: (...args: unknown[]) => unknown | Promise<unknown>;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -99,7 +99,7 @@ describe('media:open-external — launcher-extension blocklist (Audit-10 B3)', (
     await fs.rm(vaultDir, { recursive: true, force: true });
   });
 
-  // ── B3 bypasses: were openable under the old path.extname check ──────────
+  // ── Bypasses: were openable under the old path.extname check ─────────────
 
   it('blocks a Win32 trailing-dot executable (evil.exe.)', async () => {
     const result = await callOpen(vaultPath('evil.exe.'));
@@ -199,7 +199,7 @@ describe('media:open-external — launcher-extension blocklist (Audit-10 B3)', (
     expect(openPathCalls).toEqual([]);
   });
 
-  // ── Audit-12 S2 — http:// dropped + reserved-name basename guard ──────────
+  // ── http:// dropped + reserved-name basename guard ────────────────────────
 
   it('refuses a legacy http:// URL (no openExternal, no openPath)', async () => {
     const result = await callOpen('http://example.com/page');
@@ -230,7 +230,7 @@ describe('media:open-external — launcher-extension blocklist (Audit-10 B3)', (
     expect(openPathCalls).toEqual([]);
   });
 
-  // ── Audit-13 M12 — OS launcher / shell-acted-on shortcut extensions ───────
+  // ── OS launcher / shell-acted-on shortcut extensions ──────────────────────
 
   it('refuses every OS launcher / shell-shortcut extension (no openPath)', async () => {
     const launcherExts = ['.url', '.scf', '.website', '.pif', '.reg', '.inf', '.desktop'];
@@ -250,7 +250,7 @@ describe('media:open-external — launcher-extension blocklist (Audit-10 B3)', (
     expect(openPathCalls).toEqual([]);
   });
 
-  // ── L11 — case-insensitive URL-scheme allowlist (Audit-13) ────────────────
+  // ── Case-insensitive URL-scheme allowlist ─────────────────────────────────
 
   it('routes a case-varied HTTPS:// URL through shell.openExternal (was wrongly refused)', async () => {
     const target = 'HTTPS://Example.com/Page';

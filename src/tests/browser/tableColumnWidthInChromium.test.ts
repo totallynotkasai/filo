@@ -82,7 +82,7 @@ describe('a table column dragged to a width', () => {
 /**
  * The Document tab's zoom is CSS `zoom` on the page. prosemirror-tables
  * added the pointer's screen pixels to the column's own pixels, so at 150% the
- * border ran half again as fast as the pointer (Audit-29 E-10).
+ * border ran half again as fast as the pointer.
  */
 describe('a table column dragged in a zoomed note', () => {
   function zoomedEditor(zoom: number): Editor {

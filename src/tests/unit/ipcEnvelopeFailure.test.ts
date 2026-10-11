@@ -1,12 +1,12 @@
 /**
- * Phase 14 (Sprint D / C1+C2) regression guard.
+ * IPC envelope failure regression guard.
  *
  * The main-process IPC handlers (`board:save`, `config:save`,
- * `vault:write-file-text`) catch their own errors and return `{ ok: false }`
- * or `{ success: false }` envelopes instead of letting the promise reject.
- * Before Phase 14 the renderer just awaited the invoke result and ignored
- * the envelope — disk-full / EPERM / EACCES failures were silently logged
- * to console while the save indicator flashed "Saved".
+ * `vault:write-file-text`) catch their own errors and return `{ ok: false }` or
+ * `{ success: false }` envelopes instead of letting the promise reject.
+ * Previously the renderer just awaited the invoke result and ignored the
+ * envelope — disk-full / EPERM / EACCES failures were silently logged to
+ * console while the save indicator flashed "Saved".
  *
  * These tests assert that:
  *   1. `assertIpcOk` throws on `{ ok: false }` / `{ success: false }`
@@ -152,7 +152,7 @@ describe('writeConfigs — envelope failure', () => {
     setWriteErrorListener(null);
   });
 
-  it('surfaces failures on config:save { ok: false } (A1.1)', async () => {
+  it('surfaces failures on config:save { ok: false }', async () => {
     installFiloMock({
       'config:save-workspace': () => ({ ok: true }),
       'config:save': (...args: unknown[]) => {
@@ -168,7 +168,7 @@ describe('writeConfigs — envelope failure', () => {
     const settings: ProjectSettings = {} as unknown as ProjectSettings;
     const workspace: WorkspaceState = { openTabs: [], activeTabId: null } as unknown as WorkspaceState;
 
-    // A1.1: writeConfigs returns the failed list rather than throwing so the
+    // writeConfigs returns the failed list rather than throwing so the
     // honest save-success aggregate can include config target failures.
     const res = await writeConfigs('/vault', settings, 'light', workspace);
     expect(res.failed).toEqual(['defaults.json']);

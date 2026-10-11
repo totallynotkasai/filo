@@ -2,9 +2,8 @@
  * Characterisation — metadata edits land in the note's frontmatter, and every
  * board showing the note follows.
  *
- * Pins what the user sees, not how the app does it. Phases 3–6 of the master
- * plan must keep these green without editing this file (only the harness
- * adapter may change).
+ * Pins what the user sees, not how the app does it. A refactor must keep these
+ * green without editing this file (only the harness adapter may change).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { parseDocument } from 'yaml';

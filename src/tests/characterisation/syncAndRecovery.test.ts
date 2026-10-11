@@ -1,5 +1,5 @@
 /**
- * Characterisation — sync and recovery, after Audit-28 Phase 6A:
+ * Characterisation — sync and recovery:
  *
  * - the copies in .filo/recovery raise no notice at every open; Settings →
  *   Recovery lists them by kind, and deletes them to the Recycle Bin;

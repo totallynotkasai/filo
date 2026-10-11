@@ -19,7 +19,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 
 /**
- * Audit-8 Phase 3 — MEDIUM data-integrity fixes.
+ * Data-integrity fixes around external edits and task creation.
  */
 
 function ctxFor(): VaultContext {
@@ -56,9 +56,9 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
-// ── A8-M2 — an external frontmatter-only edit never makes the next save prompt ──
+// ── an external frontmatter-only edit never makes the next save prompt ──────────
 
-describe('A8-M2 — after an external frontmatter-only edit, the next in-app save lands without a prompt', () => {
+describe('after an external frontmatter-only edit, the next in-app save lands without a prompt', () => {
   // Same body, different frontmatter: the body never reloads, and the next
   // in-app save must neither re-detect that edit as a conflict nor drop it.
   const BODY = '# Heading\n\nA paragraph that does not change.\n';
@@ -120,9 +120,9 @@ describe('A8-M2 — after an external frontmatter-only edit, the next in-app sav
   });
 });
 
-// ── A8-M3(a) — Task notes body reaches disk and keeps the disk frontmatter ──
+// ── Task notes body reaches disk and keeps the disk frontmatter ─────────────
 
-describe('A8-M3(a) — setNotesBody writes the notes onto the note as it is on disk', () => {
+describe('setNotesBody writes the notes onto the note as it is on disk', () => {
   let vault: MemoryVault;
   const DISK = '---\ntitle: T\npriority: high\n---\nold body\n';
 
@@ -181,9 +181,9 @@ describe('A8-M3(a) — setNotesBody writes the notes onto the note as it is on d
   });
 });
 
-// ── A8-M3(b) — quick-add task: dispatch the placement before the seed ────
+// ── quick-add task: dispatch the placement before the seed ───────────────
 
-describe('A8-M3(b) — task creation dispatches the placement BEFORE the seed await', () => {
+describe('task creation dispatches the placement BEFORE the seed await', () => {
   let order: string[];
 
   beforeEach(() => {
@@ -235,8 +235,8 @@ describe('A8-M3(b) — task creation dispatches the placement BEFORE the seed aw
   }
 
   it('AddTaskCommand persists the placement before the (now on-chain) seed .md write fires', async () => {
-    // A9-M3 (Audit-9) SUPERSEDES A8-M3(b)'s "dispatch then a separate seed await"
-    // shape: the `.md` seed is now folded INTO AddTaskCommand.execute() (its last
+    // This SUPERSEDES the "dispatch then a separate seed await" shape above:
+    // the `.md` seed is now folded INTO AddTaskCommand.execute() (its last
     // constructor arg) so it rides the SAME history chain the placement does.
     // execute() persists the placement SYNCHRONOUSLY (before its first await) and
     // only then awaits the seed — so the dispatch still precedes the seed write,
@@ -292,9 +292,9 @@ describe('A8-M3(b) — task creation dispatches the placement BEFORE the seed aw
   });
 });
 
-// ── A8-M6 — external tags.json reload merges instead of replacing ─────────
+// ── external tags.json reload merges instead of replacing ─────────────────
 
-describe('A8-M6 — applyExternalReload merges un-flushed tag mutations', () => {
+describe('applyExternalReload merges un-flushed tag mutations', () => {
   let savedSnapshots: string[];
 
   beforeEach(() => {

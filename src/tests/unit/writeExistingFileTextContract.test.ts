@@ -10,8 +10,8 @@ import {
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Phase 1 (P0-3) regression guard: the editor write sites (TextTile,
- * DocumentEditor) now route through the new
+ * Regression guard: the editor write sites (TextTile,
+ * DocumentEditor) route through the
  * `vault:write-existing-file-text` IPC channel. When the channel reports
  * ENOENT the writers must:
  *
@@ -94,7 +94,7 @@ describe('vault:write-existing-file-text — ENOENT contract', () => {
     expect(errors).toEqual([]);
 
     // The path leaves the inflight set without entering failedVaultPaths.
-    // Phase C / C.10 — WriteStateInfo gained `failedPaths`; pin only the
+    // WriteStateInfo also carries `failedPaths`; pin only the
     // counter shape via toMatchObject.
     expect(states[states.length - 1]).toMatchObject({ inflight: 0, failed: 0 });
   });

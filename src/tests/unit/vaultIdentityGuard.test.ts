@@ -15,7 +15,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-5 G1 — generalized post-`await` vault-identity guard.
+ * Generalized post-`await` vault-identity guard.
  *
  * Three layers under test:
  *   1. The `vaultIdentity` module — capture / compare / generation token,

@@ -71,9 +71,9 @@ const corpus = loadCorpus();
  * can neither start locking editable files nor silently unlock one it would
  * rewrite. Every other fixture must stay editable (not lossy).
  *  - inline-html-spans: nested `<span style>` collapses to the inner span.
- *  - links-underline:   `<u>…[link](…)</u>` re-nests. (Audit-19 DEP-2 — with
- *                       linkify off the bare URL is now emitted verbatim, no
- *                       `<…>` wrap; the fixture stays lossy for the `<u>` only.)
+ *  - links-underline:   `<u>…[link](…)</u>` re-nests. (With linkify off the
+ *                       bare URL is now emitted verbatim, no `<…>` wrap; the
+ *                       fixture stays lossy for the `<u>` only.)
  *  - misc-syntax:       HTML comment / block `<div>` dropped.
  * `link-schemes` LEFT this set when a line the file holds became written as
  * the file spells it (`minimalEscapes.ts`): its `[[wiki]]` brackets are no
@@ -82,7 +82,7 @@ const corpus = loadCorpus();
  * `mixed-prose` LEFT this set when a single newline became a soft break node
  * (`softBreak.ts`): its two-line blockquote keeps its lines, and nothing else
  * in it changes; its baseline records the lines kept.
- * Audit-19 UX-7 — `task-lists` LEFT this set: a tight task list now serialises
+ * `task-lists` LEFT this set: a tight task list now serialises
  * tight (FiloTaskListTight), byte-identical to its source bar the final newline.
  *
  * TipTap 3 difference (the ONE place v3 output ≠ v2 output, deliberately
@@ -161,7 +161,7 @@ describe('markdown body round-trip — golden corpus', () => {
       expect(updates).toBe(0);
     });
 
-    // Audit-19 MD-1 — a load is not an undoable edit. Pre-fix, Ctrl+Z right
+    // A load is not an undoable edit. Pre-fix, Ctrl+Z right
     // after opening a note emptied it ("\n", 1 update) and autosave wrote that.
     it(`${fx.name}: load → undo is a no-op`, () => {
       let updates = 0;
@@ -197,7 +197,7 @@ describe('markdown body round-trip — golden corpus', () => {
     });
   }
 
-  // Audit-19 DEP-2 — Link's default shouldAutoLink accepted any dotted hostname.
+  // Link's default shouldAutoLink accepted any dotted hostname.
   it('typing a filename does not autolink', () => {
     const ed = makeEditor();
     loadMarkdownIntoEditor(ed, 'Start\n');
@@ -215,7 +215,7 @@ describe('markdown body round-trip — golden corpus', () => {
     expect(ed.getHTML()).toContain('href="https://example.com"');
   });
 
-  // Audit-19 UX-7 — checklists Filo creates are tight (no blank lines).
+  // Checklists Filo creates are tight (no blank lines).
   it('a new checklist created in the editor serialises tight', () => {
     const ed = makeEditor();
     loadMarkdownIntoEditor(ed, 'milk\n');

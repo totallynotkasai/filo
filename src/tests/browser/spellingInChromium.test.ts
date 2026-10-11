@@ -4,8 +4,8 @@ import { describe, it, expect, afterEach } from 'vitest';
  * Spelling on or off reaches every text field through the page's own
  * `spellcheck` (AppShell sets it on <html>): a field that doesn't set its own
  * takes its nearest ancestor's, as the HTML spec has it. jsdom doesn't
- * implement that, so the engine Filo ships is asked here (Audit-29 D-07: a
- * task's title box and notes box kept their squiggles with Spelling off).
+ * implement that, so the engine Filo ships is asked here (a task's title box
+ * and notes box kept their squiggles with Spelling off).
  */
 afterEach(() => {
   document.documentElement.removeAttribute('spellcheck');

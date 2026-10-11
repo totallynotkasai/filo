@@ -1,14 +1,12 @@
 /**
- * Audit 3.3 — appearance.json is fully Filo-owned: it carries `activeTheme`
- * and `font` only. The debounced writer emits exactly those two keys through a
+ * appearance.json is fully Filo-owned: it carries `activeTheme` and `font`
+ * only. The debounced writer emits exactly those two keys through a
  * whole-file (atomic tmp+rename) replace, so the freshly-initialised seed must
  * NOT declare a `snippets` array the next theme/font save would silently drop.
  *
- * Option B (chosen): make disk shape and code ownership agree, rather than
- * leaving a `snippets: []` seed plus a comment that misleadingly claimed the
- * write preserved on-disk snippets (it does not — the write is a whole-file
- * replace). A hand-added `snippets` is now explicitly unmanaged, not
- * preserved-by-a-false-comment.
+ * Disk shape and code ownership agree: the seed carries no `snippets: []`,
+ * because the write never preserved on-disk snippets (it is a whole-file
+ * replace). A hand-added `snippets` is explicitly unmanaged.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
@@ -16,7 +14,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { initVaultConfig } from '../../main/vault/configOps';
 
-describe('Audit 3.3 — initVaultConfig seeds appearance.json without snippets', () => {
+describe('initVaultConfig seeds appearance.json without snippets', () => {
   let vaultRoot: string;
 
   beforeEach(async () => {

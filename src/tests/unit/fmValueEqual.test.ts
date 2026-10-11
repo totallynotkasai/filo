@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { fmValueEqual } from '@renderer/commands/frontmatterInverse';
 
 /**
- * L8 (Audit-7) — `fmValueEqual` decides whether an external edit changed a
+ * `fmValueEqual` decides whether an external edit changed a
  * frontmatter field out from under an undo/redo. The old `JSON.stringify(a) ===
  * JSON.stringify(b)` comparison was order-sensitive, so an external tool that
  * merely REORDERED an object's keys or an array's items (e.g. an alphabetiser)
@@ -10,7 +10,7 @@ import { fmValueEqual } from '@renderer/commands/frontmatterInverse';
  * skipped the user's undo for that field. These pin the order-independent
  * contract (and the emptyish / scalar baseline the fix must preserve).
  */
-describe('fmValueEqual — emptyish + scalar baseline (unchanged by L8)', () => {
+describe('fmValueEqual — emptyish + scalar baseline (unchanged)', () => {
   it('treats absent / empty-string / null / undefined as equal', () => {
     expect(fmValueEqual(undefined, '')).toBe(true);
     expect(fmValueEqual(null, undefined)).toBe(true);
@@ -28,7 +28,7 @@ describe('fmValueEqual — emptyish + scalar baseline (unchanged by L8)', () => 
   });
 });
 
-describe('fmValueEqual — L8 order-independent objects', () => {
+describe('fmValueEqual — order-independent objects', () => {
   it('object key order does not matter', () => {
     expect(fmValueEqual({ a: 1, b: 2 }, { b: 2, a: 1 })).toBe(true);
   });
@@ -42,7 +42,7 @@ describe('fmValueEqual — L8 order-independent objects', () => {
   });
 });
 
-describe('fmValueEqual — L8 order-independent arrays (multiset)', () => {
+describe('fmValueEqual — order-independent arrays (multiset)', () => {
   it('a reordered array is equal (the alphabetiser case)', () => {
     expect(fmValueEqual(['x', 'y'], ['y', 'x'])).toBe(true);
     expect(fmValueEqual(['a', 'b', 'c'], ['c', 'a', 'b'])).toBe(true);

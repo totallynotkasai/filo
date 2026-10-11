@@ -263,7 +263,7 @@ describe('groupKey — all 6 groupBys including category', () => {
     expect(groupKey(makeRow(), 'dueDate', TODAY).key).toBe('no-date');
   });
 
-  // groupKey now takes an injected `today` (audit 1.3), so these are
+  // groupKey takes an injected `today`, so these are
   // deterministic against the fixed TODAY (2026-05-16) rather than the clock.
   it('groupBy "dueDate" — past date → "overdue"', () => {
     expect(groupKey(makeRow({ dueDate: '2026-05-10' }), 'dueDate', TODAY).key).toBe('overdue');
@@ -373,7 +373,7 @@ describe('smartListMatch — bucket sanity', () => {
   });
 });
 
-describe('date parsing is local-time, not UTC (audit 1.1)', () => {
+describe('date parsing is local-time, not UTC', () => {
   // Reproduce the off-by-one: in any UTC-negative zone `new Date('2026-05-16')`
   // is UTC midnight = the *previous* local day, so the old code filed a
   // due-today task as "overdue" and dropped it from the "today" list. Pinning

@@ -6,12 +6,12 @@ import { tmpdir } from 'os';
 import { copyFileToVault, TargetNameExhaustedError } from '../../main/vault/fileOps';
 
 /**
- * Phase 1 / 1.2 + L10 (Audit-13) — `copyFileToVault` uses `fs.open(..., 'wx')`
- * (O_WRONLY|O_CREAT|O_EXCL) inside the unique-suffix counter loop to RESERVE the
- * destination NAME (a 0-byte placeholder) so two concurrent same-basename copies
- * can never race onto the same name. L10 then streams the bytes into a sibling
- * `<dest>.<nonce>.tmp` and atomically `rename`s it OVER the placeholder, so the
- * final name never holds a torn/partial file. Contract:
+ * `copyFileToVault` uses `fs.open(..., 'wx')` (O_WRONLY|O_CREAT|O_EXCL) inside
+ * the unique-suffix counter loop to RESERVE the destination NAME (a 0-byte
+ * placeholder) so two concurrent same-basename copies can never race onto the
+ * same name. It then streams the bytes into a sibling `<dest>.<nonce>.tmp` and
+ * atomically `rename`s it OVER the placeholder, so the final name never holds a
+ * torn/partial file. Contract:
  *
  *   1. On success the destination exists and no `.tmp` siblings remain (the
  *      staging temp is renamed onto the placeholder).
@@ -26,7 +26,7 @@ import { copyFileToVault, TargetNameExhaustedError } from '../../main/vault/file
  *   5. If 1000 same-basename candidates are all taken, the call rejects
  *      with `TargetNameExhaustedError` rather than spinning forever.
  */
-describe('copyFileToVault — Phase 1.2 O_EXCL contract', () => {
+describe('copyFileToVault — O_EXCL contract', () => {
   let vaultDir: string;
   let sourceDir: string;
 
@@ -167,7 +167,7 @@ describe('copyFileToVault — Phase 1.2 O_EXCL contract', () => {
     // The partial file remains at the preserved path so the user can
     // recover it / clear it manually.
     await expect(fs.access(preserved!)).resolves.toBeUndefined();
-    // L10 — atomicity: the partial bytes live ONLY in the staging temp. The
+    // Atomicity: the partial bytes live ONLY in the staging temp. The
     // FINAL destination name never holds a torn file (the placeholder is dropped),
     // and the preserved path is the `.tmp`, not the destination itself.
     expect(preserved!.endsWith('.tmp')).toBe(true);

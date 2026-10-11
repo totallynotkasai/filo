@@ -4,13 +4,12 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * IMPL_PLAN_2026-05-25 Phase 1 / 1.5 — `FileWatcher.suppress` keys must be
- * case-folded on Windows/macOS so a renderer-side suppression of
- * `Notes.md` matches an OS-emitted watcher event whose casing differs
- * (`notes.md`, `NOTES.MD`, …). Without the fold the late OS event escapes
- * suppression and reaches `handleExternalMarkdownChanges` as an unwanted
- * "external edit" — surfacing spurious toasts and, worse, classifying
- * Filo's own writes as foreign in the reconcile diff.
+ * `FileWatcher.suppress` keys must be case-folded on Windows/macOS so a
+ * renderer-side suppression of `Notes.md` matches an OS-emitted watcher event
+ * whose casing differs (`notes.md`, `NOTES.MD`, …). Without the fold the late
+ * OS event escapes suppression and reaches `handleExternalMarkdownChanges` as
+ * an unwanted "external edit" — surfacing spurious toasts and, worse,
+ * classifying Filo's own writes as foreign in the reconcile diff.
  *
  * We verify behaviour through the public surface (`suppress` +
  * `reconcileNow`'s synthesised events) rather than reaching into the
@@ -36,7 +35,7 @@ vi.mock('electron', () => ({
 
 import { FileWatcher } from '../../main/services/fileWatcher';
 
-describe('FileWatcher.suppress — case-fold (Phase 1 / 1.5)', () => {
+describe('FileWatcher.suppress — case-fold', () => {
   let dir: string;
   let watcher: FileWatcher;
 

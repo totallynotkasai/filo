@@ -314,7 +314,7 @@ describe('ReplaceAllCommand — atomicity', () => {
     await runReplaceAllCommand();
 
     // No writes should have hit disk — the read-failure aborts the whole
-    // sweep before Phase 2 starts.
+    // sweep before the write phase starts.
     expect(writes).toHaveLength(0);
     expect(filesystem['a.md']).toBe('# A\nfrodo here');
   });
@@ -525,9 +525,9 @@ describe('ReplaceAllCommand — open views follow', () => {
   });
 });
 
-describe('ReplaceAllCommand — Audit-14 3.1 frontmatter-boundary parity', () => {
+describe('ReplaceAllCommand — frontmatter-boundary parity', () => {
   it('replaces a body match in a file whose fences carry a trailing space (--- )', async () => {
-    // 3.1 — the body offsets the search produced come from `splitFrontmatterSource`
+    // The body offsets the search produced come from `splitFrontmatterSource`
     // (`FileMetadata.content`), whose fence regex tolerates a trailing space on a
     // fence (`--- \n`). The replace path used to translate those offsets with a
     // DIVERGENT local regex (`---\r?\n`) that did NOT tolerate the trailing space:

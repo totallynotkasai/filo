@@ -3,20 +3,19 @@ import yaml from 'js-yaml';
 import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstModel';
 
 /**
- * Phase 6.1 — focused unit tests for the CST-operations engine, in addition to
- * the corpus-wide `frontmatterEngineDifferential.test.ts` (which proves it equals
- * the legacy engine). These pin the mechanics the plan calls out as the engine's
- * sharp edges in their own right:
+ * Focused unit tests for the CST-operations engine, in addition to the
+ * corpus-wide `frontmatterEngineDifferential.test.ts` (which proves it equals
+ * the legacy engine). These pin the engine's sharp edges in their own right:
  *
  *  - the ADD-item newline wrinkle across trailing shapes (the proven hazard:
  *    appending after a value with no trailing newline must NOT concatenate onto
  *    the previous line — `count: 3addedKey`);
  *  - the nested-collection / type-change swap;
  *  - comment survival (leading / standalone / trailing / inline) on an unrelated
- *    edit, and that a DELETED key's documenting comment drops with it (L4) rather
+ *    edit, and that a DELETED key's documenting comment drops with it rather
  *    than relocating onto a survivor;
- *  - the bare-empty-key set (C1) re-parsing correctly;
- *  - the anchor/alias refusal boundary (L27).
+ *  - the bare-empty-key set re-parsing correctly;
+ *  - the anchor/alias refusal boundary.
  */
 
 function core(block: string): Record<string, unknown> | null {
@@ -145,7 +144,7 @@ describe('patchFrontmatterSourceCst — comment survival', () => {
     expect(out, 'untouched scalar bytes canonicalised').toContain('zip: 02134');
   });
 
-  it('drops a deleted key’s documenting comment instead of relocating it onto the next key (L4)', () => {
+  it('drops a deleted key’s documenting comment instead of relocating it onto the next key', () => {
     // `# doc for count` documents `count`; deleting `count` must remove the
     // comment with it, not migrate it onto `status` (an unrelated surviving
     // field). Structural keys are untouched and re-parse.
@@ -160,7 +159,7 @@ describe('patchFrontmatterSourceCst — comment survival', () => {
     expect(re!.status).toBe('open');
   });
 
-  it('keeps the blank-line gap above a deleted commented key while dropping the comment (L4)', () => {
+  it('keeps the blank-line gap above a deleted commented key while dropping the comment', () => {
     // The blank line separating `title` from foo's documented section is
     // structural spacing — it survives — but the comment glued to the deleted
     // `foo` does not relocate onto `baz`.
@@ -177,7 +176,7 @@ describe('patchFrontmatterSourceCst — comment survival', () => {
   });
 });
 
-describe('patchFrontmatterSourceCst — bare-empty-key set (C1) re-parses', () => {
+describe('patchFrontmatterSourceCst — bare-empty-key set re-parses', () => {
   const BARE_KEYS = ['aliases', 'tags', 'cssclasses'] as const;
   type Position = 'first' | 'middle' | 'last';
   const SIBLING_BEFORE = 'title: Note';
@@ -198,11 +197,11 @@ describe('patchFrontmatterSourceCst — bare-empty-key set (C1) re-parses', () =
         const out = patchFrontmatterSourceCst(src, { ...current, [bareKey]: 'home' });
         expect(out, 'engine refused').not.toBeNull();
         const re = core(out!);
-        expect(re, 'output did not re-parse (C1 collapse)').not.toBeNull();
+        expect(re, 'output did not re-parse (bare-key collapse)').not.toBeNull();
         expect(re![bareKey], 'bare-key value wrong').toBe('home');
         expect(re!.title).toBe('Note');
         expect(re!.count).toBe(3);
-        // The C1 corruption emitted `aliases:home` (no space) — assert the fix.
+        // The bare-key corruption emitted `aliases:home` (no space) — assert the fix.
         expect(out, 'bare-key value-set concatenated without a space').not.toMatch(
           new RegExp(`${bareKey}:\\S`),
         );
@@ -211,7 +210,7 @@ describe('patchFrontmatterSourceCst — bare-empty-key set (C1) re-parses', () =
   }
 });
 
-describe('patchFrontmatterSourceCst — anchors / aliases (L27)', () => {
+describe('patchFrontmatterSourceCst — anchors / aliases', () => {
   const SRC = 'base: &b 5\nthreshold: *b\ntitle: Note';
 
   it('refuses when the CHANGED key carries an anchor', () => {
@@ -231,7 +230,7 @@ describe('patchFrontmatterSourceCst — anchors / aliases (L27)', () => {
     expect(patchFrontmatterSourceCst(SRC, next)).toBeNull();
   });
 
-  it('SPLICES an edit to an unrelated key, preserving anchors verbatim (DI-05)', () => {
+  it('SPLICES an edit to an unrelated key, preserving anchors verbatim', () => {
     const current = core(SRC)!;
     const out = patchFrontmatterSourceCst(SRC, { ...current, title: 'Renamed' });
     expect(out, 'over-refused a safe edit').not.toBeNull();

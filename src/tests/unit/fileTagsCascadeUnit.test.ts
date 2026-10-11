@@ -12,10 +12,10 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { KanbanBoard, MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Audit-14 7.7 — focused DIRECT-unit coverage of the exports in
+ * Focused DIRECT-unit coverage of the exports in
  * `fileTagsCascade.svelte.ts`. The existing `fileTagsCascade.test.ts` exercises
  * these transitively through `fileTagsStore.renameTagEverywhere` /
- * `removeTagEverywhere`; this isolates the three functions the plan named so a
+ * `removeTagEverywhere`; this isolates three of its functions so a
  * regression in one can't be masked by the surrounding sweep.
  */
 

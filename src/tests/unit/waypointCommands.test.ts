@@ -14,7 +14,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Phase 10.2 — Waypoint commands. Each one provides execute / undo
+ * Waypoint commands. Each one provides execute / undo
  * symmetry against the boardStore's waypoint slice. Move / Rename /
  * UpdateIcon use before+after snapshots; Add / Remove are inverse
  * pairs; ToggleWaypointLock is its own inverse.

@@ -1,9 +1,8 @@
 /**
  * DeleteCardCommand's opt-in note delete, behind a Kanban card's "Delete from
- * vault…" (Audit-29 E-12, decision D6), as the Task List's "Delete task and
- * file" has it: the note goes to Filo's trash with the card, and one undo
- * brings the note back before the card. Removing a card from the board alone
- * leaves the note where it is.
+ * vault…", as the Task List's "Delete task and file" has it: the note goes to
+ * Filo's trash with the card, and one undo brings the note back before the
+ * card. Removing a card from the board alone leaves the note where it is.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';

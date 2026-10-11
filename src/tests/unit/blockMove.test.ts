@@ -12,8 +12,8 @@ import {
 import type { TaskPlacement, TaskListSection } from '@renderer/schema/index';
 
 /**
- * Phase 6 — block math for Task List drag operations. Helpers are pure;
- * fixtures are minimal row-like objects + flat TaskPlacement arrays.
+ * Block math for Task List drag operations. Helpers are pure; fixtures are
+ * minimal row-like objects + flat TaskPlacement arrays.
  */
 
 function r(id: string, parent = ''): RowLike {

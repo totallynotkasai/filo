@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Audit-19 ERR-7 — non-UTF-8 notes are detected, never overwritten, and only
+ * Non-UTF-8 notes are detected, never overwritten, and only
  * rewritten by the explicit convert action (after a backup).
  *
  * `fs.readFile(p, 'utf-8')` used to replace every invalid byte with U+FFFD, and
@@ -62,7 +62,7 @@ async function listRecoveryFiles(vaultDir: string): Promise<string[]> {
   return out;
 }
 
-describe('readFileWithCoherentStat encoding (Audit-19 ERR-7)', () => {
+describe('readFileWithCoherentStat encoding', () => {
   it('reports invalid-utf-8 for Windows-1252 bytes and utf-8 for valid text', async () => {
     const stat = async () => ({ mtimeMs: 1, size: CP1252_BYTES.length });
     const bad = await readFileWithCoherentStat('/v/a.md', 1_000_000, { stat, readFile: async () => CP1252_BYTES });
@@ -77,7 +77,7 @@ describe('readFileWithCoherentStat encoding (Audit-19 ERR-7)', () => {
   });
 });
 
-describe('vault text channels vs a non-UTF-8 note (Audit-19 ERR-7)', () => {
+describe('vault text channels vs a non-UTF-8 note', () => {
   let vaultDir: string;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;

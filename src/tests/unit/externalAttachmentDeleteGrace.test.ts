@@ -201,8 +201,8 @@ describe('handleExternalAttachmentChanges — D.4 grace window', () => {
     expect(toast).toBeUndefined();
   });
 
-  it('L16 (Audit-13) — drops the prompt on a close→reopen of the SAME path during the grace window', async () => {
-    // Audit-13 L16: the grace guard was a path-string compare
+  it('drops the prompt on a close→reopen of the SAME path during the grace window', async () => {
+    // The grace guard was a path-string compare
     // (`ctx.getVaultPath() !== vaultRoot`), which a close→reopen of the SAME path
     // (a new vault generation, unchanged path string) silently passes — so a
     // deferred "attachment deleted externally" prompt could surface against the

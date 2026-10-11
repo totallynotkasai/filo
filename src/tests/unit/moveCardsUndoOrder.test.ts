@@ -1,22 +1,21 @@
 /**
- * Audit 5.1 — MoveCardsCommand.undo restores same-column order correctly.
+ * MoveCardsCommand.undo restores same-column order correctly.
  *
- * The remediation plan flagged `MoveCardsCommand.undo` as sorting its
- * snapshots ASCENDING by `fromPosition` and recommended switching to
- * DESCENDING. First-party verification (these tests) shows the opposite:
- * ascending is CORRECT and descending would corrupt the order.
+ * `MoveCardsCommand.undo` sorts its snapshots ASCENDING by `fromPosition`,
+ * which can look like a bug that switching to DESCENDING would fix.
+ * Verification (these tests) shows the opposite: ascending is CORRECT and
+ * descending would corrupt the order.
  *
- * Root cause of the plan's false positive: `moveKanbanPlacement` does a
- * REMOVE-then-INSERT (it filters the tile out of every column, splices it
- * into the target at the clamped index, then renumbers). It is NOT a naive
- * growing splice. Replaying the snapshots in ascending source-position order
- * therefore lands each restored card at its original ABSOLUTE index — even
- * when the moved cards were interleaved with cards that stayed put. Descending
- * order breaks exactly that interleaved case.
+ * Why ascending is right: `moveKanbanPlacement` does a REMOVE-then-INSERT (it
+ * filters the tile out of every column, splices it into the target at the
+ * clamped index, then renumbers). It is NOT a naive growing splice. Replaying
+ * the snapshots in ascending source-position order therefore lands each
+ * restored card at its original ABSOLUTE index — even when the moved cards were
+ * interleaved with cards that stayed put. Descending order breaks exactly that
+ * interleaved case.
  *
  * These tests pin the correct (ascending) behaviour so a future "fix" to
- * descending fails loudly. See Appendix C of the audit plan: be skeptical of
- * sweep-sourced items; reproduce before "fixing".
+ * descending fails loudly. Reproduce before "fixing".
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -72,7 +71,7 @@ function order(columnId: string): string[] {
   return (c?.tilePlacements ?? []).map((p) => p.tileId);
 }
 
-describe('Audit 5.1 — MoveCardsCommand.undo preserves order (ascending is correct)', () => {
+describe('MoveCardsCommand.undo preserves order (ascending is correct)', () => {
   beforeEach(() => {
     boardCacheStore.clear();
   });
@@ -99,7 +98,7 @@ describe('Audit 5.1 — MoveCardsCommand.undo preserves order (ascending is corr
     // Undo must put A,B,C back at their original ABSOLUTE indices 0,2,4.
     //
     //   Ascending replay  -> [A, X1, B, X2, C]   (correct)
-    //   Descending replay -> [A, X1, X2, B, C]   (WRONG — the plan's suggestion)
+    //   Descending replay -> [A, X1, X2, B, C]   (WRONG)
     hydrate(
       [col('X', ['X1', 'X2']), col('Y', ['A', 'B', 'C'])],
       ['A', 'B', 'C', 'X1', 'X2'],
@@ -115,7 +114,7 @@ describe('Audit 5.1 — MoveCardsCommand.undo preserves order (ascending is corr
   });
 });
 
-describe('Audit-13 M5 — MoveCardsCommand redo anchors the forward leg', () => {
+describe('MoveCardsCommand redo anchors the forward leg', () => {
   beforeEach(() => {
     boardCacheStore.clear();
   });

@@ -1,5 +1,5 @@
 /**
- * Per-channel payload validation (Phase 11.4 / P1-20).
+ * Per-channel payload validation.
  *
  * Pins the contract enforced by `validateIpcPayload`: every renderer→main
  * channel has an explicit schema, the schema rejects shape-mismatched args
@@ -74,8 +74,8 @@ describe('validateIpcPayload — happy paths accept correctly-shaped args', () =
     ).toEqual({ ok: true });
   });
 
-  it('rejects vault:copy-file with extra trailing args (Phase 3 / 3.6)', () => {
-    // Pre-3.6, `.rest(optionalString)` allowed any number of trailing
+  it('rejects vault:copy-file with extra trailing args', () => {
+    // Previously, `.rest(optionalString)` allowed any number of trailing
     // strings to slip through validation. The explicit 2-or-3-tuple
     // union models the two real call shapes and rejects anything else.
     const result = validateIpcPayload('vault:copy-file', [
@@ -93,7 +93,7 @@ describe('validateIpcPayload — happy paths accept correctly-shaped args', () =
     expect(validateIpcPayload('font:list-system', [])).toEqual({ ok: true });
   });
 
-  it('accepts media:read-file with (vaultRoot, relativePath) — Phase 21 M2', () => {
+  it('accepts media:read-file with (vaultRoot, relativePath)', () => {
     expect(
       validateIpcPayload('media:read-file', ['/vault', 'attachments/cover.png']),
     ).toEqual({ ok: true });
@@ -141,8 +141,8 @@ describe('validateIpcPayload — rejects malformed payloads', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('rejects single-arg media:read-file invocations (Phase 21 M2)', () => {
-    // Pre-M2 the channel accepted a single absolute-path string; the new
+  it('rejects single-arg media:read-file invocations', () => {
+    // Previously the channel accepted a single absolute-path string; the new
     // tuple is `[vaultRoot, relativePath]`. A bare one-arg call must fail.
     const r = validateIpcPayload('media:read-file', ['/vault/cover.png']);
     expect(r.ok).toBe(false);

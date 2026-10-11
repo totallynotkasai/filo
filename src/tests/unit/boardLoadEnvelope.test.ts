@@ -4,11 +4,11 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Audit-19 ERR-4 — `board:load` returned `null` for EVERY failure and the
- * renderer read `null` as "not-found": a board OneDrive held locked for a
- * moment (or an online-only placeholder while offline) looked deleted for the
- * whole session. The handler now retries a transient lock briefly and returns
- * an envelope with a typed failure code.
+ * `board:load` returned `null` for EVERY failure and the renderer read `null`
+ * as "not-found": a board OneDrive held locked for a moment (or an online-only
+ * placeholder while offline) looked deleted for the whole session. The handler
+ * now retries a transient lock briefly and returns an envelope with a typed
+ * failure code.
  */
 
 const handlers = new Map<string, (...args: unknown[]) => unknown | Promise<unknown>>();
@@ -31,7 +31,7 @@ function errno(code: string): NodeJS.ErrnoException {
   return Object.assign(new Error(`${code}: simulated`), { code });
 }
 
-describe('board:load envelope + lock retry (Audit-19 ERR-4)', () => {
+describe('board:load envelope + lock retry', () => {
   let vaultDir: string;
   let load: (...args: unknown[]) => unknown | Promise<unknown>;
   let errSpy: ReturnType<typeof vi.spyOn>;

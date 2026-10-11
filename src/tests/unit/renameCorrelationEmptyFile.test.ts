@@ -1,5 +1,5 @@
 /**
- * 6.2.H6 — same-basename rename correlator refuses pairing when both
+ * The same-basename rename correlator refuses pairing when both
  * files are zero-byte (or both content-hash to the empty buffer SHA1).
  *
  * Pre-fix the same-basename pass refused only on POSITIVE size or hash
@@ -9,8 +9,8 @@
  * the deleted file onto the unrelated new one.
  *
  * The cross-basename pass already has a 256-byte floor for the same
- * reason (Phase 19 S1) — the same-basename pass needed a parallel
- * guard for zero-byte / SHA-of-empty cases.
+ * reason — the same-basename pass needed a parallel guard for zero-byte
+ * / SHA-of-empty cases.
  */
 import { describe, it, expect } from 'vitest';
 import { correlateRenames } from '../../main/services/renameCorrelation';
@@ -31,7 +31,7 @@ function existsAmong(...paths: string[]): (rel: string) => boolean {
 // SHA-1 of the empty buffer.
 const EMPTY_SHA1 = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
 
-describe('correlateRenames — 6.2.H6 same-basename empty-file guard', () => {
+describe('correlateRenames — same-basename empty-file guard', () => {
   it('refuses to pair two zero-byte files sharing a basename across folders', async () => {
     const events = [ev('A/Notes.md'), ev('B/Notes.md')];
     const exists = existsAmong('B/Notes.md');
@@ -102,7 +102,7 @@ describe('correlateRenames — 6.2.H6 same-basename empty-file guard', () => {
   });
 
   it('still pairs a legitimate same-basename move when the file has real content', async () => {
-    // Sanity: the H6 guard only kicks in for empty/identical-empty
+    // Sanity: the empty-file guard only kicks in for empty/identical-empty
     // content. A real file with non-zero bytes still pairs via the
     // existing same-basename path.
     const events = [ev('A/Notes.md'), ev('B/Notes.md')];

@@ -11,29 +11,26 @@ import type { MindMapBoard, Tile, TileGroup } from '@renderer/schema/index';
 import { seedBoard } from '../helpers/seedBoard';
 
 /**
- * Audit 4.3 (REPRODUCE-FIRST) — claim: a BatchCommand "mixing a whole-array
- * snapshot command (ToggleGroupCommand.replaceGroups) with element-level
- * add/delete can leave the groups array inconsistent with the surviving tiles
- * after a partial rollback." Rated MEDIUM (conf low); a sibling BatchCommand
- * claim was already withdrawn (Appendix A).
+ * Regression guard: a BatchCommand mixing a whole-array snapshot command
+ * (ToggleGroupCommand.replaceGroups) with element-level add/delete must not
+ * leave the groups array inconsistent with the surviving tiles after a
+ * rollback.
  *
- * The plan's own test spec: "Construct a batch (group + tile add) where a
- * later child throws; assert post-rollback groups/tiles are consistent." This
- * test does exactly that — a real `ToggleGroupCommand` (the whole-array
- * snapshot command the claim names) MERGED into an existing group, plus an
- * element-level tile delete, then a child that throws on execute, triggering
- * the FULL rollback. It asserts the post-rollback state is the pre-batch state
- * and that no group references a deleted tile.
+ * The test builds a batch (group + tile op) where a later child throws and
+ * asserts post-rollback groups/tiles are consistent — a real
+ * `ToggleGroupCommand` (the whole-array snapshot command) MERGED into an
+ * existing group, plus an element-level tile delete, then a child that throws
+ * on execute, triggering the FULL rollback. It asserts the post-rollback state
+ * is the pre-batch state and that no group references a deleted tile.
  *
- * If this passes against unmodified code the lead is refuted for the scenario
- * described: the groups slice and the tiles slice are independent, and the
+ * Why it holds: the groups slice and the tiles slice are independent, and the
  * LIFO rollback restores each correctly (the whole-array snapshot restores the
  * exact pre-batch groups; the element-level undo restores its tile, and the
  * reverse order runs the tile-restore BEFORE the group-restore). The ONLY path
  * to a dangling group→tile reference is a PARTIAL rollback — a child's `undo()`
  * itself throwing — which BatchCommand already surfaces to the user via the
- * D.5 "Inconsistent state" modal (openBatchRollbackFailureModal). That is a
- * documented, surfaced limitation, not the silent corruption the lead implies.
+ * "Inconsistent state" modal (openBatchRollbackFailureModal). That is a
+ * documented, surfaced limitation, not silent corruption.
  */
 
 function installEmptyFiloStub(): void {
@@ -77,7 +74,7 @@ function makeMindMapFixture(): BoardFileData {
   };
 }
 
-describe('BatchCommand — group (whole-array) + element-level tile op consistency (audit 4.3)', () => {
+describe('BatchCommand — group (whole-array) + element-level tile op consistency', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     // Empty vault path so the element-level re-add's text-tile file-seed
@@ -141,7 +138,7 @@ describe('BatchCommand — group (whole-array) + element-level tile op consisten
     expect(boardStore.groups.length).toBe(1);
     expect([...boardStore.groups[0].tileIds].sort()).toEqual(['a', 'b']);
 
-    // The invariant the lead worries about: no group references a tile that
+    // The invariant at stake: no group references a tile that
     // no longer exists.
     for (const g of boardStore.groups) {
       for (const id of g.tileIds) {

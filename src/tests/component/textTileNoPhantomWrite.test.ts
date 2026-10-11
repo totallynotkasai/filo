@@ -10,10 +10,10 @@ import {
 } from './helpers/mountEditor';
 
 /**
- * Audit-19 MD-2 — TextTile's onDestroy wrote the file on EVERY unmount (viewport
- * culling, LOD switch, board/tab switch), re-serialising untouched notes through
- * the editor: `_x_` became `*x*`, Setext became ATX, CRLF notes went mixed-EOL.
- * Unmount must write only when this view has unsaved work.
+ * TextTile's onDestroy wrote the file on EVERY unmount (viewport culling, LOD
+ * switch, board/tab switch), re-serialising untouched notes through the editor:
+ * `_x_` became `*x*`, Setext became ATX, CRLF notes went mixed-EOL. Unmount
+ * must write only when this view has unsaved work.
  */
 const NOTE = 'Setext Title\n============\n\nSome _emphasis_ here.\n';
 
@@ -23,7 +23,7 @@ function type(m: Awaited<ReturnType<typeof mountTextTile>>, text: string): void 
   ed.commands.insertContent(text);
 }
 
-describe('TextTile unmount writes only unsaved work (MD-2)', () => {
+describe('TextTile unmount writes only unsaved work', () => {
   beforeEach(() => resetEditorHarness());
   afterEach(() => teardownEditorHarness());
 

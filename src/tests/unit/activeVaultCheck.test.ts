@@ -7,8 +7,8 @@ import {
 } from '../../main/utils/activeVaultCheck';
 
 /**
- * Phase 3 (P0-15 / P0-16) regression guard: every vaultRoot-accepting IPC
- * handler now gates on `assertActiveVault`. The contract:
+ * Regression guard: every vaultRoot-accepting IPC handler now gates on
+ * `assertActiveVault`. The contract:
  *
  *   1. When no vault is open, every call throws `NoActiveVaultError`.
  *   2. When a vault is open, a mismatched path throws.

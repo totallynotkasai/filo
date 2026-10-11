@@ -6,11 +6,11 @@ import { atomicWriteFile, retryOnWindowsLock } from '../../main/vault/filenameUt
 import { renameItem } from '../../main/vault/fileOps';
 
 /**
- * Audit-19 EXT-5 (plan D6) — OneDrive / Dropbox / antivirus hold rename-
- * blocking handles for a second or two. The old count-based retry gave up
- * after ~310 ms, so every such hold became "Save failed" plus a stray
- * `<file>.<nonce>.tmp` in the synced folder. win32 now retries for ~5 s of
- * ELAPSED time (a scaled budget + real timers stand in for it here).
+ * OneDrive / Dropbox / antivirus hold rename-blocking handles for a second or
+ * two. The old count-based retry gave up after ~310 ms, so every such hold
+ * became "Save failed" plus a stray `<file>.<nonce>.tmp` in the synced folder.
+ * win32 now retries for ~5 s of ELAPSED time (a scaled budget + real timers
+ * stand in for it here).
  */
 
 function lockError(code = 'EPERM'): NodeJS.ErrnoException {
@@ -19,7 +19,7 @@ function lockError(code = 'EPERM'): NodeJS.ErrnoException {
   return err;
 }
 
-describe('atomicWriteFile — time-bounded Windows lock backoff (Audit-19 EXT-5)', () => {
+describe('atomicWriteFile — time-bounded Windows lock backoff', () => {
   let dir: string;
   const savedBudget = process.env.FILO_LOCK_RETRY_BUDGET_MS;
 
@@ -92,7 +92,7 @@ describe('atomicWriteFile — time-bounded Windows lock backoff (Audit-19 EXT-5)
   });
 });
 
-describe('renameItem — lock retry (Audit-19 EXT-5)', () => {
+describe('renameItem — lock retry', () => {
   let dir: string;
   const savedBudget = process.env.FILO_LOCK_RETRY_BUDGET_MS;
   beforeEach(async () => {

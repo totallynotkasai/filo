@@ -4,7 +4,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TileDefinition, KanbanBoard } from '@renderer/schema/index';
 
 /**
- * Phase B — Kanban placement CRUD on the board cache store.
+ * Kanban placement CRUD on the board cache store.
  *
  * Each test re-hydrates a clean fixture so module-level state can't leak
  * between cases. We don't go through the debounced disk writer here —
@@ -135,7 +135,7 @@ describe('boardCache — Kanban CRUD', () => {
     expect(boardCacheStore.cache.kb.tileDefs.t2).toBeDefined();
   });
 
-  it('persistAddKanbanPlacement clamps a negative position to the head, not the tail (L9)', () => {
+  it('persistAddKanbanPlacement clamps a negative position to the head, not the tail', () => {
     boardCacheStore.persistAddKanbanPlacement('kb', 'c1', defOf('t1', 'A'), 0);
     boardCacheStore.persistAddKanbanPlacement('kb', 'c1', defOf('t2', 'B'), 1);
     // A stray negative position must floor to 0 (insert at head). The old
@@ -348,13 +348,13 @@ describe('boardCache — Kanban CRUD', () => {
     expect(style).toEqual({ headerColor: '#abc' });
   });
 
-  it('getFullTilesForKanbanBoard preserves def-level locked / faded flags (H3)', () => {
+  it('getFullTilesForKanbanBoard preserves def-level locked / faded flags', () => {
     boardCacheStore.persistAddKanbanPlacement('kb', 'c1', defOf('t1', 'A'), 0);
     boardCacheStore.persistAddKanbanPlacement('kb', 'c2', defOf('t2', 'B'), 0);
 
     // Simulate Mind Map's TileHeader lock toggle / fade affordance stamping
     // these flags directly onto the tileDef. The Kanban view must surface
-    // them so the flow-layout card honours the lock (H4 drag guard reads
+    // them so the flow-layout card honours the lock (the drag guard reads
     // tile.locked).
     const defs = boardCacheStore.cache.kb.tileDefs as Record<string, Record<string, unknown>>;
     defs.t1.locked = true;

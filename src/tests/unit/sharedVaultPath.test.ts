@@ -7,7 +7,7 @@ import {
 } from '@shared/vaultPath';
 
 /**
- * Phase 4 — branded `VaultPath` newtype + `vaultPath()` constructor.
+ * Branded `VaultPath` newtype + `vaultPath()` constructor.
  *
  * The brand prevents raw `string` from being used as a key in
  * `Map<VaultPath, _>` / `Record<VaultPath, _>` / `Set<VaultPath>` without
@@ -18,7 +18,7 @@ import {
  *  - the `isVaultPath` type-guard
  *  - the empty-string sentinel (used widely as "no path yet")
  *  - the locale-pinned case-fold (Turkish dotted-i would otherwise split
- *    path identity across machines — Phase 31 C3.7)
+ *    path identity across machines)
  */
 
 describe('shared/vaultPath — `normalizeVaultRelative`', () => {
@@ -116,10 +116,10 @@ describe('shared/vaultPath — map-key parity', () => {
     expect(m.get(vaultPath('NOTES/FOO.MD'))).toBe(2);
   });
 
-  it('rename Notes/Foo.md → notes/foo.md (the P0 #8 surface) finds the prior entry', () => {
+  it('rename Notes/Foo.md → notes/foo.md finds the prior entry', () => {
     const m = new Map<VaultPath, number>();
     m.set(vaultPath('Notes/Foo.md'), 1);
-    // OS-emitted lowercase rename event — pre-Phase-4 the raw-`string`
+    // OS-emitted lowercase rename event — with a raw-`string` key the
     // map would keep the OLD entry forever under `'Notes/Foo.md'` and a
     // lookup against the new path would miss. With VaultPath:
     expect(m.has(vaultPath('notes/foo.md'))).toBe(true);

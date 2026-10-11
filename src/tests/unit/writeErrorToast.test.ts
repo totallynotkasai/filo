@@ -7,7 +7,7 @@ import { createErrorToastAggregator } from '@renderer/lib/utils/errorToastAggreg
 import type { WriteErrorInfo } from '@renderer/lib/boards/writeStateTracking';
 import { IpcEnvelopeError } from '@shared/ipcEnvelope';
 
-describe('extractPreservedTmpPath (M5)', () => {
+describe('extractPreservedTmpPath', () => {
   it('parses the (data preserved at <tmp>) annotation from the error message', () => {
     // The exact shape `atomicWriteFile` produces, after IPC marshals it into an
     // IpcEnvelopeError whose message is main's `String(err)`.
@@ -46,7 +46,7 @@ describe('extractPreservedTmpPath (M5)', () => {
   });
 });
 
-describe('buildWriteErrorToast (M5)', () => {
+describe('buildWriteErrorToast', () => {
   it('names the preserved tmp location in the toast text', () => {
     const tmp = '/vault/Notes.md.cafef00d.tmp';
     const info: WriteErrorInfo = {
@@ -79,9 +79,9 @@ describe('buildWriteErrorToast (M5)', () => {
     expect(buildWriteErrorToast({ kind: 'component', error: new Error('x') }).context).toBe('File save failed');
   });
 
-  // Audit-18 4.2 — a corrupt-config suppression is NOT a disk-space / permission
-  // failure, so it gets an honest "we're not saving, fix the file" message and a
-  // per-target coalescing key instead of the misleading generic copy.
+  // A corrupt-config suppression is NOT a disk-space / permission failure, so
+  // it gets an honest "we're not saving, fix the file" message and a per-target
+  // coalescing key instead of the misleading generic copy.
   it('emits an honest, per-target message for a CONFIG_CORRUPT error', () => {
     const info: WriteErrorInfo = {
       kind: 'config',
@@ -114,7 +114,7 @@ describe('buildWriteErrorToast (M5)', () => {
   });
 });
 
-describe('write-error coalescing (L2)', () => {
+describe('write-error coalescing', () => {
   it('N rapid same-kind board failures collapse into ONE count-badged toast', () => {
     const pushed: string[] = [];
     const updates: Array<{ id: string; text: string }> = [];
@@ -179,12 +179,12 @@ describe('write-error coalescing (L2)', () => {
 });
 
 /**
- * A9-L10 — two same-kind write failures that PRESERVED bytes at DIFFERENT tmp
- * locations must each keep their own toast. Pre-fix the aggregator keyed only
- * by `context` (the write kind), so the second failure's `updateToastText`
+ * Two same-kind write failures that PRESERVED bytes at DIFFERENT tmp locations
+ * must each keep their own toast. Pre-fix the aggregator keyed only by
+ * `context` (the write kind), so the second failure's `updateToastText`
  * overwrote the first's text — hiding the first recovery location in-session.
  */
-describe('A9-L10 — distinct preserved-tmp locations keep separate toasts', () => {
+describe('distinct preserved-tmp locations keep separate toasts', () => {
   function makeAgg(): { aggregator: ReturnType<typeof createErrorToastAggregator>; pushed: string[]; toasts: Map<string, string> } {
     const pushed: string[] = [];
     const toasts = new Map<string, string>();

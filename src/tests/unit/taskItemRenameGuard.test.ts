@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 
 /**
- * REN-1 (Task List audit 2026-06-08, Phase 2) — inline title rename used to
- * double-fire. `commitEdit()` set `isEditing = false`, which unmounts the
- * <input> and fires its `blur` → `handleTitleBlur` → `commitEdit()` a SECOND
- * time (the `cancellingEdit` flag only covered the Cancel path). `renameTask`
- * suspends at an `await`, so on the second pass `tile.title` was still the old
- * value and the duplicate rename hit ENOENT — popping a false "Task file is no
- * longer on disk" warning on essentially every rename.
+ * Inline title rename used to double-fire. `commitEdit()` set
+ * `isEditing = false`, which unmounts the <input> and fires its `blur` →
+ * `handleTitleBlur` → `commitEdit()` a SECOND time (the `cancellingEdit` flag
+ * only covered the Cancel path). `renameTask` suspends at an `await`, so on
+ * the second pass `tile.title` was still the old value and the duplicate
+ * rename hit ENOENT — popping a false "Task file is no longer on disk" warning
+ * on essentially every rename.
  *
  * The component can't be mounted here (vitest can't preprocess a Svelte
  * `<style>`), so this models the exact handler closure from `TaskItem.svelte`
@@ -23,10 +23,10 @@ interface RenameHarness {
 }
 
 /**
- * Verbatim port of TaskItem.svelte's commit/blur/cancel handlers (with the REN-1
- * one-shot guard AND the REN-3 external-mid-edit guard). `titleAtCommit` models
+ * Verbatim port of TaskItem.svelte's commit/blur/cancel handlers (with the
+ * one-shot guard AND the external-mid-edit guard). `titleAtCommit` models
  * `tile.title` as seen at commit time — defaults to the start title (no external
- * change), so the REN-1 cases below are unaffected.
+ * change), so the one-shot cases below are unaffected.
  */
 function makeHarness(
   onRename: (t: string) => void,
@@ -39,9 +39,9 @@ function makeHarness(
   const liveTitle = opts.titleAtCommit ?? tileTitle; // tile.title at commit
 
   function commitEdit(): void {
-    if (!isEditing) return; // REN-1 guard — first commit already flipped this
+    if (!isEditing) return; // one-shot guard — first commit already flipped this
     isEditing = false;
-    if (liveTitle !== titleAtEditStart) return; // REN-3 — external rename won; drop the draft
+    if (liveTitle !== titleAtEditStart) return; // external rename won; drop the draft
     if (editTitle.trim() && editTitle !== liveTitle) {
       onRename(editTitle.trim());
     }
@@ -62,7 +62,7 @@ function makeHarness(
   };
 }
 
-describe('REN-1 — inline rename commit is one-shot', () => {
+describe('inline rename commit is one-shot', () => {
   it('Enter then the unmount-blur fires onRename exactly once', () => {
     const onRename = vi.fn();
     const h = makeHarness(onRename, { editTitle: 'New', tileTitle: 'Old' });
@@ -96,7 +96,7 @@ describe('REN-1 — inline rename commit is one-shot', () => {
     expect(onRename).not.toHaveBeenCalled();
   });
 
-  it('REN-3 — does NOT overwrite an external mid-edit rename with the stale draft', () => {
+  it('does NOT overwrite an external mid-edit rename with the stale draft', () => {
     // Editing began while the tile read "Old"; an external rename changed it to
     // "Renamed" before the user pressed Enter. The draft must NOT clobber it.
     const onRename = vi.fn();
@@ -105,7 +105,7 @@ describe('REN-1 — inline rename commit is one-shot', () => {
     expect(onRename).not.toHaveBeenCalled();
   });
 
-  it('REN-3 — still renames when the title was untouched during the edit', () => {
+  it('still renames when the title was untouched during the edit', () => {
     const onRename = vi.fn();
     const h = makeHarness(onRename, { editTitle: 'New', tileTitle: 'Old' }); // no external change
     h.enter();

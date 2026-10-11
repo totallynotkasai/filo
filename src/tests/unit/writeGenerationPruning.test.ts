@@ -45,44 +45,45 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 afterEach(disposeTestSchedulers);
 
 /**
- * Audit-16 Phase 4 — write-tracking & recovery honesty.
+ * Write-tracking & recovery honesty.
  *
- * 4.1 / 4.2 — the per-path write generations were minted `(get(key) ?? 0) + 1`,
- * but the Audit-14 1.5/1.6 boundedness fix PRUNES the entry on a still-newest
- * success, so a later write re-minted gen 1 and could COLLIDE with the
- * generation an older timed-out write's late-success heal still held:
+ * Generation collision — the per-path write generations were minted
+ * `(get(key) ?? 0) + 1`, but the boundedness fix PRUNES the entry on a
+ * still-newest success, so a later write re-minted gen 1 and could COLLIDE with
+ * the generation an older timed-out write's late-success heal still held:
  * A(timeout, gen 1) / B(success, prune) / C(re-mint gen 1, fails) /
  * A lands late → generations match → A's heal erases C's legitimate failed
  * mark — clean save indicator, wiped `.filo/.dirty`, no recovery prompt while
  * C's payload never reached disk. Both maps now mint from one
  * session-monotonic counter (`mintWriteGeneration`).
  *
- * 4.4 — `cancel(key)` only consulted `pending`, so a PARKED fire (a debounce
- * fire deferred behind an in-flight write) survived a board delete: it
+ * Parked fire — `cancel(key)` only consulted `pending`, so a PARKED fire (a
+ * debounce fire deferred behind an in-flight write) survived a board delete: it
  * resumed after the `board:delete` IPC, hit the missing-source branch, and
  * planted a false "couldn't save" error + a permanent failed mark.
  *
- * 4.5 — a config delete-then-recreate-with-same-content blip (OneDrive/AV
- * placeholder hydration) fell through to the drift check with the STALE
- * pre-delete baseline → guaranteed abort + `lastWrittenConfigs.delete` and
- * NO rebase → every later write to that target re-aborted for the session.
+ * Config blip — a config delete-then-recreate-with-same-content blip
+ * (OneDrive/AV placeholder hydration) fell through to the drift check with the
+ * STALE pre-delete baseline → guaranteed abort + `lastWrittenConfigs.delete`
+ * and NO rebase → every later write to that target re-aborted for the session.
  *
- * 4.6 — `emergencyFileRegistry` never pruned on a later successful write to
- * the same destination → phantom "Filo preserved emergency files" breadcrumb.
+ * Emergency registry — `emergencyFileRegistry` never pruned on a later
+ * successful write to the same destination → phantom "Filo preserved emergency
+ * files" breadcrumb.
  *
- * 4.7 — the scheduler's success path pruned only the PRIMARY failureId from
- * the `failures` Set; per-target partial-failure ids (config bundle) leaked
- * until reset().
+ * Partial-failure ids — the scheduler's success path pruned only the PRIMARY
+ * failureId from the `failures` Set; per-target partial-failure ids (config
+ * bundle) leaked until reset().
  *
- * 4.8 — the board reconciler's self-write divergence tiebreak (Audit-15 P2.4)
+ * Divergence tiebreak — the board reconciler's self-write divergence tiebreak
  * trusted the stat compare even while a NEWER self-write was queued/in flight,
  * so write N's watcher echo landing mid-N+1 read as "diverged" → spurious
  * external-edit prompt during normal rapid editing.
  */
 
-// ── 4.1 — scheduler-level generation collision ────────────────────────
+// ── scheduler-level generation collision ──────────────────────────────
 
-describe('Audit-16 4.1 — a pruned-then-reminted generation cannot heal across writes', () => {
+describe('a pruned-then-reminted generation cannot heal across writes', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));
@@ -96,7 +97,7 @@ describe('Audit-16 4.1 — a pruned-then-reminted generation cannot heal across 
     const deferreds: Array<() => void> = [];
     let mode: 'defer' | 'resolve' = 'defer';
     const scheduler = createScheduler<{ path: string }>({
-      name: 'test-4.1',
+      name: 'test-gen-collision',
       debounceMs: 5,
       writeTimeoutMs: 40,
       // Board/config/misc shape — IPC directly, full sentinel mode, no
@@ -115,7 +116,7 @@ describe('Audit-16 4.1 — a pruned-then-reminted generation cannot heal across 
     expect(hasFailedWrites()).toBe(true);
 
     // Write B — succeeds: clears A's failed mark AND prunes the path's
-    // generation entry (Audit-14 1.6 boundedness).
+    // generation entry (the boundedness prune).
     mode = 'resolve';
     scheduler.schedule('k', () => ({ path: 'P.md' }));
     expect((await scheduler.flushAll()).failed).toEqual([]);
@@ -143,10 +144,10 @@ describe('Audit-16 4.1 — a pruned-then-reminted generation cannot heal across 
     await scheduler.flushAll();
   });
 
-  it("positive control (Audit-12 M2): with no interim writes, A's late landing still heals", async () => {
+  it("positive control: with no interim writes, A's late landing still heals", async () => {
     let release!: () => void;
     const scheduler = createScheduler<{ path: string }>({
-      name: 'test-4.1-control',
+      name: 'test-gen-collision-control',
       debounceMs: 5,
       writeTimeoutMs: 40,
       performWrite: () => new Promise<void>((res) => { release = res; }),
@@ -163,9 +164,9 @@ describe('Audit-16 4.1 — a pruned-then-reminted generation cannot heal across 
   });
 });
 
-// ── 4.2 — component-level generation collision (same class) ──────────
+// ── component-level generation collision (same class) ────────────────
 
-describe('Audit-16 4.2 — componentWriteGenByPath survives the prune/re-mint interleaving', () => {
+describe('componentWriteGenByPath survives the prune/re-mint interleaving', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));
@@ -186,7 +187,7 @@ describe('Audit-16 4.2 — componentWriteGenByPath survives the prune/re-mint in
     );
 
     // Writer B — succeeds while A is in flight: clears + PRUNES the path's
-    // generation entry (Audit-14 1.5/1.6).
+    // generation entry (the boundedness prune).
     await trackComponentWrite('/vault', 'P.md', () => Promise.resolve(), {
       notifyOnError: false,
     });
@@ -208,9 +209,9 @@ describe('Audit-16 4.2 — componentWriteGenByPath survives the prune/re-mint in
   });
 });
 
-// ── 4.4 — cancel() reaches a parked fire ─────────────────────────────
+// ── cancel() reaches a parked fire ───────────────────────────────────
 
-describe('Audit-16 4.4 — cancel(key) neutralises a PARKED fire (board deleted mid-park)', () => {
+describe('cancel(key) neutralises a PARKED fire (board deleted mid-park)', () => {
   interface TArgs {
     vaultRoot: string;
     path: string;
@@ -238,7 +239,7 @@ describe('Audit-16 4.4 — cancel(key) neutralises a PARKED fire (board deleted 
     let resolveA!: () => void;
     const writes: TArgs[] = [];
     const scheduler = createScheduler<TArgs>({
-      name: 'test-4.4',
+      name: 'test-parked-cancel',
       debounceMs: 100,
       performWrite: (a) => {
         writes.push(a);
@@ -294,9 +295,9 @@ describe('Audit-16 4.4 — cancel(key) neutralises a PARKED fire (board deleted 
   });
 });
 
-// ── 4.5 — config benign-reappear rebases the baseline ────────────────
+// ── config benign-reappear rebases the baseline ──────────────────────
 
-describe('Audit-16 4.5 — a same-content delete+recreate blip does not wedge the config target', () => {
+describe('a same-content delete+recreate blip does not wedge the config target', () => {
   const ROOT = '/vault';
 
   function makeSettings(fontSize: number): ProjectSettings {
@@ -325,7 +326,7 @@ describe('Audit-16 4.5 — a same-content delete+recreate blip does not wedge th
       if (appStatCalls === 1) return { ok: true, mtimeMs: 1, size: 10 };
       // The blip: the armed write's pre-stat hits ENOENT…
       if (appStatCalls === 2) return { ok: false, code: 'ENOENT', error: 'unlinked' };
-      // …the L24 re-stat sees the recreated file (NEW mtime/size)…
+      // …the re-stat sees the recreated file (NEW mtime/size)…
       if (appStatCalls === 3) return { ok: true, mtimeMs: 999, size: 55 };
       // …post-write + later stats settle on the rewritten file.
       return { ok: true, mtimeMs: 1000, size: 56 };
@@ -366,9 +367,9 @@ describe('Audit-16 4.5 — a same-content delete+recreate blip does not wedge th
   });
 });
 
-// ── 4.6 — emergency-file registry prunes on a later success ──────────
+// ── emergency-file registry prunes on a later success ────────────────
 
-describe('Audit-16 4.6 — a later successful write prunes the emergency-file registry', () => {
+describe('a later successful write prunes the emergency-file registry', () => {
   let dir: string;
 
   beforeEach(async () => {
@@ -431,9 +432,9 @@ describe('Audit-16 4.6 — a later successful write prunes the emergency-file re
   });
 });
 
-// ── 4.7 — per-target failure ids pruned on the key's later success ───
+// ── per-target failure ids pruned on the key's later success ─────────
 
-describe('Audit-16 4.7 — partial-failure ids are pruned by the same key\'s later success', () => {
+describe('partial-failure ids are pruned by the same key\'s later success', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));
@@ -446,7 +447,7 @@ describe('Audit-16 4.7 — partial-failure ids are pruned by the same key\'s lat
   it('a fire-and-forget bundle failure leaves ids; the next success clears them all', async () => {
     let failNext = true;
     const scheduler = createScheduler<{ path: string }>({
-      name: 'test-4.7',
+      name: 'test-partial-failure',
       debounceMs: 5,
       // Config-bundle shape: per-target ids under one primary failure id.
       performWrite: () =>
@@ -469,9 +470,9 @@ describe('Audit-16 4.7 — partial-failure ids are pruned by the same key\'s lat
   });
 });
 
-// ── 4.8 — divergence tiebreak consults pending/in-flight writes ───────
+// ── divergence tiebreak consults pending/in-flight writes ─────────────
 
-describe('Audit-16 4.8 — a self-write echo diverging under a newer queued write is dropped', () => {
+describe('a self-write echo diverging under a newer queued write is dropped', () => {
   const REL = 'k.board.json';
 
   function makeBoard(name: string): BoardFileData {
@@ -515,7 +516,7 @@ describe('Audit-16 4.8 — a self-write echo diverging under a newer queued writ
     // Write N's echo arrives inside the suppression window…
     markRecentSelfWrite(REL);
     // …with a baseline stamped after N, but write N+1's bytes already on
-    // disk (newer stat) — the P2.4 tiebreak reads "diverged".
+    // disk (newer stat) — the divergence tiebreak reads "diverged".
     noteBaseline(REL, 1, 10);
     installFiloMock({
       'vault:stat': () => ({ ok: true, success: true, mtimeMs: 2, size: 11 }),

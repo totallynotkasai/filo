@@ -7,7 +7,7 @@ import {
 } from '@renderer/schema/settings';
 
 /**
- * Phase 1.2a — back-fill of `backgroundPattern` for stale `.filo/settings.json`.
+ * Back-fill of `backgroundPattern` for stale `.filo/settings.json`.
  *
  * A vault saved before Filo introduced `kanban.backgroundPattern` may have a
  * `defaults.kanban` object that lacks the field entirely. The loader calls

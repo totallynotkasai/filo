@@ -3,9 +3,8 @@
  * never change a note or a board file (the app's own `.filo/` state, e.g. the
  * saved camera position, may change).
  *
- * Pins what the user sees, not how the app does it. Phases 3–6 of the master
- * plan must keep these green without editing this file (only the harness
- * adapter may change).
+ * Pins what the user sees, not how the app does it. A refactor must keep these
+ * green without editing this file (only the harness adapter may change).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { startApp, stopApp, quiesce, reopenVault, waitFor } from './harness/app';

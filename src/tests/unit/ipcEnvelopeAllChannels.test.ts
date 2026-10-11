@@ -1,13 +1,12 @@
 /**
- * Phase 7 — contract-level test for `assertIpcOk` envelope handling.
+ * Contract-level test for `assertIpcOk` envelope handling.
  *
  * For EVERY envelope-discriminated channel in `IpcChannelMap` (i.e. every
  * channel whose result type uses `IpcOk<…>` or `IpcSuccess<…>`), assert
  * that a `{ ok: false }` / `{ success: false }` stub return causes the
  * canonical caller path (`assertIpcOk`) to throw `IpcEnvelopeError`. The
  * test exercises both discriminators because the legacy `success`
- * channels predate the consolidation plan and `assertIpcOk` is tolerant
- * of either.
+ * channels remain and `assertIpcOk` is tolerant of either.
  *
  * Why this is necessary even with the static gate
  * (`ipc-envelope-usage` in `scripts/gates/ipcSecurity.mjs`):
@@ -53,7 +52,7 @@ const OK_DISCRIMINATED: readonly string[] = [
   'config:save-workspace',
   'theme:save',
   'theme:delete',
-  // Audit-18 4.5 — `IpcOk<{ recents }>` so a failed add ≠ empty list.
+  // `IpcOk<{ recents }>` so a failed add ≠ empty list.
   'vault:add-recent',
 ];
 
@@ -130,7 +129,7 @@ function readGateAllowlist(): Set<string> {
   return channels;
 }
 
-describe('Phase 7 contract — IPC envelope failure surfacing', () => {
+describe('IPC envelope contract — failure surfacing', () => {
   describe.each(OK_DISCRIMINATED)('ok-discriminated channel %s', (channel) => {
     it('assertIpcOk throws IpcEnvelopeError on { ok: false }', () => {
       expect(() => assertIpcOk({ ok: false, error: 'simulated', code: 'EFOO' }, channel)).toThrow(

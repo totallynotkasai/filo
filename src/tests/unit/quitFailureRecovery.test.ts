@@ -6,14 +6,14 @@ import {
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * 6.2.H4 (follow-up) — renderer read/clear of `.filo/quit-failure.a1b2c3d4e5f6.json`.
+ * Renderer read/clear of `.filo/quit-failure.a1b2c3d4e5f6.json`.
  *
- * Audit-8 L4 — the read and the clear are SEPARATE: `readQuitFailureBreadcrumb`
- * parses but NEVER deletes (so a second crash before the user acknowledges
- * re-surfaces the location); `clearQuitFailureBreadcrumb` does the best-effort
- * delete once the surfacing toast is dismissed.
+ * The read and the clear are SEPARATE: `readQuitFailureBreadcrumb` parses but
+ * NEVER deletes (so a second crash before the user acknowledges re-surfaces the
+ * location); `clearQuitFailureBreadcrumb` does the best-effort delete once the
+ * surfacing toast is dismissed.
  */
-describe('Audit-8 L4 — quit-failure breadcrumb read/clear split', () => {
+describe('quit-failure breadcrumb read/clear split', () => {
   let diskFiles: Map<string, string>;
   let deletes: string[];
 

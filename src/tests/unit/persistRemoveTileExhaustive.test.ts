@@ -1,9 +1,9 @@
 /**
- * Phase 7 — exhaustive contract test for tile-removal entry points.
+ * Exhaustive contract test for tile-removal entry points.
  *
- * Phase 0's `deleteTileEntryPoints.test.ts` characterized the dispatcher-level
+ * `deleteTileEntryPoints.test.ts` characterizes the dispatcher-level
  * post-condition by exercising the canonical sink
- * (`boardCacheStore.persistRemoveTile`) per board type. Phase 7 widens that
+ * (`boardCacheStore.persistRemoveTile`) per board type. This file widens that
  * coverage to the higher-level *caller* paths so a future regression that
  * funnels a delete around the strategy registry surfaces immediately:
  *
@@ -29,8 +29,8 @@
  *
  * The orphan detector lives in
  * `src/tests/unit/contracts/randomOpsNoOrphans.property.test.ts`
- * and is shared with Phase 0's invariant tests so both layers report the
- * same shape of orphan.
+ * and is shared with the contract-level invariant tests so both layers
+ * report the same shape of orphan.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -274,7 +274,7 @@ const BOARD_KINDS: BoardKind[] = ['mindmap', 'kanban', 'tasklist'];
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
-describe('persistRemoveTile — exhaustive entry-point coverage (Phase 7)', () => {
+describe('persistRemoveTile — exhaustive entry-point coverage', () => {
   beforeEach(() => {
     vaultStore.setPath('/vault');
     boardCacheStore.clear();

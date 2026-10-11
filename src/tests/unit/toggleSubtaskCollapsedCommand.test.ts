@@ -5,7 +5,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard } from '@renderer/schema/index';
 
 /**
- * ToggleSubtaskCollapsedCommand — Phase 3 prerequisite for the
+ * ToggleSubtaskCollapsedCommand — prerequisite for the
  * "indent into collapsed parent auto-expands" BatchCommand path.
  *
  * Snapshot-based: undo restores the exact prior set regardless of any

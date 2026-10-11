@@ -1,5 +1,5 @@
 /**
- * Audit-11 FILO-UR-3 — disk-bytes undo round-trip for the note-backed field
+ * Disk-bytes undo round-trip for the note-backed field
  * commands (`UpdateCardFieldCommand` / `UpdateTaskFieldCommand`).
  *
  * The existing `frontmatterRebaseConflict.test.ts` asserts only the DISPLAY
@@ -90,7 +90,7 @@ function makeKanbanFixture(): BoardFileData {
   };
 }
 
-describe('Audit-11 FILO-UR-3 — field-command disk-bytes undo round-trip', () => {
+describe('field-command disk-bytes undo round-trip', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     noteStore.__resetForTests();

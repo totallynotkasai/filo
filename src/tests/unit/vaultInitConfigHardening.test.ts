@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * IMPL_PLAN_2026-05-25 Phase 1 / 1.2 — vault:init-config hardening.
+ * vault:init-config hardening.
  *
  * The bootstrap call that anchors the main-process vault registry must
  * refuse three malformed inputs before mutating `vaultRegistry`:

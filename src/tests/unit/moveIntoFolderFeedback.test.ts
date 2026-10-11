@@ -1,7 +1,7 @@
 /**
- * Phase 1 / 1.4 — `moveIntoFolder` returns a typed `MoveIntoFolderResult`
- * so sidebar drop handlers can distinguish a name collision from a real
- * IO failure. Two surfaces under test:
+ * `moveIntoFolder` returns a typed `MoveIntoFolderResult` so sidebar drop
+ * handlers can distinguish a name collision from a real IO failure. Two
+ * surfaces under test:
  *
  *  1. `describeMoveIntoFolderFailure(result, source, target)` formats
  *     human-readable toast copy for each failure code.

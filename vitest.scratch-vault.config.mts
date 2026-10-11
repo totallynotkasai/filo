@@ -1,4 +1,4 @@
-// Builds the dogfooding scratch vault (npm run scratch-vault). Same runtime as
+// Builds the manual-testing scratch vault (npm run scratch-vault). Same runtime as
 // the `characterisation` project in vitest.config.mts, pointed at the builder.
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';

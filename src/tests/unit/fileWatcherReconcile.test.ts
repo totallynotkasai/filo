@@ -44,7 +44,7 @@ function renames(): unknown[] {
 }
 
 /**
- * Phase 19 S2 — reconciliation walker tests. The walker diffs a vault
+ * Reconciliation walker tests. The walker diffs a vault
  * snapshot against the live tree and synthesises events for anything
  * `fs.watch` missed. These tests verify the diff logic without depending
  * on real OS-level filesystem events (which we can't reliably wait for in
@@ -177,13 +177,13 @@ describe('FileWatcher.reconcileNow', () => {
     await vi.waitFor(() => expect(changedNames()).toContain('Edited.md'), { timeout: 5000 });
   });
 
-  // 6.4.M8 — `.board.json` and similar JSON files Filo round-trips through
+  // `.board.json` and similar JSON files Filo round-trips through
   // `atomicWriteFile` must also be hashed during the snapshot walk so a
   // FAT/SMB filesystem (second-resolution mtime, or mtime-preserved
   // rewrite via temp-rename) doesn't make external `.board.json` edits
   // invisible to the reconciler. The legacy walker hashed only `.md`,
   // leaving everything else dependent on mtime+size.
-  it('detects .board.json change when mtime+size are identical (M8)', async () => {
+  it('detects .board.json change when mtime+size are identical', async () => {
     const target = join(dir, 'My.board.json');
     // Use a fixed timestamp so utimes' precision rounding doesn't make
     // mtime-equality flake on Windows (sub-ms fractional bits). Stamping
@@ -209,12 +209,13 @@ describe('FileWatcher.reconcileNow', () => {
     await vi.waitFor(() => expect(changedNames()).toContain('My.board.json'), { timeout: 5000 });
   });
 
-  // Audit-4 DI-15 — the reconcile walk hashed only the first 4 KB of a
+  // The reconcile walk hashed only the first 4 KB of a
   // `.board.json`, so an external edit landing PAST offset 4096 with an
   // unchanged total size + coarse mtime hashed "equal" and the change was
   // dropped (then overwritten by the local cache flush). The whole-file hash
-  // closes that window. This is the deep-edit sibling of the M8 case above.
-  it('detects a .board.json change past offset 4096 with identical mtime+size (DI-15)', async () => {
+  // closes that window. This is the deep-edit sibling of the identical
+  // mtime+size case above.
+  it('detects a .board.json change past offset 4096 with identical mtime+size', async () => {
     const target = join(dir, 'Deep.board.json');
     const fixedTime = new Date('2026-01-01T00:00:00Z');
     // 4 KB identical head + an equal-length tail that differs between writes,
@@ -259,12 +260,12 @@ describe('FileWatcher.reconcileNow', () => {
     expect(filesChanged.some((c) => c.filename === 'SelfWrite.md')).toBe(false);
   });
 
-  // Audit-10 M3 — a suppressed pass must NOT advance the snapshot past the
+  // A suppressed pass must NOT advance the snapshot past the
   // suppressed path. If an EXTERNAL edit lands inside the suppression window,
   // baking its bytes into the snapshot would mask it forever (next pass sees
   // current === snapshot). Preserving the prior entry lets the change re-surface
   // once suppression lifts.
-  it('re-surfaces an external change that landed during a suppressed window once suppression lifts (M3)', async () => {
+  it('re-surfaces an external change that landed during a suppressed window once suppression lifts', async () => {
     const target = join(dir, 'SelfWrite.md');
     await fs.writeFile(target, 'first', 'utf-8');
     await watcher.reconcileNow({ seedOnly: true });
@@ -299,7 +300,7 @@ describe('FileWatcher.reconcileNow', () => {
     expect(filesChanged.find((c) => c.filename.startsWith('.filo/'))).toBeUndefined();
   });
 
-  it('classifies a media file outside `attachments/` as attachment (Phase 19 S4)', async () => {
+  it('classifies a media file outside `attachments/` as attachment', async () => {
     await watcher.reconcileNow({ seedOnly: true });
     await fs.writeFile(join(dir, 'hero.png'), 'fake png bytes', 'utf-8');
     await watcher.reconcileNow();

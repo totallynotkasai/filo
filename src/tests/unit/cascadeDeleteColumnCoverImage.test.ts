@@ -1,14 +1,14 @@
 /**
- * Phase 1 / 1.3 — `cascadeDeleteByVaultPath` must clear a Kanban column's
+ * `cascadeDeleteByVaultPath` must clear a Kanban column's
  * own `coverImage` when the underlying file is deleted, even when that
  * file is referenced ONLY by the column header (no placement covers, no
  * tile content, no frame backgrounds).
  *
  * Pre-fix: `boardFrontmatterSync.cascadeDeleteByVaultPath` gated the
  * apply step on a hand-listed enumeration of style-clear categories that
- * silently missed `columnCoverImage` (added in Sprint C / C23). The
- * branch short-circuited, the cache stayed untouched, and the column
- * carried a dangling reference forward.
+ * silently missed `columnCoverImage`. The branch short-circuited, the
+ * cache stayed untouched, and the column carried a dangling reference
+ * forward.
  *
  * Post-fix: the gate iterates `Object.values(targets.styleClears)`, so
  * any future style-clear category participates automatically.
@@ -60,7 +60,7 @@ function makeKanbanWithColumnCover(
   };
 }
 
-describe('cascadeDeleteByVaultPath — Phase 1.3 column coverImage', () => {
+describe('cascadeDeleteByVaultPath — column coverImage', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     vaultStore.setPath('');

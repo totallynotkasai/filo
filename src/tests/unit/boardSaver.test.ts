@@ -175,7 +175,7 @@ describe('boardSaver write error propagation', () => {
     expect(observed).toHaveLength(0);
   });
 
-  it('trackComponentWrite registers markRecentSelfWrite BEFORE running writeFn (Phase A.2a)', async () => {
+  it('trackComponentWrite registers markRecentSelfWrite BEFORE running writeFn', async () => {
     // The OS-level watcher event for our own write can fire before the IPC
     // promise resolves. Marking suppression after the await let the renderer
     // surface "External edit replaced 'New Tile'" for every freshly-created
@@ -218,7 +218,7 @@ describe('boardSaver write error propagation', () => {
     ).rejects.toThrow('boom');
 
     // First push: inflight=1 (beginWrite). Last push: inflight=0, failed=1 (endWrite on rejection).
-    // Phase C / C.10 — WriteStateInfo now carries `failedPaths`; use
+    // WriteStateInfo also carries `failedPaths`; use
     // toMatchObject so the expected shape only pins the counters.
     expect(states.length).toBeGreaterThanOrEqual(2);
     expect(states[0]).toMatchObject({ inflight: 1, failed: 0 });
@@ -246,7 +246,7 @@ describe('boardSaver write error propagation', () => {
     __resetDirtyTrackingForTests();
   });
 
-  it('writeConfigs attempts every file even when one fails, then returns failures (A1.1)', async () => {
+  it('writeConfigs attempts every file even when one fails, then returns failures', async () => {
     __resetDirtyTrackingForTests();
     const seen: string[] = [];
     installFiloMock({
@@ -265,7 +265,7 @@ describe('boardSaver write error propagation', () => {
     const settings: ProjectSettings = {} as unknown as ProjectSettings;
     const workspace: WorkspaceState = { openTabs: [], activeTabId: null } as unknown as WorkspaceState;
 
-    // A1.1: failures are returned, not thrown — every other file still
+    // Failures are returned, not thrown — every other file still
     // attempted, every failed target collected in `failed`.
     const res = await writeConfigs('/vault', settings, 'light', workspace);
     expect(res.failed).toEqual(['defaults.json']);
@@ -370,7 +370,7 @@ describe('boardSaver writeConfigs per-target dirty tracking', () => {
     });
 
     const settings = makeSettings();
-    // A1.1: writeConfigs no longer throws on per-target failure; the failed
+    // writeConfigs does not throw on per-target failure; the failed
     // target lives in `failed`.
     const firstRes = await writeConfigs('/vault', settings, 'light', emptyWorkspace);
     expect(firstRes.failed).toEqual(['defaults.json']);
@@ -386,7 +386,7 @@ describe('boardSaver writeConfigs per-target dirty tracking', () => {
   });
 });
 
-describe('boardSaver.flushAll — Phase 31 A1.1 aggregate failure surfacing', () => {
+describe('boardSaver.flushAll — aggregate failure surfacing', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     restoreFiloDefault();

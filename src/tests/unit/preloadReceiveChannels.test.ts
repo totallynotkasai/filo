@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RECEIVE_CHANNELS } from '../../shared/types';
 
 /**
- * Audit-15 P3.3 — the preload `on` wrapper must allowlist the channel a
+ * The preload `on` wrapper must allowlist the channel a
  * renderer subscribes to. Previously `on` forwarded ANY channel string to
  * `ipcRenderer.on`, so a compromised renderer could attach a listener to an
  * arbitrary channel (receive-only, but the one un-gated bridge method —
@@ -43,7 +43,7 @@ await import('../../main/preload');
 
 type OnFn = (channel: string, callback: (...args: unknown[]) => void) => () => void;
 
-describe('preload on wrapper — Audit-15 P3.3 receive-channel allowlist', () => {
+describe('preload on wrapper — receive-channel allowlist', () => {
   beforeEach(() => {
     onSpy.mockClear();
     removeListenerSpy.mockClear();

@@ -4,12 +4,11 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * IMPL_PLAN_2026-05-23_v3 Phase B / B.1 — `board:create` must reject Windows
- * reserved DOS device names (CON, NUL, LPT1, etc.) before `createBoardFile`
- * calls `atomicWriteFile`. On Windows, `CON.board.json` opens a console
- * device handle instead of a real file — the write either silently no-ops or
- * hangs the IPC handler. Phase 27 added the same gate to `vault:rename`
- * (Phase 31 A3.6); this fills the gap on the create entry point.
+ * `board:create` must reject Windows reserved DOS device names (CON, NUL,
+ * LPT1, etc.) before `createBoardFile` calls `atomicWriteFile`. On Windows,
+ * `CON.board.json` opens a console device handle instead of a real file —
+ * the write either silently no-ops or hangs the IPC handler. `vault:rename`
+ * has the same gate; this covers the create entry point.
  *
  * Strategy: capture `ipcMain.handle` into a registry mock, invoke the
  * `board:create` handler with reserved names, assert `{ ok: false }`.

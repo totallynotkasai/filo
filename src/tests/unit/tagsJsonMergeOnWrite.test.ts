@@ -1,5 +1,5 @@
 /**
- * Audit-19 EXT-8 — a `.filo/tags.json` update from another machine that lands
+ * A `.filo/tags.json` update from another machine that lands
  * inside the self-write window was dropped (main suppresses the watcher event;
  * the reconciler returned on `isRecentSelfWrite`), and the next local tag save
  * blindly wrote the in-memory registry over it — B's registrations lost
@@ -58,7 +58,7 @@ function installRoutes(): void {
   };
 }
 
-describe('Audit-19 EXT-8 — tags.json merge on write', () => {
+describe('tags.json merge on write', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     __resetVaultIdentityForTests();

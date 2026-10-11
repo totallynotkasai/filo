@@ -10,13 +10,13 @@ import {
 } from '../../main/services/fileWatcherHash';
 
 /**
- * Audit-4 DI-07 / DI-15 — the watcher's content hashes covered only the first
+ * The watcher's content hashes covered only the first
  * 4 KB of a file. Two distinct files that share a 4 KB head but diverge later
  * therefore hashed identical:
  *
- *   - DI-07: the cross-basename rename gate (`hashFileForRename`) paired them
+ *   - The cross-basename rename gate (`hashFileForRename`) paired them
  *     as a rename and `propagateRename` rewired tile refs onto the wrong file.
- *   - DI-15: the reconcile diff (`fnv1a32`) treated a deep `.board.json` edit
+ *   - The reconcile diff (`fnv1a32`) treated a deep `.board.json` edit
  *     past offset 4096 as unchanged and dropped the external edit.
  *
  * These tests pin the whole-file hashing window so a future refactor can't
@@ -29,7 +29,7 @@ function headPlusTail(tail: string): Buffer {
   return Buffer.concat([Buffer.alloc(4096, 0x61), Buffer.from(tail, 'utf-8')]);
 }
 
-describe('fileWatcherHash — whole-file digests (DI-07/DI-15)', () => {
+describe('fileWatcherHash — whole-file digests', () => {
   let dir: string;
 
   beforeEach(async () => {
@@ -40,7 +40,7 @@ describe('fileWatcherHash — whole-file digests (DI-07/DI-15)', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it('hashFileForRename distinguishes two files that share a 4 KB head but diverge later (DI-07)', async () => {
+  it('hashFileForRename distinguishes two files that share a 4 KB head but diverge later', async () => {
     const a = join(dir, 'A.md');
     const b = join(dir, 'B.md');
     const bufA = headPlusTail('TAIL-AAAA');
@@ -90,7 +90,7 @@ describe('fileWatcherHash — whole-file digests (DI-07/DI-15)', () => {
     expect(hash).toBeNull();
   });
 
-  it('fnv1a32 hashes the whole buffer, not just the first 4 KB (DI-15)', () => {
+  it('fnv1a32 hashes the whole buffer, not just the first 4 KB', () => {
     // Two buffers identical for the first 4096 bytes, differing only past it.
     const base = Buffer.alloc(5000, 0x62);
     const edited = Buffer.from(base);

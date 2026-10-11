@@ -4,10 +4,10 @@ import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstMod
 
 /**
  * The source-preserving frontmatter patch engine (`patchFrontmatterSourceCst`,
- * the single CST-operations engine after Phase 6.7 deleted the legacy
- * byte-splice sibling). The defining property: changing one key leaves every
- * OTHER key's bytes (comments, order, quoting) untouched, and an unparseable /
- * non-mapping block is refused (null) rather than corrupted.
+ * the single CST-operations engine; the legacy byte-splice sibling is gone).
+ * The defining property: changing one key leaves every OTHER key's bytes
+ * (comments, order, quoting) untouched, and an unparseable / non-mapping block
+ * is refused (null) rather than corrupted.
  *
  * `yaml.load` here is js-yaml as an INDEPENDENT oracle to re-parse the engine's
  * output — not a production read. These cases carry no cross-parser-divergent
@@ -72,11 +72,11 @@ describe('patchFrontmatterSourceCst', () => {
     expect(patchFrontmatterSourceCst('a:\n\tb: 1', { a: 1 })).toBeNull();
   });
 
-  // 6.4.M3 — `valuesEqual` historically used `JSON.stringify` for value
+  // `valuesEqual` historically used `JSON.stringify` for value
   // equality. That's key-order-sensitive for plain objects: two YAML maps
   // with identical content but different key order serialised differently,
   // tripping a node-rewrite and dropping the YAML comment on the node.
-  it('keeps a nested-map value comment when only the key ORDER differs (M3)', () => {
+  it('keeps a nested-map value comment when only the key ORDER differs', () => {
     const src = [
       'meta:',
       '  # author note — preserve me',
@@ -94,7 +94,7 @@ describe('patchFrontmatterSourceCst', () => {
     expect(out).toContain('# author note — preserve me');
   });
 
-  it('keeps an array value comment when array elements differ only in JSON key order (M3)', () => {
+  it('keeps an array value comment when array elements differ only in JSON key order', () => {
     const src = [
       'people:',
       '  # roster — keep this comment',

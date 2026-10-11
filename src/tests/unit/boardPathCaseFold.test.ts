@@ -3,7 +3,7 @@ import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
 import { samePath } from '@renderer/lib/utils/path';
 
 /**
- * Audit-12 M4 — board-path compares must be case-INSENSITIVE.
+ * Board-path compares must be case-INSENSITIVE.
  *
  * The document pipeline case-folds everywhere; the board pipeline used raw `===`
  * / `normalizePath`. On a case-insensitive FS (Windows/macOS), an OS-reported
@@ -14,7 +14,7 @@ import { samePath } from '@renderer/lib/utils/path';
  * still keeps its on-disk casing). The external-edit lookup `findBoardIdForPath`
  * gets the same treatment via `samePath` (pinned by `ci:board-path-casefold`).
  */
-describe('Audit-12 M4 — renameBoardPath compares case-insensitively', () => {
+describe('renameBoardPath compares case-insensitively', () => {
   beforeEach(() => {
     boardCacheStore.clear();
   });
@@ -41,19 +41,18 @@ describe('Audit-12 M4 — renameBoardPath compares case-insensitively', () => {
     expect(boardCacheStore.paths.b2).toBe('Other/Keep.board.json');
   });
 
-  // L2 (Audit-13) SUPERSEDES the Audit-12 expectation that a case-only rename is
-  // a no-op: leaving the stored casing stale desyncs `boardPaths` from disk on a
-  // case-sensitive / synced FS (phantom-file write + "missing on disk"
-  // eviction). A case-only rename must now rebind the stored path to the new
-  // casing; only a BYTE-identical call is a true no-op.
-  it('rebinds a case-ONLY rename to the new casing (L2)', () => {
+  // A case-only rename is NOT a no-op: leaving the stored casing stale desyncs
+  // `boardPaths` from disk on a case-sensitive / synced FS (phantom-file write +
+  // "missing on disk" eviction). A case-only rename must rebind the stored path
+  // to the new casing; only a BYTE-identical call is a true no-op.
+  it('rebinds a case-ONLY rename to the new casing', () => {
     boardCacheStore.hydrate({}, { b1: 'Notes/A.board.json' });
     const changed = boardCacheStore.renameBoardPath('Notes/A.board.json', 'notes/a.board.json');
     expect(changed).toEqual(['b1']);
     expect(boardCacheStore.paths.b1).toBe('notes/a.board.json');
   });
 
-  it('treats a byte-identical rename as a true no-op (L2)', () => {
+  it('treats a byte-identical rename as a true no-op', () => {
     boardCacheStore.hydrate({}, { b1: 'Notes/A.board.json' });
     const changed = boardCacheStore.renameBoardPath('Notes/A.board.json', 'Notes/A.board.json');
     expect(changed).toEqual([]);
@@ -67,13 +66,13 @@ describe('Audit-12 M4 — renameBoardPath compares case-insensitively', () => {
     expect(boardCacheStore.paths.b1).toBe('Notes/B.board.json');
   });
 
-  it('P2.7 — a leading-slash oldPath still rebinds descendants correctly (no slice desync)', () => {
+  it('a leading-slash oldPath still rebinds descendants correctly (no slice desync)', () => {
     boardCacheStore.hydrate({}, {
       b1: 'Proj/Deep/A.board.json',
       b2: 'Proj/B.board.json',
       b3: 'Other/Keep.board.json',
     });
-    // An out-of-contract caller passes a LEADING-SLASH oldPath. Pre-P2.7 the
+    // An out-of-contract caller passes a LEADING-SLASH oldPath. Previously the
     // case-PRESERVING `oldPrefix` ("/Proj/") was one char longer than the
     // case-FOLDED `foldedPrefix` ("proj/", which strips the leading slash), so
     // `norm.slice(oldPrefix.length)` dropped the first suffix char → e.g.
@@ -86,7 +85,7 @@ describe('Audit-12 M4 — renameBoardPath compares case-insensitively', () => {
     expect(boardCacheStore.paths.b3).toBe('Other/Keep.board.json'); // unrelated, untouched
   });
 
-  it('P2.7 — a deep multi-level descendant tree all rebinds under an exact folder rename', () => {
+  it('a deep multi-level descendant tree all rebinds under an exact folder rename', () => {
     boardCacheStore.hydrate({}, {
       b1: 'Top/A.board.json',
       b2: 'Top/Mid/B.board.json',

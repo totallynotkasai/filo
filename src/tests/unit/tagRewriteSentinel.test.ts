@@ -9,10 +9,10 @@ import {
 } from '@renderer/lib/vault/tagRewriteSentinel';
 
 /**
- * Sprint B / B3: the `.filo/tag-rewrite-pending.a1b2c3d4e5f6.json` sentinel records the
- * rename intent BEFORE Phase-2 writes start so a crash mid-rewrite leaves
- * a resume breadcrumb. These tests pin the round-trip semantics — write,
- * read back exactly, clear, read returns the steady-state empty result.
+ * The `.filo/tag-rewrite-pending.a1b2c3d4e5f6.json` sentinel records the rename
+ * intent BEFORE the rewrite's write phase starts so a crash mid-rewrite leaves
+ * a resume breadcrumb. These tests pin the round-trip semantics — write, read
+ * back exactly, clear, read returns the steady-state empty result.
  */
 
 type InvokeRoute = (...args: unknown[]) => unknown | Promise<unknown>;
@@ -45,7 +45,7 @@ function installFiloStub(fs: InMemoryFs): void {
       return { success: true };
     },
     'vault:read-file-text': async (vaultRoot: unknown, relPath: unknown) => {
-      // Phase 37 / 37.6 — canonical two-arg form.
+      // Canonical two-arg form.
       const v = vaultRoot as string;
       const p = relPath as string;
       const content = fs.files.get(`${v}::${p}`);
@@ -70,7 +70,7 @@ function uninstallFiloStub(): void {
   delete (window as unknown as Record<string, unknown>).filo;
 }
 
-describe('tagRewriteSentinel — Sprint B / B3', () => {
+describe('tagRewriteSentinel', () => {
   let fs: InMemoryFs;
 
   beforeEach(() => {
@@ -173,7 +173,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     expect(result.unreadable).toBe(true);
   });
 
-  it('read on a present-but-empty (zero-byte) sentinel returns unreadable (DI-16)', async () => {
+  it('read on a present-but-empty (zero-byte) sentinel returns unreadable', async () => {
     // The read SUCCEEDS (the key exists) but content is empty — a crash that
     // created the sentinel without filling it. Must surface as unreadable, not
     // the clean "no sentinel" steady state (which is ENOENT → key absent).
@@ -202,10 +202,10 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
   });
 
   it('two rapid writes serialise — the second payload is what lands on disk (mutex)', async () => {
-    // Phase 2.3 — without the mutex, the two `vault:write-file-text` IPC
-    // calls would race at the FS layer and either payload could win. With
-    // the mutex in place, the second writePendingRewrite is gated on the
-    // first one's IPC resolving, so the on-disk content is deterministic.
+    // Without the mutex, the two `vault:write-file-text` IPC calls would race
+    // at the FS layer and either payload could win. With the mutex in place,
+    // the second writePendingRewrite is gated on the first one's IPC resolving,
+    // so the on-disk content is deterministic.
     //
     // Introduce a small async delay on the FIRST write only — without the
     // mutex, the second write would slip past it and land on disk first
@@ -287,8 +287,8 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
   });
 
   it('reads a legacy sentinel without preexistingNewNamePaths as an empty list', async () => {
-    // Forward-compat: a sentinel written by an app version before Phase 7.3
-    // lacks the field. It must still recover (defaulted to []).
+    // Forward-compat: a sentinel written by an older app version lacks the
+    // field. It must still recover (defaulted to []).
     fs.files.set(
       '/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json',
       JSON.stringify({ timestamp: 1, oldName: 'a', newName: 'b', plan: ['x.md'] }),
@@ -313,10 +313,10 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     expect(result.unreadable).toBe(true);
   });
 
-  it('reads a legacy sentinel without committedPaths as an empty list (6.3 forward-compat)', async () => {
-    // A sentinel written by an app version before 6.3 lacks the field; it
-    // must still recover, defaulted to [] (which reads as "no partial
-    // removal" — the conservative, pre-6.3 behaviour).
+  it('reads a legacy sentinel without committedPaths as an empty list (forward-compat)', async () => {
+    // A sentinel written by an older app version lacks the field; it must still
+    // recover, defaulted to [] (which reads as "no partial removal" — the
+    // conservative, earlier behaviour).
     fs.files.set(
       '/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json',
       JSON.stringify({ timestamp: 1, oldName: 'a', newName: null, plan: ['x.md'] }),
@@ -326,7 +326,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     expect(result.payload?.committedPaths).toEqual([]);
   });
 
-  it('read on a sentinel with non-string committedPaths returns unreadable (6.3)', async () => {
+  it('read on a sentinel with non-string committedPaths returns unreadable', async () => {
     fs.files.set(
       '/vault::.filo/tag-rewrite-pending.a1b2c3d4e5f6.json',
       JSON.stringify({
@@ -341,7 +341,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
     expect(result.unreadable).toBe(true);
   });
 
-  it('round-trips committedPaths for a partially-committed removal (6.3)', async () => {
+  it('round-trips committedPaths for a partially-committed removal', async () => {
     const payload: TagRewriteSentinelPayload = {
       timestamp: 1700000000000,
       oldName: 'obsolete',
@@ -357,7 +357,7 @@ describe('tagRewriteSentinel — Sprint B / B3', () => {
   });
 });
 
-describe('hasPartialTagRewriteState — Phase 7.3 exemption', () => {
+describe('hasPartialTagRewriteState — pre-existing newName exemption', () => {
   const md = (path: string, ...tags: string[]) => ({ path, tags });
 
   it('returns false for removals (newName === null)', () => {
@@ -392,7 +392,7 @@ describe('hasPartialTagRewriteState — Phase 7.3 exemption', () => {
   });
 });
 
-describe('hasPartialTagRemovalState — 6.3 removal partial-state detection', () => {
+describe('hasPartialTagRemovalState — removal partial-state detection', () => {
   it('returns false when no path was committed (crashed before stripping any file)', () => {
     expect(hasPartialTagRemovalState([])).toBe(false);
   });

@@ -6,7 +6,7 @@ import type { BoardContext } from '@renderer/stores/boardStoreTypes';
 import type { Tile } from '@renderer/schema/index';
 
 /**
- * Audit 1.2 — `addTile` / `batchUpdateTiles` previously `console.warn`-ed on a
+ * `addTile` / `batchUpdateTiles` previously `console.warn`-ed on a
  * failed `TileSchema.safeParse` and then persisted the invalid tile anyway. A
  * malformed tile reaching `.board.json` is silently dropped by `loadBoard` on
  * the next open, losing the placement (and any inline Link/Iframe/Timer data).
@@ -64,7 +64,7 @@ function makeCtx(tiles: Record<string, Tile> = {}): {
   return { ctx, spatial };
 }
 
-describe('boardTiles — invalid tiles are never persisted (audit 1.2)', () => {
+describe('boardTiles — invalid tiles are never persisted', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });

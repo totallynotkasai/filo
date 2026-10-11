@@ -12,7 +12,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-19 ERR-1 — `.board.json` used to be JSON-encoded TWICE (the renderer
+ * `.board.json` used to be JSON-encoded TWICE (the renderer
  * serialised, main serialised the string again), so the post-write size check
  * never matched and every board's 2nd save raised a false "modified externally"
  * prompt. These tests drive the REAL main-side board IO against a temp dir with

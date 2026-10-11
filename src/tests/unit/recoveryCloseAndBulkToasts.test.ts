@@ -36,13 +36,13 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 /**
- * Audit-18 Phase 4 — recovery / error-honesty fixes. Each describe block locks
- * one fix's load-bearing behaviour (a failure that previously reported success,
- * or a recovery breadcrumb destroyed without acknowledgement).
+ * Recovery / error-honesty fixes. Each describe block locks one fix's
+ * load-bearing behaviour (a failure that previously reported success, or a
+ * recovery breadcrumb destroyed without acknowledgement).
  */
 
-// ── 4.1 — bypassed Recovery-modal close preserves the sentinel ──────────────
-describe('Audit-18 4.1 — bypassed Recovery-modal close preserves the sentinel', () => {
+// ── Bypassed Recovery-modal close preserves the sentinel ────────────────────
+describe('bypassed Recovery-modal close preserves the sentinel', () => {
   let writes: Array<{ channel: string; args: unknown[] }>;
   let recoveryPaths: string[];
   let resolveCount: number;
@@ -115,8 +115,8 @@ describe('Audit-18 4.1 — bypassed Recovery-modal close preserves the sentinel'
   });
 });
 
-// ── 4.2 — corrupt-config suppression reports failure honestly ───────────────
-describe('Audit-18 4.2 — corrupt-config suppression is reported, not a silent clean no-op', () => {
+// ── Corrupt-config suppression reports failure honestly ─────────────────────
+describe('corrupt-config suppression is reported, not a silent clean no-op', () => {
   const BUNDLE_TARGETS = ['config:save-workspace', 'defaults.json', 'app.json', 'appearance.json'] as const;
   let captured: WriteErrorInfo[];
 
@@ -155,7 +155,7 @@ describe('Audit-18 4.2 — corrupt-config suppression is reported, not a silent 
   });
 });
 
-// ── 4.6 — bulk-op success toasts are gated on the awaited outcome ───────────
+// ── Bulk-op success toasts are gated on the awaited outcome ─────────────────
 /** Minimal real Command so cmds.length > 0; historyStore.execute is mocked. */
 class NoopCommand extends Command {
   description = 'noop';
@@ -182,7 +182,7 @@ function taskRow(id: string): TaskRow {
   } as TaskRow;
 }
 
-describe('Audit-18 4.6 — Task List bulk ops gate the success toast on the chain', () => {
+describe('Task List bulk ops gate the success toast on the chain', () => {
   let toastSpy: MockInstance<typeof uiStore.toast>;
 
   beforeEach(() => {
@@ -241,7 +241,7 @@ describe('Audit-18 4.6 — Task List bulk ops gate the success toast on the chai
   });
 });
 
-describe('Audit-18 4.6 — Kanban bulk Add tag gates the success toast on the chain', () => {
+describe('Kanban bulk Add tag gates the success toast on the chain', () => {
   let toastSpy: MockInstance<typeof uiStore.toast>;
 
   function makeMultiSelect() {

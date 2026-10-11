@@ -39,11 +39,11 @@ function rowWithNote(id: string, filePath: string): TaskRow {
 }
 
 /**
- * BULK-1 (Task List audit 2026-06-08, Phase 1) — the bulk "Mark complete" path
- * used to stamp `{ completed: true }` on every selected row with NO recurrence
- * branch, permanently completing repeating tasks (they never recur again). The
- * single-row `toggleCompleted` rolls recurring tasks forward instead. Both now
- * share `completionPatchForRow` so they can't diverge again.
+ * The bulk "Mark complete" path used to stamp `{ completed: true }` on every
+ * selected row with NO recurrence branch, permanently completing repeating
+ * tasks (they never recur again). The single-row `toggleCompleted` rolls
+ * recurring tasks forward instead. Both now share `completionPatchForRow` so
+ * they can't diverge again.
  *
  * The multi-select controller had no tests before this file.
  */
@@ -76,7 +76,7 @@ function mkRow(over: Partial<TaskRow> & { id: string }): TaskRow {
   } as TaskRow;
 }
 
-describe('completionPatchForRow (BULK-1 shared helper)', () => {
+describe('completionPatchForRow (shared helper)', () => {
   const NOW = new Date(2026, 4, 15, 12, 0); // 2026-05-15 (Friday)
 
   it('marks a non-recurring row complete', () => {
@@ -110,9 +110,9 @@ describe('completionPatchForRow (BULK-1 shared helper)', () => {
     expect(completionPatchForRow(r, NOW)).toEqual({ completed: true });
   });
 
-  it('rolls an undated schedule-mode repeat forward from the completion day (REC-1)', () => {
+  it('rolls an undated schedule-mode repeat forward from the completion day', () => {
     // schedule mode with no anchor date → nextDueDate(schedule) returns null.
-    // REC-1: rather than silently terminating the recurrence (the old behavior —
+    // Rather than silently terminating the recurrence (the old behavior —
     // a plain { completed: true }), seed the next due from the completion day
     // (completion-mode semantics). NOW = Fri 2026-05-15 → +1 week = 2026-05-22.
     const r = mkRow({ id: 't', recurrence: 'weekly', recurrenceMode: 'schedule', dueDate: '' });
@@ -125,7 +125,7 @@ describe('completionPatchForRow (BULK-1 shared helper)', () => {
   });
 });
 
-describe('MultiSelectController.bulkMarkComplete (BULK-1 wiring)', () => {
+describe('MultiSelectController.bulkMarkComplete (wiring)', () => {
   beforeEach(() => installFiloStub());
 
   it('routes recurring rows through roll-forward and plain rows through complete', () => {
@@ -170,7 +170,7 @@ describe('MultiSelectController.bulkMarkComplete (BULK-1 wiring)', () => {
   });
 });
 
-describe('MultiSelectController — selection cleared after non-delete bulk ops (SEL-1)', () => {
+describe('MultiSelectController — selection cleared after non-delete bulk ops', () => {
   beforeEach(() => installFiloStub());
   // historyStore.execute is mocked, so nothing lands on the undo stack; restore
   // after each test so the spy doesn't leak.
@@ -214,7 +214,7 @@ describe('MultiSelectController — selection cleared after non-delete bulk ops 
   });
 });
 
-describe('MultiSelectController.pruneSelection (SEL-2)', () => {
+describe('MultiSelectController.pruneSelection', () => {
   it('drops removed ids and clears the anchor when it was pruned', () => {
     const c = new MultiSelectController(baseDeps([]));
     c.selectedTaskIds = new SvelteSet(['a', 'b', 'c']);
@@ -241,7 +241,7 @@ describe('MultiSelectController.pruneSelection (SEL-2)', () => {
   });
 });
 
-describe('MultiSelectController.handleRowSelect — shift-click with a lost anchor (SEL-3)', () => {
+describe('MultiSelectController.handleRowSelect — shift-click with a lost anchor', () => {
   it('extends the selection instead of collapsing when the anchor is gone', () => {
     // Visible rows are a, b, c; the anchor 'z' was filtered away or deleted.
     const rows = [mkRow({ id: 'a' }), mkRow({ id: 'b' }), mkRow({ id: 'c' })];
@@ -249,13 +249,13 @@ describe('MultiSelectController.handleRowSelect — shift-click with a lost anch
     c.selectedTaskIds = new SvelteSet(['a']);
     c.lastSelectedTaskId = 'z'; // not in the filtered rows
     c.handleRowSelect('c', { shift: true, ctrl: false });
-    // Pre-SEL-3 this collapsed to just {c}; now it keeps 'a', adds 'c', re-anchors.
+    // Previously this collapsed to just {c}; now it keeps 'a', adds 'c', re-anchors.
     expect([...c.selectedTaskIds].sort()).toEqual(['a', 'c']);
     expect(c.lastSelectedTaskId).toBe('c');
   });
 });
 
-describe('MultiSelectController.bulkApplyFieldPatch — dedups rows sharing a backing file (SHARE-1)', () => {
+describe('MultiSelectController.bulkApplyFieldPatch — dedups rows sharing a backing file', () => {
   beforeEach(() => installFiloStub());
 
   it('builds ONE command for two selected rows backed by the same note path', () => {

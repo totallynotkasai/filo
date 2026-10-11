@@ -1,5 +1,5 @@
 /**
- * Audit-19 BL-1 — new Kanban cards, new tasks and Task-List OS drops must never
+ * New Kanban cards, new tasks and Task-List OS drops must never
  * overwrite an existing vault file. Every seed goes through the create-exclusive
  * `vault:create-file-text` channel; the fake below implements it with a
  * CASE-INSENSITIVE EEXIST (NTFS semantics) over an in-memory file map and fails
@@ -162,7 +162,7 @@ function quickAdd(title: string) {
   >[0];
 }
 
-describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
+describe('seed writes are create-exclusive', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     __clearRecentSelfWritesForTests();
@@ -242,7 +242,7 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     expect(files.get('groceries (2).md')).toMatch(/^---\ntitle: groceries\n/);
   });
 
-  it('(5b) quick-add "Email the landlord." creates a legal name (Audit-19 ERR-2)', async () => {
+  it('(5b) quick-add "Email the landlord." creates a legal name', async () => {
     installVault({});
     const { tl } = hydrateBoards();
     await taskCreator(tl).addTaskFromQuickAdd(quickAdd('Email the landlord.'));
@@ -283,7 +283,7 @@ describe('Audit-19 BL-1 — seed writes are create-exclusive', () => {
     expect(isRecentSelfWrite('Groceries (2).md')).toBe(true);
   });
 
-  it('(MD-3) a new task opens with an empty body-only body, not the full FM file', async () => {
+  it('a new task opens with an empty body-only body, not the full FM file', async () => {
     installVault({});
     const { tl } = hydrateBoards();
     await taskCreator(tl).addTaskFromQuickAdd(quickAdd('Buy milk'));

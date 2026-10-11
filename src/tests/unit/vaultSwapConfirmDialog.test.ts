@@ -1,6 +1,6 @@
 /**
- * Audit 3.1 — a vault swap must resolve any pending confirm dialog rather
- * than nulling it out from under an awaiting caller.
+ * A vault swap must resolve any pending confirm dialog rather than nulling it
+ * out from under an awaiting caller.
  *
  * `tabStore.close` / `closeOthers` show a "Save failed — close anyway?"
  * confirm via `confirmCloseAnyway`, which returns a Promise resolved ONLY by
@@ -22,7 +22,7 @@ afterEach(() => {
   uiStore.closeConfirm();
 });
 
-describe('Audit 3.1 — vault swap settles a pending confirm dialog', () => {
+describe('vault swap settles a pending confirm dialog', () => {
   it('fires the confirm dialog onCancel during a pre-swap (does not hang the awaiting promise)', async () => {
     // Model exactly what `confirmCloseAnyway` does: a promise resolved only
     // by the dialog callbacks.

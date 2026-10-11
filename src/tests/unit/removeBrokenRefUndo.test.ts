@@ -1,12 +1,12 @@
 /**
- * Phase 5 / 5.3 — broken-ref removal goes through history.
+ * Broken-ref removal goes through history.
  *
- * Before this phase, the broken-ref "Remove from board" quick-action called
+ * Previously, the broken-ref "Remove from board" quick-action called
  * `boardStore.removeTile` directly with no undo. The fix routes through
- * `boardStore.removeTilesWithHistory([tileId])` (no fileSnapshots — the
- * backing file is already missing, that's why we're removing it). Ctrl+Z
- * restores the placement; the no-snapshots path's "restored tiles reference
- * missing files" toast is exactly the right user signal.
+ * `boardStore.removeTilesWithHistory([tileId])` (no fileSnapshots — the backing
+ * file is already missing, that's why we're removing it). Ctrl+Z restores the
+ * placement; the no-snapshots path's "restored tiles reference missing files"
+ * toast is exactly the right user signal.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -80,7 +80,7 @@ function activate(tiles: TextTile[]): void {
   seedBoard(boardStore, fixture.board, tilesById, {}, []);
 }
 
-describe('broken-ref Remove from board — Phase 5 / 5.3', () => {
+describe('broken-ref Remove from board goes through history', () => {
   beforeEach(() => {
     installSilentBridge();
     vaultStore.setPath('/vault');

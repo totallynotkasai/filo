@@ -1,5 +1,5 @@
 /**
- * Audit 3.2 — an in-flight `flyTo` camera animation must be cancelled when
+ * An in-flight `flyTo` camera animation must be cancelled when
  * the board changes or the pane is destroyed.
  *
  * `cancelFlyTo()` was wired into panBy/flyTo but NOT into `setBoard`, and the
@@ -67,7 +67,7 @@ function advanceFrame(deltaMs: number): void {
   for (const { cb } of pending) cb(nowMs);
 }
 
-describe('Audit 3.2 — flyTo RAF is cancelled on board switch / pane destroy', () => {
+describe('flyTo RAF is cancelled on board switch / pane destroy', () => {
   beforeEach(() => {
     rafQueue = [];
     rafSeq = 0;

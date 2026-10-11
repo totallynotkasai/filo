@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Phase 8 / 8.5 — defensive caps on the recent-vaults list:
+ * Defensive caps on the recent-vaults list:
  *   (a) `vault:add-recent` / `vault:pin-recent` reject paths or names
  *       longer than 4096 chars or containing null bytes;
  *   (b) `recent-vaults.json` is capped at 50 entries — pins beyond that
@@ -45,7 +45,7 @@ vi.mock('electron', () => ({
 // imports run for real. The mock above keeps Electron itself stubbed.
 const { registerVaultHandlers } = await import('../../main/ipc/vault.ipc');
 
-describe('vault:add-recent / pin-recent caps (Phase 8 / 8.5)', () => {
+describe('vault:add-recent / pin-recent caps', () => {
   let addHandler: (...args: unknown[]) => unknown | Promise<unknown>;
   let pinHandler: (...args: unknown[]) => unknown | Promise<unknown>;
   let removeHandler: (...args: unknown[]) => unknown | Promise<unknown>;
@@ -66,7 +66,7 @@ describe('vault:add-recent / pin-recent caps (Phase 8 / 8.5)', () => {
     await fs.rm(userDataDir, { recursive: true, force: true });
   });
 
-  // Audit-18 4.5 — `vault:add-recent` now returns an `{ ok, recents }` envelope
+  // `vault:add-recent` returns an `{ ok, recents }` envelope
   // so the renderer can tell a failed add from a genuinely empty list.
   type AddRecentEnvelope =
     | { ok: true; recents: { path: string }[] }
@@ -74,7 +74,7 @@ describe('vault:add-recent / pin-recent caps (Phase 8 / 8.5)', () => {
 
   describe('input validation', () => {
     it('accepts a normal vault path and name', async () => {
-      // Sprint C / C21 — `vault:add-recent` now stat-checks the path
+      // `vault:add-recent` stat-checks the path
       // and rejects non-directories, so pass a real temp directory.
       const realVault = await fs.mkdtemp(join(tmpdir(), 'filo-recents-vault-'));
       try {
@@ -111,7 +111,7 @@ describe('vault:add-recent / pin-recent caps (Phase 8 / 8.5)', () => {
     });
 
     it('rejects a non-existent directory with { ok: false } (not an empty list)', async () => {
-      // Audit-18 4.5 — the failure case must NOT be an empty array; the
+      // The failure case must NOT be an empty array; the
       // renderer keys off `ok` so it can leave the displayed list intact.
       const result = (await addHandler({}, '/does/not/exist/at/all', 'Ghost')) as AddRecentEnvelope;
       expect(result.ok).toBe(false);
@@ -147,7 +147,7 @@ describe('vault:add-recent / pin-recent caps (Phase 8 / 8.5)', () => {
       };
       await fs.writeFile(path, JSON.stringify(seeded));
 
-      // Sprint C / C21 — `vault:add-recent` now stat-checks the path
+      // `vault:add-recent` stat-checks the path
       // and rejects non-directories. Create a real temp dir for the
       // new entry; the pre-seeded entries are pre-existing and never
       // re-validated.

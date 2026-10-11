@@ -27,35 +27,35 @@ import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-17 Phase 2 — the "failure reported as success" error-honesty cluster.
+ * The "failure reported as success" error-honesty cluster.
  *
- *  2.1 A note flush must report a failed write as a failure (the edit stays
- *      unsaved and queued), never resolve it as success.
- *  2.2 `atomicWriteFile` deleted the fully-written + fsynced tmp when the
- *      rename retry budget exhausted on EPERM/EBUSY — on a quit-time flush
- *      those are the user's last bytes. Fix: EPERM/EBUSY join the
- *      ENOSPC/EIO/ENOMEM/EACCES preserve list.
- *  2.3 The board scheduler's pre-write `vault:stat` ENOENT (baseline
- *      present) bare-returned → the armed write resolved as SUCCESS and the
- *      debounce window's mutations silently dropped on a sync-client
- *      unlink/recreate blip. Fix: re-stat once after a grace delay; a
- *      reappeared file falls through to the existing drift check (prompt),
- *      a still-missing file keeps the genuine-delete no-op semantics.
- *  2.4 `writeBoardFile`'s drift fallback with NO registered handler silently
- *      resolved 'keep-local' (overwriting the external edit), contradicting
- *      the module docstring. Fix: default to 'defer' → abort +
- *      notifyWriteError.
- *  2.5 `uiStore.invokeToastAction` swallowed async action failures into the
- *      console. Fix: failures route through reportError (errorBus). A
- *      conflict's Reload re-reads FIRST, so a failing re-read leaves the
- *      user's unsaved edit in place.
+ *  - A note flush must report a failed write as a failure (the edit stays
+ *    unsaved and queued), never resolve it as success.
+ *  - `atomicWriteFile` deleted the fully-written + fsynced tmp when the
+ *    rename retry budget exhausted on EPERM/EBUSY — on a quit-time flush
+ *    those are the user's last bytes. Fix: EPERM/EBUSY join the
+ *    ENOSPC/EIO/ENOMEM/EACCES preserve list.
+ *  - The board scheduler's pre-write `vault:stat` ENOENT (baseline
+ *    present) bare-returned → the armed write resolved as SUCCESS and the
+ *    debounce window's mutations silently dropped on a sync-client
+ *    unlink/recreate blip. Fix: re-stat once after a grace delay; a
+ *    reappeared file falls through to the existing drift check (prompt),
+ *    a still-missing file keeps the genuine-delete no-op semantics.
+ *  - `writeBoardFile`'s drift fallback with NO registered handler silently
+ *    resolved 'keep-local' (overwriting the external edit), contradicting
+ *    the module docstring. Fix: default to 'defer' → abort +
+ *    notifyWriteError.
+ *  - `uiStore.invokeToastAction` swallowed async action failures into the
+ *    console. Fix: failures route through reportError (errorBus). A
+ *    conflict's Reload re-reads FIRST, so a failing re-read leaves the
+ *    user's unsaved edit in place.
  */
 
-// ── 2.1 — note flush failure honesty ──
+// ── Note flush failure honesty ──
 
-describe('Audit-17 2.1 — a note flush reports failure instead of resolving as success', () => {
+describe('a note flush reports failure instead of resolving as success', () => {
   let vault: MemoryVault;
-  const VIEW = 'text-tile:a17';
+  const VIEW = 'text-tile:wf';
 
   async function edited(relPath: string): Promise<void> {
     const m = noteStore.acquire(relPath, VIEW);
@@ -69,10 +69,10 @@ describe('Audit-17 2.1 — a note flush reports failure instead of resolving as 
     vaultStore.setPath('/vault');
     noteStore.__resetForTests();
     vault = installMemoryVault({
-      'Notes/A17ok.md': '---\ntitle: T\n---\norig',
-      'Notes/A17fail.md': '---\ntitle: T\n---\norig',
-      'Notes/A17gone.md': '---\ntitle: T\n---\norig',
-      'Notes/A17heal.md': '---\ntitle: T\n---\norig',
+      'Notes/FlushOk.md': '---\ntitle: T\n---\norig',
+      'Notes/FlushFail.md': '---\ntitle: T\n---\norig',
+      'Notes/FlushGone.md': '---\ntitle: T\n---\norig',
+      'Notes/FlushHeal.md': '---\ntitle: T\n---\norig',
     });
     // The writer's reportError breadcrumbs to console.error.
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -87,7 +87,7 @@ describe('Audit-17 2.1 — a note flush reports failure instead of resolving as 
   });
 
   it('a successful flush returns true and the note goes clean', async () => {
-    const relPath = 'Notes/A17ok.md';
+    const relPath = 'Notes/FlushOk.md';
     await edited(relPath);
 
     expect(await noteStore.flush(relPath)).toBe(true);
@@ -101,7 +101,7 @@ describe('Audit-17 2.1 — a note flush reports failure instead of resolving as 
   });
 
   it('a failed write IPC returns false; the note STAYS unsaved and queued', async () => {
-    const relPath = 'Notes/A17fail.md';
+    const relPath = 'Notes/FlushFail.md';
     await edited(relPath);
     vault.failNextWrite(relPath, 'EACCES');
 
@@ -113,7 +113,7 @@ describe('Audit-17 2.1 — a note flush reports failure instead of resolving as 
   });
 
   it('a note deleted under the edit fails, and is never recreated from memory', async () => {
-    const relPath = 'Notes/A17gone.md';
+    const relPath = 'Notes/FlushGone.md';
     await edited(relPath);
     vault.remove(relPath);
 
@@ -124,7 +124,7 @@ describe('Audit-17 2.1 — a note flush reports failure instead of resolving as 
   });
 
   it('a failure followed by a successful flush returns to true (no sticky error)', async () => {
-    const relPath = 'Notes/A17heal.md';
+    const relPath = 'Notes/FlushHeal.md';
     await edited(relPath);
 
     vault.failNextWrite(relPath, 'EACCES');
@@ -138,13 +138,13 @@ describe('Audit-17 2.1 — a note flush reports failure instead of resolving as 
   });
 });
 
-// ── 2.2 — atomicWriteFile preserves the tmp on EPERM/EBUSY exhaustion ──
+// ── atomicWriteFile preserves the tmp on EPERM/EBUSY exhaustion ──
 
-describe('Audit-17 2.2 — atomicWriteFile preserves the fsynced tmp on EPERM/EBUSY exhaustion', () => {
+describe('atomicWriteFile preserves the fsynced tmp on EPERM/EBUSY exhaustion', () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await fs.mkdtemp(join(tmpdir(), 'filo-a17-'));
+    dir = await fs.mkdtemp(join(tmpdir(), 'filo-write-fail-'));
   });
 
   afterEach(async () => {
@@ -181,7 +181,7 @@ describe('Audit-17 2.2 — atomicWriteFile preserves the fsynced tmp on EPERM/EB
       expect(tmpEntries.length).toBe(1);
       await expect(fs.readFile(join(dir, tmpEntries[0]), 'utf-8')).resolves.toBe('staged content');
 
-      // The M5 toast path regex-parses `(data preserved at <path>.tmp)` from
+      // The toast path regex-parses `(data preserved at <path>.tmp)` from
       // the MESSAGE (the custom property doesn't survive IPC marshalling) —
       // assert the annotation rides for these codes too.
       const message = (captured as { message?: string }).message ?? '';
@@ -193,7 +193,7 @@ describe('Audit-17 2.2 — atomicWriteFile preserves the fsynced tmp on EPERM/EB
   }
 });
 
-// ── 2.3 / 2.4 — board scheduler pre-write ENOENT re-stat + no-handler drift abort ──
+// ── Board scheduler pre-write ENOENT re-stat + no-handler drift abort ──
 
 type InvokeRecord = { channel: string; args: unknown[] };
 
@@ -235,7 +235,7 @@ function installBoardDiskStub(
   });
 }
 
-describe('Audit-17 2.3 — board pre-write ENOENT re-stats once instead of silent success', () => {
+describe('board pre-write ENOENT re-stats once instead of silent success', () => {
   let calls: InvokeRecord[];
 
   beforeEach(() => {
@@ -305,7 +305,7 @@ describe('Audit-17 2.3 — board pre-write ENOENT re-stats once instead of silen
   });
 });
 
-describe('Audit-17 2.4 — drift with NO registered handler aborts loudly instead of keep-local', () => {
+describe('drift with NO registered handler aborts loudly instead of keep-local', () => {
   let calls: InvokeRecord[];
 
   beforeEach(() => {
@@ -345,9 +345,9 @@ describe('Audit-17 2.4 — drift with NO registered handler aborts loudly instea
   });
 });
 
-// ── 2.5 — toast-action failures reach the errorBus; 6.3 handlers re-read FIRST ──
+// ── Toast-action failures reach the errorBus; conflict handlers re-read FIRST ──
 
-describe('Audit-17 2.5 — invokeToastAction routes action failures through the errorBus', () => {
+describe('invokeToastAction routes action failures through the errorBus', () => {
   let reported: ReportedError[];
   let unsubscribe: (() => void) | null = null;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
@@ -416,7 +416,7 @@ describe('Audit-17 2.5 — invokeToastAction routes action failures through the 
   });
 });
 
-describe('Audit-17 2.5 — a conflict Reload re-reads FIRST (no destructive prefix on failure)', () => {
+describe('a conflict Reload re-reads FIRST (no destructive prefix on failure)', () => {
   let vault: MemoryVault;
 
   beforeEach(() => {

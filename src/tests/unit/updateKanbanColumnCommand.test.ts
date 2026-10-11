@@ -1,5 +1,5 @@
 /**
- * Phase 7 / 7.2 — UpdateKanbanColumnCommand + SetAllKanbanColumnsCollapsedCommand.
+ * UpdateKanbanColumnCommand + SetAllKanbanColumnsCollapsedCommand.
  *
  * Each command captures the affected column slice's prior shape (collapsed
  * flag, WIP limit, width) so undo restores the exact prior state even if
@@ -116,7 +116,7 @@ describe('UpdateKanbanColumnCommand', () => {
     expect(getColumn('c1')?.wipLimit).toBe(3);
   });
 
-  it('L29: only re-applies fields that actually changed (preserves a concurrent edit to an untouched field)', () => {
+  it('only re-applies fields that actually changed (preserves a concurrent edit to an untouched field)', () => {
     // This command toggles ONLY `collapsed` — wipLimit + width are identical in
     // before/after, so they're not "changed" fields.
     const cmd = new UpdateKanbanColumnCommand(
@@ -131,7 +131,7 @@ describe('UpdateKanbanColumnCommand', () => {
     // and undo (e.g. the user dragged the WIP slider).
     boardCacheStore.setKanbanColumnWipLimit('kb', 'c1', 7);
     expect(getColumn('c1')?.wipLimit).toBe(7);
-    // Undo the collapse toggle. The pre-L29 command re-stamped ALL three fields
+    // Undo the collapse toggle. The command used to re-stamp ALL three fields
     // every leg, so undo would clobber wipLimit back to the captured `null`.
     // With per-field application, only `collapsed` is touched — the 7 survives.
     cmd.undo();

@@ -9,10 +9,9 @@ import {
 import type { Tile, TaskPlacement } from '@renderer/schema/index';
 
 /**
- * Phase 6 — pure filter coverage. The filter mirrors the transient UI state
- * held in TaskListBoard.svelte; extracting it to a pure function makes the
- * smart-list / chip / showCompleted combinations testable without the Svelte
- * runtime.
+ * Pure filter coverage. The filter mirrors the transient UI state held in
+ * TaskListBoard.svelte; extracting it to a pure function makes the smart-list /
+ * chip / showCompleted combinations testable without the Svelte runtime.
  */
 
 function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {

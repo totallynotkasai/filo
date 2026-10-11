@@ -1,5 +1,5 @@
 /**
- * Phase 5 / 5.2 — UpdateAttachmentSrcCommand regression guard.
+ * UpdateAttachmentSrcCommand regression guard.
  *
  * One Command class is shared by the six attachment tile types (image,
  * video, audio, file, iframe, link). The clear/replace src actions used

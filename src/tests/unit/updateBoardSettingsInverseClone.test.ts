@@ -7,7 +7,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Phase 6 / 6.3 — `updateBoardSettingsWithHistory` builds the inverse
+ * `updateBoardSettingsWithHistory` builds the inverse
  * patch by reading the live `previousSettings` object. For object-typed
  * values, the previous shallow assignment kept the inverse referencing
  * the same Svelte 5 $state proxy as the live store: any subsequent
@@ -49,11 +49,10 @@ function activate(initialSettings: Record<string, unknown> = {}): void {
   const fixture = makeMindMapFixture(initialSettings);
   boardCacheStore.hydrate({ mm: fixture }, { mm: 'm.board.json' });
   boardStore.setBoard(fixture.board);
-  // IMPL_PLAN_2026-05-26 / Item 1 — `setBoard` no longer mutates
-  // `historyStore.activeBoardId`; PaneView's `isActive`-gated $effect
-  // owns that signal in production. Unit tests without a PaneView
-  // mount call it explicitly here to keep the undo/redo helpers
-  // routing to this fixture's stack.
+  // `setBoard` does not mutate `historyStore.activeBoardId`; PaneView's
+  // `isActive`-gated $effect owns that signal in production. Unit tests
+  // without a PaneView mount call it explicitly here to keep the
+  // undo/redo helpers routing to this fixture's stack.
   historyStore.setActiveBoard(fixture.board.id);
 }
 

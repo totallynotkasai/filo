@@ -1,13 +1,13 @@
 /**
- * Audit-6 Phase 5.5 — execute/undo ROUND-TRIP coverage for the Kanban
- * structure commands the `ci:command-roundtrip-coverage` gate requires.
+ * Execute/undo ROUND-TRIP coverage for the Kanban structure commands the
+ * `ci:command-roundtrip-coverage` gate requires.
  *
- * H1 (`ReorderSectionCommand`) silently no-op'd a multi-slot drag because no
+ * `ReorderSectionCommand` once silently no-op'd a multi-slot drag because no
  * test ever drove a degenerate-delta reorder through execute → undo. These
  * tests lock the Kanban analogues — most importantly a multi-COLUMN
- * move-first-to-last (the direct `ReorderColumnCommand` twin of H1) — plus the
- * add-column / rename-column / add-card round-trips. Each asserts execute
- * changes state, undo reverses it, and redo re-applies it.
+ * move-first-to-last (the direct `ReorderColumnCommand` twin of that bug) —
+ * plus the add-column / rename-column / add-card round-trips. Each asserts
+ * execute changes state, undo reverses it, and redo re-applies it.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { boardCacheStore } from '@renderer/stores/boardCache.svelte';
@@ -73,7 +73,7 @@ function cardIds(columnId: string): string[] {
   return ((col?.tilePlacements ?? []) as Array<{ tileId: string }>).map((p) => p.tileId);
 }
 
-describe('Audit-6 Phase 5.5 — Kanban structure command round-trips', () => {
+describe('Kanban structure command round-trips', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -106,8 +106,8 @@ describe('Audit-6 Phase 5.5 — Kanban structure command round-trips', () => {
     expect(columnTitle('c1')).toBe('Backlog');
   });
 
-  it('ReorderColumnCommand: a multi-slot move-first-to-last round-trips (H1 twin)', () => {
-    // 3 positions change at once — the exact shape H1's section command silently
+  it('ReorderColumnCommand: a multi-slot move-first-to-last round-trips', () => {
+    // 3 positions change at once — the exact shape the section command silently
     // dropped. ReorderColumnCommand captures the WHOLE order, so it survives.
     const cmd = new ReorderColumnCommand('kb', ['c1', 'c2', 'c3'], ['c2', 'c3', 'c1']);
     cmd.execute();
@@ -130,12 +130,12 @@ describe('Audit-6 Phase 5.5 — Kanban structure command round-trips', () => {
   });
 });
 
-// ── Audit-7 M3 — MoveCardsCommand neighbour-anchored multi-card undo ──────────
+// ── MoveCardsCommand neighbour-anchored multi-card undo ───────────────────────
 //
 // MoveCardsCommand.undo restored each card to its absolute fromPosition, which
 // goes stale if a source column is mutated between the move and the undo. The
 // command now also captures the surviving sibling each card should sit before
-// (from the PRE-move cache, mirroring single-card MoveCardCommand 6.4.M16) so an
+// (from the PRE-move cache, mirroring single-card MoveCardCommand) so an
 // ascending-order replay reconstructs the original interleaving. These tests
 // drive an intervening mutation — the exact case the roundtrip-coverage gate's
 // plain construct→execute→undo never exercises.
@@ -170,7 +170,7 @@ function makeKanbanWithCards(): BoardFileData {
   };
 }
 
-describe('Audit-7 M3 — MoveCardsCommand neighbour-anchored undo', () => {
+describe('MoveCardsCommand neighbour-anchored undo', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -201,7 +201,7 @@ describe('Audit-7 M3 — MoveCardsCommand neighbour-anchored undo', () => {
 
     cmd.undo();
 
-    // M3 — anchors restore B before C and D before E despite the shift.
+    // The anchors restore B before C and D before E despite the shift.
     // Absolute-only undo would scramble this to [Z,B,A,D,C,E].
     expect(cardIds('src')).toEqual(['Z', 'A', 'B', 'C', 'D', 'E']);
     expect(cardIds('dst')).toEqual([]);
@@ -239,7 +239,7 @@ describe('Audit-7 M3 — MoveCardsCommand neighbour-anchored undo', () => {
   });
 });
 
-// ── Audit-14 2.2 — DeleteCardCommand neighbour-anchored undo ──────────────────
+// ── DeleteCardCommand neighbour-anchored undo ─────────────────────────────────
 //
 // DeleteCardCommand.undo restored the card at its absolute snapshotPosition,
 // which goes stale if a sibling is added/removed between the delete and the
@@ -248,7 +248,7 @@ describe('Audit-7 M3 — MoveCardsCommand neighbour-anchored undo', () => {
 // deleted one and undo inserts before that anchor, falling back to the clamped
 // absolute position when the deleted card was the column tail.
 
-describe('Audit-14 2.2 — DeleteCardCommand neighbour-anchored undo', () => {
+describe('DeleteCardCommand neighbour-anchored undo', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -274,7 +274,7 @@ describe('Audit-14 2.2 — DeleteCardCommand neighbour-anchored undo', () => {
 
     cmd.undo();
 
-    // 2.2 — the D anchor restores C immediately before D despite the shift.
+    // The D anchor restores C immediately before D despite the shift.
     // Absolute-only undo (insert at index 2) would scramble this to
     // [Z,A,C,B,D,E].
     expect(cardIds('src')).toEqual(['Z', 'A', 'B', 'C', 'D', 'E']);

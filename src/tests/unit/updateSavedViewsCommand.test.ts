@@ -1,7 +1,6 @@
 /**
- * Phase 7 / 7.4 + 7.5 — UpdateSavedViewsCommand round-trips the saved-views
- * array on both Kanban and Task List boards. The same command serves both
- * via a `kind` discriminator.
+ * UpdateSavedViewsCommand round-trips the saved-views array on both Kanban and
+ * Task List boards. The same command serves both via a `kind` discriminator.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

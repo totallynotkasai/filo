@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { snapshotForRecovery } from '../../main/services/recoverySnapshot';
 
 /**
- * Phase 5 (P0-12) regression guard: when the renderer fails to load a
+ * Regression guard: when the renderer fails to load a
  * vault file (parse / schema-invalid), `snapshotForRecovery` preserves
  * its bytes in `.filo/recovery/<ts>/<basename>` so the original survives
  * any later overwrite. The user can fix the file by hand from that copy.
@@ -61,7 +61,7 @@ describe('snapshotForRecovery', { timeout: 20_000 }, () => {
   });
 
   /**
-   * Phase 23 M22 — long-lived vaults that hit a flaky `.board.json` write
+   * Long-lived vaults that hit a flaky `.board.json` write
    * window can accumulate dozens of snapshots of the same file before the
    * user notices. The prune step keeps the most recent
    * `MAX_SNAPSHOTS_PER_BASENAME` (=20) per basename and drops the rest;
@@ -126,7 +126,7 @@ describe('snapshotForRecovery', { timeout: 20_000 }, () => {
   });
 
   /**
-   * C9 — when mtimes collide on the millisecond (filesystems with
+   * When mtimes collide on the millisecond (filesystems with
    * second-level granularity, or simultaneous saves), the prune step
    * tiebreaks by subdirectory path lexicographically. The ISO-8601
    * timestamp subdir name is monotonically sortable, so a deterministic
@@ -171,7 +171,7 @@ describe('snapshotForRecovery', { timeout: 20_000 }, () => {
   });
 
   /**
-   * IMPL_PLAN_2026-05-23_v2 P2.8 — when the prune step's `readdir` on the
+   * When the prune step's `readdir` on the
    * recovery root fails with anything other than ENOENT (notably EACCES on
    * a network-share vault with restrictive permissions), surface it through
    * `logMainError` so the operator sees that snapshots are accumulating
@@ -218,13 +218,12 @@ describe('snapshotForRecovery', { timeout: 20_000 }, () => {
   });
 
   /**
-   * Phase 9.7 — even with per-basename pruning, a vault hit by a wide
+   * Even with per-basename pruning, a vault hit by a wide
    * multi-file corruption (one bad sync run touching 50+ boards) could
    * accumulate hundreds of recovery snapshots across different basenames.
    * After the per-basename prune runs, a global second pass walks every
    * timestamp subdir and drops the oldest files until the total count is
-   * back under `MAX_SNAPSHOTS_TOTAL`. Sprint C / C19 lowered the cap
-   * from 200 to 100.
+   * back under `MAX_SNAPSHOTS_TOTAL` (100).
    */
   it('caps total snapshots across all basenames at 100', async () => {
     const recoveryRoot = join(vaultRoot, '.filo', 'recovery');

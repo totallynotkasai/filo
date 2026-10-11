@@ -54,7 +54,7 @@ test('the header still moves the panel', async () => {
   await expect(panel).toHaveCount(0);
 });
 
-// BL-03: a click outside the panel took the focus with it, and Escape then did nothing.
+// A click outside the panel took the focus with it, and Escape then did nothing.
 test('Escape closes the panel after a click outside it', async () => {
   const { win } = launched;
   const panel = win.locator('.search-panel');

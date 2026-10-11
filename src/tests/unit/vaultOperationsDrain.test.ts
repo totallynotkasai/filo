@@ -127,11 +127,11 @@ describe('withDrainedWrites — drain ordering', () => {
   });
 
 
-  // Phase 6.4.M1 — withDrainedWrites must also drain misc + config writers.
+  // withDrainedWrites must also drain misc + config writers.
   // Otherwise a debounced sidebar-order / viewport / tags / workspace.json
   // write fires AFTER the disk-shape change lands, racing the rename or
   // resurrecting a path the IPC just removed.
-  it('flushes pending misc writes BEFORE running op (M1 — misc)', async () => {
+  it('flushes pending misc writes BEFORE running op', async () => {
     const events: string[] = [];
 
     installFiloMock({
@@ -158,7 +158,7 @@ describe('withDrainedWrites — drain ordering', () => {
     expect(events).toEqual(['misc-write', 'op']);
   });
 
-  it('flushes pending config writes BEFORE running op (M1 — config)', async () => {
+  it('flushes pending config writes BEFORE running op', async () => {
     const events: string[] = [];
 
     installFiloMock({

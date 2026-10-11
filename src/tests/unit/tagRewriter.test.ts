@@ -26,13 +26,13 @@ function frontmatterObjectOf(md: string): Record<string, unknown> {
 /** Any `\n` NOT preceded by `\r` — i.e. a lone LF that broke CRLF fidelity. */
 const LONE_LF = /[^\r]\n/;
 
-// 6.4.M9 — the shared FRONTMATTER_FENCE regex required `---` immediately
-// followed by a newline. A fence with trailing whitespace (`--- `) therefore
-// parsed as "no frontmatter", so addTagToMarkdown fell through to the
-// no-frontmatter branch and PREPENDED a second `---` block, duplicating
-// frontmatter and orphaning the original keys in the body. The fence now
-// tolerates trailing horizontal whitespace.
-describe('tagRewriter — fence with trailing whitespace (6.4.M9)', () => {
+// The shared FRONTMATTER_FENCE regex required `---` immediately followed by a
+// newline. A fence with trailing whitespace (`--- `) therefore parsed as "no
+// frontmatter", so addTagToMarkdown fell through to the no-frontmatter branch
+// and PREPENDED a second `---` block, duplicating frontmatter and orphaning the
+// original keys in the body. The fence now tolerates trailing horizontal
+// whitespace.
+describe('tagRewriter — fence with trailing whitespace', () => {
   it('addTagToMarkdown edits the existing block, not a prepended duplicate', () => {
     const src = '--- \ntitle: Foo\n--- \nbody';
     const out = addTagToMarkdown(src, 'newtag');
@@ -155,9 +155,9 @@ describe('addTagToMarkdown', () => {
     expect(out).not.toMatch(/- #todo/);
   });
 
-  // Phase 7.4 — adding the FIRST tag to a file that has frontmatter but no
-  // `tags:` field used to fall to the lossy load→dump path, discarding YAML
-  // comments / blank lines / key order. It now inserts via a line-level edit.
+  // Adding the FIRST tag to a file that has frontmatter but no `tags:` field
+  // used to fall to the lossy load→dump path, discarding YAML comments / blank
+  // lines / key order. It now inserts via a line-level edit.
   it('inserts the first tag via a line edit, preserving comments and key order', () => {
     const input = [
       '---',
@@ -182,24 +182,24 @@ describe('addTagToMarkdown', () => {
     expect(out).toBe(['---', 'title: X', 'tags:', '  - a', '---', 'body'].join('\n'));
   });
 
-  // 3.2 (Audit-18) — the fresh tags block now APPENDS after every existing
-  // line instead of splicing before a single trailing blank line, and
-  // `reassemble` re-emits the one separator newline, so the FM's trailing
-  // blank line survives instead of being collapsed.
-  it('appends the tags block and preserves the FM trailing blank line (3.2)', () => {
+  // The fresh tags block now APPENDS after every existing line instead of
+  // splicing before a single trailing blank line, and `reassemble` re-emits the
+  // one separator newline, so the FM's trailing blank line survives instead of
+  // being collapsed.
+  it('appends the tags block and preserves the FM trailing blank line', () => {
     const input = ['---', 'title: X', '', '---', 'body'].join('\n');
     const out = addTagToMarkdown(input, 'a');
     // The blank line the file carried is preserved (no value/structure drift).
     expect(out).toBe(['---', 'title: X', '', 'tags:', '  - a', '---', 'body'].join('\n'));
   });
 
-  // 3.2 (Audit-18) — leg (b): `splitFrontmatter`/`reassemble` used to collapse
-  // the FM's trailing blank line on EVERY successful tag edit (the fast path
-  // included). When that blank is SEMANTIC — the keep-chomped trailing newline a
-  // `notes: |+` scalar owns as its LAST key — the collapse was a silent VALUE
-  // change a parse-only validation passes. `reassemble` now re-emits the one
-  // separator newline, so a line-path tag edit preserves the `|+` value verbatim.
-  it('preserves a trailing |+ block scalar’s value on a line-path tag edit (3.2)', () => {
+  // `splitFrontmatter`/`reassemble` used to collapse the FM's trailing blank
+  // line on EVERY successful tag edit (the fast path included). When that blank
+  // is SEMANTIC — the keep-chomped trailing newline a `notes: |+` scalar owns as
+  // its LAST key — the collapse was a silent VALUE change a parse-only
+  // validation passes. `reassemble` now re-emits the one separator newline, so a
+  // line-path tag edit preserves the `|+` value verbatim.
+  it('preserves a trailing |+ block scalar’s value on a line-path tag edit', () => {
     const input = ['---', 'tags:', '  - x', '  - y', 'notes: |+', '  hello', '', '---', 'body'].join('\n');
     const out = removeTagFromMarkdown(input, 'y');
     // The blank line after `hello` is the keep-chomped trailing newline `|+`
@@ -209,19 +209,19 @@ describe('addTagToMarkdown', () => {
     );
   });
 
-  // 3.2 (Audit-18) — leg (b), the verifier superset: the trailing blank is
-  // preserved on EVERY successful tag edit, not just the |+ case.
-  it('preserves a cosmetic FM trailing blank line on a tag remove (3.2)', () => {
+  // The superset: the trailing blank is preserved on EVERY successful tag edit,
+  // not just the |+ case.
+  it('preserves a cosmetic FM trailing blank line on a tag remove', () => {
     const input = ['---', 'tags:', '  - x', '  - y', '', '---', 'body'].join('\n');
     const out = removeTagFromMarkdown(input, 'y');
     expect(out).toBe(['---', 'tags:', '  - x', '', '---', 'body'].join('\n'));
   });
 
-  // 3.1 (Audit-18) — a zero-interior fence pair (`---\n---\n`, a common empty
-  // frontmatter placeholder) is now recognised as an EMPTY frontmatter block, so
-  // a tag-add edits that block instead of PREPENDING a second `---` block above
-  // the orphaned fences (which used to demote them into the body).
-  it('adds a tag into an EMPTY frontmatter block instead of prepending a duplicate (3.1)', () => {
+  // A zero-interior fence pair (`---\n---\n`, a common empty frontmatter
+  // placeholder) is now recognised as an EMPTY frontmatter block, so a tag-add
+  // edits that block instead of PREPENDING a second `---` block above the
+  // orphaned fences (which used to demote them into the body).
+  it('adds a tag into an EMPTY frontmatter block instead of prepending a duplicate', () => {
     const input = ['---', '---', 'body'].join('\n');
     const out = addTagToMarkdown(input, 'a');
     expect(out).toBe(['---', 'tags:', '  - a', '---', 'body'].join('\n'));
@@ -238,7 +238,7 @@ describe('addTagToMarkdown', () => {
   });
 });
 
-// ── Audit 2.2 ─────────────────────────────────────────────────────────────
+// ── Case-insensitive tag identity ─────────────────────────────────────────
 // Tag identity is case-INSENSITIVE everywhere else (registry
 // `canonicaliseTagName`, `frontmatterSync.valuesEqual`
 // — all fold via `toLocaleLowerCase('en-US')`), but the frontmatter rewriter
@@ -247,7 +247,7 @@ describe('addTagToMarkdown', () => {
 // skipped when renaming/removing the registry's `project`, and adding `project`
 // to a file holding `Project` appended a duplicate. Casing of the NEW name and
 // the leading-`#` decision must still be taken from the file/registry as-is.
-describe('tag rewriter — case-insensitive identity (Audit 2.2)', () => {
+describe('tag rewriter — case-insensitive identity', () => {
   it('rewrites a case-variant tag (block form)', () => {
     const input = ['---', 'tags:', '  - Project', '  - keep', '---', 'body'].join('\n');
     const out = rewriteTagInMarkdown(input, 'project', 'done');
@@ -278,14 +278,14 @@ describe('tag rewriter — case-insensitive identity (Audit 2.2)', () => {
   });
 });
 
-// ── 7.5 ───────────────────────────────────────────────────────────────────
+// ── Anchored / aliased tags field ─────────────────────────────────────────
 // The line-level rewriter declines a `tags:` field defined via a YAML anchor
 // (`tags: &x [..]`) or alias (`tags: *x`). The historical fallback was the
 // js-yaml load→dump path, but `dump({ noRefs: true })` EXPANDS the anchor and
 // re-emits the whole block — a larger, more surprising mutation than the
 // documented comment loss. So every rewriter now SKIPS an anchored/aliased
 // tags field and returns the file byte-for-byte unchanged.
-describe('tag rewriter — anchored/aliased tags field is left untouched (7.5)', () => {
+describe('tag rewriter — anchored/aliased tags field is left untouched', () => {
   const aliased = [
     '---',
     'common: &shared',
@@ -316,14 +316,14 @@ describe('tag rewriter — anchored/aliased tags field is left untouched (7.5)',
     expect(addTagToMarkdown(anchored, 'delta')).toBe(anchored);
   });
 
-  // 5.5 (Audit-16) — the original anchored check inspected only the START of
-  // the header value, so an alias INSIDE the collection reported "not anchored"
-  // and fell through to the load→dump fallback: the alias was resolved on the
-  // load, the CST engine refused (alias on the changed tags key), and the dump
-  // re-emitted the WHOLE frontmatter from the resolved object — anchors on
-  // other keys dropped, aliases inlined, comments lost. The widened scan covers
-  // the full value range (flow items + block items), so these skip instead.
-  it('5.5 — an alias INSIDE a flow collection skips the rewrite (file untouched)', () => {
+  // The original anchored check inspected only the START of the header value,
+  // so an alias INSIDE the collection reported "not anchored" and fell through
+  // to the load→dump fallback: the alias was resolved on the load, the CST
+  // engine refused (alias on the changed tags key), and the dump re-emitted the
+  // WHOLE frontmatter from the resolved object — anchors on other keys dropped,
+  // aliases inlined, comments lost. The widened scan covers the full value range
+  // (flow items + block items), so these skip instead.
+  it('an alias INSIDE a flow collection skips the rewrite (file untouched)', () => {
     const flowAlias = [
       '---',
       'keep: &s shared',
@@ -338,7 +338,7 @@ describe('tag rewriter — anchored/aliased tags field is left untouched (7.5)',
     expect(addTagToMarkdown(flowAlias, 'delta')).toBe(flowAlias);
   });
 
-  it('5.5 — an alias as a BLOCK item skips the rewrite (file untouched)', () => {
+  it('an alias as a BLOCK item skips the rewrite (file untouched)', () => {
     const blockAlias = [
       '---',
       'keep: &s shared',
@@ -358,14 +358,14 @@ describe('tag rewriter — anchored/aliased tags field is left untouched (7.5)',
     expect(removeTagFromMarkdown(blockAlias, 'literal')).toBe(blockAlias);
   });
 
-  it('5.5 — an ANCHOR defined on a flow/block item skips the rewrite', () => {
+  it('an ANCHOR defined on a flow/block item skips the rewrite', () => {
     const flowAnchor = ['---', 'tags: [&t alpha, beta]', '---', 'body', ''].join('\n');
     expect(rewriteTagInMarkdown(flowAnchor, 'alpha', 'gamma')).toBe(flowAnchor);
     const blockAnchor = ['---', 'tags:', '  - &t alpha', '  - beta', '---', 'body', ''].join('\n');
     expect(removeTagFromMarkdown(blockAnchor, 'beta')).toBe(blockAnchor);
   });
 
-  it('5.5 — a QUOTED tag merely containing &/* still takes the established path', () => {
+  it('a QUOTED tag merely containing &/* still takes the established path', () => {
     const quoted = ['---', 'title: X', "tags: ['*not-an-alias', foo]", '---', 'body', ''].join('\n');
     const out = rewriteTagInMarkdown(quoted, 'foo', 'bar');
     expect(out).toContain('bar');
@@ -374,7 +374,7 @@ describe('tag rewriter — anchored/aliased tags field is left untouched (7.5)',
   });
 });
 
-// ── 1.3 ───────────────────────────────────────────────────────────────────
+// ── Unparseable frontmatter is never erased ───────────────────────────────
 // `addTagToMarkdown` reaches the js-yaml load→dump fallback whenever the file
 // already has a top-level `tags:` field (so the string→array upgrade semantics
 // are preserved). On UNPARSEABLE YAML `loadYamlObject` returns null; the old
@@ -383,7 +383,7 @@ describe('tag rewriter — anchored/aliased tags field is left untouched (7.5)',
 // Its siblings (`rewriteTagInMarkdown`, `removeTagFromMarkdown`) already guard
 // with `if (!fm) return rawContent`; addTag must do the same — refuse the write
 // rather than destroy the block.
-describe('addTagToMarkdown — never erases an unparseable frontmatter block (1.3)', () => {
+describe('addTagToMarkdown — never erases an unparseable frontmatter block', () => {
   it('returns the input unchanged when a duplicate key makes the YAML unparseable', () => {
     // js-yaml throws "duplicated mapping key" on `title` → the block can't be
     // round-tripped, so the safe behaviour is to leave the file untouched.
@@ -400,7 +400,7 @@ describe('addTagToMarkdown — never erases an unparseable frontmatter block (1.
   });
 });
 
-// ── 1.4 ───────────────────────────────────────────────────────────────────
+// ── CRLF files ────────────────────────────────────────────────────────────
 // CRLF files (the Windows / Notepad / VS Code / Obsidian default) defeated the
 // line-level rewriter: `TAGS_HEADER_RE` (+ the block-item / blank-line checks)
 // ran against `yamlSource.split('\n')`, leaving a trailing `\r` on every FM
@@ -408,9 +408,9 @@ describe('addTagToMarkdown — never erases an unparseable frontmatter block (1.
 // (no /m) don't cross `\r`, so a `tags:` line that wasn't last never matched.
 // Consequences: rename/remove silently fell to the lossy dump path (comment
 // loss, reorder, FM→LF) and add saw "no tags field" → spliced a SECOND `tags:`
-// block → duplicate key → unparseable → erasure (1.1). User decision: PRESERVE
+// block → duplicate key → unparseable → erasure. User decision: PRESERVE
 // the original line endings (don't normalise to LF).
-describe('tag rewriter — CRLF files preserve endings + never corrupt (1.4)', () => {
+describe('tag rewriter — CRLF files preserve endings + never corrupt', () => {
   // `tags:` is a NON-last key (followed by `aliases:`), so on CRLF its line
   // keeps a trailing `\r` and the pre-fix regex never matched it.
   const crlf = [
@@ -449,10 +449,10 @@ describe('tag rewriter — CRLF files preserve endings + never corrupt (1.4)', (
   it('adds a tag without creating a duplicate tags: key or erasing data, preserving CRLF', () => {
     // The file already HAS a `tags:` field, so add takes the documented
     // load→dump path (which upgrades string→array and, per the accepted
-    // KNOWN_LIMITATION, drops YAML comments — same on LF). 1.4's guarantee here
+    // KNOWN_LIMITATION, drops YAML comments — same on LF). The guarantee here
     // is narrower but critical: hasTagsHeader now sees the `\r`-terminated line,
     // so add appends to the existing block instead of splicing a SECOND `tags:`
-    // key (which made the file unparseable → erased via 1.1). Endings stay CRLF
+    // key (which made the file unparseable → erased). Endings stay CRLF
     // and every DATA key survives.
     const out = addTagToMarkdown(crlf, 'new');
     expect((out.match(/^tags\s*:/gm) ?? []).length).toBe(1); // no second block
@@ -489,31 +489,31 @@ describe('tag rewriter — CRLF files preserve endings + never corrupt (1.4)', (
   });
 });
 
-// ── 1.5 + 1.6 ──────────────────────────────────────────────────────────────
-// renderTagsField emitted every surviving tag BARE, so (1.5) renaming a tag to
+// ── Emitted scalar quoting ─────────────────────────────────────────────────
+// renderTagsField emitted every surviving tag BARE, so renaming a tag to
 // a YAML-special name (@home, 123, null) produced invalid or type-coerced YAML,
-// and (1.6) removing/renaming an UNRELATED tag stripped the quotes off a quoted
+// and removing/renaming an UNRELATED tag stripped the quotes off a quoted
 // sibling — a file holding `[draft, "@home"]` lost the quotes on `@home` the
 // instant `draft` was removed → bare `@home` → unparseable. The fix renders
 // each scalar with exactly the quoting js-yaml needs (flow context, which is
-// also block-safe). The UI rejects such names on create/rename (1.5a); this is
+// also block-safe). The UI rejects such names on create/rename; this is
 // the on-disk defence-in-depth for names authored externally (e.g. in Obsidian).
-describe('tag rewriter — emitted scalars are quoted so YAML never corrupts (1.5/1.6)', () => {
-  it('keeps a quoted flow-sibling quoted when an unrelated tag is removed (1.6)', () => {
+describe('tag rewriter — emitted scalars are quoted so YAML never corrupts', () => {
+  it('keeps a quoted flow-sibling quoted when an unrelated tag is removed', () => {
     const input = ['---', 'tags: [draft, "@home"]', '---', 'body'].join('\n');
     const out = removeTagFromMarkdown(input, 'draft');
     const fm = frontmatterObjectOf(out); // pre-fix: bare @home → js-yaml throws
     expect(fm.tags).toEqual(['@home']);
   });
 
-  it('keeps a quoted block-sibling quoted when an unrelated tag is removed (1.6)', () => {
+  it('keeps a quoted block-sibling quoted when an unrelated tag is removed', () => {
     const input = ['---', 'tags:', '  - draft', "  - '@home'", '---', 'body'].join('\n');
     const out = removeTagFromMarkdown(input, 'draft');
     const fm = frontmatterObjectOf(out);
     expect(fm.tags).toEqual(['@home']);
   });
 
-  it('quotes a renamed tag that needs it, round-tripping to the intended string (1.5)', () => {
+  it('quotes a renamed tag that needs it, round-tripping to the intended string', () => {
     // The UI blocks renaming TO @home, but the rewriter must still emit valid
     // YAML if handed such a name (defence in depth).
     const input = ['---', 'tags:', '  - foo', '  - keep', '---', 'body'].join('\n');
@@ -522,7 +522,7 @@ describe('tag rewriter — emitted scalars are quoted so YAML never corrupts (1.
     expect(fm.tags).toEqual(['@home', 'keep']);
   });
 
-  it('quotes numeric / boolean / null names so they stay strings, not coerced (1.5)', () => {
+  it('quotes numeric / boolean / null names so they stay strings, not coerced', () => {
     for (const special of ['123', 'true', 'null']) {
       const input = ['---', 'tags:', '  - foo', '---', 'body'].join('\n');
       const out = rewriteTagInMarkdown(input, 'foo', special);
@@ -538,7 +538,7 @@ describe('tag rewriter — emitted scalars are quoted so YAML never corrupts (1.
   });
 });
 
-// ── Phase 6.4 ───────────────────────────────────────────────────────────────
+// ── emitTagScalar quoting-oracle parity ─────────────────────────────────────
 // The per-tag quoting oracle `emitTagScalar` was re-implemented on the `yaml`
 // package (was js-yaml), removing the last js-yaml use from the tag write path.
 // js-yaml's default `dump` was deliberately YAML-1.1-conservative — it quoted
@@ -547,13 +547,13 @@ describe('tag rewriter — emitted scalars are quoted so YAML never corrupts (1.
 // vault-index CORE read under which an unquoted `1_000` resolves to the NUMBER
 // 1000. The replacement reproduces that conservatism with `version: '1.1'` and
 // matches the single-quote preference with `singleQuote: true`. This is the
-// quoting-oracle PARITY test the refactor plan calls for: it runs both oracles
-// over a YAML-hostile name table and asserts the new output (a) always
-// round-trips to the exact string in flow AND block context under js-yaml
-// DEFAULT, js-yaml CORE, and the `yaml` package, and (b) is byte-identical to
-// the old oracle except a small allowlist of cosmetic, round-trip-safe diffs.
-describe('emitTagScalar — quoting-oracle parity with the pre-6.4 js-yaml oracle (Phase 6.4)', () => {
-  // The EXACT pre-6.4 implementation (js-yaml DEFAULT schema = YAML 1.1).
+// quoting-oracle PARITY test: it runs both oracles over a YAML-hostile name
+// table and asserts the new output (a) always round-trips to the exact string
+// in flow AND block context under js-yaml DEFAULT, js-yaml CORE, and the `yaml`
+// package, and (b) is byte-identical to the old oracle except a small allowlist
+// of cosmetic, round-trip-safe diffs.
+describe('emitTagScalar — quoting-oracle parity with the old js-yaml oracle', () => {
+  // The EXACT old implementation (js-yaml DEFAULT schema = YAML 1.1).
   function oldEmitTagScalar(tag: string): string {
     return yaml.dump([tag], { flowLevel: 0, lineWidth: -1 }).replace(/\n$/, '').slice(1, -1).trim();
   }
@@ -571,8 +571,8 @@ describe('emitTagScalar — quoting-oracle parity with the pre-6.4 js-yaml oracl
   // An emitted scalar must read back as the EXACT original string in both flow
   // and block context, under all three parsers that touch a tag on disk: js-yaml
   // DEFAULT (the strictest YAML-1.1 resolver + the tagRewriter test parser),
-  // js-yaml CORE (the vault index, pre-6.5), and the `yaml` package (the read
-  // path + the write engine's compare).
+  // js-yaml CORE (the vault index's former parser), and the `yaml` package (the
+  // read path + the write engine's compare).
   function roundTripsEverywhere(scalar: string, tag: string): boolean {
     const readers: Array<(doc: string) => unknown> = [
       (d) => yaml.load(d),
@@ -655,7 +655,7 @@ describe('emitTagScalar — quoting-oracle parity with the pre-6.4 js-yaml oracl
   });
 });
 
-// ── Phase 6.4 / M2 ──────────────────────────────────────────────────────────
+// ── Fallback path preserves cross-parser scalars ────────────────────────────
 // `loadYamlObject` now parses with the `yaml` package — the SAME parser the
 // source-preserving engine (`patchFrontmatterSourceCst`) derives its
 // value-compare object from. Under the old js-yaml CORE load, `1_000` / `0b1010`
@@ -665,7 +665,7 @@ describe('emitTagScalar — quoting-oracle parity with the pre-6.4 js-yaml oracl
 // canonicalised it on disk. These inputs reach the fallback (a `*` inside the
 // flow value makes `locateTagsField` decline the fast line rewrite) and assert
 // the divergent sibling survives byte-for-byte.
-describe('tag rewriter — fallback path preserves cross-parser scalars (Phase 6.4 / M2)', () => {
+describe('tag rewriter — fallback path preserves cross-parser scalars', () => {
   it('keeps an untouched 1_000 sibling verbatim through the load→patch fallback', () => {
     const input = ['---', 'thousands: 1_000', 'tags: [foo, a*b]', '---', 'body'].join('\n');
     const out = rewriteTagInMarkdown(input, 'foo', 'x');
@@ -682,7 +682,7 @@ describe('tag rewriter — fallback path preserves cross-parser scalars (Phase 6
   });
 });
 
-// ── Audit-10 H1 ──────────────────────────────────────────────────────────────
+// ── Un-tokenizable tag shapes ────────────────────────────────────────────────
 // The line-level fast path's hand-rolled tokenizer doesn't FAIL on shapes it
 // can't represent — it SUCCEEDS with a WRONG value, so `renderTagsField` then
 // re-emits the corruption and a SIBLING tag is silently mangled by an unrelated
@@ -695,10 +695,10 @@ describe('tag rewriter — fallback path preserves cross-parser scalars (Phase 6
 // `locateTagsField` now declines these (returns null) so the edit takes the
 // load → CST fallback, which tokenises them correctly. The data guarantee tested
 // here is sibling-VALUE correctness; the inline comment on a CHANGED `tags:`
-// field is dropped by the source-preserving engine (an accepted limitation, like
-// L23/L28) — the point is the value is no longer corrupted. Cleanly single/
-// double-quoted siblings (`'@home'`) still ride the fast path (covered above).
-describe('tag rewriter — declines un-tokenizable shapes, sibling survives (Audit-10 H1)', () => {
+// field is dropped by the source-preserving engine (an accepted limitation) —
+// the point is the value is no longer corrupted. Cleanly single/double-quoted
+// siblings (`'@home'`) still ride the fast path (covered above).
+describe('tag rewriter — declines un-tokenizable shapes, sibling survives', () => {
   it('block + inline comment: removing a sibling leaves the commented tag clean', () => {
     const input = ['---', 'tags:', '  - alpha', '  - beta # note', '  - gamma', '---', 'body'].join('\n');
     const out = removeTagFromMarkdown(input, 'alpha');
@@ -783,7 +783,7 @@ function normaliseToArray(tags: unknown): string[] {
   return [];
 }
 
-describe('Audit-11 T1 — merge-rename dedups the tag list', () => {
+describe('merge-rename dedups the tag list', () => {
   it('rename onto an existing tag yields ONE entry, not a duplicate (flow list)', () => {
     const md = '---\ntags: [draft, review]\n---\nBody\n';
     const out = rewriteTagInMarkdown(md, 'draft', 'review');

@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 
 /**
- * Audit-15 P3.2 — `link:fetch-metadata` extracts `og:image` / `<link rel=icon>`
- * from attacker-controllable page markup and used to return them verbatim. A
- * hostile page could aim them at an internal address; today only the renderer
- * CSP (`img-src 'self' data: blob: filo:`) stops the load, but that's an
- * adjacent control, not the channel's own validation. The fix resolves each
- * against the (already SSRF-validated) final page URL and drops anything that
- * lands on a private host or a non-displayable scheme.
+ * `link:fetch-metadata` extracts `og:image` / `<link rel=icon>` from
+ * attacker-controllable page markup and used to return them verbatim. A hostile
+ * page could aim them at an internal address; today only the renderer CSP
+ * (`img-src 'self' data: blob: filo:`) stops the load, but that's an adjacent
+ * control, not the channel's own validation. The fix resolves each against the
+ * (already SSRF-validated) final page URL and drops anything that lands on a
+ * private host or a non-displayable scheme.
  *
  * Two layers of coverage:
  *   1. `sanitizeReturnedResourceUrl` exercised in isolation (fast, exhaustive).
@@ -73,7 +73,7 @@ vi.mock('../../main/ipc/vault.ipc', () => ({
 const { registerMediaHandlers, sanitizeReturnedResourceUrl } = await import('../../main/ipc/media.ipc');
 
 // ── 1. sanitizeReturnedResourceUrl in isolation ─────────────────────────────
-describe('sanitizeReturnedResourceUrl — Audit-15 P3.2', () => {
+describe('sanitizeReturnedResourceUrl', () => {
   const BASE = 'https://example.com/article';
 
   it('returns "" for empty input', () => {
@@ -130,7 +130,7 @@ describe('sanitizeReturnedResourceUrl — Audit-15 P3.2', () => {
 });
 
 // ── 2. full link:fetch-metadata pipeline ────────────────────────────────────
-describe('link:fetch-metadata — image/favicon sanitised end-to-end (Audit-15 P3.2)', () => {
+describe('link:fetch-metadata — image/favicon sanitised end-to-end', () => {
   let fetchHandler: (...a: unknown[]) => Promise<unknown>;
 
   beforeAll(() => {

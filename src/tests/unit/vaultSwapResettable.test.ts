@@ -8,7 +8,7 @@ import {
 } from '@renderer/core/vaultLifecycle';
 
 /**
- * Phase 6.1.R2 — `vaultSwapResettable` helper.
+ * `vaultSwapResettable` helper.
  *
  * Sugar over `onVaultSwap('pre-swap', ...)` that mirrors each
  * registration in a queryable set so a CI gate (or a unit test) can
@@ -16,7 +16,7 @@ import {
  * point, not just any swap handler.
  */
 
-describe('Phase 6.1.R2 — vaultSwapResettable', () => {
+describe('vaultSwapResettable', () => {
   beforeEach(() => {
     __resetVaultLifecycleForTests();
   });

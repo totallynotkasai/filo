@@ -1,12 +1,10 @@
 /**
  * Contract — `Command.targetBoardId` coverage matrix.
  *
- * Per IMPLEMENTATION_PLAN_2026-05-27 §Phase 2:
+ * Every Command captures targetBoardId at construction; CI gate at error.
  *
- *   "Every Command captures targetBoardId at construction; CI gate at error."
- *
- * Phase 2 landed — every concrete Command subclass under
- * `src/renderer/commands/` now declares `readonly targetBoardId: string`
+ * Every concrete Command subclass under
+ * `src/renderer/commands/` declares `readonly targetBoardId: string`
  * and assigns it in its constructor. This test pins that contract: a
  * future command that forgets the field fails here in addition to the
  * `scripts/gates:commands-target-board` CI gate.
@@ -109,7 +107,7 @@ describe('Contract — Command.targetBoardId coverage', () => {
 
   describe('every concrete Command declares + assigns `targetBoardId`', () => {
     for (const info of ALL_COMMAND_CLASSES) {
-      // Phase 2 contract — every command MUST declare `readonly
+      // Contract — every command MUST declare `readonly
       // targetBoardId: string` AND assign it in the constructor. Half-state
       // (declared without assignment, or assigned without declaration) is
       // a bug. Board-agnostic commands (ReplaceAllCommand, CascadeDeleteCommand)

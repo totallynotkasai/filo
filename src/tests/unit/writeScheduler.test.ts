@@ -1,5 +1,5 @@
 /**
- * Phase R1 — `createScheduler` primitive tests.
+ * `createScheduler` primitive tests.
  *
  * Covers the contract every five legacy schedulers (board / markdown /
  * frontmatter / config / misc) must share post-migration:
@@ -577,7 +577,7 @@ describe('createScheduler — getFailureId override', () => {
   });
 });
 
-describe('createScheduler — overlapping fires for one key (F2 counter leak)', () => {
+describe('createScheduler — overlapping fires for one key (counter leak)', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     restoreFiloDefault();
@@ -647,12 +647,11 @@ describe('createScheduler — overlapping fires for one key (F2 counter leak)', 
   });
 });
 
-describe('A8-M4 (REFUTED) — a later same-key success supersedes an earlier failure', () => {
-  // VERIFY-FIRST outcome (Audit-8 M4): the audit flagged that the L12 success-
-  // prune (`failures.delete(failureId)`) on a later fire could erase an earlier
-  // fire's failure token before `flushAll` reads it, causing Ctrl+S to flash
-  // "Saved" while a config file failed. Verified against the live primitive +
-  // configWriteScheduler: NOT a bug.
+describe('a later same-key success supersedes an earlier failure', () => {
+  // Suspected: the success-prune (`failures.delete(failureId)`) on a later
+  // fire could erase an earlier fire's failure token before `flushAll` reads
+  // it, causing Ctrl+S to flash "Saved" while a config file failed. Verified
+  // against the live primitive + configWriteScheduler: NOT a bug.
   //
   // Why it's correct, not a loss:
   //  - The config scheduler coalesces every config write under ONE key
@@ -665,15 +664,15 @@ describe('A8-M4 (REFUTED) — a later same-key success supersedes an earlier fai
   //    including every file the earlier fire failed — is on disk. The earlier
   //    failure is genuinely SUPERSEDED, so dropping it from `flushAll().failed`
   //    is correct: reporting it would be a FALSE "save failed" for data that
-  //    actually landed. (The plan's suggested per-fire failureId fix would
-  //    introduce exactly that false positive.)
+  //    actually landed. (A per-fire failureId would introduce exactly that
+  //    false positive.)
   //  - A genuinely-unresolved failure is NOT dropped: if the later fire is still
   //    in-flight at `flushAll`, it is awaited and its failure attributed (see the
   //    "in-flight failure attribution" + "partial-failure passthrough" suites);
   //    and `writeConfigs` independently fires `notifyWriteError` per failed file.
   //  - configWriteScheduler's `performWrite` never throws (it returns
   //    `{ failed }`), so the per-file ids it reports (`app.json`, …) are NEVER
-  //    the constant `failureId` the L12 prune deletes — the prune can't touch
+  //    the constant `failureId` the success-prune deletes — the prune can't touch
   //    them regardless.
   beforeEach(() => {
     __resetDirtyTrackingForTests();
@@ -749,7 +748,7 @@ describe('A8-M4 (REFUTED) — a later same-key success supersedes an earlier fai
   });
 });
 
-describe('createScheduler — failures Set pruned on later success (Audit-7 L12)', () => {
+describe('createScheduler — failures Set pruned on later success', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     restoreFiloDefault();
@@ -774,7 +773,7 @@ describe('createScheduler — failures Set pruned on later success (Audit-7 L12)
     });
 
     // Fire #1 as pure fire-and-forget — its settle runs BEFORE any flush, so
-    // no flush ever drains the attributed failure id (the L12 leak window).
+    // no flush ever drains the attributed failure id (the leak window).
     vi.useFakeTimers();
     scheduler.schedule('k1', () => makeArgs('leak.md'));
     vi.advanceTimersByTime(200);

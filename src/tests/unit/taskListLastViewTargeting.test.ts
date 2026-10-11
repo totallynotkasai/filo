@@ -8,7 +8,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Audit-4 DI-08 — Task List `lastView` persisted into the WRONG board.
+ * Task List `lastView` persisted into the WRONG board.
  *
  * The persist timer in `TaskListBoard.svelte` fires ~300 ms after a change.
  * In split view two boards are mounted at once; if board A's surviving timer
@@ -59,7 +59,7 @@ function settingsOf(boardId: string): Record<string, unknown> {
   return (boardCacheStore.cache[boardId]?.board.settings ?? {}) as Record<string, unknown>;
 }
 
-describe('TaskList lastView persist — targets the armed pane board (DI-08)', () => {
+describe('TaskList lastView persist — targets the armed pane board', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     vaultStore.setPath('/vault');
@@ -134,7 +134,7 @@ describe('TaskList lastView persist — targets the armed pane board (DI-08)', (
     paneA.board.updateBoardSettingsWithHistory({ lastView: { sortBy: 'title' } }, {}, 'Change task view');
 
     // canUndo reads the active board's (B's) stack — it now has an entry,
-    // exactly the cross-board undo pollution DI-08 eliminates.
+    // exactly the cross-board undo pollution the pane-board targeting eliminates.
     expect(historyStore.canUndo).toBe(true);
   });
 });

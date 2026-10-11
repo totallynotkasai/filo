@@ -1,5 +1,5 @@
 /**
- * Audit-19 UX-2 — `filo://` internal links could not be inserted: TipTap's Link
+ * `filo://` internal links could not be inserted: TipTap's Link
  * URI allowlist refused them, `setLink` returned false and the toolbar ignored
  * the result, so nothing happened. A custom `isAllowedUri` now accepts filo://
  * while still refusing `javascript:`; a refused href shows a toast.
@@ -27,7 +27,7 @@ afterEach(() => {
   while (editors.length) editors.pop()?.destroy();
 });
 
-describe('filo:// link insertion (Audit-19 UX-2)', () => {
+describe('filo:// link insertion', () => {
   it('setLink accepts a filo://board link and it serialises', () => {
     const ed = makeEditor('hello world\n');
     ed.commands.setTextSelection({ from: 1, to: 6 });

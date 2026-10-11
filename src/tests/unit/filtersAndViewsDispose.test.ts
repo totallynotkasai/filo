@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { TaskListFiltersAndViews } from '../../renderer/lib/tasklist/filtersAndViews.svelte';
 
 /**
- * Audit2 5.6 — `TaskListFiltersAndViews.dispose()` cancels the lastView
+ * `TaskListFiltersAndViews.dispose()` cancels the lastView
  * debounce so a host unmount mid-window doesn't fire `updateSettings` +
  * push a history entry against a board that's already torn down.
  *
@@ -10,7 +10,7 @@ import { TaskListFiltersAndViews } from '../../renderer/lib/tasklist/filtersAndV
  * on every filter mutation; without dispose, the callback could land after
  * the component unmounted and write into a stale board context.
  */
-describe('TaskListFiltersAndViews.dispose() (5.6)', () => {
+describe('TaskListFiltersAndViews.dispose()', () => {
   afterEach(() => {
     vi.useRealTimers();
   });

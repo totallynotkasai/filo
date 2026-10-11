@@ -1,14 +1,13 @@
 /**
  * Contract — external-edit reconciliation coverage.
  *
- * Originally this source-scan test asserted the CURRENT shape at the Phase 0
- * boundary (document + attachment had reconcilers; board + config-* did
- * NOT). Phase 3 inverted that — every `FileChangeType` arm now has a
- * registered reconciler in `externalChangeRegistry`, and the renderer's
- * vault listener dispatches through `dispatchExternalChangeBatch` instead
- * of an inline `c.type === 'document' | 'attachment'` filter.
+ * Every `FileChangeType` arm has a registered reconciler in
+ * `externalChangeRegistry` (once only document + attachment did; board +
+ * config-* did NOT), and the renderer's vault listener dispatches through
+ * `dispatchExternalChangeBatch` instead of an inline
+ * `c.type === 'document' | 'attachment'` filter.
  *
- * The assertions below characterise the POST-Phase-3 contract:
+ * The assertions below characterise that contract:
  *
  *   1. `FileChangeType` enumerates `document`, `attachment`, `board`,
  *      `config`, `config-tags`, `config-theme`, `config-template`, `tree`.
@@ -21,7 +20,7 @@
  *      `handleExternalAttachmentChanges` are bridged into the registry as
  *      batched reconcilers (registerBatchedReconciler calls).
  *
- * When a future phase removes or refactors any of these, this test fails
+ * When a future change removes or refactors any of these, this test fails
  * loudly so the author updates the matrix.
  */
 import { describe, it, expect } from 'vitest';
@@ -94,10 +93,10 @@ const CURRENT_FILE_CHANGE_KINDS = extractFileChangeTypeKinds();
 
 describe('Contract — external-edit reconciliation coverage', () => {
   describe('FileChangeType union inventory', () => {
-    it('enumerates the post-Phase-3 kinds', () => {
-      // Phase 3 / 3.2 — split `config` into three granular subtypes
-      // (config-tags / config-theme / config-template) while keeping
-      // bare `config` for un-routed `.filo/` files. The watcher now
+    it('enumerates every external-change kind', () => {
+      // `config` is split into three granular subtypes
+      // (config-tags / config-theme / config-template), with bare
+      // `config` kept for un-routed `.filo/` files. The watcher
       // emits eight distinct kinds.
       const actual = [...CURRENT_FILE_CHANGE_KINDS].sort();
       const expected = [
@@ -134,8 +133,8 @@ describe('Contract — external-edit reconciliation coverage', () => {
     });
 
     it('no longer inline-filters by `c.type === document | attachment`', () => {
-      // The Phase-0 boundary path used these literals; Phase 3 replaced
-      // them with the exhaustive dispatcher. A future regression that
+      // The old boundary path used these literals; the exhaustive
+      // dispatcher replaced them. A future regression that
       // brings the inline filter back is exactly what this test catches.
       // Note: we still expect the comment block to mention the kinds —
       // matching on the array index syntax `c.type === 'document'` would
@@ -170,11 +169,11 @@ describe('Contract — external-edit reconciliation coverage', () => {
   });
 
   describe('vaultExternalChanges.ts retains the cross-store coordination', () => {
-    // Phase 3 / 3.2 — the cross-store coordination logic
+    // The cross-store coordination logic
     // (`handleExternalMarkdownChanges`, `handleExternalAttachmentChanges`)
     // still lives on the vaultStore mixin because it touches too many
     // peers (vault index, document store, history, popups) to refactor
-    // out in a single phase. The registry's batched reconcilers bridge
+    // out in one go. The registry's batched reconcilers bridge
     // these methods into the dispatcher rather than re-implementing them.
     it('still exposes handleExternalMarkdownChanges + handleExternalAttachmentChanges', () => {
       expect(EXTERNAL_CHANGES_TEXT).toMatch(/async handleExternalMarkdownChanges\(/);
@@ -183,7 +182,7 @@ describe('Contract — external-edit reconciliation coverage', () => {
   });
 
   describe('watcher supervisor', () => {
-    // Phase 3 / 3.1 — the supervisor state machine lives in its own
+    // The supervisor state machine lives in its own
     // module (`watcherSupervisor.ts`) so `fileWatcher.ts` can stay under
     // the file-size ceiling. Each of these assertions targets the
     // dedicated module.

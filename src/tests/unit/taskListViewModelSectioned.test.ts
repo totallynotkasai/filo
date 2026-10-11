@@ -7,7 +7,7 @@ import type { Tile, TaskPlacement, TaskListSection } from '@renderer/schema/inde
 import type { SortBy } from '@renderer/lib/tasks/taskListModel';
 
 /**
- * P5.3 (Audit-15) — `sectionedView` was rewritten from a `.filter` per section
+ * `sectionedView` was rewritten from a `.filter` per section
  * (O(sections × rows)) to a single-pass bucket assignment. These tests lock in
  * the behaviour the rewrite must preserve: the leading "Unsectioned" bucket is
  * emitted only when non-empty, each section owns the contiguous
@@ -73,7 +73,7 @@ function shape(vm: TaskListViewModel): Array<[string | null, string[]]> {
   return vm.sectionedView.map((s) => [s.id, s.rows.map((r) => r.tile.id)]);
 }
 
-describe('TaskListViewModel.sectionedView — P5.3 single-pass bucketing', () => {
+describe('TaskListViewModel.sectionedView — single-pass bucketing', () => {
   it('splits a leading bucket plus two sections by placement index', () => {
     const vm = makeVm({
       placements: place('t1', 't2', 't3', 't4'),
@@ -124,12 +124,12 @@ describe('TaskListViewModel.sectionedView — P5.3 single-pass bucketing', () =>
     ]);
   });
 
-  it('SEC-4: array order is load-bearing — a section listed BEFORE an empty tie loses its slice', () => {
+  it('array order is load-bearing — a section listed BEFORE an empty tie loses its slice', () => {
     // Tied-section ownership is decided by ARRAY ORDER: the section listed LAST
     // at a shared position owns the slice, earlier ones render empty. So if a
     // section that "wants" the tasks is listed BEFORE an empty section at the
     // same position, the later (empty-intended) section steals them. This is the
-    // SEC-4 hazard the persist layer guards against by keeping empties listed
+    // hazard the persist layer guards against by keeping empties listed
     // first (see boardCacheTaskList.persistTaskListStructure). The view model
     // faithfully applies the rule either way.
     const vm = makeVm({

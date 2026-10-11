@@ -1,5 +1,5 @@
 /**
- * Audit 3.2 — the filo:// media protocol must apply the same `.filo/`
+ * The filo:// media protocol must apply the same `.filo/`
  * carve-out and structural validation that every other renderer-facing vault
  * read enforces, not just `assertWithinVault`. The decision logic lives in the
  * pure `resolveServableMediaPath` (mirroring how rangeHeader.ts factors the
@@ -17,7 +17,7 @@ import * as path from 'path';
 import { resolveServableMediaPath } from '../../main/protocol/mediaPathGuard';
 import { FiloDirForbiddenError } from '../../main/utils/pathSecurity';
 
-describe('Audit 3.2 — resolveServableMediaPath enforces the .filo/ guard', () => {
+describe('resolveServableMediaPath enforces the .filo/ guard', () => {
   let vaultRoot = '';
 
   beforeAll(() => {

@@ -10,7 +10,7 @@ import {
 import { PAYLOAD_LIMITS } from '../../main/utils/payloadLimits';
 
 /**
- * Phase 8 / 8.1 — read-path payload caps. Every JSON file we read from
+ * Read-path payload caps. Every JSON file we read from
  * `.filo/` is stat-checked before the read so a hand-edited (or simply
  * corrupted) multi-GB file aborts up front instead of being buffered into
  * main-process memory only to fail downstream.
@@ -24,7 +24,7 @@ import { PAYLOAD_LIMITS } from '../../main/utils/payloadLimits';
  * The under-cap counterparts are spot-checked to keep the happy path
  * pinned alongside the size-rejection path.
  */
-describe('Phase 8 / 8.1 — read-path payload caps', () => {
+describe('read-path payload caps', () => {
   let vaultRoot: string;
 
   beforeEach(async () => {

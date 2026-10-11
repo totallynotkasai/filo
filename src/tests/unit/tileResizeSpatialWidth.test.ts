@@ -7,14 +7,14 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Tile } from '@renderer/schema/index';
 
 /**
- * Audit 5.1 — REFUTED. Claim: "On manual resize of an auto-width text tile,
+ * REFUTED claim: "On manual resize of an auto-width text tile,
  * the commit sets `userResizedWidth: true` and the re-measure effect only
  * rewrites `renderedHeight`, leaving a stale auto `renderedWidth` in the rbush
  * index forever, so marquee / hit-testing / guides disagree on the X axis."
  *
  * The mechanism does not exist in the current code:
- *   - There is NO `userResizedWidth` field anywhere (tile.ts has none); both of
- *     the plan's proposed fixes are written around that hallucinated field.
+ *   - There is NO `userResizedWidth` field anywhere (tile.ts has none); both
+ *     proposed fixes were written around that hallucinated field.
  *   - `renderedWidth` / `renderedHeight` have ZERO production writers (grep:
  *     the only `:=` sites are the schema definitions). They are only ever READ
  *     in `renderedWidth ?? size.width`, which therefore always collapses to
@@ -27,8 +27,7 @@ import type { MindMapBoard, Tile } from '@renderer/schema/index';
  * So the realistic resize path keeps the spatial footprint exact on the X axis.
  * This guard locks that in: a normal tile resized wider then narrower has its
  * rbush entry track `size.width` with no stale extent lingering. It PASSES
- * against unmodified code — per the plan's reproduce-first discipline, the lead
- * is refuted.
+ * against unmodified code — reproduce first: the lead is refuted.
  */
 
 function installEmptyFiloStub(): void {
@@ -78,7 +77,7 @@ function makeTextTile(id: string, x = 0, y = 0): Tile {
   } as unknown as Tile;
 }
 
-describe('Tile resize spatial width (audit 5.1 — REFUTED)', () => {
+describe('Tile resize spatial width (no stale extent)', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     vaultStore.setPath('/vault');

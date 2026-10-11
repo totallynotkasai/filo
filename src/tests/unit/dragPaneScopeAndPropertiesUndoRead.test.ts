@@ -1,25 +1,25 @@
 /**
- * Audit-18 Phase 6 — canvas / store residual corners.
+ * Canvas / store residual corners.
  *
- *  6.1 `tileDragAction` opened/closed the spatial-index batch via the GLOBAL
- *      `spatialStore` facade (→ the globally-active pane's spatial index). The
- *      drag is pointer-captured to the pane it started on, so its handlers keep
- *      firing there — but a second touch on the OTHER pane retargets the active
- *      scope mid-drag (PaneView activates on pointerdowncapture). `beginBatch()`
- *      then opened pane A's batch while `endBatch()` closed pane B's, leaking
- *      pane A's batch forever (frozen spatial revision → viewport culling stops
- *      updating; looks like data loss). Fix: thread the pane's `BoardScope` into
- *      the action and bind begin/endBatch (and all board/canvas/selection reads)
- *      to `scope.spatial` — immune to active-scope flips. Mirrors Audit-12 M5.
+ *  - `tileDragAction` opened/closed the spatial-index batch via the GLOBAL
+ *    `spatialStore` facade (→ the globally-active pane's spatial index). The
+ *    drag is pointer-captured to the pane it started on, so its handlers keep
+ *    firing there — but a second touch on the OTHER pane retargets the active
+ *    scope mid-drag (PaneView activates on pointerdowncapture). `beginBatch()`
+ *    then opened pane A's batch while `endBatch()` closed pane B's, leaking
+ *    pane A's batch forever (frozen spatial revision → viewport culling stops
+ *    updating; looks like data loss). Fix: thread the pane's `BoardScope` into
+ *    the action and bind begin/endBatch (and all board/canvas/selection reads)
+ *    to `scope.spatial` — immune to active-scope flips.
  *
- *  6.3 `UpdatePropertiesCommand`'s undo/redo must not write when the note
- *      can't be read: a non-ENOENT read failure (FILE_TOO_LARGE / transient
- *      EACCES/EBUSY) leaves the file PRESENT, so a write built without it would
- *      silently overwrite the real note. The command rejects instead, so
- *      history drops it and nothing is queued.
+ *  - `UpdatePropertiesCommand`'s undo/redo must not write when the note
+ *    can't be read: a non-ENOENT read failure (FILE_TOO_LARGE / transient
+ *    EACCES/EBUSY) leaves the file PRESENT, so a write built without it would
+ *    silently overwrite the real note. The command rejects instead, so
+ *    history drops it and nothing is queued.
  *
- * 6.1 is driven through the raw action (the component only forwards its
- * context scope).
+ * The tile drag is driven through the raw action (the component only forwards
+ * its context scope).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -47,7 +47,7 @@ import type { MindMapBoard, TileDefinition } from '@renderer/schema/index';
 import { seedBoard } from '../helpers/seedBoard';
 
 
-// ── 6.1 helpers ──────────────────────────────────────────────────────────
+// ── Tile-drag helpers ────────────────────────────────────────────────────
 
 function makeMindMapWithTile(): BoardFileData {
   return {
@@ -115,7 +115,7 @@ function stubPointerCapture(el: HTMLElement): void {
   }
 }
 
-describe('Audit-18 6.1 — tile drag spatial batch is pane-scoped', () => {
+describe('tile drag spatial batch is pane-scoped', () => {
   beforeEach(() => {
     vaultStore.setPath('/vault');
     boardCacheStore.clear();
@@ -224,9 +224,9 @@ describe('Audit-18 6.1 — tile drag spatial batch is pane-scoped', () => {
 });
 
 
-// ── 6.3 ──────────────────────────────────────────────────────────────────
+// ── Properties undo/redo ─────────────────────────────────────────────────
 
-describe('Audit-18 6.3 — Properties undo/redo refuses when the note cannot be read', () => {
+describe('Properties undo/redo refuses when the note cannot be read', () => {
   beforeEach(() => {
     __resetVaultIdentityForTests();
     __resetDirtyTrackingForTests();

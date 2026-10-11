@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { InlineTileSchema } from '@renderer/schema/placement';
 
 /**
- * Phase 1 / 1.4 — `InlineTileSchema` previously used `.passthrough()`, so a
+ * `InlineTileSchema` previously used `.passthrough()`, so a
  * hand-edited `.board.json` could carry an inline-tile `url` with any
  * scheme — including `javascript:` / `data:` / `file:`, which would reach
  * the renderer DOM unchecked. The tightened schema validates `url` via the

@@ -3,9 +3,9 @@ import { fakeCommand } from '../helpers/fakeCommand';
 import { historyStore, type Command } from '@renderer/stores/history.svelte';
 
 /**
- * Phase C / C.1 — historyStore.execute / undo / redo serialise async
- * command bodies so a rapid Apply → Undo can't overlap the prior
- * command's flush+merge+schedule sequence with the next one's.
+ * historyStore.execute / undo / redo serialise async command bodies so a rapid
+ * Apply → Undo can't overlap the prior command's flush+merge+schedule sequence
+ * with the next one's.
  *
  * Pins two contracts:
  *
@@ -17,10 +17,10 @@ import { historyStore, type Command } from '@renderer/stores/history.svelte';
  *
  *  2. When an async command's `execute()` promise is still pending,
  *     the next call's body must not run until that promise settles.
- *     This is the only behaviour change the audit's race depends on.
+ *     This is the only behaviour change the Apply → Undo race depends on.
  */
 
-describe('Phase C / C.1 — historyStore async command serialisation', () => {
+describe('historyStore async command serialisation', () => {
   beforeEach(() => {
     historyStore.clear();
     historyStore.setActiveBoard('b-c1');
@@ -111,10 +111,10 @@ describe('Phase C / C.1 — historyStore async command serialisation', () => {
     expect(order).toEqual(['exec', 'undo-start', 'undo-end', 'exec']);
   });
 
-  // L31 (Audit-6) — `whenChainSettled()` is the gate `vaultStore.save()` awaits
-  // before flushing, so an in-flight async command finishes scheduling its disk
-  // writes before the flush pass runs (no premature "saved").
-  it('L31: whenChainSettled() awaits an in-flight async command before resolving', async () => {
+  // `whenChainSettled()` is the gate `vaultStore.save()` awaits before
+  // flushing, so an in-flight async command finishes scheduling its disk writes
+  // before the flush pass runs (no premature "saved").
+  it('whenChainSettled() awaits an in-flight async command before resolving', async () => {
     let resolveExecute: (() => void) | null = null;
     const executePending = new Promise<void>((res) => { resolveExecute = res; });
     let chainSettled = false;
@@ -138,7 +138,7 @@ describe('Phase C / C.1 — historyStore async command serialisation', () => {
     expect(chainSettled).toBe(true);
   });
 
-  it('L31: whenChainSettled() resolves promptly when the chain is idle', async () => {
+  it('whenChainSettled() resolves promptly when the chain is idle', async () => {
     await expect(historyStore.whenChainSettled()).resolves.toBeUndefined();
   });
 });

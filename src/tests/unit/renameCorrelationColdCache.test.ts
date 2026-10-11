@@ -1,5 +1,5 @@
 /**
- * Audit-4 DI-17 (cold-cache rename) — the same-basename correlation pass
+ * Cold-cache rename — the same-basename correlation pass
  * refuses to pair on basename alone when BOTH the size and hash probes are
  * supplied (the production configuration) yet NEITHER can perform an identity
  * comparison: the missing (old) side was never observed, so its size and hash
@@ -12,7 +12,7 @@
  * no undo. The safe outcome is delete+create, recoverable via the broken-ref
  * relink once the cache warms.
  *
- * Probe-absent / single-probe callers (legacy tests) keep the pre-2.1
+ * Probe-absent / single-probe callers (legacy tests) keep the plain
  * basename-only pairing — the guard only tightens the both-probes path.
  */
 import { describe, it, expect } from 'vitest';
@@ -28,7 +28,7 @@ function existsAmong(...paths: string[]): (rel: string) => boolean {
   return (p) => set.has(p);
 }
 
-describe('correlateRenames — DI-17 cold-cache same-basename refusal', () => {
+describe('correlateRenames — cold-cache same-basename refusal', () => {
   it('refuses a same-basename pair when the old side has no observable size OR hash', async () => {
     const events = [ev('A/Notes.md'), ev('B/Notes.md')];
     const exists = existsAmong('B/Notes.md');
@@ -82,7 +82,7 @@ describe('correlateRenames — DI-17 cold-cache same-basename refusal', () => {
     const events = [ev('A/Notes.md'), ev('B/Notes.md')];
     const exists = existsAmong('B/Notes.md');
     // Only a size probe; missing side null. The cold-cache guard needs both
-    // probes to engage, so the balanced pre-2.1 basename pairing is preserved.
+    // probes to engage, so the balanced basename-only pairing is preserved.
     const relPathSize = (rel: string) => (rel === 'B/Notes.md' ? 4096 : null);
 
     const { renames } = await correlateRenames(events, exists, relPathSize, undefined, false);
@@ -91,7 +91,7 @@ describe('correlateRenames — DI-17 cold-cache same-basename refusal', () => {
   });
 });
 
-describe('correlateRenames — L15 small-file floor on the same-basename pass', () => {
+describe('correlateRenames — small-file floor on the same-basename pass', () => {
   it('refuses a <256-byte same-basename pair with no hash corroboration (size coincidence)', async () => {
     const events = [ev('A/Notes.md'), ev('B/Notes.md')];
     const exists = existsAmong('B/Notes.md');

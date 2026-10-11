@@ -14,9 +14,9 @@ import type { MindMapBoard } from '@renderer/schema/index';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Phase 2 / 2.2 — external rename propagation must mirror the full in-app
- * rename follow-ups: activeRootFolder rewrite, per-board defaultFolder pin
- * rewrite, rename-cascade sentinel write/clear, and a failed-flush toast.
+ * External rename propagation must mirror the full in-app rename follow-ups:
+ * activeRootFolder rewrite, per-board defaultFolder pin rewrite, rename-cascade
+ * sentinel write/clear, and a failed-flush toast.
  */
 
 function clearToasts(): void {
@@ -105,7 +105,7 @@ function ctxFor(project: Project | null, opts?: { markMetaDirty?: () => void }):
   };
 }
 
-describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () => {
+describe('vaultExternalChanges — external rename propagation', () => {
   let slice: ReturnType<typeof makeExternalChangesSlice>;
 
   beforeEach(() => {
@@ -205,10 +205,10 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
   });
 
   it('writes and clears the rename-cascade sentinel on full success', async () => {
-    // Sprint C / C-A5-4 — sentinel is only written when the cascade
-    // actually touched something. Give the test a board with a
-    // defaultFolder pin matching OldRoot so clearBoardDefaultFolderIfMatches
-    // marks the board dirty and the rename's cascade has real work.
+    // The sentinel is only written when the cascade actually touched something.
+    // Give the test a board with a defaultFolder pin matching OldRoot so
+    // clearBoardDefaultFolderIfMatches marks the board dirty and the rename's
+    // cascade has real work.
     const a = makeMindMap('a', 'OldRoot');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
 
@@ -254,9 +254,9 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
     expect(fakeDisk.content).toBe(null);
   });
 
-  it('Sprint C / C-A5-4 — skips sentinel write when the cascade touched no boards', async () => {
+  it('skips sentinel write when the cascade touched no boards', async () => {
     // Empty cache + no boards → propagateRename, renameBoardPath, and
-    // clearBoardDefaultFolderIfMatches all return empty. The pre-Sprint-C
+    // clearBoardDefaultFolderIfMatches all return empty. The earlier
     // behaviour was to still write + clear a sentinel; that's pure noise
     // on a watcher echo of an in-app rename whose cascade already ran.
     const project = makeProject();
@@ -297,9 +297,8 @@ describe('vaultExternalChanges — external rename propagation (Phase 2.2)', () 
 
   it('surfaces a failed-flush toast and marks the sentinel when a .board.json write fails', async () => {
     // One board with a defaultFolder pin so the rename's cascade actually
-    // marks it dirty (Sprint C / C-A5-4 — cascade work is now the gate
-    // for the sentinel write). Pre-Sprint-C this just used an unrelated
-    // pre-dirtied board, which no longer triggers the sentinel path.
+    // marks it dirty (cascade work is the gate for the sentinel write). An
+    // unrelated pre-dirtied board doesn't trigger the sentinel path.
     const a = makeMindMap('a', 'OldRoot');
     boardCacheStore.hydrate({ a }, { a: 'a.board.json' });
 

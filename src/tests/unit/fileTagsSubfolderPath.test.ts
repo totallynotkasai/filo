@@ -1,6 +1,6 @@
 /**
- * Audit-12 H2 — the single-tag add/remove path must write a text tile's tag to
- * the note its `filePath` names, NOT a same-named note at the vault ROOT.
+ * The single-tag add/remove path must write a text tile's tag to the note its
+ * `filePath` names, NOT a same-named note at the vault ROOT.
  *
  * The bug: on a cold-loaded subfolder Task row (not on the active board, no
  * loaded note), a root-fallback path resolution wrote the tag to a ROOT file,
@@ -34,7 +34,7 @@ async function drainFireAndForget(): Promise<void> {
   for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
-describe('Audit-12 H2 — fileTags tag write honors subfolders', () => {
+describe('fileTags tag write honors subfolders', () => {
   let mdWrites: string[];
 
   beforeEach(async () => {

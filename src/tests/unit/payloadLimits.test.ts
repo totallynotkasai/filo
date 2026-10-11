@@ -1,5 +1,5 @@
 /**
- * Phase 21 / M5 regression guard.
+ * IPC payload size-cap regression guard.
  *
  * Every write-shaped IPC handler now caps its payload via
  * `assertPayloadByteSize` before reaching the disk write. The tests below

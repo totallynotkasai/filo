@@ -4,11 +4,11 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Polish phase 1.3 — `vault:create-folder` now runs the relative form of
- * the supplied path through `assertSafeRelativePath`, which validates
- * every segment with `assertSafeFilename`. Without this guard, a renderer
- * (or future caller) could request `foo/CON/bar` and successfully
- * create directories that subsequent writes can't open on Windows.
+ * `vault:create-folder` now runs the relative form of the supplied path through
+ * `assertSafeRelativePath`, which validates every segment with
+ * `assertSafeFilename`. Without this guard, a renderer (or future caller) could
+ * request `foo/CON/bar` and successfully create directories that subsequent
+ * writes can't open on Windows.
  *
  * Mirrors the per-segment guard in `vault:rename`'s
  * `assertSafeFilename(basename(newPath))` and the existing test
@@ -43,7 +43,7 @@ vi.mock('electron', () => ({
 const { registerVaultHandlers } = await import('../../main/ipc/vault.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 
-describe('vault:create-folder — per-segment reserved-name guard (polish 1.3)', () => {
+describe('vault:create-folder — per-segment reserved-name guard', () => {
   let vaultDir: string;
   let createFolderHandler: (...args: unknown[]) => Promise<unknown>;
   let errSpy: ReturnType<typeof vi.spyOn>;

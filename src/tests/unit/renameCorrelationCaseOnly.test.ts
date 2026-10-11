@@ -1,14 +1,13 @@
 /**
- * Phase A.2 — case-only rename on a case-insensitive filesystem.
+ * Case-only rename on a case-insensitive filesystem.
  *
- * Phase 31 B2.4 folded the bucket key on Win/macOS so `Notes.md` and
- * `notes.md` land in the same `byBase` bucket. But the partition into
- * `missing[]` vs `present[]` uses `relPathExists`, which on a
- * case-insensitive FS returns true for BOTH casings after the rename —
- * because `statSync('notes.md')` and `statSync('Notes.md')` both
- * succeed. So the strict `missing===1 && present===1` gate fails, no
- * synthetic rename emits, and every tile that referenced the file
- * shows a broken-ref badge.
+ * The bucket key is folded on Win/macOS so `Notes.md` and `notes.md` land in
+ * the same `byBase` bucket. But the partition into `missing[]` vs `present[]`
+ * uses `relPathExists`, which on a case-insensitive FS returns true for BOTH
+ * casings after the rename — because `statSync('notes.md')` and
+ * `statSync('Notes.md')` both succeed. So the strict
+ * `missing===1 && present===1` gate fails, no synthetic rename emits, and
+ * every tile that referenced the file shows a broken-ref badge.
  *
  * The fix adds a fallback inside the per-bucket loop: when the bucket
  * has exactly two same-type events whose full paths differ only by
@@ -46,7 +45,7 @@ function existsCaseInsensitive(...paths: string[]): (rel: string) => boolean {
   return (p) => set.has(p.toLowerCase());
 }
 
-describe('correlateRenames — case-only rename (Phase A.2)', () => {
+describe('correlateRenames — case-only rename', () => {
   it('case-insensitive FS pairs Notes.md ↔ notes.md when both watchers report present', async () => {
     // After `Notes.md` → `notes.md`, the OS fires events for BOTH
     // casings (Windows ReadDirectoryChangesW reports the OLD name as

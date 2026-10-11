@@ -1,11 +1,7 @@
 /**
- * Audit-15 Phase 4 — UI/UX LOW polish.
+ * Uniform "target no longer exists" toast for undo/redo.
  *
- * Phase 4 is mostly UI/markup polish (P4.1 tab-rename auto-focus, P4.2
- * EmojiPicker arrow nav, P4.3 timer end cue, P4.4 FileTile missing-file
- * badge) validated by svelte-check + manual GUI smoke. The one item that
- * changes command *behavior* is P4.5 — a uniform "target no longer exists"
- * toast for undo/redo. This suite locks the data-adjacent half of P4.5: the
+ * This suite locks the data-adjacent half of that toast: the
  * AddCardCommand silent-orphan regression (a redo into a deleted column used
  * to create the tile def with no placement and no feedback), plus the shared
  * toast helper's wording.
@@ -68,7 +64,7 @@ function toastsSince(before: number): string[] {
   return uiStore.toasts.slice(before).map((t) => t.text);
 }
 
-describe('Audit-15 Phase 4 — P4.5 uniform missing-target toast', () => {
+describe('uniform missing-target toast', () => {
   beforeEach(() => {
     // Start each test from an empty toast tray so slice(before) is exact.
     for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });

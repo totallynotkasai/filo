@@ -78,7 +78,7 @@ describe('parseRangeHeader', () => {
     expect(parseRangeHeader('  bytes=0-99  ', TOTAL)).toEqual({ start: 0, end: 99 });
   });
 
-  it('Audit-11 P1 — rejects every range form against a 0-byte file (→416)', () => {
+  it('rejects every range form against a 0-byte file (→416)', () => {
     // A 0-byte file has no satisfiable byte range. The suffix form is the
     // dangerous one: `bytes=-N` computed `end = totalSize - 1 = -1`, which would
     // emit a malformed 206 `Content-Range: bytes 0--1/0`. RFC 7233 → 416.

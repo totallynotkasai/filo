@@ -11,8 +11,8 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 afterEach(disposeTestSchedulers);
 
 /**
- * Audit-12 M2 — a board/config/misc write that exceeds `writeTimeoutMs` and is
- * marked failed, then LATER succeeds, must self-heal the phantom failed mark.
+ * A board/config/misc write that exceeds `writeTimeoutMs` and is marked failed,
+ * then LATER succeeds, must self-heal the phantom failed mark.
  *
  * On timeout, `fireWrite` stops awaiting and `markPathFailed`s the path so the
  * `.filo/.dirty` sentinel survives. But the underlying IPC keeps running — on a
@@ -27,7 +27,7 @@ afterEach(disposeTestSchedulers);
  * These exercise a `sentinelMode: 'full'` scheduler (the board/config/misc
  * shape — no trackComponentWrite) with a controllable deferred write.
  */
-describe('Audit-12 M2 — late success self-heals a timed-out failed mark', () => {
+describe('late success self-heals a timed-out failed mark', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     installFiloMock(() => ({ ok: true, success: true }));
@@ -93,13 +93,13 @@ describe('Audit-12 M2 — late success self-heals a timed-out failed mark', () =
   }, 3000);
 
   /**
-   * Audit-13 M3 — the late-success self-heal must NOT erase a NEWER, legitimate
-   * failure for the same path. A write that timed out (W1) keeps running; if a
-   * NEWER write (W2) for that path fails in the interim it records a fresh failed
-   * mark. When W1 finally lands, an UNCONDITIONAL clear-by-path (the M2 fix on its
-   * own) would wipe W2's mark and falsely report the path clean — masking real
-   * loss. The per-path write generation gates the heal: W1 only heals if it's
-   * still the newest write for its path.
+   * The late-success self-heal must NOT erase a NEWER, legitimate failure for
+   * the same path. A write that timed out (W1) keeps running; if a NEWER write
+   * (W2) for that path fails in the interim it records a fresh failed mark.
+   * When W1 finally lands, an UNCONDITIONAL clear-by-path (the late-success fix
+   * on its own) would wipe W2's mark and falsely report the path clean —
+   * masking real loss. The per-path write generation gates the heal: W1 only
+   * heals if it's still the newest write for its path.
    *
    * Bite: drop the generation guard (clear unconditionally) → the final
    * `hasFailedWrites()` assertion goes red.
@@ -141,7 +141,7 @@ describe('Audit-12 M2 — late success self-heals a timed-out failed mark', () =
     resolveW1?.();
     await new Promise((r) => setTimeout(r, 20));
 
-    // M3 — the failed mark survives: the path genuinely failed (W2), not clean.
+    // The failed mark survives: the path genuinely failed (W2), not clean.
     expect(hasFailedWrites()).toBe(true);
     expect(isPathPending('Same.md')).toBe(true);
   }, 3000);

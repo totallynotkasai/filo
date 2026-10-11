@@ -23,22 +23,22 @@ import type { ProjectSettings, WorkspaceState } from '@renderer/schema/index';
 afterEach(disposeTestSchedulers);
 
 /**
- * Audit-18 Phase 1 — the dogfood-unblock fix set (3 HIGH + 3 small MEDIUMs).
+ * Teardown, tags-load, failed-read, config re-stat and bulk-tag fixes.
  * Each describe block locks one fix's load-bearing behaviour. The component-
- * internal guards (H3 TextTile) are additionally pinned by
+ * internal guards (the TextTile failed-read guard) are additionally pinned by
  * `scripts/gates:no-silent-write-abort`; these tests lock the gateway /
  * primitive facts those guards depend on.
  */
 
-// ── H1 — teardown parked-write cancel (pendingOnly) ─────────────────────────
+// ── teardown parked-write cancel (pendingOnly) ──────────────────────────────
 //
 // onDestroy fires a fire-and-forget flush THEN a synchronous cancel. The plain
-// cancel marks a PARKED fire cancelled (Audit-16 4.4), so its closure bails and
+// cancel marks a PARKED fire cancelled, so its closure bails and
 // the freshest rows never write while the flush still resolves ok. `pendingOnly`
 // keeps the teardown cancel to an armed timer, so the flush-owned parked fire
 // still lands. Driven through the `createScheduler` primitive with a controllable
 // in-flight write so a real parked fire is constructed deterministically.
-describe('Audit-18 H1 — pendingOnly cancel preserves a flush-owned parked fire', () => {
+describe('pendingOnly cancel preserves a flush-owned parked fire', () => {
   interface Args { id: string }
 
   function makeScheduler(performed: string[], gate: Promise<void>) {
@@ -84,7 +84,7 @@ describe('Audit-18 H1 — pendingOnly cancel preserves a flush-owned parked fire
     expect(performed).toContain('w2'); // the freshest rows were NOT dropped
   });
 
-  it('counter-case: a NON-pendingOnly cancel drops the parked write (the H1 bug)', async () => {
+  it('counter-case: a NON-pendingOnly cancel drops the parked write (the original bug)', async () => {
     const performed: string[] = [];
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
@@ -102,8 +102,8 @@ describe('Audit-18 H1 — pendingOnly cancel preserves a flush-owned parked fire
   });
 });
 
-// ── H2 — corrupt tags.json load is read-only (never written back) ────────────
-describe('Audit-18 H2 — corrupt tags.json loads read-only', () => {
+// ── corrupt tags.json load is read-only (never written back) ─────────────────
+describe('corrupt tags.json loads read-only', () => {
   beforeEach(() => {
     restoreFiloDefault();
     fileTagsStore.reset();
@@ -161,14 +161,14 @@ describe('Audit-18 H2 — corrupt tags.json loads read-only', () => {
   });
 });
 
-// ── H3 — a note whose read failed is never written from an editor ────────────
+// ── a note whose read failed is never written from an editor ─────────────────
 //
 // The component side (TextTile / DocumentEditor frozen with a Retry banner) is
 // pinned by the component suite. These lock the note-store facts it rests on: a
 // NON-ENOENT read failure leaves the note `unreadable` and refuses editor
 // bodies, so an empty editor can't overwrite the unread file; a missing file
 // is `missing`, and a body typed there never recreates it.
-describe('Audit-18 H3 — a failed note read blocks editor writes', () => {
+describe('a failed note read blocks editor writes', () => {
   let vault: MemoryVault;
 
   beforeEach(() => {
@@ -224,8 +224,8 @@ describe('Audit-18 H3 — a failed note read blocks editor writes', () => {
   });
 });
 
-// ── M5 — config ENOENT re-stat is gated behind the grace delay ───────────────
-describe('Audit-18 M5 — config ENOENT re-stat grace delay', () => {
+// ── config ENOENT re-stat is gated behind the grace delay ────────────────────
+describe('config ENOENT re-stat grace delay', () => {
   const VAULT_ROOT = '/vault';
 
   function settings(mindmap: Record<string, unknown>): ProjectSettings {
@@ -283,13 +283,13 @@ describe('Audit-18 M5 — config ENOENT re-stat grace delay', () => {
 
     expect(defaultsStatCount).toBeGreaterThanOrEqual(2); // re-stat happened after the delay
     // The reappeared file drifted (foreign mtime+size) → abort, surfaced as a
-    // failure — NOT silently resolved as a clean success (the M5 bug).
+    // failure — NOT silently resolved as a clean success (the original bug).
     expect(result.failed).toContain('defaults.json');
   });
 });
 
-// ── M7 — bulk Add tag routes through the injected popup, not window.prompt ────
-describe('Audit-18 M7 — bulk Add tag uses the injected popup resolver', () => {
+// ── bulk Add tag routes through the injected popup, not window.prompt ─────────
+describe('bulk Add tag uses the injected popup resolver', () => {
   function makeMultiSelect(promptValue: string | null) {
     const tiles: Record<string, Tile> = {
       a: { id: 'a', type: 'text', filePath: 'A.md', title: 'A', tags: [] } as unknown as Tile,

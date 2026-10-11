@@ -3,7 +3,7 @@ import { vaultStore } from '@renderer/stores/vault.svelte';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Phase 6.0.C1 — `openVault` must close the previous vault on the main side
+ * `openVault` must close the previous vault on the main side
  * before invoking `vault:init-config` for the next.
  *
  * Mechanism: `vault:init-config` (board.ipc.ts:108) reads
@@ -77,7 +77,7 @@ function buildRoutes(calls: CallLog[], registry: RegistryState) {
   };
 }
 
-describe('Phase 6.0.C1 — openVault closes the previous vault before init-config', () => {
+describe('openVault closes the previous vault before init-config', () => {
   beforeEach(() => restoreFiloDefault());
   afterEach(() => restoreFiloDefault());
 

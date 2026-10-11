@@ -7,7 +7,7 @@ import { scanSyncConflicts, scanBoardFiles } from '../../main/vault/boardFileOps
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-19 ERR-3 / EXT-7 — duplicate board ids were resolved by scan order:
+ * Duplicate board ids were resolved by scan order:
  * the FIRST file in code-unit order won, and ' ' / '-' sort before '.', so
  * `Plan (1).board.json` or `Plan - Copy.board.json` hijacked the canonical
  * `Plan.board.json` (every later save went into the copy). The ranking is now
@@ -40,7 +40,7 @@ function installBoards(files: Record<string, { data: unknown; mtimeMs: number }>
   });
 }
 
-describe('duplicate board ids — tie-break (Audit-19 ERR-3)', () => {
+describe('duplicate board ids — tie-break', () => {
   afterEach(() => restoreFiloDefault());
 
   it('the canonical file beats a "(1)" copy that sorts first (bite)', async () => {
@@ -78,7 +78,7 @@ describe('duplicate board ids — tie-break (Audit-19 ERR-3)', () => {
     expect(msg).not.toMatch(/remove the copy|duplicate was/i);
   });
 
-  it("the loser's frames are not merged (Audit 1.2 contract)", async () => {
+  it("the loser's frames are not merged", async () => {
     installBoards({
       'Plan (1).board.json': { data: envelope('b1', 'Plan', 'loserFrame'), mtimeMs: 200 },
       'Plan.board.json': { data: envelope('b1', 'Plan', 'winnerFrame'), mtimeMs: 100 },
@@ -88,7 +88,7 @@ describe('duplicate board ids — tie-break (Audit-19 ERR-3)', () => {
   });
 });
 
-describe('board:list-conflicts scan (Audit-19 EXT-7)', () => {
+describe('board:list-conflicts scan', () => {
   let vault: string;
   beforeEach(async () => {
     vault = await fs.mkdtemp(join(tmpdir(), 'filo-board-conflicts-'));

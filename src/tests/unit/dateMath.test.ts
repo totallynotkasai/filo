@@ -8,7 +8,7 @@ function iso(d: Date): string {
   ).padStart(2, '0')}`;
 }
 
-describe('addMonthsClamped (Audit-8 L6)', () => {
+describe('addMonthsClamped', () => {
   it('preserves the day-of-month within a long-enough target month', () => {
     expect(iso(addMonthsClamped(new Date(2026, 4, 15), 1))).toBe('2026-06-15');
   });

@@ -6,7 +6,7 @@ import {
 } from '@renderer/lib/tasklist/indentGesture';
 
 /**
- * Phase 6 — indent/outdent gesture classification.
+ * Indent/outdent gesture classification.
  *
  * Two surface areas:
  *   1. `isHorizontalIndentGesture(dx, dy)` — pure threshold/ratio test.

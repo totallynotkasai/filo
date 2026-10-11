@@ -4,9 +4,9 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Audit-19 EXT-6 / ERR-8 — main side: machine identity in userData, ownership
- * enforcement in `assertNotInFiloDir`, and no config seeding into a `.filo/`
- * another machine created.
+ * Main side: machine identity in userData, ownership enforcement in
+ * `assertNotInFiloDir`, and no config seeding into a `.filo/` another
+ * machine created.
  */
 
 let userData = '';
@@ -82,7 +82,7 @@ describe('assertNotInFiloDir — per-machine sentinel ownership', () => {
   });
 });
 
-describe('initVaultConfig — ERR-8 seeding', () => {
+describe('initVaultConfig — config seeding', () => {
   let vault: string;
   beforeEach(async () => {
     vault = await fs.mkdtemp(join(tmpdir(), 'filo-init-'));

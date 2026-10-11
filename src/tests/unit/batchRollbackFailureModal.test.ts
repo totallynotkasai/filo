@@ -35,7 +35,7 @@ function makeCmd(description: string, opts: { exThrows?: boolean; undoThrows?: b
   return cmd;
 }
 
-describe('BatchCommand — D.5 rollback failure modal', () => {
+describe('BatchCommand — rollback failure modal', () => {
   beforeEach(() => {
     uiStore.closeConfirm();
     // Silence the reportError toast spam in stderr.
@@ -46,10 +46,9 @@ describe('BatchCommand — D.5 rollback failure modal', () => {
     vi.restoreAllMocks();
   });
 
-  // Polish phase 2.2 — `BatchCommand.execute()` / `undo()` are now async,
-  // so error propagation flows through Promise rejection rather than a
-  // sync throw. Test sites switch from `expect(() => ...).toThrow()` to
-  // `await expect(...).rejects.toThrow()`.
+  // `BatchCommand.execute()` / `undo()` are async, so error propagation
+  // flows through Promise rejection rather than a sync throw. Test sites use
+  // `await expect(...).rejects.toThrow()`, not `expect(() => ...).toThrow()`.
   it('opens a danger confirm modal when rollback children throw during execute()', async () => {
     const flakyUndo = makeCmd('flaky', { undoThrows: true });
     const fine = makeCmd('fine');

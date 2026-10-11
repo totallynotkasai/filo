@@ -1,5 +1,5 @@
 /**
- * Phase 3 / 3.2 — externalChangeRegistry unit tests.
+ * externalChangeRegistry unit tests.
  *
  * Pure dispatcher logic: register reconcilers, dispatch events, batched
  * dispatch. No store coordination — that's the integration concern of

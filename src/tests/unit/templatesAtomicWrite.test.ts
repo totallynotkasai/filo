@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Phase 4 / 4.3 — `templates:layout:write` must use `atomicWriteFile`
+ * `templates:layout:write` must use `atomicWriteFile`
  * so a crash mid-write doesn't leave the template file as half-written
  * JSON. The previous implementation called `fs.promises.writeFile`
  * directly, which is not crash-safe.
@@ -36,7 +36,7 @@ vi.mock('../../main/ipc/vault.ipc', () => ({
 const { registerTemplateHandlers } = await import('../../main/ipc/templates.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 
-describe('templates:layout:write — atomic write (Phase 4 / 4.3)', () => {
+describe('templates:layout:write — atomic write', () => {
   let vaultDir: string;
   let writeHandler: (...args: unknown[]) => unknown | Promise<unknown>;
   let errSpy: ReturnType<typeof vi.spyOn>;

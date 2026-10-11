@@ -16,7 +16,7 @@ import { TEST_MACHINE_IDENTITY } from '../helpers/testMachine';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-19 EXT-6 (plan D5) — `.filo/` syncs to every machine, and with ONE
+ * `.filo/` syncs to every machine, and with ONE
  * shared `.filo/.dirty` machine B's clean shutdown deleted machine A's crash
  * breadcrumb (A then never showed its recovery prompt) and B prompted for A's
  * unflushed files, whose data only exists on A. Sentinels are now per machine.
@@ -58,7 +58,7 @@ function installSharedFilo(files: Map<string, string>, calls: Array<{ channel: s
   });
 }
 
-describe('per-machine crash sentinels (Audit-19 EXT-6)', () => {
+describe('per-machine crash sentinels', () => {
   let files: Map<string, string>;
   let calls: Array<{ channel: string; rel: string }>;
 

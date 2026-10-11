@@ -13,7 +13,7 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { seedBoard } from '../helpers/seedBoard';
 
 /**
- * Phase 2 / 2.1 — when an attachment file (image/video/audio) is deleted
+ * When an attachment file (image/video/audio) is deleted
  * externally and at least one tile / cover image / frame background still
  * references it, the renderer must surface a confirm toast that routes
  * through the undoable cascade-delete command. Correlated renames are
@@ -177,9 +177,9 @@ describe('vaultExternalChanges — external attachment delete', () => {
     );
     expect(toast).toBeDefined();
 
-    // Invoke "Remove references". Audit-19 EXT-4 — it opens a danger confirm
-    // listing the boards; confirming re-probes `vault:file-exists` (3.8,
-    // Audit-18) — the mock keeps returning `false` (still gone) — then cascades.
+    // Invoke "Remove references". It opens a danger confirm listing the
+    // boards; confirming re-probes `vault:file-exists` — the mock keeps
+    // returning `false` (still gone) — then cascades.
     await toast?.actions?.[0].handler();
     expect(boardStore.getTile('t_img')).toBeDefined(); // nothing removed before confirm
     const dialog = uiStore.confirmDialog!;

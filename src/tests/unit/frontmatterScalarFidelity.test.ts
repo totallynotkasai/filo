@@ -5,19 +5,19 @@ import { valuesEqual } from '@renderer/lib/vault/frontmatterEngine';
 import { patchFrontmatterSourceCst } from '@renderer/lib/vault/frontmatterCstModel';
 
 /**
- * Audit-4 Phase 1 — frontmatter write-integrity (the js-yaml ↔ `yaml`-package
- * seam). Regression guards for DI-01, DI-01b, DI-02, DI-05.
+ * Frontmatter write-integrity regression guards (the js-yaml ↔ `yaml`-package
+ * seam).
  *
  * Root cause: Filo READ frontmatter with js-yaml's DEFAULT_SCHEMA (YAML 1.1 —
  * resolves `2026-06-01` → a JS `Date` and `<<: *a` → a merged map) but
  * RE-SERIALISES the disk baseline with the `yaml` package (YAML 1.2 core —
  * keeps them a `string` / a literal `<<`). The two libraries disagreed, so the
  * source-preserving engine thought unchanged keys "changed" and rewrote them —
- * corrupting unquoted dates to ISO timestamps (DI-01) and destroying merge
- * references (DI-05). Reading with CORE_SCHEMA aligns the two sides.
+ * corrupting unquoted dates to ISO timestamps and destroying merge
+ * references. Reading with CORE_SCHEMA aligns the two sides.
  */
 
-describe('DI-01 — unquoted YAML dates round-trip byte-identical', () => {
+describe('unquoted YAML dates round-trip byte-identical', () => {
   it('parseMarkdownFile reads an unquoted date as a string, not a Date', () => {
     const md = '---\ncreated: 2025-01-15\ndue: 2025-03-20\ntitle: Note\n---\nbody\n';
     const parsed = parseMarkdownFile(md);
@@ -64,7 +64,7 @@ describe('DI-01 — unquoted YAML dates round-trip byte-identical', () => {
   });
 });
 
-describe('DI-05 — YAML merge keys (`<<`) survive a tag op', () => {
+describe('YAML merge keys (`<<`) survive a tag op', () => {
   it('keeps the literal `<<` merge reference when adding a tag', () => {
     const md = '---\ndefaults: &d\n  color: red\nwidget:\n  <<: *d\n  size: big\ntags:\n  - foo\n---\nbody\n';
     const out = addTagToMarkdown(md, 'bar');
@@ -75,7 +75,7 @@ describe('DI-05 — YAML merge keys (`<<`) survive a tag op', () => {
   });
 });
 
-describe('DI-01b — valuesEqual / doc.set hardened against Date', () => {
+describe('valuesEqual / doc.set hardened against Date', () => {
   it('valuesEqual treats two different Dates as unequal (not both-empty-keys)', () => {
     // Object.keys(new Date()) === [] — the generic object branch would have
     // compared two different Dates as EQUAL (0 keys each). That would silently
@@ -96,7 +96,7 @@ describe('DI-01b — valuesEqual / doc.set hardened against Date', () => {
   });
 });
 
-describe('DI-02 — BOM `.md` does not get duplicate frontmatter on tag-add', () => {
+describe('BOM `.md` does not get duplicate frontmatter on tag-add', () => {
   const BOM = '﻿';
 
   it('addTagToMarkdown edits the existing block (one block, BOM preserved)', () => {

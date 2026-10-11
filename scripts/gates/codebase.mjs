@@ -436,7 +436,7 @@ export const checks = [
     id: 'characterisation-suite',
     title: 'the refactor characterisation suite stays in place, un-skipped and black-box',
     hint:
-      'Specs change only where the master plan lists an expected change. Drive the app through ' +
+      'Specs change only where a refactor intends a user-visible change. Drive the app through ' +
       `${CHARACTERISATION_DIR}/harness/ (update the harness when internals move), never through @renderer imports.`,
     run(ctx) {
       const out = [];

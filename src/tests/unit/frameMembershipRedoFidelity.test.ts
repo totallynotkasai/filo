@@ -8,16 +8,16 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard, Frame, Tile } from '@renderer/schema/index';
 
 /**
- * Audit 4.4 (REPRODUCE-FIRST) — claim: `MoveTilesCommand` / `UpdateFrameCommand`
- * redo re-derive frame membership GEOMETRICALLY while undo restores a snapshot,
- * so "if the user manually adjusted frame membership between the action and a
- * redo, redo can re-add a manually-excluded tile … redo isn't a faithful
- * replay." Rated LOW.
+ * Regression guard: `MoveTilesCommand` / `UpdateFrameCommand` redo re-derive
+ * frame membership GEOMETRICALLY while undo restores a snapshot, raising the
+ * worry that "if the user manually adjusted frame membership between the
+ * action and a redo, redo can re-add a manually-excluded tile … redo isn't a
+ * faithful replay."
  *
- * These tests run the plan's exact sequence (action → manual membership tweak →
+ * These tests run that exact sequence (action → manual membership tweak →
  * undo → redo) and assert redo reproduces the ORIGINAL action's membership.
  *
- * If they pass against unmodified code the lead is refuted: frame membership is
+ * Why it holds: frame membership is
  * purely geometric — `framesStore.updateContainment` / `syncTileMembership`
  * derive it from tile-centre-vs-frame-bounds (frames.svelte.ts), and EVERY drag
  * re-syncs — so there is no persistent "manual membership override" that
@@ -96,7 +96,7 @@ function makeTile(id: string, x: number, y: number): Tile {
   } as unknown as Tile;
 }
 
-describe('frame membership redo fidelity (audit 4.4)', () => {
+describe('frame membership redo fidelity', () => {
   beforeEach(() => {
     installEmptyFiloStub();
     vaultStore.setPath('/vault');

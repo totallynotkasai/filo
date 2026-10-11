@@ -9,9 +9,9 @@
  * The ops in this file are **pure-envelope transitions** that mirror what
  * the cache slices in `boardCacheTiles.ts`, `boardCacheKanban.ts`, and
  * `boardCacheTaskList.ts` would emit when behaving correctly. They are the
- * *invariant target* — a Phase 1+ refactor (notably Phase 2 / bug #2's
- * removeTile dispatch) MUST produce envelopes that pass this invariant.
- * Per-board-type entry-point coverage (the bug #2 capture) lives in
+ * *invariant target* — any refactor (notably of the removeTile dispatch)
+ * MUST produce envelopes that pass this invariant.
+ * Per-board-type entry-point coverage lives in
  * `deleteTileEntryPoints.test.ts` so the failure modes there can be
  * inspected one at a time.
  *
@@ -479,5 +479,5 @@ describe('Contract — no-orphan invariant under random ops', () => {
 export type { Op };
 
 // Silence the unused-import warning if we ever drop the import (kept around
-// because the Phase 2 / Phase 6 collapses may want to import the union).
+// because later refactors may want to import the union).
 void ({} as Board);

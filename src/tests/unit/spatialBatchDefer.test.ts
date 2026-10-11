@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { createSpatialScope, type SpatialScope } from '@renderer/stores/spatial.svelte';
 
 /**
- * Phase 7.7 — resize-driven spatial updates must not perturb the index
+ * Resize-driven spatial updates must not perturb the index
  * mid-batch (multi-tile drag). Smart-guide candidate collection reads the
  * index; a neighbour reflowing (image load, auto-height growth) would snap
  * the guides 1–5px. `updateOrDefer` holds the update until `endBatch`.
  */
-describe('SpatialScope batch resize deferral (Phase 7.7)', () => {
+describe('SpatialScope batch resize deferral', () => {
   let scope: SpatialScope;
 
   beforeEach(() => {

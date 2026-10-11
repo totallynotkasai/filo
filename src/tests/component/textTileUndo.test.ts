@@ -11,11 +11,11 @@ import {
 } from './helpers/mountEditor';
 
 /**
- * Audit-19 MD-1 — loading a file was recorded in ProseMirror's undo history, so
+ * Loading a file was recorded in ProseMirror's undo history, so
  * Ctrl+Z right after opening a note emptied it and autosave wrote `"\n"` over
  * the file. Driven through the real keymap on real mounted components.
  */
-describe('Ctrl+Z right after a load does not empty the note (MD-1)', () => {
+describe('Ctrl+Z right after a load does not empty the note', () => {
   beforeEach(() => resetEditorHarness());
   afterEach(() => teardownEditorHarness());
 

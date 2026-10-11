@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * Audit-10 M6 — `VisibleTilesViewModel.visibleTiles` was rewritten to map over
- * the culled `visibleTileIds` (O(on-screen)) instead of filtering every tile on
- * the board (O(total) per pan frame). These tests pin the observable contract
- * the refactor must preserve: correct viewport culling, frame-hidden exclusion,
- * and — critically — insertion-order stacking, so
- * overlapping tiles sharing the `--z-tile` z-index keep their DOM-order paint
- * order even though the spatial index returns ids in tree-traversal order.
+ * `VisibleTilesViewModel.visibleTiles` was rewritten to map over the culled
+ * `visibleTileIds` (O(on-screen)) instead of filtering every tile on the board
+ * (O(total) per pan frame). These tests pin the observable contract the
+ * refactor must preserve: correct viewport culling, frame-hidden exclusion, and
+ * — critically — insertion-order stacking, so overlapping tiles sharing the
+ * `--z-tile` z-index keep their DOM-order paint order even though the spatial
+ * index returns ids in tree-traversal order.
  *
  * `framesStore` is a facade over the active board scope; we mock it so the view
  * model can be exercised with plain mock deps and a controllable hidden set.
@@ -43,7 +43,7 @@ function makeViewModel(
   return new VisibleTilesViewModel(deps as never);
 }
 
-describe('VisibleTilesViewModel.visibleTiles (Audit-10 M6)', () => {
+describe('VisibleTilesViewModel.visibleTiles', () => {
   beforeEach(() => {
     mockHidden.clear();
   });

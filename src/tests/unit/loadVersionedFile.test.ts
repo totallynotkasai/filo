@@ -1,9 +1,8 @@
 /**
- * Phase 4 / E2 — `loadVersionedFile` is the single migrate-then-validate
- * path every versioned `.filo/` config loader routes through
- * (recurrence-proofs F6). These tests pin the four-way classification and
- * the migrate-before-parse ordering that a from-future file relies on to
- * avoid a silent downgrade.
+ * `loadVersionedFile` is the single migrate-then-validate path every versioned
+ * `.filo/` config loader routes through. These tests pin the four-way
+ * classification and the migrate-before-parse ordering that a from-future file
+ * relies on to avoid a silent downgrade.
  */
 
 import { describe, it, expect } from 'vitest';

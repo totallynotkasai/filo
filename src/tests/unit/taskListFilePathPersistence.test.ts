@@ -1,5 +1,5 @@
 /**
- * Audit-12 H1 — Task List creation must persist `filePath` onto the def BEFORE
+ * Task List creation must persist `filePath` onto the def BEFORE
  * `AddTaskCommand` deep-clones it.
  *
  * The bug: `AddTaskCommand`'s ctor deep-clones the def and `execute()` persists
@@ -75,7 +75,7 @@ function findTextDef(): (TileDefinition & { filePath?: string }) | undefined {
     | undefined;
 }
 
-describe('Audit-12 H1 — Task List creation persists filePath', () => {
+describe('Task List creation persists filePath', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     restoreFiloDefault();

@@ -1,5 +1,5 @@
 /**
- * Audit5 2.5 (#9) — Task List section commands must be delta-aware.
+ * Task List section commands must be delta-aware.
  *
  * `DeleteSectionCommand` and `ReorderSectionCommand` previously replayed a
  * construction-time snapshot of the WHOLE `tileDefs` / `tasks` / `sections`
@@ -85,7 +85,7 @@ function slice() {
   };
 }
 
-describe('Audit5 2.5 — DeleteSectionCommand (delta-aware)', () => {
+describe('DeleteSectionCommand (delta-aware)', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -174,7 +174,7 @@ describe('Audit5 2.5 — DeleteSectionCommand (delta-aware)', () => {
   });
 });
 
-describe('Audit5 2.5 — ReorderSectionCommand (delta-aware)', () => {
+describe('ReorderSectionCommand (delta-aware)', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -236,15 +236,15 @@ describe('Audit5 2.5 — ReorderSectionCommand (delta-aware)', () => {
 });
 
 /**
- * Audit-6 H1 — multi-slot section drag (3+ sections, 3+ positions changed).
+ * Multi-slot section drag (3+ sections, 3+ positions changed).
  *
- * The prior Audit5 adjacent-swap encoding only set idA/idB when EXACTLY two
+ * The prior adjacent-swap encoding only set idA/idB when EXACTLY two
  * positions changed, so a drag across 2+ slots left both empty → execute/undo
  * were silent no-ops and the section snapped back (the move wasn't undoable).
  * The general N-section reorder applies the captured order against the live
  * cache, so a move-first-to-last round-trips through execute → undo → redo.
  */
-describe('Audit-6 H1 — ReorderSectionCommand (general N-section reorder)', () => {
+describe('ReorderSectionCommand (general N-section reorder)', () => {
   /** Board: A@0 owns t1, B@1 owns t2, C@2 owns t3. */
   function make3SectionBoard(): BoardFileData {
     return {
@@ -337,7 +337,7 @@ describe('Audit-6 H1 — ReorderSectionCommand (general N-section reorder)', () 
   });
 });
 
-describe('SEC-2 — persistTaskListStructure clamps section positions into [0, taskCount]', () => {
+describe('persistTaskListStructure clamps section positions into [0, taskCount]', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -353,9 +353,9 @@ describe('SEC-2 — persistTaskListStructure clamps section positions into [0, t
   it('PINS trailing sections whose positions exceed taskCount AT taskCount (no position > taskCount)', () => {
     // 3 tasks exist; two sections store positions beyond taskCount (3). They
     // clamp to taskCount and PIN there as empty tail ties — they are NOT bumped
-    // to taskCount+1, taskCount+2 (the old L22 behavior, which emitted an
+    // to taskCount+1, taskCount+2 (the old behavior, which emitted an
     // invalid `position > taskCount` that can't index `tasks` and misroutes a
-    // later add — SEC-1/SEC-2). Sorted array order is preserved; the LAST tied
+    // later add). Sorted array order is preserved; the LAST tied
     // section owns any future tail slot via sectionIdForPlacementIndex.
     boardCacheStore.persistTaskListStructure('tl', [
       { id: 'x', title: 'X', position: 0, collapsed: false },
@@ -365,7 +365,7 @@ describe('SEC-2 — persistTaskListStructure clamps section positions into [0, t
     const secs = sections();
     expect(secs.map((s) => s.id)).toEqual(['x', 'y', 'z']);
     expect(secs.map((s) => s.position)).toEqual([0, 3, 3]);
-    // SEC-2 invariant: no position exceeds taskCount.
+    // Invariant: no position exceeds taskCount.
     for (const s of secs) expect(s.position).toBeLessThanOrEqual(3);
   });
 
@@ -379,7 +379,7 @@ describe('SEC-2 — persistTaskListStructure clamps section positions into [0, t
 });
 
 /**
- * Audit-16 2.2 — DeleteSectionCommand.undo re-inserts the restored marker at
+ * DeleteSectionCommand.undo re-inserts the restored marker at
  * its ORIGINAL array slot (anchored on the first surviving successor), not at
  * the end of the sections array.
  *
@@ -391,7 +391,7 @@ describe('SEC-2 — persistTaskListStructure clamps section positions into [0, t
  * the restored "empty" section — persisted to .board.json and compounding with
  * later add-to-section ops.
  */
-describe('Audit-16 2.2 — DeleteSectionCommand.undo restores a tied section\'s array slot', () => {
+describe('DeleteSectionCommand.undo restores a tied section\'s array slot', () => {
   /**
    * Board: A@0 owns t1,t2; E@2 EMPTY, tied with B@2 (E listed before B, so B —
    * last in array order — owns the slice [2, end) = t3).
@@ -454,7 +454,7 @@ describe('Audit-16 2.2 — DeleteSectionCommand.undo restores a tied section\'s 
     expect(sectionIdForPlacementIndex(board().sections ?? [], 2)).toBe('sec-B');
 
     cmd.undo();
-    // 2.2 — original array order restored: E back BEFORE its tied owner B, so
+    // Original array order restored: E back BEFORE its tied owner B, so
     // B still owns t3. Pre-fix the marker was appended last → [A, B, E] → the
     // restored "empty" E owned the slice and t3 silently re-homed into it.
     expect(rawSectionIds()).toEqual(['sec-A', 'sec-E', 'sec-B']);
@@ -489,10 +489,10 @@ describe('Audit-16 2.2 — DeleteSectionCommand.undo restores a tied section\'s 
 });
 
 /**
- * Audit-16 2.3 — persistAddTaskPlacement with a stale/missing targetSectionId
- * falls back to the numeric boundary shift.
+ * persistAddTaskPlacement with a stale/missing targetSectionId falls back to
+ * the numeric boundary shift.
  *
- * The SEC-1 rewrite resolves the target section by findIndex and bumps only
+ * It resolves the target section by findIndex and bumps only
  * sections AFTER it in array order — on a miss (the section was deleted
  * between capture and apply: an undo racing an external board reload, or a
  * quick-add aimed at a just-removed section) the condition was false for
@@ -500,7 +500,7 @@ describe('Audit-16 2.2 — DeleteSectionCommand.undo restores a tied section\'s 
  * section whose slice starts at/after the insert point ended up off by one,
  * transitively misrouting later adds.
  */
-describe('Audit-16 2.3 — persistAddTaskPlacement stale-targetSectionId fallback', () => {
+describe('persistAddTaskPlacement stale-targetSectionId fallback', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');
@@ -520,7 +520,7 @@ describe('Audit-16 2.3 — persistAddTaskPlacement stale-targetSectionId fallbac
       boardCacheStore.persistAddTaskPlacement('tl', textDef('t4', 'Task 4'), 1, undefined, 'sec-GONE');
 
       expect(taskIds()).toEqual(['t1', 't4', 't2', 't3']);
-      // 2.3 — B's boundary shifted with the insert (pre-fix it stayed at 2,
+      // B's boundary shifted with the insert (pre-fix it stayed at 2,
       // silently stealing t2 into B). A's start is before the insert: unchanged.
       const secs = sections();
       expect(secs.find((s) => s.id === 'sec-A')?.position).toBe(0);
@@ -540,7 +540,7 @@ describe('Audit-16 2.3 — persistAddTaskPlacement stale-targetSectionId fallbac
   });
 });
 
-describe('Audit-13 L8 — AddSectionCommand deep-clones the section (nested style)', () => {
+describe('AddSectionCommand deep-clones the section (nested style)', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     vaultStore.setPath('/vault');

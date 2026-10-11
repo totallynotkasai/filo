@@ -5,12 +5,11 @@ import { tmpdir } from 'os';
 import { loadConfig, isCorruptConfig } from '../../main/vault/configOps';
 
 /**
- * Phase 5 (P0-13) regression guard: `loadConfig` distinguishes the three
- * load outcomes — file missing (ENOENT), file present + parses, file
- * present + fails to parse. The corrupt sentinel is what the renderer
- * relies on to gate the debounced writer; if it ever silently dropped to
- * the bootstrap fallback again, the next save would clobber the user's
- * hand-edited file.
+ * Regression guard: `loadConfig` distinguishes the three load outcomes — file
+ * missing (ENOENT), file present + parses, file present + fails to parse. The
+ * corrupt sentinel is what the renderer relies on to gate the debounced writer;
+ * if it ever silently dropped to the bootstrap fallback again, the next save
+ * would clobber the user's hand-edited file.
  */
 describe('loadConfig', () => {
   let vaultRoot: string;
@@ -77,11 +76,11 @@ describe('loadConfig', () => {
   });
 
   /**
-   * Phase 23 M21 — transient lock windows (Windows Defender mid-scan,
-   * Dropbox indexer, antivirus) used to fall through to the catch-all
-   * corruption branch, permanently disabling the writer for that session
-   * even after the lock released. The retry gives one extra attempt after
-   * 500ms before classifying the failure.
+   * Transient lock windows (Windows Defender mid-scan, Dropbox indexer,
+   * antivirus) used to fall through to the catch-all corruption branch,
+   * permanently disabling the writer for that session even after the lock
+   * released. The retry gives one extra attempt after 500ms before classifying
+   * the failure.
    */
   it('retries the read once after EACCES before classifying as corrupt', async () => {
     // Simulate a transient EACCES via a monkey-patched fs.readFile.
@@ -117,8 +116,8 @@ describe('loadConfig', () => {
     const { promises: realFs } = await import('fs');
     const original = realFs.readFile;
     const filePath = join(vaultRoot, '.filo', 'app.json');
-    // Plant a real file so the Phase 8 / 8.1 pre-stat succeeds; the test is
-    // pinning EACCES on readFile specifically, not "file missing".
+    // Plant a real file so the pre-stat succeeds; the test is pinning EACCES on
+    // readFile specifically, not "file missing".
     await fs.writeFile(filePath, JSON.stringify({ globalFont: 'Inter' }), 'utf-8');
 
     (realFs as { readFile: typeof realFs.readFile }).readFile = (async (

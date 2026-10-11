@@ -5,9 +5,8 @@ import { tmpdir } from 'os';
 import { atomicWriteFile } from '../../main/vault/filenameUtils';
 
 /**
- * Phase 1 (P0-1) regression guard: `vault:write-file-text` now routes
- * through `atomicWriteFile`, so a crash mid-write can never leave a
- * partial file on disk. The contract:
+ * Regression guard: `vault:write-file-text` routes through `atomicWriteFile`,
+ * so a crash mid-write can never leave a partial file on disk. The contract:
  *
  *   1. The destination file is either fully old or fully new after the call.
  *   2. On success no `.tmp` sibling is left behind.
@@ -62,7 +61,7 @@ describe('atomicWriteFile', () => {
     expect(entries.some((name) => name.endsWith('.tmp'))).toBe(false);
   });
 
-  // Phase 31 B1.1 — Buffer overload regression. `media:save-audio` and the
+  // Buffer overload regression. `media:save-audio` and the
   // recovery-snapshot copy path now write binary data through this helper.
   // Confirm the bytes round-trip without UTF-8 mangling.
   it('writes Buffer payloads byte-identical', async () => {
@@ -75,13 +74,13 @@ describe('atomicWriteFile', () => {
     expect(entries).toEqual(['audio.bin']);
   });
 
-  // Polish phase 1.1 — EACCES joins ENOSPC/EIO/ENOMEM on the preserve-tmp
-  // branch. The retry loop exhausted EACCES attempts (antivirus / Dropbox
-  // briefly held the destination), but the tmp is intact on disk with the
-  // user's content; preserving it lets them recover after regaining
-  // permissions on the target. Without the preserve branch, the tmp gets
-  // unlink'd and the staged write is lost.
-  it('preserves the .tmp sibling on EACCES rename failure (polish 1.1)', async () => {
+  // EACCES joins ENOSPC/EIO/ENOMEM on the preserve-tmp branch. The retry loop
+  // exhausted EACCES attempts (antivirus / Dropbox briefly held the
+  // destination), but the tmp is intact on disk with the user's content;
+  // preserving it lets them recover after regaining permissions on the target.
+  // Without the preserve branch, the tmp gets unlink'd and the staged write is
+  // lost.
+  it('preserves the .tmp sibling on EACCES rename failure', async () => {
     const target = join(dir, 'note.md');
     // Pre-create the destination so a real read is possible; the spy
     // forces fs.rename to always throw EACCES so retry budget exhausts.
@@ -114,11 +113,11 @@ describe('atomicWriteFile', () => {
     await expect(fs.readFile(target, 'utf-8')).resolves.toBe('existing');
   });
 
-  // Polish phase 1.1 — when write/sync throws AND the close handle also
-  // throws, the original write/sync error must reach the caller. Without
-  // the inner try around fh.close(), the close-after-throw would replace
-  // the actionable diagnostic with a generic close failure.
-  it('surfaces the write error when both write and close throw (polish 1.1)', async () => {
+  // When write/sync throws AND the close handle also throws, the original
+  // write/sync error must reach the caller. Without the inner try around
+  // fh.close(), the close-after-throw would replace the actionable diagnostic
+  // with a generic close failure.
+  it('surfaces the write error when both write and close throw', async () => {
     const target = join(dir, 'note.md');
 
     const originalOpen = fs.open.bind(fs);
@@ -162,8 +161,8 @@ describe('atomicWriteFile', () => {
     expect((captured as Error).message).not.toContain('forced close failure');
   });
 
-  // Audit-7 L7 — `vault:write-existing-file-text` passes `expectExisting: true`
-  // so a dirty editor's debounce can't resurrect a file the user just deleted.
+  // `vault:write-existing-file-text` passes `expectExisting: true` so a dirty
+  // editor's debounce can't resurrect a file the user just deleted.
   // `fs.rename(tmp, dest)` creates `dest` unconditionally, so the guard
   // re-verifies existence immediately before the rename and aborts (ENOENT) if
   // it's gone — shrinking the stat-precheck→rename resurrection window.

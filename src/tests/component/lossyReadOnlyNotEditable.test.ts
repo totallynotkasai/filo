@@ -14,10 +14,10 @@ import {
 } from './helpers/mountEditor';
 
 /**
- * Audit-19 UX-1 / MD-7 — a note flagged lossy was "read-only" only in that it
- * refused to SAVE; the editor stayed editable, so typed text was silently
- * discarded (and a tab close found nothing pending). A lossy note is now truly
- * non-editable, toolbar commands included, until Take ownership.
+ * A note flagged lossy was "read-only" only in that it refused to SAVE; the
+ * editor stayed editable, so typed text was silently discarded (and a tab close
+ * found nothing pending). A lossy note is now truly non-editable, toolbar
+ * commands included, until Take ownership.
  */
 const LOSSY_NOTE = 'A paragraph with a <!-- a comment --> comment.\n';
 

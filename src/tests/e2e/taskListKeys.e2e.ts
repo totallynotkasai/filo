@@ -5,12 +5,12 @@ import path from 'node:path';
 import { freshVault, launchBuilt, listFiles, makeTemp, newBoard, quitLikeUser, removeTemp } from './helpers/app';
 
 /**
- * The Task List and Kanban from the keyboard and the mouse, in the built app
- * (Audit-28 Phase 4): on a list sorted by priority, the arrow keys and a
- * Shift-click range follow the rows on screen and a bulk Delete removes only
- * the highlighted rows; D opens the date picker on the task's day, the arrows
- * and Enter pick a day, and focus comes back to the row; a Kanban card's date
- * is picked in the same picker.
+ * The Task List and Kanban from the keyboard and the mouse, in the built app:
+ * on a list sorted by priority, the arrow keys and a Shift-click range follow
+ * the rows on screen and a bulk Delete removes only the highlighted rows; D
+ * opens the date picker on the task's day, the arrows and Enter pick a day, and
+ * focus comes back to the row; a Kanban card's date is picked in the same
+ * picker.
  */
 
 let root: string;

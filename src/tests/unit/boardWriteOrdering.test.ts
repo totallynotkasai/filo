@@ -7,10 +7,10 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 afterEach(disposeTestSchedulers);
 
 /**
- * Audit-13 H1 — board/config/misc writes can land out of order and silently
+ * Board/config/misc writes can land out of order and silently
  * clobber newer data on a slow / synced volume.
  *
- * The WC-3 / H4 "drain the older in-flight write before firing the newer one so
+ * The "drain the older in-flight write before firing the newer one so
  * the newest lands LAST" fix existed only on the `flush()` / `flushAll()` paths.
  * The common ACTIVE-EDITING path is the debounce TIMER, which just fired
  * `void fireWrite(...)` with no pre-drain. If a prior write for the same key was
@@ -27,7 +27,7 @@ afterEach(disposeTestSchedulers);
  * Bite: revert the timer-fire drain (`schedule`'s setTimeout fires
  * `fireFromTimer()` synchronously again) → "no overlap" + "freshest args" go red.
  */
-describe('Audit-13 H1 — timer-fire path serializes per key (newest write lands last)', () => {
+describe('timer-fire path serializes per key (newest write lands last)', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     // The scheduler's begin/endWrite drive markDirty/markClean (fire-and-forget

@@ -8,9 +8,9 @@ import {
 } from '@shared/conflictCopy';
 
 /**
- * Audit-19 C0 — table-driven coverage of the shared sync-conflict detector:
- * a positive row per documented client scheme (both `.md` and `.board*.json`)
- * and a negative corpus of names users genuinely pick.
+ * Table-driven coverage of the shared sync-conflict detector: a positive row
+ * per documented client scheme (both `.md` and `.board*.json`) and a negative
+ * corpus of names users genuinely pick.
  */
 
 const always = (): boolean => true;

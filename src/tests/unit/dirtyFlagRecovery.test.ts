@@ -43,11 +43,11 @@ function installIpcStub(): IpcStub {
 describe('dirtyFlagRecovery', () => {
   beforeEach(() => {
     installIpcStub();
-    // Audit-8 L3 — the per-session unreadable-sentinel dedupe is module state;
+    // The per-session unreadable-sentinel dedupe is module state;
     // reset it so each test starts fresh (and the per-test toast-count
     // assertions below stay accurate).
     __resetDirtyRecoveryDedupeForTests();
-    // Audit-16 3.3 — the generation-scoped suppression reads vaultIdentity
+    // The generation-scoped suppression reads vaultIdentity
     // module state; reset so a test's beginVaultGeneration doesn't bleed.
     __resetVaultIdentityForTests();
   });
@@ -77,7 +77,7 @@ describe('dirtyFlagRecovery', () => {
     await markClean('/vault');
     const del = stub.writes.find((w) => w.channel === 'vault:delete');
     expect(del).toBeDefined();
-    // Phase 25 L6 — vault:delete now takes (vaultRoot, itemPath).
+    // vault:delete takes (vaultRoot, itemPath).
     expect(del?.args[0]).toBe('/vault');
     expect(del?.args[1]).toBe('/vault/.filo/.dirty.a1b2c3d4e5f6');
   });
@@ -87,7 +87,7 @@ describe('dirtyFlagRecovery', () => {
     stub.responses.set('vault:delete', undefined);
     stub.invoke = async (channel, ..._args) => {
       stub.writes.push({ channel, args: _args });
-      // Phase 31 A1.6 — use the real Node ENOENT shape so the `.code === 'ENOENT'`
+      // Use the real Node ENOENT shape so the `.code === 'ENOENT'`
       // swallow branch in markClean matches; otherwise the error path surfaces
       // via reportError (which is correct production behaviour for non-ENOENT).
       const err = new Error('ENOENT: no such file');
@@ -178,11 +178,11 @@ describe('dirtyFlagRecovery', () => {
     expect(errors[0].context).toBe('dirtyFlag.check');
   });
 
-  // Audit-14 1.3 — a per-launch session id distinguishes a sentinel THIS
+  // A per-launch session id distinguishes a sentinel THIS
   // process wrote (e.g. a migration-repair write during open) from a genuine
   // prior-crash breadcrumb, so a legacy-vault open doesn't surface a spurious
   // Recovery modal.
-  it('markDirty stamps the current launchId (1.3)', async () => {
+  it('markDirty stamps the current launchId', async () => {
     const stub = installIpcStub();
     await markDirty('/vault', ['x.md']);
     const write = stub.writes.find((w) => w.channel === 'vault:write-file-text');
@@ -190,9 +190,9 @@ describe('dirtyFlagRecovery', () => {
     expect(body.launchId).toBe(__getLaunchIdForTests());
   });
 
-  it('checkRecovery SUPPRESSES a sentinel stamped by the current launch AND open (1.3 + 3.3)', async () => {
+  it('checkRecovery SUPPRESSES a sentinel stamped by the current launch AND open', async () => {
     const stub = installIpcStub();
-    // Audit-16 3.3 — suppression is now scoped to the vault OPEN, so the
+    // Suppression is scoped to the vault OPEN, so the
     // same-open sentinel carries the current vault generation too (exactly
     // what markDirty stamps for a migration-repair write during this open).
     stub.responses.set('vault:read-file-text', {
@@ -209,11 +209,11 @@ describe('dirtyFlagRecovery', () => {
     expect(status.needsRecovery).toBe(false);
   });
 
-  // Audit-16 3.3 — the launchId alone suppressed by PROCESS, swallowing the
+  // The launchId alone suppressed by PROCESS, swallowing the
   // breadcrumb the Don't-Save swap-away deliberately preserves: a same-session
   // reopen (A→B→A or close→reopen) never prompted, and the first clean write
   // cycle then destroyed the breadcrumb permanently.
-  it('markDirty stamps the current vault generation (3.3)', async () => {
+  it('markDirty stamps the current vault generation', async () => {
     const stub = installIpcStub();
     await markDirty('/vault', ['x.md']);
     const write = stub.writes.find((w) => w.channel === 'vault:write-file-text');
@@ -221,7 +221,7 @@ describe('dirtyFlagRecovery', () => {
     expect(body.vaultGeneration).toBe(currentVaultGeneration());
   });
 
-  it('checkRecovery PROMPTS for a same-launch sentinel preserved across a same-session reopen (3.3)', async () => {
+  it('checkRecovery PROMPTS for a same-launch sentinel preserved across a same-session reopen', async () => {
     const stub = installIpcStub();
     // The sentinel was written during an EARLIER open of this same process
     // (the Don't-Save branch preserved it), then the vault was reopened —
@@ -242,7 +242,7 @@ describe('dirtyFlagRecovery', () => {
     expect(status.pendingPaths).toEqual(['Notes.md']);
   });
 
-  it('checkRecovery PROMPTS for a same-launch sentinel with no generation stamp (3.3 back-compat)', async () => {
+  it('checkRecovery PROMPTS for a same-launch sentinel with no generation stamp (back-compat)', async () => {
     const stub = installIpcStub();
     stub.responses.set('vault:read-file-text', {
       success: true,
@@ -256,7 +256,7 @@ describe('dirtyFlagRecovery', () => {
     expect(status.needsRecovery).toBe(true);
   });
 
-  it('checkRecovery STILL prompts for a sentinel from a prior launch (1.3)', async () => {
+  it('checkRecovery STILL prompts for a sentinel from a prior launch', async () => {
     const stub = installIpcStub();
     stub.responses.set('vault:read-file-text', {
       success: true,
@@ -271,7 +271,7 @@ describe('dirtyFlagRecovery', () => {
     expect(status.pendingPaths).toEqual(['Notes.md']);
   });
 
-  it('checkRecovery prompts for a legacy sentinel with no launchId (1.3 back-compat)', async () => {
+  it('checkRecovery prompts for a legacy sentinel with no launchId (back-compat)', async () => {
     const stub = installIpcStub();
     stub.responses.set('vault:read-file-text', {
       success: true,
@@ -360,7 +360,7 @@ describe('dirtyFlagRecovery', () => {
     expect(errors[0].context).toBe('dirtyFlag.mark');
   });
 
-  it('markDirty surfaces envelope-failure ({ok:false}) via errorBus (A1.6)', async () => {
+  it('markDirty surfaces envelope-failure ({ok:false}) via errorBus', async () => {
     __resetErrorBusForTests();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const stub = installIpcStub();
@@ -374,7 +374,7 @@ describe('dirtyFlagRecovery', () => {
     expect(errors[0].context).toBe('dirtyFlag.mark');
   });
 
-  it('markClean surfaces non-ENOENT envelope-failure via errorBus (A1.6)', async () => {
+  it('markClean surfaces non-ENOENT envelope-failure via errorBus', async () => {
     __resetErrorBusForTests();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const stub = installIpcStub();
@@ -401,7 +401,7 @@ describe('dirtyFlagRecovery', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('checkRecovery fires recovery:snapshot on EACCES so the prior sentinel bytes survive the new session (A2.4)', async () => {
+  it('checkRecovery fires recovery:snapshot on EACCES so the prior sentinel bytes survive the new session', async () => {
     __resetErrorBusForTests();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const stub = installIpcStub();
@@ -425,18 +425,18 @@ describe('dirtyFlagRecovery', () => {
     expect(errors).toHaveLength(1);
   });
 
-  // 6.4.M5 — a zero-byte `.filo/.dirty.a1b2c3d4e5f6` is evidence of a crash mid-flush
+  // A zero-byte `.filo/.dirty.a1b2c3d4e5f6` is evidence of a crash mid-flush
   // (markDirty created the file but the JSON payload write didn't land).
   // The legacy code treated zero-byte as "cleanly absent", silently hiding
   // the crash from the user. Treat it as dirty with the sentinel-unreadable
   // reason flag so the recovery UI surfaces the same "investigate manually"
   // copy it shows for an EACCES read.
   //
-  // Audit-7 M4 — the `sentinel-unreadable` reason is gated OUT of the
+  // The `sentinel-unreadable` reason is gated OUT of the
   // recovery modal, so the zero-byte case must surface a toast (via
   // reportError) like the EACCES branch — otherwise the strongest
   // mid-write-crash signal reaches neither the modal nor any notification.
-  it('checkRecovery treats zero-byte .filo/.dirty as dirty AND surfaces a toast (M5/M4)', async () => {
+  it('checkRecovery treats zero-byte .filo/.dirty as dirty AND surfaces a toast', async () => {
     __resetErrorBusForTests();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const stub = installIpcStub();
@@ -463,7 +463,7 @@ describe('dirtyFlagRecovery', () => {
     expect(snap).toBeUndefined();
   });
 
-  // Audit-8 L3 — a read-only/locked share can't read OR clear the sentinel, so
+  // A read-only/locked share can't read OR clear the sentinel, so
   // the unreadable-sentinel toast must surface ONCE per vault per session, not
   // on every open. The status itself is unchanged on every call (still flags
   // recovery); only the repeat toast + snapshot are suppressed.

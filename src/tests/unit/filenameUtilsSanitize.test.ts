@@ -2,13 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { sanitizeFilename } from '../../main/vault/filenameUtils';
 
 /**
- * Audit2 5.5 — `sanitizeFilename` now strips trailing dots / spaces and
+ * `sanitizeFilename` strips trailing dots / spaces and
  * prefixes any Windows reserved device name with `_` so the sanitised
  * output clears `assertSafeFilename` instead of throwing downstream. The
  * `:` character is already stripped via the pre-existing ILLEGAL_CHARS
- * regex; 5.4 hardens `assertSafeFilename` itself for the same gap.
+ * regex; `assertSafeFilename` itself is hardened for the same gap.
  */
-describe('sanitizeFilename — trailing dots / spaces (5.5)', () => {
+describe('sanitizeFilename — trailing dots / spaces', () => {
   it('strips a single trailing dot', () => {
     expect(sanitizeFilename('Note.')).toBe('Note');
   });
@@ -32,7 +32,7 @@ describe('sanitizeFilename — trailing dots / spaces (5.5)', () => {
   });
 });
 
-describe('sanitizeFilename — Windows reserved device names (5.5)', () => {
+describe('sanitizeFilename — Windows reserved device names', () => {
   it('prefixes a bare reserved name', () => {
     expect(sanitizeFilename('CON')).toBe('_CON');
     expect(sanitizeFilename('NUL')).toBe('_NUL');

@@ -1,5 +1,5 @@
 /**
- * Phase 7 / 7.7 — ToggleFadeCommand: generic "fade these tiles" undoable.
+ * ToggleFadeCommand: generic "fade these tiles" undoable.
  *
  * The command snapshots each tile's prior `faded` flag so undo restores the
  * mixed state exactly even if the caller mixed already-faded and unfaded

@@ -1,6 +1,5 @@
 /**
- * Characterisation — the Task List and Kanban as the user works them, after
- * Audit-28 Phase 4:
+ * Characterisation — the Task List and Kanban as the user works them:
  *
  * - the keys, Tab and Shift-click follow the rows on screen, not the order in
  *   the file, so a bulk Delete removes only the rows shown highlighted;

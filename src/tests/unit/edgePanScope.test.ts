@@ -1,5 +1,5 @@
 /**
- * Audit 5.4 — edge-pan pans the captured pane scope, not the global facade.
+ * Edge-pan pans the captured pane scope, not the global facade.
  *
  * `edgePan` is a module singleton. It used to call the global `canvasStore`
  * facade, which routes to whichever pane is active AT TICK TIME. Connection
@@ -19,7 +19,7 @@ function mkScope(): CanvasScope {
   return { panBy: vi.fn() } as unknown as CanvasScope;
 }
 
-describe('Audit 5.4 — edge-pan routes to the scope passed to startEdgePan', () => {
+describe('edge-pan routes to the scope passed to startEdgePan', () => {
   let raf: FrameRequestCallback | null = null;
 
   beforeEach(() => {

@@ -6,23 +6,23 @@ import { fireVaultSwap } from '@renderer/core/vaultLifecycle';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-16 Phase 2 — undo/redo corruption (history-store half).
+ * Undo/redo corruption (history-store half).
  *
- * 2.1 `rollbackExecute` resolved the stack via `getActiveStack()` — the
- *     Audit-14 2.1 fix covered only undo()/redo(), so an async execute()
- *     body rejecting after a tab switch rolled back the WRONG board's stack
- *     (never-applied command left on the origin stack; a later Ctrl+Z
- *     replayed its inverse over state it never changed).
- * 2.4 `clearBoard` drops the closed board's OWN stack (and its commands on
- *     other stacks). Deleted files wait in Filo's trash, so this loses
- *     nothing and needs no warning toast.
- * 2.5 The pre-swap reset zeroed `chainInflightDepth` while a command body
- *     was still in flight; the body's settle handler then decremented the
- *     fresh counter to -1, permanently deferring every later command body
- *     to a microtask (silently inverting the "sync body runs synchronously"
- *     contract for the rest of the session).
+ * - `rollbackExecute` resolved the stack via `getActiveStack()` — the
+ *   earlier fix covered only undo()/redo(), so an async execute()
+ *   body rejecting after a tab switch rolled back the WRONG board's stack
+ *   (never-applied command left on the origin stack; a later Ctrl+Z
+ *   replayed its inverse over state it never changed).
+ * - `clearBoard` drops the closed board's OWN stack (and its commands on
+ *   other stacks). Deleted files wait in Filo's trash, so this loses
+ *   nothing and needs no warning toast.
+ * - The pre-swap reset zeroed `chainInflightDepth` while a command body
+ *   was still in flight; the body's settle handler then decremented the
+ *   fresh counter to -1, permanently deferring every later command body
+ *   to a microtask (silently inverting the "sync body runs synchronously"
+ *   contract for the rest of the session).
  *
- * (2.2 DeleteSectionCommand tied-sibling anchor and 2.3 stale-targetSectionId
+ * (The DeleteSectionCommand tied-sibling anchor and stale-targetSectionId
  * fallback live in sectionCommandsDelta.test.ts alongside the existing
  * section-command round-trips.)
  */
@@ -67,9 +67,9 @@ class DeferredExecuteCommand extends Command {
   undo(): void {}
 }
 
-// ── 2.1 — rejected async execute rolls back the ORIGIN board's stack ─────────
+// ── rejected async execute rolls back the ORIGIN board's stack ───────────────
 
-describe('Audit-16 2.1 — rollbackExecute resolves the origin board stack', () => {
+describe('rollbackExecute resolves the origin board stack', () => {
   let toastSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     historyStore.clear();
@@ -110,7 +110,7 @@ describe('Audit-16 2.1 — rollbackExecute resolves the origin board stack', () 
     cmd.rejectBody(new Error('execute boom'));
     await pending.catch(() => {});
 
-    // 2.1 — origin board A: the never-applied command was removed from its
+    // Origin board A: the never-applied command was removed from its
     // undo stack and the pre-execute redo stack was restored. (Under the
     // bug, A.undo still held cmd and A.redo stayed cleared.)
     historyStore.setActiveBoard('board-A');
@@ -124,9 +124,9 @@ describe('Audit-16 2.1 — rollbackExecute resolves the origin board stack', () 
   });
 });
 
-// ── 2.4 — clearBoard drops the closed board's history quietly ──────────────
+// ── clearBoard drops the closed board's history quietly ────────────────────
 
-describe('Audit-16 2.4 — clearBoard drops the closed board\x27s own stack', () => {
+describe('clearBoard drops the closed board\x27s own stack', () => {
   let toastSpy: MockInstance<typeof uiStore.toast>;
   beforeEach(() => {
     historyStore.clear();
@@ -167,9 +167,9 @@ describe('Audit-16 2.4 — clearBoard drops the closed board\x27s own stack', ()
   });
 });
 
-// ── 2.5 — pre-swap reset cannot be underflowed by a late settle ───────────────
+// ── pre-swap reset cannot be underflowed by a late settle ─────────────────────
 
-describe('Audit-16 2.5 — chainInflightDepth survives a Don\'t-Save swap with a body in flight', () => {
+describe('chainInflightDepth survives a Don\'t-Save swap with a body in flight', () => {
   beforeEach(() => {
     installFiloMock(() => null);
     historyStore.clear();

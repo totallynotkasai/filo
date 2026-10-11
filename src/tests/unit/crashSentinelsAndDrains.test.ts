@@ -29,44 +29,44 @@ import type { VaultContext } from '@renderer/stores/vaultStoreTypes';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-17 Phase 3 — lifecycle, vault-swap, and recovery correctness.
+ * Lifecycle, vault-swap, and recovery correctness.
  *
- *  3.1 A failed FIRST vault open left the main registry armed at the failed
- *      path (init-config only rolls back when initVaultConfig itself throws),
- *      and the failure-path `vault:close` fired only `if (outgoingVaultPath)`
- *      — null on a first open — so every OTHER vault failed init-config's
- *      "different vault already active" guard until restart.
- *  3.2 Open-time repair writes REPLACE a genuine prior-crash `.filo/.dirty.a1b2c3d4e5f6`
- *      payload (beginWrite → refreshSentinel → markDirty) before the recovery
- *      sequencer reads it; the Audit-16 3.3 self-write suppression then hid
- *      the crash entirely. Fix: the candidate phase reads + stashes the
- *      sentinel PRE-COMMIT and `checkRecovery` consumes the stash.
- *  3.3 Esc/X/backdrop on the Recovery modal bypassed `acknowledgeRecovery`,
- *      parking the recovery sequencer forever (steps 2–4 never ran). Fix:
- *      dismiss-is-acknowledge via the Modal's `beforeClose` in AppShell.
- *  3.4 `withDrainedWrites` treated CONCURRENT siblings as nested: a sibling
- *      arriving while the drain was in flight (parked up to ~60 s behind a
- *      board drift prompt) ran its disk-shape op with NO drain. Fix: siblings
- *      queue on the in-flight drain's promise.
- *  3.5 `vault:watch` re-armed the registry + started a watcher after two
- *      awaits with no re-assert — a `vault:close` / rapid swap completing
- *      inside the window was silently reversed. Fix: registry epoch captured
- *      before the awaits, re-checked after each.
- *  3.6 An external rename whose pre-cascade drain failed returned with no
- *      cascade AND no sentinel — the rename was never re-synthesised and
- *      `pruneOrphanFileTags` dropped the old path's vault-local attachment
- *      tags permanently. Fix: lay the rename-cascade sentinel before the
- *      early return.
- *  3.7 `writePendingRenameCascade` clobbered an UNREADABLE sentinel with a
- *      fresh single-entry file (`existing.entries ?? []`). Fix: refuse +
- *      preserve + throw.
- *  3.8 Recovery snapshots discarded the folder (`basename(rel)`): same-ms
- *      same-basename collisions kept one copy, and the per-basename pruner
- *      conflated unrelated same-named files across folders. Fix: flatten the
- *      rel path into the snapshot filename and key the prune on it.
+ *  - A failed FIRST vault open left the main registry armed at the failed
+ *    path (init-config only rolls back when initVaultConfig itself throws),
+ *    and the failure-path `vault:close` fired only `if (outgoingVaultPath)`
+ *    — null on a first open — so every OTHER vault failed init-config's
+ *    "different vault already active" guard until restart.
+ *  - Open-time repair writes REPLACE a genuine prior-crash `.filo/.dirty.a1b2c3d4e5f6`
+ *    payload (beginWrite → refreshSentinel → markDirty) before the recovery
+ *    sequencer reads it; the generation-scoped self-write suppression then
+ *    hid the crash entirely. Fix: the candidate phase reads + stashes the
+ *    sentinel PRE-COMMIT and `checkRecovery` consumes the stash.
+ *  - Esc/X/backdrop on the Recovery modal bypassed `acknowledgeRecovery`,
+ *    parking the recovery sequencer forever (steps 2–4 never ran). Fix:
+ *    dismiss-is-acknowledge via the Modal's `beforeClose` in AppShell.
+ *  - `withDrainedWrites` treated CONCURRENT siblings as nested: a sibling
+ *    arriving while the drain was in flight (parked up to ~60 s behind a
+ *    board drift prompt) ran its disk-shape op with NO drain. Fix: siblings
+ *    queue on the in-flight drain's promise.
+ *  - `vault:watch` re-armed the registry + started a watcher after two
+ *    awaits with no re-assert — a `vault:close` / rapid swap completing
+ *    inside the window was silently reversed. Fix: registry epoch captured
+ *    before the awaits, re-checked after each.
+ *  - An external rename whose pre-cascade drain failed returned with no
+ *    cascade AND no sentinel — the rename was never re-synthesised and
+ *    `pruneOrphanFileTags` dropped the old path's vault-local attachment
+ *    tags permanently. Fix: lay the rename-cascade sentinel before the
+ *    early return.
+ *  - `writePendingRenameCascade` clobbered an UNREADABLE sentinel with a
+ *    fresh single-entry file (`existing.entries ?? []`). Fix: refuse +
+ *    preserve + throw.
+ *  - Recovery snapshots discarded the folder (`basename(rel)`): same-ms
+ *    same-basename collisions kept one copy, and the per-basename pruner
+ *    conflated unrelated same-named files across folders. Fix: flatten the
+ *    rel path into the snapshot filename and key the prune on it.
  */
 
-// ── Main-side harness for 3.5 (mirrors vaultWatchRequiresActiveVault.test.ts) ──
+// ── Main-side harness for vault:watch (mirrors vaultWatchRequiresActiveVault.test.ts) ──
 
 const ipcHandlers = new Map<string, (...args: unknown[]) => unknown | Promise<unknown>>();
 
@@ -102,9 +102,9 @@ function dismissAllToasts(): void {
   for (const t of [...uiStore.toasts]) uiStore.dismissToast(t.id, { silent: true });
 }
 
-// ── 3.2 — pre-commit sentinel stash ──────────────────────────────────
+// ── pre-commit sentinel stash ────────────────────────────────────────
 
-describe('Audit-17 3.2 — pre-commit stash preserves the prior-crash sentinel payload', () => {
+describe('pre-commit stash preserves the prior-crash sentinel payload', () => {
   /** Simulated `.filo/.dirty.a1b2c3d4e5f6` bytes on disk; markDirty replaces them. */
   let dirtyContent: string | null;
 
@@ -199,9 +199,9 @@ describe('Audit-17 3.2 — pre-commit stash preserves the prior-crash sentinel p
   });
 });
 
-// ── 3.4 — concurrent withDrainedWrites siblings ───────────────────────
+// ── concurrent withDrainedWrites siblings ─────────────────────────────
 
-describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind the in-flight drain', () => {
+describe('concurrent withDrainedWrites siblings queue behind the in-flight drain', () => {
   beforeEach(() => {
     __resetDrainGuardForTests();
     __resetDirtyTrackingForTests();
@@ -226,7 +226,7 @@ describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind th
 
     installFiloMock({});
     // Park the drain: the misc flush awaits this gated write.
-    scheduleMiscWrite('audit17-3.4-slow', () => ({
+    scheduleMiscWrite('slow-write', () => ({
       vaultRoot: '/vault',
       path: '.filo/slow.json',
       write: async () => {
@@ -258,13 +258,13 @@ describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind th
     expect(events.indexOf('drain-write:end')).toBeLessThan(events.indexOf('op2'));
   });
 
-  it('Audit-18 5.3 — a sibling SHARES a failed drain verdict instead of re-draining (no hang, no per-sibling re-drain)', async () => {
+  it('a sibling SHARES a failed drain verdict instead of re-draining (no hang, no per-sibling re-drain)', async () => {
     const events: string[] = [];
     let releaseWrite: () => void = () => {};
     const writeGate = new Promise<void>((res) => { releaseWrite = res; });
 
     installFiloMock({});
-    scheduleMiscWrite('audit17-3.4-failing', () => ({
+    scheduleMiscWrite('failing-write', () => ({
       vaultRoot: '/vault',
       path: '.filo/failing.json',
       write: async () => {
@@ -282,7 +282,7 @@ describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind th
     });
 
     releaseWrite();
-    // Audit-18 5.3 — the outer drain fails; the sibling now SHARES that verdict
+    // The outer drain fails; the sibling now SHARES that verdict
     // and throws the same error rather than re-entering a fresh full drain (the
     // old `return withDrainedWrites(op)` ran one ~60 s drain per parked sibling
     // and re-toasted each time). Neither op runs — refusing a disk-shape op
@@ -296,9 +296,9 @@ describe('Audit-17 3.4 — concurrent withDrainedWrites siblings queue behind th
   });
 });
 
-// ── 3.7 — unreadable rename-cascade sentinel is preserved ─────────────
+// ── unreadable rename-cascade sentinel is preserved ───────────────────
 
-describe('Audit-17 3.7 — writePendingRenameCascade refuses to clobber an unreadable sentinel', () => {
+describe('writePendingRenameCascade refuses to clobber an unreadable sentinel', () => {
   const SENTINEL_REL = '.filo/rename-cascade-pending.a1b2c3d4e5f6.json';
   let sentinelWrites: string[];
   let sentinelContent: string | null;
@@ -369,9 +369,9 @@ describe('Audit-17 3.7 — writePendingRenameCascade refuses to clobber an unrea
   });
 });
 
-// ── 3.6 — drain failure during an external rename lays a breadcrumb ──
+// ── drain failure during an external rename lays a breadcrumb ────────
 
-describe('Audit-17 3.6 — external rename drain failure writes the rename-cascade sentinel', () => {
+describe('external rename drain failure writes the rename-cascade sentinel', () => {
   const SENTINEL_REL = '.filo/rename-cascade-pending.a1b2c3d4e5f6.json';
 
   function ctxFor(): VaultContext {
@@ -461,9 +461,9 @@ describe('Audit-17 3.6 — external rename drain failure writes the rename-casca
   });
 });
 
-// ── 3.5 — vault:watch TOCTOU epoch guard (main side) ─────────────────
+// ── vault:watch TOCTOU epoch guard (main side) ───────────────────────
 
-describe('Audit-17 3.5 — vault:watch bails when the registry changes under its awaits', () => {
+describe('vault:watch bails when the registry changes under its awaits', () => {
   type WatchResult = { success: boolean; code?: string; error?: string };
   let watchHandler: (...args: unknown[]) => Promise<WatchResult>;
   let vaultDir: string;
@@ -502,7 +502,7 @@ describe('Audit-17 3.5 — vault:watch bails when the registry changes under its
       if (!intercepted && typeof p === 'string' && p === vaultDir) {
         intercepted = true;
         // The registry mutation lands while the handler is parked on this
-        // await — exactly the TOCTOU window 3.5 closes.
+        // await — exactly the TOCTOU window the epoch guard closes.
         onIntercept();
       }
       return realStat(p as never);
@@ -543,9 +543,9 @@ describe('Audit-17 3.5 — vault:watch bails when the registry changes under its
   });
 });
 
-// ── 3.8 — recovery snapshot path flattening (main side, real fs) ─────
+// ── recovery snapshot path flattening (main side, real fs) ───────────
 
-describe('Audit-17 3.8 — recovery snapshots flatten the rel path into the filename', () => {
+describe('recovery snapshots flatten the rel path into the filename', () => {
   let vaultRoot: string;
 
   beforeEach(async () => {
@@ -636,9 +636,9 @@ describe('Audit-17 3.8 — recovery snapshots flatten the rel path into the file
   });
 });
 
-// ── 3.3 — dismiss-is-acknowledge wiring pin ──────────────────────────
+// ── dismiss-is-acknowledge wiring pin ────────────────────────────────
 
-describe('Audit-17 3.3 — every Recovery modal close path un-parks the sequencer', () => {
+describe('every Recovery modal close path un-parks the sequencer', () => {
   it('AppShell wires beforeClose → bypassRecoveryModalClose on the recovery-files Modal', async () => {
     const src = await fs.readFile(
       join(process.cwd(), 'src/renderer/components/layout/AppShell.svelte'),
@@ -648,11 +648,11 @@ describe('Audit-17 3.3 — every Recovery modal close path un-parks the sequence
     expect(idx).toBeGreaterThan(-1);
     // The Esc / X / backdrop close paths all route through Modal's
     // `beforeClose`; without this hook they bypass the recovery sequencer
-    // resolver and it parks forever (steps 2–4 never run). Audit-18 4.1
-    // NARROWED A17-3.3: a bypassed close un-parks the sequencer via
-    // `bypassRecoveryModalClose()` (which preserves the `.filo/.dirty.a1b2c3d4e5f6`
-    // sentinel) rather than `acknowledgeRecovery()` (which destroys it) —
-    // only the explicit Dismiss button acknowledges.
+    // resolver and it parks forever (steps 2–4 never run). A bypassed close
+    // un-parks the sequencer via `bypassRecoveryModalClose()` (which preserves
+    // the `.filo/.dirty.a1b2c3d4e5f6` sentinel) rather than
+    // `acknowledgeRecovery()` (which destroys it) — only the explicit Dismiss
+    // button acknowledges.
     const block = src.slice(idx, idx + 600);
     expect(block).toMatch(/beforeClose=/);
     expect(block).toMatch(/bypassRecoveryModalClose\(\)/);
@@ -661,10 +661,10 @@ describe('Audit-17 3.3 — every Recovery modal close path un-parks the sequence
   });
 });
 
-// ── 3.1 — failed FIRST open releases the registry (kept last: drives the
-//          full vaultStore.openVault transaction) ─────────────────────
+// ── failed FIRST open releases the registry (kept last: drives the
+//    full vaultStore.openVault transaction) ───────────────────────────
 
-describe('Audit-17 3.1 — a failed FIRST open does not lock out other vaults', () => {
+describe('a failed FIRST open does not lock out other vaults', () => {
   const VALID_TAGS_JSON = JSON.stringify({ version: 1, tags: {}, fileTags: {} });
 
   interface RegistryState { current: string | null; }

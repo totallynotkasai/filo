@@ -16,7 +16,7 @@ import { registerPathRenamable } from '@renderer/lib/vault/renamePathKeys';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * F3 (2026-05-28) — atomic rename cascade across `.filo/tags.json`.
+ * Atomic rename cascade across `.filo/tags.json`.
  *
  * The rename cascade awaits the board flush (`flushAllDirty`) but the tag
  * rename went through a DEBOUNCED misc-write. A crash after the boards landed
@@ -57,7 +57,7 @@ function ctxFor(): VaultContext {
   };
 }
 
-describe('rename cascade — synchronous tags.json flush (F3)', () => {
+describe('rename cascade — synchronous tags.json flush', () => {
   let tagsSaves: string[];
 
   beforeEach(async () => {
@@ -131,7 +131,7 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
     expect(latest.fileTags['old.md']).toBeUndefined();
   });
 
-  // 6.4.M19 — a flushPendingSave rejection must NOT abort the rest of the
+  // A flushPendingSave rejection must NOT abort the rest of the
   // cascade. (The realistic write-failure path resolves { ok:false } via the
   // scheduler's internal catch, so it never reaches here; this exercises the
   // narrow rejection path — getArgs throw / future regression — via a spy.)
@@ -170,18 +170,18 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
     ).resolves.toBeUndefined();
 
     expect(tagsFlushSpy).toHaveBeenCalled();
-    // M19 — the board cascade still flushed despite the tags-flush rejection.
+    // The board cascade still flushed despite the tags-flush rejection.
     expect(flushSpy).toHaveBeenCalled();
 
     flushSpy.mockRestore();
     tagsFlushSpy.mockRestore();
   });
 
-  // Audit-4 DI-17 — a tags-only rename (no board cascade) whose synchronous
+  // A tags-only rename (no board cascade) whose synchronous
   // tags flush FAILS must still leave a recovery breadcrumb. Without it the
   // hasCascadeWork early-return skips the sentinel and the failed tag rename is
-  // silently unrecoverable, contradicting the F3 catch's promise.
-  it('DI-17 — a failed tags-only flush writes a recovery sentinel (no silent loss)', async () => {
+  // silently unrecoverable, contradicting the tags-flush catch's promise.
+  it('a failed tags-only flush writes a recovery sentinel (no silent loss)', async () => {
     const sentinelWrites: string[] = [];
     installFiloMock((channel: string, ...args: unknown[]) => {
       if (channel === 'tags:load') return null;
@@ -251,9 +251,9 @@ describe('rename cascade — synchronous tags.json flush (F3)', () => {
     expect(payload.entries.at(-1)).toMatchObject({ oldPath: 'Old.md', newPath: 'New.md' });
   });
 
-  // Contrast: a SUCCESSFUL tags-only flush keeps the C-A5-4 skip — no sentinel
+  // Contrast: a SUCCESSFUL tags-only flush keeps the sentinel skip — no sentinel
   // noise when there's nothing to recover.
-  it('DI-17 — a successful tags-only flush writes NO sentinel', async () => {
+  it('a successful tags-only flush writes NO sentinel', async () => {
     const sentinelWrites: string[] = [];
     installFiloMock((channel: string, ...args: unknown[]) => {
       if (channel === 'tags:load') return null;

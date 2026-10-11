@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Audit 5.8 — `vault:init-config` arms the main-process registry
+ * `vault:init-config` arms the main-process registry
  * (`vaultRegistry.setCurrentVault(vaultRoot)`) BEFORE awaiting
  * `initVaultConfig`. If init throws (EACCES on a read-only mount, ENOSPC, a
  * flaky network share), the handler must ROLL the registry BACK; otherwise a
@@ -45,7 +45,7 @@ vi.mock('../../main/vault/configOps', async (importOriginal) => {
 const { registerBoardHandlers } = await import('../../main/ipc/board.ipc');
 const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 
-describe('vault:init-config — registry rollback on init failure (audit 5.8)', () => {
+describe('vault:init-config — registry rollback on init failure', () => {
   let vaultDir: string;
   let initHandler: (...args: unknown[]) => unknown | Promise<unknown>;
   let errSpy: ReturnType<typeof vi.spyOn>;

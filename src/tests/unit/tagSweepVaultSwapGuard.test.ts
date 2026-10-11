@@ -1,6 +1,6 @@
 /**
- * Audit-12 H3 — the vault-wide tag rename/remove sweep must NOT apply the
- * outgoing vault's tag operation to a vault swapped-in mid-flight.
+ * The vault-wide tag rename/remove sweep must NOT apply the outgoing vault's
+ * tag operation to a vault swapped-in mid-flight.
  *
  * The bug: `runTagRewriteSweep` read the LIVE `vaultStore.path` and the sweep is
  * long-running. A vault swap during it (or its survive-a-swap retry toast, whose
@@ -77,7 +77,7 @@ function seedVaultIndexWithTaggedFile(path: string, tag: string): void {
   vi.spyOn(vaultIndexStore, 'applyChanges').mockResolvedValue(undefined);
 }
 
-describe('Audit-12 H3 — vault-wide tag rename/remove swap guard', () => {
+describe('vault-wide tag rename/remove swap guard', () => {
   beforeEach(async () => {
     __resetVaultIdentityForTests();
     boardCacheStore.clear();

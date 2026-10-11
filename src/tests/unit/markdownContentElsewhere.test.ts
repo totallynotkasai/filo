@@ -37,12 +37,12 @@ import { TOOLBAR_CASES, applyToolbarCase } from '../helpers/toolbarCases';
  * to the end, which markdown-it as Filo sets it up doesn't do: words would
  * move for reasons that have nothing to do with what Filo writes. So this
  * check can't see what GitHub's linking of bare addresses does to an escape
- * inside one (BL-17).
+ * inside one.
  *
  * Where `*` and `~~` interleave, the parsers disagree in more than one way.
  * micromark pairs emphasis and strikethrough in separate passes, so it can
  * read a note differently from both markdown-it and GitHub (`*~~*a~~*`,
- * italic and struck over `*a`); and GitHub can differ from both (BL-18), which
+ * italic and struck over `*a`); and GitHub can differ from both, which
  * this check can't see. Check such a difference against GitHub before
  * treating it as Filo's.
  *
@@ -193,7 +193,7 @@ describe('known differences', () => {
     return editorMarkdown(ed);
   }
 
-  // BL-15: markdown-it strikes text through only between `~~`; GitHub also
+  // markdown-it strikes text through only between `~~`; GitHub also
   // takes a single `~` each side. Typed tildes are saved as typed, so GitHub
   // strikes "one" through.
   it('a pair of single tildes typed as text', () => {
@@ -203,7 +203,7 @@ describe('known differences', () => {
     expect(shown(micromarkHtml(saved)).text).toBe('a one b');
   });
 
-  // BL-16: a `~` typed right before struck text is saved bare, next to the
+  // A `~` typed right before struck text is saved bare, next to the
   // `~~` that opens the strikethrough. markdown-it takes the last two of the
   // three tildes as the opener; GitHub reads a run of three as text, so it
   // shows every tilde and strikes nothing. (A `~` inside the struck text is

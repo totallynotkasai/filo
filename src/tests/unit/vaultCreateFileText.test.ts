@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Audit-19 BL-1 — `vault:create-file-text` is CREATE-EXCLUSIVE. The seed paths
+ * `vault:create-file-text` is CREATE-EXCLUSIVE. The seed paths
  * (new Kanban card / task / Task-List OS drop) used `vault:write-file-text`
  * (create-or-OVERWRITE) and silently replaced an existing off-board file with the
  * same name. Real temp dir, real handler.
@@ -46,7 +46,7 @@ const { vaultRegistry } = await import('../../main/services/vaultRegistry');
 
 type Result = { success: boolean; code?: string; error?: string; path?: string };
 
-describe('vault:create-file-text (Audit-19 BL-1)', () => {
+describe('vault:create-file-text', () => {
   let vaultDir: string;
   let create: (root: string, rel: string, content: string) => Promise<Result>;
   let errSpy: ReturnType<typeof vi.spyOn>;
@@ -112,7 +112,7 @@ describe('vault:create-file-text (Audit-19 BL-1)', () => {
     expect((await create(vaultDir, 'Fresh.md', 'content')).success).toBe(true);
   });
 
-  it('accepts a name with an ellipsis (Audit-19 ERR-2)', async () => {
+  it('accepts a name with an ellipsis', async () => {
     const r = await create(vaultDir, 'Ideas... later.md', 'x');
     expect(r.success).toBe(true);
   });

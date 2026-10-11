@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 /**
- * Phase 3 / 3.1 — `FileWatcher.stop()` awaits any in-flight reconcile walk
+ * `FileWatcher.stop()` awaits any in-flight reconcile walk
  * and aborts further emits. Without this guarantee, swapping vaults while a
  * reconcile is mid-walk leaks `vault:files-changed` events from the OLD
  * vault into the NEW vault's listener (paths are the OS-relative ones the
@@ -41,7 +41,7 @@ vi.mock('electron', () => ({
 
 import { FileWatcher } from '../../main/services/fileWatcher';
 
-describe('FileWatcher.stop() — Phase 3 / 3.1', () => {
+describe('FileWatcher.stop()', () => {
   let dir: string;
   let watcher: FileWatcher;
 

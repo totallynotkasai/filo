@@ -1,5 +1,5 @@
 /**
- * Audit 3.1 — wheel-zoom / drag-pan route to the pane scope passed to
+ * Wheel-zoom / drag-pan route to the pane scope passed to
  * `viewportAction`, not the global `canvasStore` facade.
  *
  * `viewportAction` is attached per-pane but used to mutate through the global
@@ -20,7 +20,7 @@ function mkScope(): CanvasScope {
   return { panBy: vi.fn(), zoomBy: vi.fn() } as unknown as CanvasScope;
 }
 
-describe('Audit 3.1 — viewportAction routes to the scope it was given', () => {
+describe('viewportAction routes to the scope it was given', () => {
   it('wheel-zooms the passed pane scope and leaves other panes untouched', () => {
     const node = document.createElement('div');
     const paneA = mkScope();

@@ -65,7 +65,7 @@ describe('migrateBoardFile', () => {
     expect(out.fromFuture).toBe(true);
     expect(out.noMigrationPath).toBe(false);
     // Data left at its input version so the loader can surface the
-    // version number in its error message (Phase 23 / M14).
+    // version number in its error message.
     expect((out.data as { version?: unknown }).version).toBe(99);
     // Schema parse on the future-version output still fails because the
     // schema pins the current version literal — the loader's `fromFuture`
@@ -91,7 +91,7 @@ describe('migrateBoardFile', () => {
     expect(BoardFileDataSchema.safeParse(migration.data).success).toBe(false);
   });
 
-  it('Sprint C / C9 — returns noMigrationPath: true for an old version, not fromFuture', () => {
+  it('returns noMigrationPath: true for an old version, not fromFuture', () => {
     // `fromFuture` would misstate the cause; `noMigrationPath` lets the
     // loader surface a precise toast.
     const input = validBoardEnvelope(5);
@@ -102,7 +102,7 @@ describe('migrateBoardFile', () => {
     expect((out.data as { version?: unknown }).version).toBe(5);
   });
 
-  it('Sprint C / C10 — fractional version is routed to noMigrationPath', () => {
+  it('fractional version is routed to noMigrationPath', () => {
     const input = validBoardEnvelope(6.5);
     const out = migrateBoardFile(input);
     expect(out.migratedFrom).toBe(6.5);

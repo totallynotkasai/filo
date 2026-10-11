@@ -3,18 +3,18 @@ import { DatePickerViewState } from '@renderer/lib/tasklist/datePickerViewState.
 import { calendarCells, dateKeyMove, shiftDay, weekdayLabels, weekStartDay } from '@renderer/lib/tasklist/calendarGrid';
 
 /**
- * DATE-1 (Task List audit 2026-06-08, Phase 1) — the date picker's visible
- * month was pinned by a self-resetting `$effect`: it re-derived the seed from
- * `value` on every viewMonth/viewYear change and reset them, so the ‹/› arrows
- * could never reach another month. The reactive view-state is extracted here so
- * the regression is locked in without mounting the component.
+ * The date picker's visible month was pinned by a self-resetting `$effect`: it
+ * re-derived the seed from `value` on every viewMonth/viewYear change and reset
+ * them, so the ‹/› arrows could never reach another month. The reactive
+ * view-state is extracted here so the regression is locked in without mounting
+ * the component.
  *
  * The host calls `syncToValue(value)` from an `$effect` on every tick; the key
  * property is that a repeated call with the SAME value is a no-op that leaves
  * any navigation intact, while a CHANGED value re-seeds.
  */
 
-describe('DatePickerViewState — seed + navigation (DATE-1)', () => {
+describe('DatePickerViewState — seed + navigation', () => {
   it('seeds the visible month from an ISO value', () => {
     const v = new DatePickerViewState();
     v.syncToValue('2026-05-20');

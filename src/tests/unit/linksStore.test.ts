@@ -7,7 +7,7 @@ import { encodeFiloLink } from '@renderer/schema/link';
 import type { Project } from '@renderer/schema/index';
 
 /**
- * Audit-14 7.7 — `links.svelte.ts` had no dedicated test. Covers the filo://
+ * Dedicated coverage for `links.svelte.ts`. Covers the filo://
  * link dispatch: non-filo URLs are passed through to the external handler, a
  * board-nav link opens the target tab (happy path), and a board-nav to a missing
  * board surfaces an error toast instead of navigating to nothing (failure path).

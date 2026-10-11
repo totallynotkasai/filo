@@ -1,5 +1,5 @@
 /**
- * Phase B / B.3 — `loadBoard` must refuse to load when the recovery
+ * `loadBoard` must refuse to load when the recovery
  * snapshot IPC fails AND the board needs orphan-ref / duplicate prune.
  *
  * Previous behaviour: snapshot failure was logged and the loader
@@ -113,7 +113,7 @@ function makeCleanBoard(): BoardFileData {
   };
 }
 
-describe('loadBoard — snapshot-failure abort (Phase B.3)', () => {
+describe('loadBoard — snapshot-failure abort', () => {
   beforeEach(() => {
     uninstallFiloStub();
     __resetErrorBusForTests();
@@ -127,11 +127,8 @@ describe('loadBoard — snapshot-failure abort (Phase B.3)', () => {
     const file = makeBoardWithOrphanRef();
     // Real IPC contract — `recovery:snapshot` returns
     // `{ ok: true, path }` / `{ ok: false, code?, error }`, not a bare
-    // string. See `src/main/ipc/board.ipc.ts:360-371`. The pre-Phase-1
-    // production cast at `boardLoader.ts:452` is `as string`, which
-    // happens to coerce the success envelope into a truthy object so
-    // this test still passes — but the assertion does not look at the
-    // snapshotPath, only at the load outcome.
+    // string. See `src/main/ipc/board.ipc.ts:360-371`. The assertion does
+    // not look at the snapshotPath, only at the load outcome.
     installFiloStub({
       'board:load': () => structuredClone(file),
       'recovery:snapshot': () => ({ ok: true, path: '.filo/recovery/orphan.board.json' }),
@@ -167,8 +164,7 @@ describe('loadBoard — snapshot-failure abort (Phase B.3)', () => {
     }
   });
 
-  // CONSOLIDATION_PLAN_2026-05-25.md Phase 1 — bug #1 fixed.
-  // `boardLoader.ts` now consumes the recovery:snapshot envelope via
+  // `boardLoader.ts` consumes the recovery:snapshot envelope via
   // `invokeOk`. On `{ ok: false, ... }`, invokeOk throws
   // `IpcEnvelopeError`, the catch keeps `snapshotPath` null, and the
   // abort branch at `boardLoader.ts` returns `snapshot-failed` instead
@@ -191,10 +187,9 @@ describe('loadBoard — snapshot-failure abort (Phase B.3)', () => {
     }
   });
 
-  // CONSOLIDATION_PLAN_2026-05-25.md Phase 1 — bug #1 fixed.
   // `loadAllBoards` routes `{ ok: false, error: 'snapshot-failed' }`
-  // through `failedBoards[]` correctly now that `boardLoader.ts`
-  // surfaces the snapshot-failed error from invokeOk's catch.
+  // through `failedBoards[]` because `boardLoader.ts` surfaces the
+  // snapshot-failed error from invokeOk's catch.
   it('loadAllBoards surfaces a snapshot-failed entry through failedBoards[]', async () => {
     const file = makeBoardWithOrphanRef();
     installFiloStub({

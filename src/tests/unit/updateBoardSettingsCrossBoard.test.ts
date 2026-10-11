@@ -7,7 +7,7 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { MindMapBoard } from '@renderer/schema/index';
 
 /**
- * Audit2 2.4 — cross-board undo/redo of an UpdateBoardSettingsCommand must
+ * Cross-board undo/redo of an UpdateBoardSettingsCommand must
  * mutate the command's OWN board (`this.targetBoardId`), not whatever board
  * the global `boardStore` facade currently points at.
  *
@@ -53,7 +53,7 @@ function settingsOf(boardId: string): Record<string, unknown> {
   return (boardCacheStore.cache[boardId]?.board.settings ?? {}) as Record<string, unknown>;
 }
 
-describe('UpdateBoardSettingsCommand — board-targeted execute/undo (audit2 2.4)', () => {
+describe('UpdateBoardSettingsCommand — board-targeted execute/undo', () => {
   beforeEach(() => {
     boardCacheStore.clear();
     boardStore.clearBoard();
@@ -101,7 +101,7 @@ describe('UpdateBoardSettingsCommand — board-targeted execute/undo (audit2 2.4
     expect(settingsOf('boardA')).toMatchObject({ bg: 'A0' });
   });
 
-  it('surfaces a warning toast (not a silent no-op) when the target board was deleted (L10)', () => {
+  it('surfaces a warning toast (not a silent no-op) when the target board was deleted', () => {
     const cmd = new UpdateBoardSettingsCommand({ bg: 'B1' }, { bg: 'B0' }, [], undefined, 'boardB');
     cmd.execute();
     expect(settingsOf('boardB')).toMatchObject({ bg: 'B1' });

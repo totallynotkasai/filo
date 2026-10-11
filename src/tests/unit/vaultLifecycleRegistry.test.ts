@@ -9,7 +9,7 @@ import {
 } from '@renderer/core/vaultLifecycle';
 
 /**
- * Phase 4 (Consolidation 2026-05-25) — vault-lifecycle registry contract.
+ * Vault-lifecycle registry contract.
  *
  * The registry is the single subscription point for vault-swap reset. Tests
  * cover:

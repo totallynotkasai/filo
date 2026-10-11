@@ -5,10 +5,10 @@ import { ProjectSettingsSchema } from '@renderer/schema/settings';
 import type { Project } from '@renderer/schema/index';
 
 /**
- * Phase 1.2b — pin the visible-state contract for `applyGlobal()` on the
+ * Pins the visible-state contract for `applyGlobal()` on the
  * `kanban.backgroundPattern` selector.
  *
- * The audit hypothesised the project-settings pattern selector "doesn't
+ * The suspicion was that the project-settings pattern selector "doesn't
  * change anything" because the apply path might not propagate to
  * `vaultStore.project.settings`. The fix candidate was to clone
  * `project.settings` instead of mutating it — the existing code already

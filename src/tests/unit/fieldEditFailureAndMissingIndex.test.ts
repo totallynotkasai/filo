@@ -16,15 +16,15 @@ import { installMemoryVault, type MemoryVault } from '../helpers/memoryVault';
 import { restoreFiloDefault } from '../helpers/filoBridge';
 
 /**
- * Audit-9 Phase 2 — silent-error honesty:
- *   - A9-L2: a field edit whose write fails is reported as failed (the save
- *            and quit drains see it), never as a silent success.
- *   - A9-L3: a Task field edit on a note the vault index doesn't know yet
- *            still reaches disk, as an undoable command.
+ * Silent-error honesty:
+ *   - a field edit whose write fails is reported as failed (the save and quit
+ *     drains see it), never as a silent success.
+ *   - a Task field edit on a note the vault index doesn't know yet still
+ *     reaches disk, as an undoable command.
  */
 
-// ── A9-L2 — a failed field write is surfaced, not silent ──────────────────────
-describe('A9-L2 — a card field edit whose write fails is reported as failed', () => {
+// ── a failed field write is surfaced, not silent ──────────────────────────────
+describe('a card field edit whose write fails is reported as failed', () => {
   let vault: MemoryVault;
 
   beforeEach(() => {
@@ -74,8 +74,8 @@ describe('A9-L2 — a card field edit whose write fails is reported as failed', 
   });
 });
 
-// ── A9-L3 — a field edit on an un-indexed note still persists ─────────────────
-describe('A9-L3 — Task field edit on a note missing from the index reaches disk, undoably', () => {
+// ── a field edit on an un-indexed note still persists ─────────────────────────
+describe('Task field edit on a note missing from the index reaches disk, undoably', () => {
   let vault: MemoryVault;
 
   function makeWriter() {

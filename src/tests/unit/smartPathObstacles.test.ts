@@ -3,7 +3,7 @@ import { computePath } from '@renderer/lib/connections/pathRouter';
 import { SpatialIndex } from '@renderer/lib/spatialIndex';
 
 /**
- * Audit 5.6 — claim: `computeSmartPath` includes the connection's own
+ * Claim: `computeSmartPath` includes the connection's own
  * source/target tiles in the A* obstacle set, so the first/last segments graze
  * their own tiles, A* exhausts MAX_ITER, and the path falls back to a curve,
  * defeating obstacle avoidance.
@@ -16,7 +16,7 @@ import { SpatialIndex } from '@renderer/lib/spatialIndex';
 const isCurveFallback = (d: string): boolean => d.includes(' C ');
 const isPolyline = (d: string): boolean => d.includes(' L ');
 
-describe('smart path routing with source/target in the obstacle set (audit 5.6)', () => {
+describe('smart path routing with source/target in the obstacle set', () => {
   it('routes a clear direct path as a polyline (not a curve) with both tiles present', () => {
     const idx = new SpatialIndex();
     idx.insert('A', 0, 0, 100, 100); // source [0..100]

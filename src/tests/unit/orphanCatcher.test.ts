@@ -40,7 +40,7 @@ function asMap<T extends { id: string }>(items: T[]): Record<string, T> {
   return out;
 }
 
-// Audit 1.1 — at runtime a text tile's `content` is always '' (the body lives
+// At runtime a text tile's `content` is always '' (the body lives
 // in the .md / documentStore); the store passes findOrphans a resolver that
 // reads the real body. The fixtures stash a body on `content`, so this test
 // resolver feeds it back the same way.
@@ -117,7 +117,7 @@ describe('findOrphans', () => {
     expect(far.map((r) => r.tileId).sort()).toEqual(['a', 'b']);
   });
 
-  // ── Audit 1.1 regression ────────────────────────────────────────────────
+  // ── Resolved-body emptiness regression ──────────────────────────────────
   // Emptiness must be decided from the RESOLVED backing body, never from the
   // tile's own `content` field. At runtime `buildTileDefinition` hard-codes
   // text-tile `content: ''` (the body lives in the .md / documentStore), so

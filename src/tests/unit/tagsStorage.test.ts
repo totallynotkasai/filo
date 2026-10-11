@@ -28,13 +28,13 @@ import {
   type ReportedError,
 } from '@renderer/lib/utils/errorBus';
 
-// ── 1.5a ───────────────────────────────────────────────────────────────────
+// ── Tag-name input guard ───────────────────────────────────────────────────
 // Strict create/rename input guard. The frontmatter rewriter quotes scalars
-// (1.5b/1.6) so any name is SAFE on disk, but the user shouldn't be able to
+// so any name is SAFE on disk, but the user shouldn't be able to
 // MINT confusing tags (numbers, YAML keywords, leading indicator chars). This
 // is scoped to the input boundary only — `isValidTagName` stays lenient so
 // existing tags (e.g. a legacy numeric tag) are never disturbed.
-describe('isSafeNewTagName (1.5a — strict create/rename input guard)', () => {
+describe('isSafeNewTagName (strict create/rename input guard)', () => {
   it('accepts ordinary names (hierarchy, hyphens, mid-colon, on/yes/no)', () => {
     for (const name of [
       'project', 'todo', 'foo/bar', 'team/dev/lead', 'v2', '2024-q1', 'a:b', 'foo#bar', 'on', 'yes', 'no',
@@ -152,7 +152,7 @@ describe('tagsStorage — pure CRUD', () => {
     });
   });
 
-  // F6 (2026-05-28) — the version migrator was wired into the loader so a
+  // The version migrator is wired into the loader so a
   // from-future tags.json is detected (and surfaced read-only) instead of
   // being parsed + silently re-saved at the current version.
   describe('loadTagsFile — version migration', () => {
@@ -384,7 +384,7 @@ describe('tagsStorage — pure CRUD', () => {
     });
 
     /**
-     * Phase 1 / 1.5 — Windows OS file-watcher events frequently
+     * Windows OS file-watcher events frequently
      * round-trip path casing differently from the original write:
      * the user creates `Notes/Foo.md` from the app, but a later
      * filesystem-driven rename arrives as `notes/foo.md` because the
@@ -416,7 +416,7 @@ describe('tagsStorage — pure CRUD', () => {
   });
 
   describe('renameFolderInTags / dropFolderInTags', () => {
-    // Phase 1 / 1.5 — fileTags keys are canonicalised through
+    // fileTags keys are canonicalised through
     // `normalizeVaultRelative` (separator + lowercase), so an input of
     // `Old/a.md` is stored as `old/a.md`. Tests assert against the
     // canonical form.

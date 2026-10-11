@@ -1,5 +1,5 @@
 /**
- * Phase 1 / 1.1 — Project Settings unsaved-changes guard.
+ * Project Settings unsaved-changes guard.
  *
  * Two surfaces under test:
  *

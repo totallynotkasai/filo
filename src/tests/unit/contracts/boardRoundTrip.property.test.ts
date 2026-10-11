@@ -7,18 +7,17 @@
  * The envelope's `version` is required (no default), and a tile def keeps only
  * the fields the board owns.
  *
- * Mitigates the parity-risk from CONSOLIDATION_PLAN_2026-05-25.md Phase 0:
- * the factories below mirror `boardRegistry[type].createDefault(...)` in
+ * Guards board-creation parity: the factories below mirror
+ * `boardRegistry[type].createDefault(...)` in
  * `src/renderer/core/boardRegistry.ts` (lines 62-155). The registry itself
  * cannot be imported here because it eagerly pulls in the four Svelte board
  * components, which the vite-plugin-svelte preprocessor cannot handle inside
- * a vitest+jsdom environment. Phase 5 collapses every other in-app board-
- * creation site onto `boardRegistry.createDefault`; if THAT canonical shape
- * drifts from this contract, the property tests below catch the
- * regression.
+ * a vitest+jsdom environment. Every other in-app board-creation site collapses
+ * onto `boardRegistry.createDefault`; if THAT canonical shape drifts from
+ * this contract, the property tests below catch the regression.
  *
- * Phase-1+ collapses MUST keep this test green — any structural drift in
- * the on-disk file shape surfaces here as a property counterexample.
+ * Refactors MUST keep this test green — any structural drift in the on-disk
+ * file shape surfaces here as a property counterexample.
  */
 
 import { describe, it, expect } from 'vitest';

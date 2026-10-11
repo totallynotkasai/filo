@@ -5,14 +5,14 @@ import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import type { FileTreeNode } from '../../shared/types';
 
 /**
- * Audit5 2.2 (#5) — `vaultIndex.rebuild()` generation guard.
+ * `vaultIndex.rebuild()` generation guard.
  *
  * A fast A→B vault swap can start a second `rebuild()` while the first is still
  * awaiting its chunked reads. Both share the module-level `index` /
  * `isBuilding` / `buildCompleteResolvers`. Pre-fix, the OUTGOING rebuild's
  * `finally` flipped `isBuilding=false` and drained the INCOMING rebuild's
- * resolvers against a half-built index (re-opening 6.2.H3), and its in-flight
- * reads upserted stale-vault files into the new vault's index.
+ * resolvers against a half-built index, and its in-flight reads upserted
+ * stale-vault files into the new vault's index.
  *
  * These tests drive two overlapping rebuilds with GATED reads so the
  * interleaving is deterministic, and assert the stale generation:
@@ -24,7 +24,7 @@ function mdFile(name: string, root: string): FileTreeNode {
   return { name, path: `${root}/${name}`, isDirectory: false, extension: '.md' };
 }
 
-describe('Audit5 2.2 — vaultIndex.rebuild generation guard', () => {
+describe('vaultIndex.rebuild generation guard', () => {
   afterEach(() => {
     restoreFiloDefault();
     vaultIndexStore.clear();

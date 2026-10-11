@@ -15,20 +15,19 @@ import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
 import type { TaskListBoard, TileDefinition } from '@renderer/schema/index';
 
 /**
- * Audit-14 Phase 7 — test & CI safety-net.
+ * Test & CI safety-net.
  *
- * 7.1 — quit-with-pending-write + crash-recovery (the highest-consequence flow):
- *       an edit arms a write, the app is killed before it lands, and on relaunch
- *       the `.filo/.dirty.a1b2c3d4e5f6` recovery sentinel must still name the unsaved path.
- *       This is the cadence-independent integration counterpart to the
- *       (nightly-only) kill+relaunch E2E.
+ * Quit-with-pending-write + crash-recovery (the highest-consequence flow): an
+ * edit arms a write, the app is killed before it lands, and on relaunch the
+ * `.filo/.dirty.a1b2c3d4e5f6` recovery sentinel must still name the unsaved
+ * path. This is the cadence-independent integration counterpart to the
+ * (nightly-only) kill+relaunch E2E.
  *
- * 7.3 — DeleteTaskCommand.undo reconciles a Document still open on the restored
- *       task `.md` (the task twin of the 2.3 DeleteTilesCommand fix). The note
- *       comes back from Filo's trash and the note store re-reads it, so every
- *       open view of the note follows the restored file — otherwise a Document
- *       open on a second pane keeps showing it as missing, and its next save
- *       could invert the restore.
+ * DeleteTaskCommand.undo reconciles a Document still open on the restored task
+ * `.md` (the task twin of the DeleteTilesCommand fix). The note comes back from
+ * Filo's trash and the note store re-reads it, so every open view of the note
+ * follows the restored file — otherwise a Document open on a second pane keeps
+ * showing it as missing, and its next save could invert the restore.
  */
 
 function makeTaskListWithTask(boardId: string, tileId: string, filePath: string): BoardFileData {
@@ -66,7 +65,7 @@ function makeTaskListWithTask(boardId: string, tileId: string, filePath: string)
   };
 }
 
-describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () => {
+describe('DeleteTaskCommand.undo reconciles open editors', () => {
   beforeEach(() => {
     __resetDirtyTrackingForTests();
     noteStore.__resetForTests();
@@ -130,17 +129,17 @@ describe('Audit-14 7.3 — DeleteTaskCommand.undo reconciles open editors', () =
   });
 });
 
-// ── 7.1 — quit-with-pending-write keeps the recovery breadcrumb ──────────────
+// ── quit-with-pending-write keeps the recovery breadcrumb ────────────────────
 
 /**
  * Ties the REAL write lifecycle (`trackComponentWrite` → `beginWrite` →
  * `markDirty`) to the REAL recovery read (`checkRecovery`) through a `.filo/.dirty.a1b2c3d4e5f6`
  * sentinel persisted on a mock "disk", so a hard quit mid-write leaves a
  * breadcrumb naming the unsaved path rather than losing the edit silently. This
- * is the unit/integration version the plan asks for explicitly because the full
- * kill+relaunch E2E runs only on the nightly cadence.
+ * is the unit/integration version, needed because the full kill+relaunch E2E
+ * runs only on the nightly cadence.
  */
-describe('Audit-14 7.1 — quit-with-pending-write recovery breadcrumb', () => {
+describe('quit-with-pending-write recovery breadcrumb', () => {
   function installSentinelDisk(): { sentinel: string | null } {
     // A mock disk that persists ONLY the `.filo/.dirty.a1b2c3d4e5f6` sentinel across the
     // "relaunch" (write captures it, read serves it, delete clears it).
@@ -160,7 +159,7 @@ describe('Audit-14 7.1 — quit-with-pending-write recovery breadcrumb', () => {
         disk.sentinel = null;
         return { success: true };
       }
-      // Any other read (e.g. the Audit-19 legacy `.filo/.dirty` fallback) is absent.
+      // Any other read (e.g. the legacy `.filo/.dirty` fallback) is absent.
       if (channel === 'vault:read-file-text') return { success: false, code: 'ENOENT' };
       return { success: true };
     });
@@ -210,7 +209,7 @@ describe('Audit-14 7.1 — quit-with-pending-write recovery breadcrumb', () => {
     // Relaunch = a NEW process: the surviving sentinel was written by the
     // (now-crashed) PRIOR launch, so stamp it with a prior launchId —
     // checkRecovery deliberately SUPPRESSES a sentinel from the CURRENT launch
-    // (the 1.3 false-positive guard), which a same-process read would otherwise hit.
+    // (the false-positive guard), which a same-process read would otherwise hit.
     const payload = JSON.parse(disk.sentinel as string);
     payload.launchId = 'prior-crashed-session';
     disk.sentinel = JSON.stringify(payload);

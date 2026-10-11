@@ -41,9 +41,9 @@ const EOL_CHECKS = [
   {
     file: 'src/tests/unit/assembleMarkdownEngine.test.ts',
     required: [
-      { token: /single-line frontmatter eol \(A8-M1\)/, why: 'the single-line-frontmatter CRLF behavioural matrix exists' },
+      { token: /single-line frontmatter eol'/, why: 'the single-line-frontmatter CRLF behavioural matrix exists' },
       { token: /eol:\s*'\\r\\n'/, why: 'a row drives the gateway-threaded CRLF eol' },
-      { token: /CRLF body \(A19-MD10\)/, why: 'the CRLF-body behavioural matrix exists' },
+      { token: /— CRLF body'/, why: 'the CRLF-body behavioural matrix exists' },
     ],
   },
   {

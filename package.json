@@ -2,6 +2,7 @@
   "name": "filo",
   "version": "0.2.9",
   "description": "A Personal Knowledge Management desktop application with infinite canvas mind mapping",
+  "license": "MIT",
   "private": true,
   "main": "dist/main/main.js",
   "scripts": {

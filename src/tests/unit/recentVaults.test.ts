@@ -21,6 +21,7 @@ const {
   loadRecentVaults,
   loadPreferences,
   setOpenLastVaultOnLaunch,
+  setDevToolsEnabled,
   addRecentVault,
   removeRecentVault,
   pinRecentVault,
@@ -43,7 +44,7 @@ async function seed(data: unknown): Promise<void> {
   await fs.writeFile(filePath(), typeof data === 'string' ? data : JSON.stringify(data));
 }
 
-async function onDisk(): Promise<{ vaults: SeedVault[]; preferences: { openLastVaultOnLaunch: boolean } }> {
+async function onDisk(): Promise<{ vaults: SeedVault[]; preferences: { openLastVaultOnLaunch: boolean; devToolsEnabled?: boolean } }> {
   return JSON.parse(await fs.readFile(filePath(), 'utf-8'));
 }
 
@@ -63,21 +64,21 @@ afterEach(async () => {
 describe('reading recent-vaults.json', () => {
   it('a first launch (no file) reads as an empty list with the default preference, and logs nothing', async () => {
     expect(await loadRecentVaults()).toEqual([]);
-    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: true });
+    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: true, devToolsEnabled: false });
     expect(errSpy).not.toHaveBeenCalled();
   });
 
   it('reads the older bare-array format as the vault list', async () => {
     await seed([{ path: '/a', name: 'A', lastOpened: 1 }]);
     expect(await loadRecentVaults()).toEqual([{ path: '/a', name: 'A', lastOpened: 1 }]);
-    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: true });
+    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: true, devToolsEnabled: false });
   });
 
   it('merges stored preferences over the defaults', async () => {
     await seed({ vaults: [], preferences: { openLastVaultOnLaunch: false } });
-    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: false });
+    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: false, devToolsEnabled: false });
     await seed({ vaults: [] });
-    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: true });
+    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: true, devToolsEnabled: false });
   });
 
   it('treats a non-array `vaults` field as empty', async () => {
@@ -95,7 +96,7 @@ describe('reading recent-vaults.json', () => {
   it('a JSON scalar reads as empty', async () => {
     await seed('42');
     expect(await loadRecentVaults()).toEqual([]);
-    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: true });
+    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: true, devToolsEnabled: false });
   });
 });
 
@@ -220,18 +221,46 @@ describe('setOpenLastVaultOnLaunch', () => {
 
     await setOpenLastVaultOnLaunch(false);
 
-    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: false });
+    expect(await loadPreferences()).toEqual({ openLastVaultOnLaunch: false, devToolsEnabled: false });
     expect((await loadRecentVaults()).map((v) => v.path)).toEqual(['/a']);
   });
 
   it('creates the file on a first launch', async () => {
     await setOpenLastVaultOnLaunch(false);
-    expect(await onDisk()).toEqual({ vaults: [], preferences: { openLastVaultOnLaunch: false } });
+    expect(await onDisk()).toEqual({ vaults: [], preferences: { openLastVaultOnLaunch: false, devToolsEnabled: false } });
   });
 
   it('writes atomically: no temp file is left beside it', async () => {
     await setOpenLastVaultOnLaunch(true);
     const names = await fs.readdir(userDataDir);
     expect(names).toEqual(['recent-vaults.json']);
+  });
+});
+
+describe('setDevToolsEnabled', () => {
+  it('is off until the user turns it on', async () => {
+    expect((await loadPreferences()).devToolsEnabled).toBe(false);
+    await seed({ vaults: [], preferences: { openLastVaultOnLaunch: true } });
+    expect((await loadPreferences()).devToolsEnabled).toBe(false);
+  });
+
+  it('saves the switch and keeps the other preference and the vault list', async () => {
+    await seed({ vaults: [{ path: '/a', name: 'A', lastOpened: 1 }], preferences: { openLastVaultOnLaunch: false } });
+
+    await setDevToolsEnabled(true);
+
+    expect(await onDisk()).toEqual({
+      vaults: [{ path: '/a', name: 'A', lastOpened: 1 }],
+      preferences: { openLastVaultOnLaunch: false, devToolsEnabled: true },
+    });
+    await setDevToolsEnabled(false);
+    expect((await loadPreferences()).devToolsEnabled).toBe(false);
+  });
+
+  it('reads anything but a real true as off', async () => {
+    for (const value of ['true', 1, 'yes', null]) {
+      await seed({ vaults: [], preferences: { devToolsEnabled: value } });
+      expect((await loadPreferences()).devToolsEnabled).toBe(false);
+    }
   });
 });

@@ -34,6 +34,27 @@ describe('uiStore — toast aggregation helpers', () => {
     expect(uiStore.toasts.find((t) => t.id === b)?.text).toBe('B-updated');
     expect(uiStore.toasts.find((t) => t.id === c)?.text).toBe('C');
   });
+
+  it('a button that keeps the toast open runs and leaves the toast, with its other buttons', () => {
+    const copied = vi.fn();
+    const retried = vi.fn();
+    const id = uiStore.pushToast({
+      text: 'An unexpected error occurred.',
+      type: 'error',
+      duration: 0,
+      actions: [
+        { label: 'Retry', handler: retried },
+        { label: 'Copy details', handler: copied, keepOpen: true },
+      ],
+    });
+    uiStore.invokeToastAction(id, 1);
+    expect(copied).toHaveBeenCalledTimes(1);
+    expect(uiStore.toasts.find((t) => t.id === id)?.actions?.map((a) => a.label)).toEqual(['Retry', 'Copy details']);
+
+    uiStore.invokeToastAction(id, 0);
+    expect(retried).toHaveBeenCalledTimes(1);
+    expect(uiStore.toasts.find((t) => t.id === id)).toBeUndefined();
+  });
 });
 
 /**

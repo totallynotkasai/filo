@@ -26,6 +26,7 @@ import { installPermissionHandlers } from './utils/permissionPolicy';
 import { SYSTEM_LOCALE_ARG } from '../shared/systemLocale';
 import { textMenuItems, type TextMenuItem } from './utils/textMenu';
 import { createTextMenuQuery } from './services/textMenuQuery';
+import { devToolsEnabled, isDevToolsShortcut, loadDevToolsPreference, toggleDevTools } from './services/devTools';
 
 // Must run before `app.whenReady`. Registers the `filo://` URL scheme as a
 // privileged standard scheme so the renderer can load vault-local media
@@ -221,6 +222,7 @@ function installContentSecurityPolicy(): void {
 async function createWindow(): Promise<void> {
   const icon = resolveWindowIcon();
   const savedState = await loadWindowState();
+  await loadDevToolsPreference();
   mainWindow = new BrowserWindow({
     x: savedState.x,
     y: savedState.y,
@@ -439,29 +441,22 @@ async function createWindow(): Promise<void> {
     }
   });
 
-  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+  // A dev run (`npm run dev`) opens DevTools at once. Gated on `app.isPackaged`
+  // (belt-and-braces with ELECTRON_RENDERER_URL) so an env-injected production
+  // build cannot force them open.
+  const devRun = !app.isPackaged && Boolean(process.env.ELECTRON_RENDERER_URL);
+  // The application menu is disabled, so Chromium's own Ctrl+Shift+I does
+  // nothing: the keys are handled here. Outside a dev run they work only once
+  // the user has turned General → Developer tools on (services/devTools.ts).
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (!isDevToolsShortcut(input) || !mainWindow) return;
+    if (!devRun && !devToolsEnabled()) return;
+    event.preventDefault();
+    toggleDevTools(mainWindow.webContents);
+  });
+  if (devRun && process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
-    // Dev only: auto-open DevTools so the renderer can be inspected. Gated
-    // on `app.isPackaged` (belt-and-braces with ELECTRON_RENDERER_URL) so an
-    // env-injected production build cannot force DevTools open. The
-    // application menu is disabled (so the default Ctrl+Shift+I accelerator
-    // does nothing); registering an explicit shortcut here keeps DevTools
-    // toggleable without adding a visible menu bar.
     mainWindow.webContents.openDevTools({ mode: 'detach' });
-    mainWindow.webContents.on('before-input-event', (_e, input) => {
-      const isToggleDevtools =
-        input.type === 'keyDown' &&
-        input.key.toLowerCase() === 'i' &&
-        input.control &&
-        input.shift;
-      if (isToggleDevtools) {
-        if (mainWindow?.webContents.isDevToolsOpened()) {
-          mainWindow.webContents.closeDevTools();
-        } else {
-          mainWindow?.webContents.openDevTools({ mode: 'detach' });
-        }
-      }
-    });
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }

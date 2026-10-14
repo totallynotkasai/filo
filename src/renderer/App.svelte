@@ -11,6 +11,7 @@
   } from './lib/boards/boardSaver';
   import { onError, reportError } from './lib/utils/errorBus';
   import { createErrorToastAggregator } from './lib/utils/errorToastAggregator';
+  import { copyErrorDetails } from './lib/utils/errorDetails';
   import { buildWriteErrorToast } from './lib/boards/writeErrorToast';
   import { settleBoardFailureToasts, trackBoardFailureToast } from './lib/boards/writeFailureToasts';
   import { retryAllFailedWrites } from './lib/boards/writeSchedulerFailures';
@@ -75,7 +76,7 @@
       updateToastText: (id, text) => uiStore.updateToastText(id, text),
       updateToastActions: (id, actions) => uiStore.updateToastActions(id, actions),
     },
-    { details: () => saveStateStore.requestDetails() },
+    { details: () => saveStateStore.requestDetails(), copyDetails: (reports) => copyErrorDetails(reports) },
   );
   setBoardWriteErrorListener((info) => {
     const { context, message, coalesceKey, retryable } = buildWriteErrorToast(info);
@@ -141,14 +142,15 @@
   // single toast with a count badge so bulk failures don't spam the
   // stack. See `createErrorToastAggregator` for the policy.
   // Readable: a context is an id, so the toast shows the message (or a label),
-  // and a report about another file opens its own toast.
+  // and a report about another file opens its own toast. Copy details hands
+  // over the error's own text, which the toast leaves out.
   onError(
     createErrorToastAggregator(
       {
         pushToast: (opts) => uiStore.pushToast(opts),
         updateToastText: (id, text) => uiStore.updateToastText(id, text),
       },
-      { readable: true },
+      { readable: true, copyDetails: (reports) => copyErrorDetails(reports) },
     ),
   );
 

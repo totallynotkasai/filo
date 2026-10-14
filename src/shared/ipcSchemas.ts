@@ -152,6 +152,9 @@ export const IPC_PAYLOAD_SCHEMAS = {
     z.tuple([nonEmptyString, z.array(nonEmptyString).min(1).max(10_000), z.boolean()]),
   ]),
   'app:machine-identity': z.tuple([]),
+  'app:get-dev-tools': z.tuple([]),
+  'app:set-dev-tools': z.tuple([z.boolean()]),
+  'app:open-dev-tools': z.tuple([]),
   'vault:convert-to-utf8': z.tuple([nonEmptyString, nonEmptyString]),
   'vault:sweep-orphan-tmp': z.tuple([nonEmptyString]),
   // (vaultRoot, vault-relative path).

@@ -319,6 +319,21 @@ export interface IpcChannelMap {
     args: [];
     result: { machineId: string; hostname: string };
   };
+  // General → Developer tools: kept per machine in userData/recent-vaults.json.
+  'app:get-dev-tools': {
+    args: [];
+    result: { enabled: boolean };
+  };
+  // Off also closes developer tools left open.
+  'app:set-dev-tools': {
+    args: [enabled: boolean];
+    result: IpcSuccess;
+  };
+  // Refused (FORBIDDEN) while the switch is off.
+  'app:open-dev-tools': {
+    args: [];
+    result: IpcSuccess;
+  };
   // The only rewrite of a non-UTF-8 note (backs up first).
   'vault:convert-to-utf8': {
     args: [vaultRoot: string, relPath: string];

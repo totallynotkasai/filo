@@ -97,6 +97,46 @@
     }
   }
 
+  // "Developer tools": per machine too, kept by main (it decides whether
+  // Ctrl+Shift+I / F12 open them), so like the toggle above it saves at once.
+  let devToolsOn = $state(false);
+
+  $effect(() => {
+    void loadDevToolsPreference();
+  });
+
+  async function loadDevToolsPreference(): Promise<void> {
+    try {
+      devToolsOn = (await window.filo.invoke('app:get-dev-tools')).enabled;
+    } catch {
+      devToolsOn = false;
+    }
+  }
+
+  async function toggleDevTools(): Promise<void> {
+    const next = !devToolsOn;
+    devToolsOn = next;
+    try {
+      const result = await window.filo.invoke('app:set-dev-tools', next);
+      if (!result.success) {
+        devToolsOn = !next;
+        uiStore.toast("Couldn't save the Developer tools setting.", 'error');
+      }
+    } catch {
+      devToolsOn = !next;
+      uiStore.toast("Couldn't save the Developer tools setting.", 'error');
+    }
+  }
+
+  async function openDevTools(): Promise<void> {
+    try {
+      const result = await window.filo.invoke('app:open-dev-tools');
+      if (!result.success) uiStore.toast("Couldn't open the developer tools.", 'error');
+    } catch {
+      uiStore.toast("Couldn't open the developer tools.", 'error');
+    }
+  }
+
   async function loadSystemFonts() {
     loadingFonts = true;
     try {
@@ -541,6 +581,34 @@
       </div>
     {/each}
   </div>
+
+  <div class="setting-divider"></div>
+
+  <!-- Developer tools: per machine, like "Open last vault on launch". The
+       installed app keeps no log, so an error's full text is read in their
+       console. -->
+  <div class="setting-row">
+    <div class="setting-label-stack">
+      <span class="setting-label">Developer tools</span>
+      <span class="setting-hint">For tracking down a problem. When on, Ctrl+Shift+I or F12 opens Chromium's developer tools in a window of their own, where the Console shows the full text of any error. Applies to this computer only.</span>
+      {#if devToolsOn}
+        <button class="btn-secondary dev-tools-open" type="button" onclick={openDevTools}>Open developer tools</button>
+      {/if}
+    </div>
+    <button
+      class="toggle-btn"
+      class:active={devToolsOn}
+      onclick={toggleDevTools}
+      role="switch"
+      aria-checked={devToolsOn}
+      aria-label="Developer tools"
+    >
+      <span class="toggle-track">
+        <span class="toggle-thumb"></span>
+      </span>
+      <span class="toggle-label">{devToolsOn ? 'On' : 'Off'}</span>
+    </button>
+  </div>
 </div>
 
 <style>
@@ -720,8 +788,13 @@
     font-size: 11px;
     line-height: 1.4;
   }
-  .apply-defaults-btn {
+  .apply-defaults-btn,
+  .dev-tools-open {
     align-self: flex-start;
+  }
+
+  .dev-tools-open {
+    margin-top: 4px;
   }
 
   .toggle-btn {

@@ -75,6 +75,10 @@ export type IpcChannel =
   | 'recovery:delete'
   // This machine id (userData) and hostname
   | 'app:machine-identity'
+  // General → Developer tools (per machine, userData): the switch and its button
+  | 'app:get-dev-tools'
+  | 'app:set-dev-tools'
+  | 'app:open-dev-tools'
   // Rewrite a Windows-1252 note as UTF-8 after backing up the original
   | 'vault:convert-to-utf8'
   // Move orphaned atomic-write temps into .filo/recovery/orphan-tmp

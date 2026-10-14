@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { freshVault, launchBuilt, makeTemp, openNoteByName, quitLikeUser, removeTemp } from './helpers/app';
+import { freshVault, launchBuilt, makeTemp, openNoteByName, quitLikeUser, removeTemp, withClipboardKept } from './helpers/app';
 import type { LaunchedApp } from './helpers/app';
 
 /**
@@ -124,28 +124,7 @@ test('at laptop widths the note clears the sidebar and every formatting control 
 
 // This case uses the machine's real clipboard: what it held is put back after.
 test('a link copied from the sidebar pastes into a note as a link to that note, which opens it', async () => {
-  const { app } = launched;
-  await app.evaluate(async ({ clipboard }) => {
-    (globalThis as unknown as { __clip: unknown }).__clip = await clipboard.read();
-  });
-  try {
-    await pasteCopiedLink();
-  } finally {
-    await app.evaluate(async ({ clipboard, ClipboardItem }) => {
-      const saved = (globalThis as unknown as { __clip: Parameters<typeof clipboard.write>[0] }).__clip;
-      // An item read can't be written back as it is: each is rebuilt from its parts.
-      const items = await Promise.all(saved.map(async (item) => {
-        const parts: Record<string, Blob> = {};
-        for (const type of item.types) {
-          const part = await item.getType(type);
-          if (part instanceof Blob) parts[type] = part;
-        }
-        return new ClipboardItem(parts);
-      }));
-      if (items.length > 0) await clipboard.write(items);
-      else clipboard.clear();
-    });
-  }
+  await withClipboardKept(launched.app, pasteCopiedLink);
 });
 
 async function pasteCopiedLink(): Promise<void> {

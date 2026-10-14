@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createErrorToastAggregator, type AggregatorToastApi } from '@renderer/lib/utils/errorToastAggregator';
+import {
+  createErrorToastAggregator,
+  MAX_DETAILED_REPORTS,
+  type AggregatorToastApi,
+  type ToastButton,
+} from '@renderer/lib/utils/errorToastAggregator';
+import type { TimedReport } from '@renderer/lib/utils/errorDetails';
 
 interface FakeToast {
   id: string;
@@ -188,5 +194,92 @@ describe('createErrorToastAggregator — several files in one toast', () => {
     aggregate({ context: 'Board save failed', error: new Error('x'), message: 'again', path: 'Plan.board.json', actions: [openA] });
     expect(toasts[0].text).toBe('Board save failed (2×): again');
     expect(actions.get(toasts[0].id)).toEqual(['Open A']);
+  });
+});
+
+describe('Copy details', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function apiWithButtons() {
+    const { api, toasts } = makeFakeApi();
+    const buttons = new Map<string, ToastButton[]>();
+    const push = api.pushToast.bind(api);
+    api.pushToast = (opts) => {
+      const id = push(opts);
+      buttons.set(id, opts.actions ?? []);
+      return id;
+    };
+    api.updateToastActions = (id, next) => {
+      buttons.set(id, next);
+      return true;
+    };
+    const press = async (id: string, label: string): Promise<void> => {
+      const button = buttons.get(id)?.find((b) => b.label === label);
+      if (!button) throw new Error(`no ${label} button`);
+      await button.handler();
+    };
+    return { api, toasts, buttons, press };
+  }
+
+  it('every toast gets one, last, and it keeps the toast open', () => {
+    const { api, toasts, buttons } = apiWithButtons();
+    const aggregate = createErrorToastAggregator(api, { readable: true, copyDetails: vi.fn() });
+    aggregate({ context: 'window.onerror', error: new Error('boom'), message: 'An unexpected error occurred.', sharedActions: [{ label: 'Retry', handler: () => undefined }] });
+    const own = buttons.get(toasts[0].id) ?? [];
+    expect(own.map((b) => b.label)).toEqual(['Retry', 'Copy details']);
+    expect(own[1].keepOpen).toBe(true);
+  });
+
+  it('is left out without a copier', () => {
+    const { api, toasts, buttons } = apiWithButtons();
+    createErrorToastAggregator(api, { readable: true })({ context: 'x', error: new Error('boom') });
+    expect(buttons.get(toasts[0].id)).toEqual([]);
+  });
+
+  it("hands over every report the toast stands for, with the error's own text, even after its window closed", async () => {
+    const { api, toasts, press } = apiWithButtons();
+    const copyDetails = vi.fn();
+    const aggregate = createErrorToastAggregator(api, { readable: true, windowMs: 1000, copyDetails });
+    const first = new TypeError('x is undefined');
+    aggregate({ context: 'window.onerror', error: first, message: 'An unexpected error occurred.' });
+    vi.advanceTimersByTime(200);
+    aggregate({ context: 'window.onerror', error: 'second', message: 'An unexpected error occurred.' });
+    vi.advanceTimersByTime(5000);
+
+    await press(toasts[0].id, 'Copy details');
+    expect(copyDetails).toHaveBeenCalledTimes(1);
+    const reports = copyDetails.mock.calls[0][0] as TimedReport[];
+    expect(reports.map((r) => r.report.error)).toEqual([first, 'second']);
+    expect(reports[0].report).toEqual({ context: 'window.onerror', error: first, message: 'An unexpected error occurred.' });
+    expect(reports[1].at - reports[0].at).toBe(200);
+  });
+
+  it(`keeps the newest ${MAX_DETAILED_REPORTS} of a storm`, async () => {
+    const { api, toasts, press } = apiWithButtons();
+    const copyDetails = vi.fn();
+    const aggregate = createErrorToastAggregator(api, { readable: true, copyDetails });
+    for (let i = 1; i <= MAX_DETAILED_REPORTS + 5; i++) aggregate({ context: 'tagSweep', error: `failure ${i}` });
+    await press(toasts[0].id, 'Copy details');
+    const reports = copyDetails.mock.calls[0][0] as TimedReport[];
+    expect(reports).toHaveLength(MAX_DETAILED_REPORTS);
+    expect(reports[0].report.error).toBe('failure 6');
+    expect(reports.at(-1)?.report.error).toBe(`failure ${MAX_DETAILED_REPORTS + 5}`);
+  });
+
+  it('stays when a second file swaps the first file’s buttons for Details', async () => {
+    const { api, toasts, buttons, press } = apiWithButtons();
+    const copyDetails = vi.fn();
+    const aggregate = createErrorToastAggregator(api, { details: () => undefined, copyDetails });
+    aggregate({ context: 'File save failed', error: new Error('a'), path: 'A.md', actions: [{ label: 'Open A', handler: () => undefined }] });
+    aggregate({ context: 'File save failed', error: new Error('b'), path: 'B.md' });
+    expect(buttons.get(toasts[0].id)?.map((b) => b.label)).toEqual(['Details', 'Copy details']);
+    await press(toasts[0].id, 'Copy details');
+    expect((copyDetails.mock.calls[0][0] as TimedReport[]).map((r) => r.report.path)).toEqual(['A.md', 'B.md']);
   });
 });

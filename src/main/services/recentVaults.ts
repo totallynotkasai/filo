@@ -16,6 +16,8 @@ export interface RecentVault {
 
 export interface RecentVaultsPreferences {
   openLastVaultOnLaunch: boolean;
+  /** Ctrl+Shift+I / F12 open Chromium's developer tools (General → Developer tools). */
+  devToolsEnabled: boolean;
 }
 
 interface RecentVaultsFile {
@@ -35,6 +37,7 @@ const MAX_TOTAL = 50;
 
 const DEFAULT_PREFERENCES: RecentVaultsPreferences = {
   openLastVaultOnLaunch: true,
+  devToolsEnabled: false,
 };
 
 function getRecentVaultsPath(): string {
@@ -66,6 +69,9 @@ async function readFile(): Promise<RecentVaultsFile> {
       const preferences: RecentVaultsPreferences = {
         ...DEFAULT_PREFERENCES,
         ...(obj.preferences ?? {}),
+        // Only a real `true` turns the developer tools on: a hand-edited
+        // "yes" or 1 leaves them off.
+        devToolsEnabled: obj.preferences?.devToolsEnabled === true,
       };
       return { vaults, preferences };
     }
@@ -121,6 +127,12 @@ export async function loadPreferences(): Promise<RecentVaultsPreferences> {
 export async function setOpenLastVaultOnLaunch(enabled: boolean): Promise<void> {
   const file = await readFile();
   file.preferences.openLastVaultOnLaunch = enabled;
+  await writeFile(file);
+}
+
+export async function setDevToolsEnabled(enabled: boolean): Promise<void> {
+  const file = await readFile();
+  file.preferences.devToolsEnabled = enabled;
   await writeFile(file);
 }
 

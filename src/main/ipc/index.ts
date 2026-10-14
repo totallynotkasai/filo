@@ -12,6 +12,7 @@ import { registerSidebarHandlers } from './sidebar.ipc';
 import { registerMachineHandlers } from './machine.ipc';
 import { registerVaultEncodingHandlers } from './vaultEncoding.ipc';
 import { registerRecoveryHandlers } from './recovery.ipc';
+import { registerDevToolsHandlers } from './devTools.ipc';
 
 /**
  * Registers all IPC handlers for the main process.
@@ -32,4 +33,5 @@ export function registerAllHandlers(): void {
   registerMachineHandlers();
   registerVaultEncodingHandlers();
   registerRecoveryHandlers();
+  registerDevToolsHandlers();
 }

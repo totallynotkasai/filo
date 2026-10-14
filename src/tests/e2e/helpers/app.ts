@@ -196,6 +196,34 @@ export function killApp(app: ElectronApplication): void {
   }
 }
 
+/**
+ * Runs `use`, which puts something on the machine's real clipboard, and puts
+ * back what the clipboard held before, whatever `use` does.
+ */
+export async function withClipboardKept(app: ElectronApplication, use: () => Promise<void>): Promise<void> {
+  await app.evaluate(async ({ clipboard }) => {
+    (globalThis as unknown as { __clip: unknown }).__clip = await clipboard.read();
+  });
+  try {
+    await use();
+  } finally {
+    await app.evaluate(async ({ clipboard, ClipboardItem }) => {
+      const saved = (globalThis as unknown as { __clip: Parameters<typeof clipboard.write>[0] }).__clip;
+      // An item read can't be written back as it is: each is rebuilt from its parts.
+      const items = await Promise.all(saved.map(async (item) => {
+        const parts: Record<string, Blob> = {};
+        for (const type of item.types) {
+          const part = await item.getType(type);
+          if (part instanceof Blob) parts[type] = part;
+        }
+        return new ClipboardItem(parts);
+      }));
+      if (items.length > 0) await clipboard.write(items);
+      else clipboard.clear();
+    });
+  }
+}
+
 export const nativeBoxes = (app: ElectronApplication): Promise<NativeBox[]> =>
   app.evaluate(() => (globalThis as unknown as { __boxes: NativeBox[] }).__boxes);
 

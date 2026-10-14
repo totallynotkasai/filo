@@ -26,6 +26,11 @@
  * The error bus's aggregator runs `readable` (see the option): one toast per
  * context and file, showing the message rather than the context id.
  *
+ * With `copyDetails`, every toast also has a Copy details button that hands
+ * over the reports the toast stands for (the newest `MAX_DETAILED_REPORTS`),
+ * so the error's own text, which the toast leaves out, can be read. It keeps
+ * the toast open: copying isn't an answer to the toast.
+ *
  * Returns the id of the toast the report went to, so a caller can close it
  * once what it reports is resolved.
  *
@@ -34,6 +39,10 @@
  */
 
 import type { ReportedError } from './errorBus';
+import type { TimedReport } from './errorDetails';
+
+/** How many reports one toast keeps for Copy details (the newest ones). */
+export const MAX_DETAILED_REPORTS = 20;
 
 /**
  * A `ReportedError` plus an optional coalescing-key override. Kept a
@@ -57,6 +66,8 @@ export interface AggregatedReport extends ReportedError {
 export interface ToastButton {
   label: string;
   handler: () => void | Promise<void>;
+  /** The toast stays after the button is pressed. */
+  keepOpen?: boolean;
 }
 
 export interface AggregatorToastApi {
@@ -88,6 +99,8 @@ interface AggregatedToast {
   expiryTimer: ReturnType<typeof setTimeout>;
   /** Distinct files the toast covers, first report first. */
   paths: string[];
+  /** What Copy details hands over; the toast's button holds the same array. */
+  reports: TimedReport[];
 }
 
 export interface ErrorToastAggregatorOptions {
@@ -102,6 +115,8 @@ export interface ErrorToastAggregatorOptions {
    * context and file, so a second file's report never replaces the first's.
    */
   readable?: boolean;
+  /** Puts a toast's reports on the clipboard; adds a Copy details button to every toast. */
+  copyDetails?: (reports: readonly TimedReport[]) => void | Promise<void>;
 }
 
 /** `boardCache.create-text-md` → `Board cache`: the subsystem of an error-bus context id. */
@@ -125,8 +140,17 @@ export function createErrorToastAggregator(
 ): (err: AggregatedReport) => string {
   const windowMs = options.windowMs ?? 1000;
   const recent = new Map<string, AggregatedToast>();
+  const { copyDetails } = options;
+  // Bound to the toast's own array, so it still copies once the coalescing
+  // window has closed and the entry is gone.
+  const copyButton = (reports: readonly TimedReport[]): ToastButton[] =>
+    copyDetails ? [{ label: 'Copy details', handler: () => copyDetails(reports), keepOpen: true }] : [];
 
   return ({ context, message, error, coalesceKey, path, actions, sharedActions }) => {
+    const report: ReportedError = { context, error };
+    if (message !== undefined) report.message = message;
+    if (path !== undefined) report.path = path;
+    const timed: TimedReport = { report, at: Date.now() };
     // Coalesce by `coalesceKey` when supplied, else by `context`. The
     // display prefix below always stays `context`, so the count badge reads per
     // write KIND while distinct recovery locations keep separate toasts.
@@ -147,9 +171,15 @@ export function createErrorToastAggregator(
       const updated = api.updateToastText(existing.toastId, text);
       if (updated) {
         existing.count++;
+        existing.reports.push(timed);
+        if (existing.reports.length > MAX_DETAILED_REPORTS) existing.reports.shift();
         if (newFile && paths.length === 2) {
           // The first file's own buttons no longer fit a toast about several.
-          const buttons = [...(sharedActions ?? []), ...(options.details ? [{ label: 'Details', handler: options.details }] : [])];
+          const buttons = [
+            ...(sharedActions ?? []),
+            ...(options.details ? [{ label: 'Details', handler: options.details }] : []),
+            ...copyButton(existing.reports),
+          ];
           api.updateToastActions?.(existing.toastId, buttons);
         }
         existing.paths = paths;
@@ -162,7 +192,8 @@ export function createErrorToastAggregator(
       recent.delete(key);
     }
 
-    const buttons = [...(actions ?? []), ...(sharedActions ?? [])];
+    const reports = [timed];
+    const buttons = [...(actions ?? []), ...(sharedActions ?? []), ...copyButton(reports)];
     const toastId = api.pushToast({
       text: options.readable ? readableText : `${context}: ${detail}`,
       type: 'error',
@@ -177,7 +208,7 @@ export function createErrorToastAggregator(
       },
     });
     const expiryTimer = setTimeout(() => recent.delete(key), windowMs);
-    recent.set(key, { toastId, count: 1, expiryTimer, paths: path !== undefined && !options.readable ? [path] : [] });
+    recent.set(key, { toastId, count: 1, expiryTimer, paths: path !== undefined && !options.readable ? [path] : [], reports });
     return toastId;
   };
 }

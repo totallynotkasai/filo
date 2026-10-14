@@ -143,6 +143,8 @@ export interface ToastAction {
    * dispatcher (`invokeToastAction`) wraps the call in try/catch.
    */
   handler: () => void | Promise<void>;
+  /** The toast stays after the button is pressed (Copy details): pressing it answers nothing. */
+  keepOpen?: boolean;
 }
 
 export interface ToastMessage {
@@ -516,8 +518,8 @@ export const uiStore = {
   },
   /**
    * Runs a toast action by id, then dismisses the toast without firing
-   * its `onDismiss` callback. If the action is missing, the toast is
-   * dismissed normally.
+   * its `onDismiss` callback, unless the action keeps it open. If the
+   * action is missing, the toast is dismissed normally.
    */
   invokeToastAction(id: string, actionIndex: number) {
     const toast = toasts.find((t) => t.id === id);
@@ -539,6 +541,7 @@ export const uiStore = {
         surface(err);
       }
     }
+    if (action?.keepOpen) return;
     this.dismissToast(id, { silent: true });
   },
   dismissToast(id: string, options: { silent?: boolean } = {}) {

@@ -22,6 +22,7 @@
   import { sidebarTagFilter } from '../../stores/sidebarTagFilter.svelte';
   import { reportError } from '../../lib/utils/errorBus';
   import { copyFileIntoVault } from '../../lib/vault/vaultOperations';
+  import { isCarriedPath, startSidebarDrag } from '../../lib/vault/sidebarDrag';
   import { ProgressiveCount } from '../../lib/utils/progressiveCount.svelte';
   import { adoptAndFindBoard } from '../../stores/boardDiscovery';
   import {
@@ -227,9 +228,12 @@
     );
   }
 
+  // A folder being dragged is no place to drop itself: it neither highlights
+  // nor opens under its own drag (the tree's handler refuses the drop too).
   function handleFolderDragEnter(e: DragEvent) {
     if (!node.isDirectory) return;
     if (!isDropPayload(e)) return;
+    if (isCarriedPath(node.path)) return;
     e.preventDefault();
     isDropTarget = true;
 
@@ -246,6 +250,7 @@
   function handleFolderDragOver(e: DragEvent) {
     if (!node.isDirectory) return;
     if (!isDropPayload(e)) return;
+    if (isCarriedPath(node.path)) return;
     e.preventDefault();
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
@@ -495,7 +500,7 @@
 
 </script>
 
-<div class="vault-file-item" class:drop-target={isDropTarget} class:selected={isSelected} class:actions-pinned={isPinnedHere} style="padding-left: {12 + depth * 16}px">
+<div class="vault-file-item" class:drop-target={isDropTarget} class:selected={isSelected} class:actions-pinned={isPinnedHere} data-path={node.path} style="padding-left: {12 + depth * 16}px">
   <!-- Sidebar reorder uses this explicit handle (svelte-dnd-action);
        native HTML5 drag stays on `.file-row` so canvas/column/section
        drops keep firing. See `.drag-handle` CSS below for rationale. -->
@@ -535,6 +540,7 @@
       // drop handler (which listens for the singular type) can't accept it.
       if (selected.size > 1 && selected.has(node.path)) {
         const ordered = Array.from(selected);
+        startSidebarDrag(ordered);
         e.dataTransfer.setData('text/plain', ordered.join('\n'));
         e.dataTransfer.setData(
           'application/x-vault-files',
@@ -547,6 +553,7 @@
       }
       // Single-drag: keep the selection coherent with what's being dragged.
       vaultStore.selectOnly(node.path);
+      startSidebarDrag([node.path]);
       e.dataTransfer.setData('text/plain', node.path);
       e.dataTransfer.setData(
         'application/x-vault-file',

@@ -375,6 +375,39 @@ export async function dragFromSidebar(app: CharApp, rel: string, target: Element
   await quiesce(600);
 }
 
+/**
+ * Drag one sidebar row onto another as the browser runs it: the drop fires
+ * only when the last dragover was taken (preventDefault); otherwise the drag
+ * ends with a dragleave on the row under it. The source hears dragend last.
+ */
+async function dragRowOnto(source: Element, target: Element): Promise<void> {
+  const dt = new RecordingDataTransfer();
+  source.dispatchEvent(dragEvent('dragstart', dt));
+  target.dispatchEvent(dragEvent('dragenter', dt));
+  const over = dragEvent('dragover', dt);
+  target.dispatchEvent(over);
+  target.dispatchEvent(dragEvent(over.defaultPrevented ? 'drop' : 'dragleave', dt));
+  source.dispatchEvent(dragEvent('dragend', dt));
+  await quiesce(600);
+}
+
+/** Pick the sidebar row for `rel` up and put it back down on itself. */
+export async function putBackInSidebar(app: CharApp, rel: string): Promise<void> {
+  const row = await revealInSidebar(app, rel);
+  await dragRowOnto(row, row);
+}
+
+/** Drag the sidebar row for `rel` onto the folder row `folderRel`. */
+export async function dragIntoSidebarFolder(app: CharApp, rel: string, folderRel: string): Promise<void> {
+  const row = await revealInSidebar(app, rel);
+  await dragRowOnto(row, await revealInSidebar(app, folderRel));
+}
+
+/** Whether the sidebar shows a drop highlight: the whole tree's (the vault root) or a folder's. */
+export function sidebarDropHighlighted(app: CharApp): boolean {
+  return app.el.querySelector('.file-tree.root-drop-active, .vault-file-item.drop-target') !== null;
+}
+
 // ── Boards: adding notes ─────────────────────────────────────────────────────
 
 /** Paths of `.md` files that appeared since `before`. */

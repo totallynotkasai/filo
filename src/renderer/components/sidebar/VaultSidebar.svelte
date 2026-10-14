@@ -16,6 +16,7 @@
   import { isContentEditableAware } from '../../lib/utils/editableTarget';
   import { buildSidebarSpaceMenu } from '../../lib/vault/sidebarFileMenu';
   import { newFolderIn, newNoteIn } from '../../lib/vault/sidebarNewItems';
+  import { endSidebarDrag, isCarriedPath } from '../../lib/vault/sidebarDrag';
 
   /**
    * svelte-dnd-action item wrapper. The library requires an `id` field on
@@ -101,10 +102,34 @@
     const types = e.dataTransfer?.types;
     if (!types) return;
     if (!types.includes('application/x-vault-file') && !types.includes('application/x-vault-files')) return;
+    // An item put back down on its own row is no drop: the tree would take it
+    // as "move to the vault root" and pull it out of its folder.
+    const row = e.target instanceof Element ? e.target.closest<HTMLElement>('.vault-file-item[data-path]') : null;
+    if (row && isCarriedPath(row.dataset.path)) {
+      rootDropActive = false;
+      return;
+    }
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     rootDropActive = true;
   }
+
+  // Every drag ends the drop highlight, wherever it ends. A drop on a folder
+  // row stops there (it is that folder's move), so the tree's own drop and
+  // dragleave never fire for it; the window hears every drop and dragend
+  // first, in the capture phase.
+  $effect(() => {
+    function onDragFinished() {
+      rootDropActive = false;
+      endSidebarDrag();
+    }
+    window.addEventListener('drop', onDragFinished, true);
+    window.addEventListener('dragend', onDragFinished, true);
+    return () => {
+      window.removeEventListener('drop', onDragFinished, true);
+      window.removeEventListener('dragend', onDragFinished, true);
+    };
+  });
 
   function handleRootDragLeave(e: DragEvent) {
     if (e.relatedTarget && (e.currentTarget as HTMLElement)?.contains(e.relatedTarget as Node)) {

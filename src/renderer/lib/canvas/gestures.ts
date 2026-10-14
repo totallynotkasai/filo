@@ -1,4 +1,5 @@
 import type { CanvasScope } from '../../stores/canvas.svelte';
+import { isCanvasBackground } from './canvasBackground';
 
 /**
  * Viewport action — attaches pan and zoom handlers to the canvas container.
@@ -27,15 +28,10 @@ export function viewportAction(node: HTMLElement, scope: CanvasScope) {
   };
 
   function onPointerDown(e: PointerEvent) {
-    // Only pan on middle-click, or left-click on the canvas background
+    // Only pan on middle-click, or left-click on the canvas background (a
+    // frame's empty body included)
     const isMiddle = e.button === 1;
-    const target = e.target as HTMLElement;
-    const isLeftOnBackground = e.button === 0 && !e.shiftKey && (
-      target === node ||
-      target.classList?.contains('canvas-transform') ||
-      target.classList?.contains('board-background') ||
-      target.closest?.('.board-background') !== null
-    );
+    const isLeftOnBackground = e.button === 0 && !e.shiftKey && isCanvasBackground(e.target, node);
 
     if (!isMiddle && !isLeftOnBackground) return;
 

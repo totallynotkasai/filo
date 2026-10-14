@@ -33,6 +33,7 @@
   const selectionStore = scope.selection;
   const spatialStore = scope.spatial;
   import { viewportAction } from '../../lib/canvas/gestures';
+  import { isCanvasBackground } from '../../lib/canvas/canvasBackground';
   import { dragDropAction } from '../../lib/canvas/dragDrop';
   import { edgePanAction, syncConnectionEdgePan } from '../../lib/canvas/edgePan';
   import { createId } from '../../lib/utils/ids';
@@ -385,15 +386,14 @@
   // tile: the board's keys (N, Delete, the arrows) then act here, and not in
   // the sidebar row or toolbar button that had focus before.
   function handleCanvasPointerDown(e: PointerEvent) {
-    const t = e.target as HTMLElement | null;
-    const onBackground = t === canvasContainer || t?.classList?.contains('canvas-transform') || t?.closest?.('.board-background') != null;
+    const onBackground = isCanvasBackground(e.target, canvasContainer);
     if (onBackground && document.activeElement !== canvasContainer) canvasContainer.focus({ preventScroll: true });
     marquee.handlePointerDown(e);
   }
 
   // ── Click on canvas background clears selection / cancels connection drawing ──
   function handleCanvasClick(e: MouseEvent) {
-    if (e.target === canvasContainer || (e.target as HTMLElement)?.classList?.contains('canvas-transform')) {
+    if (isCanvasBackground(e.target, canvasContainer)) {
       // Move focus off any tile's TipTap editor so the global Delete shortcut
       // isn't swallowed by ProseMirror after a click-empty-canvas-then-Delete.
       const ae = document.activeElement as HTMLElement | null;

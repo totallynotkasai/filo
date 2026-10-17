@@ -80,6 +80,7 @@ import { onVaultSwap } from '../core/vaultLifecycle';
 import { cloneTagsFile, sameJson, mergeTagsThreeWay } from '../lib/vault/tagsFileMerge';
 import { countTagUsage, type TagCounts } from '../lib/tags/tagBrowserFilter';
 import { sameTag } from '../lib/vault/sidebarTagFilter';
+import { DEFAULT_TAG_COLOR } from '../constants/defaults';
 
 let file = $state<TagsFile>(emptyTagsFile());
 let isHydrated = $state(false);
@@ -558,7 +559,7 @@ export const fileTagsStore = {
     if (!tagName) return;
     if (!isValidTagName(tagName)) return;
     if (file.tags[tagName]) return;
-    const def = { color: color ?? '#3a86ff', createdAt: Date.now() };
+    const def = { color: color ?? DEFAULT_TAG_COLOR, createdAt: Date.now() };
     file = { ...file, tags: { ...file.tags, [tagName]: def } };
     scheduleSave();
   },

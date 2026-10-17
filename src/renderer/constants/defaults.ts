@@ -77,3 +77,11 @@ export const LAYOUT_GAP_BUFFER = 80;
 
 /** App-wide accent / brand color. Update here to change everywhere. */
 export const ACCENT_COLOR = '#6c63ff';
+
+/**
+ * A tag's colour until the user picks one: shown for a tag no
+ * `.filo/tags.json` entry names (one another program wrote into a note) and
+ * given to every tag Filo registers, so a tag never changes colour when it is
+ * registered.
+ */
+export const DEFAULT_TAG_COLOR = '#3a86ff';

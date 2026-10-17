@@ -9,7 +9,7 @@ import { noteStore } from '@renderer/stores/notes.svelte';
 import { fileTagsStore } from '@renderer/stores/fileTags.svelte';
 import { DeleteTilesCommand, RemoveTileTagCommand } from '@renderer/commands/index';
 import { __resetDirtyTrackingForTests } from '@renderer/lib/boards/writeStateTracking';
-import { ACCENT_COLOR } from '@renderer/constants/defaults';
+import { DEFAULT_TAG_COLOR } from '@renderer/constants/defaults';
 import { installFiloMock, restoreFiloDefault } from '../helpers/filoBridge';
 import { installMemoryVault } from '../helpers/memoryVault';
 import type { BoardFileData } from '@renderer/lib/boards/boardSaver';
@@ -339,8 +339,8 @@ describe('RemoveTileTagCommand.undo preserves the tag colour', () => {
 
     // An interleaved GLOBAL tag delete wipes the definition + its colour.
     fileTagsStore.deleteTag('colourtag');
-    // getDefinition now falls back to the accent default (no real definition).
-    expect(fileTagsStore.getDefinition('colourtag').color).toBe(ACCENT_COLOR);
+    // getDefinition now falls back to the default tag colour (no real definition).
+    expect(fileTagsStore.getDefinition('colourtag').color).toBe(DEFAULT_TAG_COLOR);
 
     cmd.undo();
 

@@ -176,8 +176,8 @@ export const TimerTileSchema = BaseTileSchema.extend({
   // toward zero and stops there, so negative seeds either no-op or wrap
   // around when a tick subtracts. A hand-edited `.board.json` with a
   // negative timer field belongs in failedBoards, not on the canvas.
-  duration: z.number().finite().nonnegative().default(0), // seconds
-  remaining: z.number().finite().nonnegative().default(0),
+  duration: z.number().finite().nonnegative().default(0), // milliseconds
+  remaining: z.number().finite().nonnegative().default(0), // milliseconds
   mode: TimerModeSchema.default('hms'),
   isRunning: z.boolean().default(false),
   // Wall-clock end (epoch ms) of a running countdown; absent while stopped.

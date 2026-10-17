@@ -4,6 +4,7 @@ import { fileTagsStore } from './fileTags.svelte';
 import { vaultIndexStore } from './vaultIndex.svelte';
 import { uiStore } from './ui.svelte';
 import { emptyTagsFile } from '../lib/vault/tagsStorage';
+import { DEFAULT_TAG_COLOR } from '../constants/defaults';
 import { flattenTreePaths } from '../lib/vault/vaultTreeSort';
 import { isStillSameVault, type VaultIdentity } from '../lib/vault/vaultIdentity';
 import { namedByPendingRename, type ReadResult } from '../lib/vault/renameCascadeSentinel';
@@ -82,7 +83,7 @@ function seedRegistryFromNotes(): void {
     ));
     if (unique.length === 0) continue;
     for (const t of unique) {
-      if (!seed.tags[t]) seed.tags[t] = { color: '#3a86ff', createdAt: Date.now() };
+      if (!seed.tags[t]) seed.tags[t] = { color: DEFAULT_TAG_COLOR, createdAt: Date.now() };
     }
     mutated = true;
   }

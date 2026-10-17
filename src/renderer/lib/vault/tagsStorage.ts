@@ -17,7 +17,7 @@ import {
   migrateTagsFile,
   CURRENT_TAGS_FILE_VERSION,
 } from '../../schema/tagsFile';
-import { ACCENT_COLOR } from '../../constants/defaults';
+import { DEFAULT_TAG_COLOR } from '../../constants/defaults';
 import { reportError } from '../utils/errorBus';
 import { vaultPath, type VaultPath } from '@shared/vaultPath';
 import { loadVersionedFile } from './loadVersionedFile';
@@ -229,7 +229,7 @@ export function allTagNames(file: TagsFile): string[] {
  * definition if the tag has no explicit entry yet.
  */
 export function getTagDefinition(file: TagsFile, tagName: string): TagDefinition {
-  return file.tags[tagName] ?? { color: ACCENT_COLOR };
+  return file.tags[tagName] ?? { color: DEFAULT_TAG_COLOR };
 }
 
 /**
@@ -343,7 +343,7 @@ export function addTagToFile(file: TagsFile, path: string, tagName: string): Tag
   const nextTags = existing.includes(canonical) ? existing : [...existing, canonical];
   const nextDefs = file.tags[canonical]
     ? file.tags
-    : { ...file.tags, [canonical]: { color: ACCENT_COLOR, createdAt: Date.now() } };
+    : { ...file.tags, [canonical]: { color: DEFAULT_TAG_COLOR, createdAt: Date.now() } };
   return {
     ...file,
     tags: nextDefs,
@@ -388,7 +388,7 @@ export function setFileTags(file: TagsFile, path: string, tags: string[]): TagsF
     // Each iteration uses the latest `working` so that two newly-introduced
     // case variants in the same call collapse to one entry.
     if (!working.tags[c]) {
-      working = { ...working, tags: { ...working.tags, [c]: { color: ACCENT_COLOR, createdAt: Date.now() } } };
+      working = { ...working, tags: { ...working.tags, [c]: { color: DEFAULT_TAG_COLOR, createdAt: Date.now() } } };
     }
   }
   const nextFileTags = { ...working.fileTags };

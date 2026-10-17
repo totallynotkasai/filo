@@ -124,7 +124,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--tag-color, #6c63ff);
+    background: var(--tag-color, #3a86ff);
     flex-shrink: 0;
   }
   .tag-name {

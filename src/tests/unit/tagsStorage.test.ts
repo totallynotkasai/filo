@@ -22,6 +22,7 @@ import {
   isSafeNewTagName,
 } from '@renderer/lib/vault/tagsStorage';
 import { CURRENT_TAGS_FILE_VERSION } from '@renderer/schema/tagsFile';
+import { DEFAULT_TAG_COLOR } from '@renderer/constants/defaults';
 import {
   onError,
   __resetErrorBusForTests,
@@ -491,10 +492,10 @@ describe('tagsStorage — pure CRUD', () => {
       expect(allTagNames(f)).toEqual(['lonely', 'one']);
     });
 
-    it('getTagDefinition falls back to an accent-coloured default', () => {
+    it('getTagDefinition falls back to the default tag colour', () => {
       const f = emptyTagsFile();
       const def = getTagDefinition(f, 'unknown');
-      expect(def.color).toBeTruthy();
+      expect(def.color).toBe(DEFAULT_TAG_COLOR);
     });
   });
 });

@@ -96,6 +96,7 @@ filo/
 ├── knip.ts                            # Dead-code check (npm run knip, in ci:verify)
 ├── CLAUDE.md                          # This file
 ├── KNOWN_LIMITATIONS.md               # Accepted trade-offs (do NOT "fix")
+├── VAULT_FORMAT_FOR_AGENTS.md         # How an AI agent writes notes and boards into a vault: update it when a schema or a saved spelling changes
 ├── Filo_Design_Doc_Rework_V5.md
 │
 ├── src/

@@ -84,6 +84,33 @@ test('a long note sits on page cards, zoomed in or not, and its file is left as 
   expect(fs.readFileSync(path.join(vault, 'River Road.md'), 'utf8')).toBe(NOTE);
 });
 
+test('a Document tab switched away from and back comes back where it was scrolled to', async () => {
+  const vault = freshVault(root, 'Switch', { 'River Road.md': NOTE, 'Ferry.md': '---\ntitle: Ferry\n---\nTwo coins.\n' });
+  const launched = await launchBuilt(vault);
+  const { win } = launched;
+  const scrollTop = (): Promise<number> => win.evaluate(() => document.querySelector('.document-board')?.scrollTop ?? -1);
+  try {
+    await openNoteByName(win, 'River Road');
+    await expect.poll(async () => (await linesOutsidePages(win)).pages, { timeout: 10_000 }).toBeGreaterThan(2);
+    const box = (await win.locator('.document-board').boundingBox())!;
+    await win.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await win.mouse.wheel(0, 2400);
+    await expect.poll(scrollTop).toBeGreaterThan(1500);
+    const left = await scrollTop();
+
+    await openNoteByName(win, 'Ferry');
+    await expect(win.locator('.document-board .ProseMirror')).toContainText('Two coins.');
+    await win.getByRole('tab', { name: /River Road/ }).click();
+    await expect(win.locator('.document-board .ProseMirror')).toContainText('Aria rode north');
+    await expect.poll(async () => Math.abs((await scrollTop()) - left)).toBeLessThan(2);
+    // Still there once the pages have been laid out again.
+    await win.waitForTimeout(2_000);
+    expect(Math.abs((await scrollTop()) - left)).toBeLessThan(2);
+  } finally {
+    expect((await quitLikeUser(launched)).outcome).toBe('exited');
+  }
+});
+
 test('with Global Defaults → Document set to one continuous sheet, the note has no page cards', async () => {
   const defaults = JSON.stringify({ mindmap: {}, kanban: {}, tasklist: {}, document: { pageLayout: 'continuous' } }, null, 2);
   const vault = freshVault(root, 'Sheet', { 'River Road.md': NOTE, '.filo/defaults.json': defaults });

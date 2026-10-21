@@ -13,7 +13,7 @@
   import { fileNameProblem } from '@shared/fileNames';
   import { boardCacheStore } from '../../stores/boardCache.svelte';
   import { noteTitle } from '../../stores/noteMeta';
-  import { copyFiloLink } from '../../lib/utils/copyLink';
+  import { copyFiloLink, copyText } from '../../lib/utils/copyLink';
   import { linkToBoard, linkToNote } from '../../schema/link';
   import { boardStore } from '../../stores/board.svelte';
   import { normalizePath, samePath, toPosix, toVaultRelative } from '../../lib/utils/path';
@@ -473,6 +473,11 @@
     }
   }
 
+  async function copyItemPath(): Promise<void> {
+    if (await copyText(node.path)) uiStore.toast(`Path of "${node.name}" copied.`, 'success', 3000);
+    else uiStore.toast(`Couldn't copy the path of "${node.name}".`, 'error', 4000);
+  }
+
   function openContextMenu(e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
@@ -481,6 +486,7 @@
       isDirectory: node.isDirectory,
       isNote: isNoteFile,
       copyLink: copyLinkFor(),
+      onCopyPath: vaultStore.selectedPaths.size > 1 ? undefined : () => { void copyItemPath(); },
       onNewNote: () => { void newNoteIn(node.path); },
       onNewFolder: () => { void newFolderIn(node.path); },
       onTags: () => {

@@ -15,6 +15,8 @@ interface SidebarFileMenuOpts extends Partial<MakeInFolder> {
   isNote: boolean;
   /** A note or a board: puts a link to it on the clipboard. */
   copyLink?: { what: 'note' | 'board'; action: () => void };
+  /** Puts the item's full path on the clipboard; left out while several rows are selected. */
+  onCopyPath?: () => void;
   onTags: () => void;
   onRename: () => void;
   onRenameToTitle: () => void;
@@ -40,6 +42,9 @@ export function buildSidebarFileMenu(opts: SidebarFileMenuOpts): ContextMenuItem
     items.push(...makeItems({ onNewNote: opts.onNewNote, onNewFolder: opts.onNewFolder }), { id: 'sep-new', divider: true, label: '' });
   }
   if (opts.copyLink) items.push({ id: 'copy-link', label: copyLinkLabel(opts.copyLink.what), action: opts.copyLink.action });
+  if (opts.onCopyPath) {
+    items.push({ id: 'copy-path', label: opts.isDirectory ? 'Copy folder path' : 'Copy file path', action: opts.onCopyPath });
+  }
   if (!opts.isDirectory) items.push({ id: 'edit-tags', label: MENU_LABEL.tags, action: opts.onTags });
   items.push({ id: 'rename', label: 'Rename', action: opts.onRename });
   if (opts.isNote) items.push({ id: 'rename-to-title', label: 'Rename file to match title', action: opts.onRenameToTitle });

@@ -13,6 +13,7 @@
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { focusIsInBoard } from '../../lib/utils/boardFocus';
   import { attachPageView, type PageView } from '../../lib/editor/pageBreaks';
+  import { trackDocumentScroll } from '../../lib/editor/documentScroll';
   import type { PageRect } from '../../lib/editor/pageLayout';
   import { DOCUMENT_ZOOM_LEVELS, zoomedIn, zoomedOut, zoomLabel } from '../../lib/utils/documentZoom';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
@@ -90,6 +91,7 @@
   let pages = $state<PageRect[]>([]);
   let pageView: PageView | null = null;
   let unregisterZoomKeys: Array<() => void> = [];
+  let stopScrollTracking: () => void = () => {};
   let zoom = $derived(workspaceStore.documentZoom);
   let pagesBottom = $derived(pages.length ? pages[pages.length - 1]!.top + pages[pages.length - 1]!.height : 0);
 
@@ -251,6 +253,8 @@
     pageView.setEnabled(untrack(() => paged));
 
     boardElement.addEventListener('wheel', handleWheel, { passive: false });
+    // A tab switch remounts this view: come back where the user left off.
+    stopScrollTracking = trackDocumentScroll(boardElement, tabId);
     // Zoom is shared by every Document tab; the keys act while focus is in this
     // one (the note, the Raw view, its tag row, the zoom control), never from
     // another board. Zoom changes no text, so a field (the Raw view, the tag
@@ -279,6 +283,7 @@
     for (const off of unregisterZoomKeys) off();
     unregisterZoomKeys = [];
     boardElement?.removeEventListener('wheel', handleWheel);
+    stopScrollTracking();
     pageView?.destroy();
     pageView = null;
     // Unsaved keystrokes go to the model; the note writer saves them after

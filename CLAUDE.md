@@ -423,7 +423,7 @@ filo/
 │   │   │   │   ├── unreconciledFolderMoves.ts # Folder moves any tree read saw, kept for the next reconcile
 │   │   │   │   ├── unsavedMessages.ts # Close / open / quit wording for unsaved work, by cause; the quit dialog ("Waiting for your decision" when only held decisions are left) and the Retry result
 │   │   │   │   ├── sidebarTagFilter.ts # Files a tag (or child tag) selects; tree cut down to them
-│   │   │   │   ├── sidebarFileMenu.ts # The sidebar file / folder context menu (a folder: New note, New folder) and the empty space's
+│   │   │   │   ├── sidebarFileMenu.ts # The sidebar file / folder context menu (a folder: New note, New folder; Copy file / folder path with one row selected) and the empty space's
 │   │   │   │   ├── sidebarNewItems.ts # newNoteIn / newFolderIn: the sidebar's New (toolbar +, empty space, a folder's menu); filters cleared, the folder opened
 │   │   │   │   ├── sidebarDrag.ts     # The items a sidebar drag carries: one put back down on its own row is no drop (moves and highlights nothing); every drop or dragend ends it and the tree's drop highlight
 │   │   │   │   └── vaultTreeSort.ts   # Sidebar sort (natural order) and Group By (the primary key: first letter, day, size band, type); the search matches a note's title too
@@ -534,6 +534,7 @@ filo/
 │   │   │   │   ├── pageBreaks.ts      # The Document tab's page view on its editor: measures the blocks, puts each break's space above its block as a padding decoration (drawn, never in the note or its undo; only the breaks that changed are swapped, straight to the view), reports the page cards; a long note waits longer before measuring (`measureWaits`)
 │   │   │   │   ├── pageMeasure.ts     # measureBlocks: where the blocks lie with no breaks, starting from the last measure: blocks before an edit kept, those after it moved by its height once the first and last are seen to have moved by that; typing in one paragraph that left the height alone measures nothing
 │   │   │   │   ├── pageLayout.ts      # layoutPages: where a note's pages break (pure): each block that would cross a page's bottom band starts the next page; one taller than a page, or that nothing can move, stretches its page
+│   │   │   │   ├── documentScroll.ts  # Where each Document tab was scrolled to (this session, by tab id): a tab switched back to comes back there, re-applied while the note and its pages load, until the user scrolls, clicks or types
 │   │   │   │   ├── rawTextEditor.ts   # The Raw view's text field (CodeMirror): Markdown colours, line numbers, invisible characters, Ctrl+F; frontmatter found by `splitFrontmatterFence`; never edits by itself (Tab leaves); reports typing / leaving / Ctrl+S; text from disk clears its undo history (Ctrl+Z never reaches a version it replaced)
 │   │   │   │   ├── renderedSame.ts    # Lossy check past the cosmetic rules: same markdown-it HTML and reference definitions, no escape another app reads differently
 │   │   │   │   ├── titleCommit.ts     # TileHeader / Frame title commit: a line break a space, trim, default, drop unstyled HTML

@@ -297,6 +297,19 @@ describe('copied links', () => {
     expect(ids(buildSidebarFileMenu({ ...fileMenu, copyLink: { what: 'note', action: noop } }))).toEqual(['Copy link to note']);
     expect(ids(buildSidebarFileMenu({ ...fileMenu, isNote: false, copyLink: { what: 'board', action: noop } }))).toEqual(['Copy link to board']);
   });
+
+  it("a sidebar item's path is offered for one file or folder, after its link", () => {
+    const noop = (): void => {};
+    const fileMenu = { isDirectory: false, isNote: true, onTags: noop, onRename: noop, onRenameToTitle: noop, onReveal: noop, onDelete: noop };
+    const ids = (items: Array<{ id: string }>): string[] => items.map((i) => i.id);
+    const note = buildSidebarFileMenu({ ...fileMenu, copyLink: { what: 'note', action: noop }, onCopyPath: noop });
+    expect(ids(note).slice(0, 2)).toEqual(['copy-link', 'copy-path']);
+    expect(note.find((i) => i.id === 'copy-path')?.label).toBe('Copy file path');
+    const folder = buildSidebarFileMenu({ ...fileMenu, isDirectory: true, isNote: false, onCopyPath: noop });
+    expect(folder.find((i) => i.id === 'copy-path')?.label).toBe('Copy folder path');
+    // A selection of several rows passes no copy action.
+    expect(ids(buildSidebarFileMenu(fileMenu))).not.toContain('copy-path');
+  });
 });
 
 describe("a task row's styles", () => {

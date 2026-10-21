@@ -84,6 +84,16 @@ test('a long note sits on page cards, zoomed in or not, and its file is left as 
   expect(fs.readFileSync(path.join(vault, 'River Road.md'), 'utf8')).toBe(NOTE);
 });
 
+/** In the page: the paragraph at the top of the Document tab's view, and where it starts against the view's top. */
+function topParagraph(): { index: number; offset: number } {
+  const board = document.querySelector('.document-board');
+  if (!board) return { index: -1, offset: 0 };
+  const top = board.getBoundingClientRect().top;
+  const blocks = [...board.querySelectorAll('.ProseMirror > p')];
+  const index = blocks.findIndex((p) => p.getBoundingClientRect().bottom > top);
+  return { index, offset: index < 0 ? 0 : Math.round(blocks[index]!.getBoundingClientRect().top - top) };
+}
+
 test('a Document tab switched away from and back comes back where it was scrolled to', async () => {
   const vault = freshVault(root, 'Switch', { 'River Road.md': NOTE, 'Ferry.md': '---\ntitle: Ferry\n---\nTwo coins.\n' });
   const launched = await launchBuilt(vault);
@@ -96,16 +106,38 @@ test('a Document tab switched away from and back comes back where it was scrolle
     await win.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await win.mouse.wheel(0, 2400);
     await expect.poll(scrollTop).toBeGreaterThan(1500);
+    await win.waitForTimeout(300);
     const left = await scrollTop();
+    const leftAt = await win.evaluate(topParagraph);
 
     await openNoteByName(win, 'Ferry');
     await expect(win.locator('.document-board .ProseMirror')).toContainText('Two coins.');
+    // Every frame from the switch on in which the note shows: the paragraph
+    // at the top of the view.
+    await win.evaluate(`window.__topParagraph = ${topParagraph.toString()}`);
+    await win.evaluate(() => {
+      const w = window as unknown as { __frames: Array<{ index: number; offset: number }>; __topParagraph: () => { index: number; offset: number } };
+      const top = w.__topParagraph;
+      w.__frames = [];
+      const started = performance.now();
+      const tick = (): void => {
+        const hidden = (document.querySelector('.document-board .document-container') as HTMLElement | null)?.style.visibility === 'hidden';
+        if (!hidden && document.querySelector('.document-board .ProseMirror')?.textContent?.includes('Aria')) w.__frames.push(top());
+        if (performance.now() - started < 2_500) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
     await win.getByRole('tab', { name: /River Road/ }).click();
-    await expect(win.locator('.document-board .ProseMirror')).toContainText('Aria rode north');
-    await expect.poll(async () => Math.abs((await scrollTop()) - left)).toBeLessThan(2);
-    // Still there once the pages have been laid out again.
-    await win.waitForTimeout(2_000);
+    await win.waitForTimeout(2_800);
     expect(Math.abs((await scrollTop()) - left)).toBeLessThan(2);
+    // The note is never seen anywhere but where it was left: not at its top,
+    // nor at the old offset before its pages are laid out.
+    const frames = await win.evaluate(() => (window as unknown as { __frames: Array<{ index: number; offset: number }> }).__frames);
+    expect(frames.length).toBeGreaterThan(0);
+    for (const frame of frames) {
+      expect(frame.index).toBe(leftAt.index);
+      expect(Math.abs(frame.offset - leftAt.offset)).toBeLessThan(3);
+    }
   } finally {
     expect((await quitLikeUser(launched)).outcome).toBe('exited');
   }

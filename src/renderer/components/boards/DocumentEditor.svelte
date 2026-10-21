@@ -13,7 +13,7 @@
   import { registerCommandWithShortcut } from '../../core/commandRegistry';
   import { focusIsInBoard } from '../../lib/utils/boardFocus';
   import { attachPageView, type PageView } from '../../lib/editor/pageBreaks';
-  import { trackDocumentScroll } from '../../lib/editor/documentScroll';
+  import { trackDocumentScroll, type DocumentScrollTracking } from '../../lib/editor/documentScroll';
   import type { PageRect } from '../../lib/editor/pageLayout';
   import { DOCUMENT_ZOOM_LEVELS, zoomedIn, zoomedOut, zoomLabel } from '../../lib/utils/documentZoom';
   import { openNoteInDocumentTab } from '../../lib/notes/openNote';
@@ -91,11 +91,12 @@
   let pages = $state<PageRect[]>([]);
   let pageView: PageView | null = null;
   let unregisterZoomKeys: Array<() => void> = [];
-  let stopScrollTracking: () => void = () => {};
+  let scrollTracking: DocumentScrollTracking | null = null;
   let zoom = $derived(workspaceStore.documentZoom);
   let pagesBottom = $derived(pages.length ? pages[pages.length - 1]!.top + pages[pages.length - 1]!.height : 0);
 
   let boardElement: HTMLDivElement;
+  let containerElement: HTMLDivElement;
   let paperElement: HTMLDivElement;
   let frontElement: HTMLDivElement;
 
@@ -248,13 +249,16 @@
     pageView = attachPageView(editor, {
       column: () => paperElement,
       observed: () => [frontElement],
-      onPages: (next) => { pages = next; },
+      onPages: (next) => {
+        pages = next;
+        if (next.length > 0) scrollTracking?.laidOut();
+      },
     });
     pageView.setEnabled(untrack(() => paged));
 
     boardElement.addEventListener('wheel', handleWheel, { passive: false });
     // A tab switch remounts this view: come back where the user left off.
-    stopScrollTracking = trackDocumentScroll(boardElement, tabId);
+    scrollTracking = trackDocumentScroll(boardElement, tabId, { content: containerElement, awaitLayout: untrack(() => paged) });
     // Zoom is shared by every Document tab; the keys act while focus is in this
     // one (the note, the Raw view, its tag row, the zoom control), never from
     // another board. Zoom changes no text, so a field (the Raw view, the tag
@@ -283,7 +287,8 @@
     for (const off of unregisterZoomKeys) off();
     unregisterZoomKeys = [];
     boardElement?.removeEventListener('wheel', handleWheel);
-    stopScrollTracking();
+    scrollTracking?.stop();
+    scrollTracking = null;
     pageView?.destroy();
     pageView = null;
     // Unsaved keystrokes go to the model; the note writer saves them after
@@ -426,7 +431,7 @@
     pattern={settings.backgroundPattern ?? vaultStore.project?.settings?.document?.backgroundPattern}
     bgColor={settings.backgroundColor || vaultStore.project?.settings?.document?.backgroundColor || ''}
   />
-  <div class="document-container" style:zoom={zoom === 1 ? null : zoom}>
+  <div class="document-container" style:zoom={zoom === 1 ? null : zoom} bind:this={containerElement}>
     <div
       class="document-paper"
       class:paged={showPages}
